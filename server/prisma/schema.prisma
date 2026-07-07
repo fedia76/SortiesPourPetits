@@ -1,0 +1,95 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+enum Setting {
+  INDOOR
+  OUTDOOR
+  BOTH
+}
+
+enum EventStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String
+  displayName  String
+  role         Role     @default(USER)
+  createdAt    DateTime @default(now())
+
+  events          Event[] @relation("EventAuthor")
+  moderatedEvents Event[] @relation("EventModerator")
+}
+
+model Venue {
+  id         Int     @id @default(autoincrement())
+  name       String
+  address    String
+  city       String
+  postalCode String
+  lat        Decimal @db.Decimal(9, 6)
+  lng        Decimal @db.Decimal(9, 6)
+
+  events Event[]
+
+  @@index([lat, lng])
+}
+
+model Event {
+  id              Int         @id @default(autoincrement())
+  title           String
+  description     String      @db.Text
+  isFree          Boolean     @default(false)
+  price           Decimal?    @db.Decimal(8, 2)
+  photoUrl        String?
+  ageMin          Int
+  ageMax          Int
+  dateStart       DateTime    @db.Date
+  dateEnd         DateTime    @db.Date
+  setting         Setting
+  status          EventStatus @default(PENDING)
+  rejectionReason String?
+  createdAt       DateTime    @default(now())
+
+  venue   Venue @relation(fields: [venueId], references: [id])
+  venueId Int
+
+  author      User @relation("EventAuthor", fields: [createdById], references: [id])
+  createdById Int
+
+  moderator     User? @relation("EventModerator", fields: [moderatedById], references: [id])
+  moderatedById Int?
+
+  openingHours OpeningHour[]
+
+  @@index([status, dateEnd])
+  @@index([createdById])
+}
+
+model OpeningHour {
+  id        Int    @id @default(autoincrement())
+  dayOfWeek Int // 0 = lundi … 6 = dimanche
+  openTime  String // "HH:MM"
+  closeTime String // "HH:MM"
+
+  event   Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId Int
+
+  @@index([eventId])
+}
