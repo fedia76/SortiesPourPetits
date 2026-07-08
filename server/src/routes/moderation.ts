@@ -21,8 +21,8 @@ moderationRouter.get('/pending', async (_req, res) => {
     events: events.map((e) => ({
       ...e,
       price: e.price === null ? null : Number(e.price),
-      dateStart: e.dateStart.toISOString().slice(0, 10),
-      dateEnd: e.dateEnd.toISOString().slice(0, 10),
+      dateStart: e.dateStart ? e.dateStart.toISOString().slice(0, 10) : null,
+      dateEnd: e.dateEnd ? e.dateEnd.toISOString().slice(0, 10) : null,
       venue: { ...e.venue, lat: Number(e.venue.lat), lng: Number(e.venue.lng) },
     })),
   });

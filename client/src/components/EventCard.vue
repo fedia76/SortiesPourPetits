@@ -10,6 +10,7 @@ const priceLabel = computed(() =>
 );
 
 const dateLabel = computed(() => {
+  if (props.event.isPermanent || !props.event.dateStart || !props.event.dateEnd) return 'Toute l’année';
   const fmt = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
   return props.event.dateStart === props.event.dateEnd
     ? fmt(props.event.dateStart)
@@ -24,8 +25,10 @@ const dateLabel = computed(() => {
     <div class="body">
       <div class="badges">
         <span class="badge price">{{ priceLabel }}</span>
-        <span class="badge">{{ event.ageMin }}–{{ event.ageMax }} ans</span>
-        <span class="badge">{{ SETTING_LABELS[event.setting] }}</span>
+        <span v-if="event.ageMin !== null && event.ageMax !== null" class="badge">
+          {{ event.ageMin }}–{{ event.ageMax }} ans
+        </span>
+        <span v-if="event.setting" class="badge">{{ SETTING_LABELS[event.setting] }}</span>
         <span class="badge">{{ event.category.name }}</span>
         <span v-if="event.distanceKm !== undefined" class="badge">📍 {{ event.distanceKm }} km</span>
       </div>

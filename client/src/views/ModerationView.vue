@@ -50,15 +50,17 @@ onMounted(load);
     <div v-for="e in events" :key="e.id" class="card" style="padding: 1.2rem; margin-bottom: 1rem">
       <div class="badges" style="margin-bottom: 0.4rem">
         <span class="badge price">{{ e.isFree ? 'Gratuit' : `${e.price} €` }}</span>
-        <span class="badge">{{ e.ageMin }}–{{ e.ageMax }} ans</span>
-        <span class="badge">{{ SETTING_LABELS[e.setting] }}</span>
+        <span v-if="e.ageMin !== null && e.ageMax !== null" class="badge">{{ e.ageMin }}–{{ e.ageMax }} ans</span>
+        <span v-if="e.setting" class="badge">{{ SETTING_LABELS[e.setting] }}</span>
       </div>
       <h3>
         <RouterLink :to="`/sorties/${e.id}`">{{ e.title }}</RouterLink>
       </h3>
       <p class="muted">
-        {{ e.venue.name }} · {{ e.venue.city }} · du {{ e.dateStart }} au {{ e.dateEnd }} ·
-        proposé par {{ e.author.displayName }}
+        {{ e.venue.name }} · {{ e.venue.city }} ·
+        <template v-if="e.isPermanent || !e.dateStart || !e.dateEnd">toute l'année</template>
+        <template v-else>du {{ e.dateStart }} au {{ e.dateEnd }}</template>
+        · proposé par {{ e.author.displayName }}
       </p>
       <p style="white-space: pre-line">{{ e.description }}</p>
       <img

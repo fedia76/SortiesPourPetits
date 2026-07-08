@@ -1,4 +1,4 @@
-import { Prisma, Role } from '@prisma/client';
+import { Prisma, Role, Setting } from '@prisma/client';
 import { Router } from 'express';
 import { prisma } from '../db';
 import { hasRole, requireAuth } from '../middleware/auth';
@@ -26,8 +26,8 @@ function serializeEvent(event: EventWithRelations, distanceKm?: number) {
   return {
     ...event,
     price: event.price === null ? null : Number(event.price),
-    dateStart: event.dateStart.toISOString().slice(0, 10),
-    dateEnd: event.dateEnd.toISOString().slice(0, 10),
+    dateStart: event.dateStart ? event.dateStart.toISOString().slice(0, 10) : null,
+    dateEnd: event.dateEnd ? event.dateEnd.toISOString().slice(0, 10) : null,
     venue: {
       ...event.venue,
       lat: Number(event.venue.lat),
@@ -62,19 +62,23 @@ eventsRouter.get('/', async (req, res) => {
     and.push({ OR: [{ isFree: true }, { price: { lte: f.priceMax } }] });
   }
   if (f.age !== undefined) {
-    where.ageMin = { lte: f.age };
-    where.ageMax = { gte: f.age };
+    // Une tranche d'âge non renseignée est considérée comme ouverte à tous.
+    and.push({ OR: [{ ageMin: null }, { ageMin: { lte: f.age } }] });
+    and.push({ OR: [{ ageMax: null }, { ageMax: { gte: f.age } }] });
   }
   // Chevauchement de périodes : l'événement est visible s'il est en cours
   // à un moment de l'intervalle demandé. Par défaut : pas encore terminé.
+  // Un événement permanent (sans date de fin) est toujours considéré en cours.
   const from = f.from ?? new Date().toISOString().slice(0, 10);
-  where.dateEnd = { gte: new Date(from) };
+  and.push({ OR: [{ isPermanent: true }, { dateEnd: { gte: new Date(from) } }] });
   if (f.to) {
-    where.dateStart = { lte: new Date(f.to) };
+    and.push({ OR: [{ isPermanent: true }, { dateStart: { lte: new Date(f.to) } }] });
   }
   if (f.setting) {
     // Un lieu « les deux » satisfait une recherche intérieur OU extérieur.
-    where.setting = f.setting === 'BOTH' ? 'BOTH' : { in: [f.setting, 'BOTH'] };
+    // Un cadre non renseigné satisfait n'importe quelle recherche de cadre.
+    const settingMatch: Setting[] = f.setting === 'BOTH' ? ['BOTH'] : [f.setting, 'BOTH'];
+    and.push({ OR: [{ setting: null }, { setting: { in: settingMatch } }] });
   }
   if (f.categoryId !== undefined) {
     where.categoryId = f.categoryId;
@@ -194,16 +198,18 @@ eventsRouter.post('/', requireAuth, photoUpload.single('photo'), async (req, res
     data: {
       title: input.title,
       description: input.description,
+      sourceUrl: input.sourceUrl ?? null,
       isFree: input.isFree,
       price: input.isFree ? null : input.price,
       photoUrl,
-      ageMin: input.ageMin,
-      ageMax: input.ageMax,
-      dateStart: new Date(input.dateStart),
-      dateEnd: new Date(input.dateEnd),
-      openTime: input.openTime,
-      closeTime: input.closeTime,
-      setting: input.setting,
+      ageMin: input.ageMin ?? null,
+      ageMax: input.ageMax ?? null,
+      isPermanent: input.isPermanent,
+      dateStart: input.isPermanent ? null : new Date(input.dateStart!),
+      dateEnd: input.isPermanent ? null : new Date(input.dateEnd!),
+      openTime: input.openTime ?? null,
+      closeTime: input.closeTime ?? null,
+      setting: input.setting ?? null,
       venueId: venue.id,
       categoryId: input.categoryId,
       createdById: req.user!.id,
@@ -250,16 +256,18 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
     data: {
       title: input.title,
       description: input.description,
+      sourceUrl: input.sourceUrl ?? null,
       isFree: input.isFree,
       price: input.isFree ? null : input.price,
       photoUrl,
-      ageMin: input.ageMin,
-      ageMax: input.ageMax,
-      dateStart: new Date(input.dateStart),
-      dateEnd: new Date(input.dateEnd),
-      openTime: input.openTime,
-      closeTime: input.closeTime,
-      setting: input.setting,
+      ageMin: input.ageMin ?? null,
+      ageMax: input.ageMax ?? null,
+      isPermanent: input.isPermanent,
+      dateStart: input.isPermanent ? null : new Date(input.dateStart!),
+      dateEnd: input.isPermanent ? null : new Date(input.dateEnd!),
+      openTime: input.openTime ?? null,
+      closeTime: input.closeTime ?? null,
+      setting: input.setting ?? null,
       venueId: venue.id,
       categoryId: input.categoryId,
       // Une modification par l'auteur repasse en modération.

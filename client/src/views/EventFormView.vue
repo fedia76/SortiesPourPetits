@@ -14,15 +14,17 @@ const editId = computed(() => (route.name === 'edit-event' ? Number(route.params
 const form = reactive({
   title: '',
   description: '',
+  sourceUrl: '',
   isFree: false,
   price: '' as string | number,
-  ageMin: 0,
-  ageMax: 12,
+  ageMin: '' as string | number,
+  ageMax: '' as string | number,
+  isPermanent: false,
   dateStart: '',
   dateEnd: '',
-  openTime: '10:00',
-  closeTime: '18:00',
-  setting: 'BOTH' as Setting,
+  openTime: '',
+  closeTime: '',
+  setting: '' as Setting | '',
   categoryId: null as number | null,
   venueName: '',
   address: '',
@@ -66,15 +68,17 @@ async function submit() {
   const payload: EventInput = {
     title: form.title,
     description: form.description,
+    sourceUrl: form.sourceUrl.trim() === '' ? null : form.sourceUrl.trim(),
     isFree: form.isFree,
     price: form.isFree || form.price === '' ? null : Number(form.price),
-    ageMin: form.ageMin,
-    ageMax: form.ageMax,
-    dateStart: form.dateStart,
-    dateEnd: form.dateEnd,
-    openTime: form.openTime,
-    closeTime: form.closeTime,
-    setting: form.setting,
+    ageMin: form.ageMin === '' ? null : Number(form.ageMin),
+    ageMax: form.ageMax === '' ? null : Number(form.ageMax),
+    isPermanent: form.isPermanent,
+    dateStart: form.isPermanent || form.dateStart === '' ? null : form.dateStart,
+    dateEnd: form.isPermanent || form.dateEnd === '' ? null : form.dateEnd,
+    openTime: form.openTime === '' ? null : form.openTime,
+    closeTime: form.closeTime === '' ? null : form.closeTime,
+    setting: form.setting === '' ? null : form.setting,
     categoryId: form.categoryId,
     venue: {
       name: form.venueName,
@@ -107,15 +111,17 @@ onMounted(async () => {
   const { event } = await api.get<{ event: EventItem }>(`/api/events/${editId.value}`);
   form.title = event.title;
   form.description = event.description;
+  form.sourceUrl = event.sourceUrl ?? '';
   form.isFree = event.isFree;
   form.price = event.price ?? '';
-  form.ageMin = event.ageMin;
-  form.ageMax = event.ageMax;
-  form.dateStart = event.dateStart;
-  form.dateEnd = event.dateEnd;
-  form.openTime = event.openTime;
-  form.closeTime = event.closeTime;
-  form.setting = event.setting;
+  form.ageMin = event.ageMin ?? '';
+  form.ageMax = event.ageMax ?? '';
+  form.isPermanent = event.isPermanent;
+  form.dateStart = event.dateStart ?? '';
+  form.dateEnd = event.dateEnd ?? '';
+  form.openTime = event.openTime ?? '';
+  form.closeTime = event.closeTime ?? '';
+  form.setting = event.setting ?? '';
   form.categoryId = event.category.id;
   form.venueName = event.venue.name;
   form.address = event.venue.address;
@@ -171,16 +177,17 @@ onMounted(async () => {
 
       <div class="row">
         <div class="field">
-          <label for="age-min">Âge minimum *</label>
-          <input id="age-min" v-model.number="form.ageMin" type="number" min="0" max="17" required />
+          <label for="age-min">Âge minimum</label>
+          <input id="age-min" v-model="form.ageMin" type="number" min="0" max="17" />
         </div>
         <div class="field">
-          <label for="age-max">Âge maximum *</label>
-          <input id="age-max" v-model.number="form.ageMax" type="number" min="0" max="18" required />
+          <label for="age-max">Âge maximum</label>
+          <input id="age-max" v-model="form.ageMax" type="number" min="0" max="18" />
         </div>
         <div class="field">
-          <label for="setting">Cadre *</label>
-          <select id="setting" v-model="form.setting" required>
+          <label for="setting">Cadre</label>
+          <select id="setting" v-model="form.setting">
+            <option value="">Non précisé</option>
             <option value="INDOOR">Intérieur</option>
             <option value="OUTDOOR">Extérieur</option>
             <option value="BOTH">Les deux</option>
@@ -195,25 +202,54 @@ onMounted(async () => {
         </div>
       </div>
 
+      <div class="field">
+        <label class="checkbox">
+          <input v-model="form.isPermanent" type="checkbox" />
+          Événement permanent (pas de date de fin)
+        </label>
+      </div>
+
       <div class="row">
         <div class="field">
-          <label for="date-start">Date de début *</label>
-          <input id="date-start" v-model="form.dateStart" type="date" required />
+          <label for="date-start">Date de début {{ form.isPermanent ? '' : '*' }}</label>
+          <input
+            id="date-start"
+            v-model="form.dateStart"
+            type="date"
+            :disabled="form.isPermanent"
+            :required="!form.isPermanent"
+          />
         </div>
         <div class="field">
-          <label for="date-end">Date de fin *</label>
-          <input id="date-end" v-model="form.dateEnd" type="date" required />
+          <label for="date-end">Date de fin {{ form.isPermanent ? '' : '*' }}</label>
+          <input
+            id="date-end"
+            v-model="form.dateEnd"
+            type="date"
+            :disabled="form.isPermanent"
+            :required="!form.isPermanent"
+          />
         </div>
         <div class="field">
-          <label for="open-time">Heure d'ouverture *</label>
-          <input id="open-time" v-model="form.openTime" type="time" required />
+          <label for="open-time">Heure d'ouverture</label>
+          <input id="open-time" v-model="form.openTime" type="time" />
         </div>
         <div class="field">
-          <label for="close-time">Heure de fermeture *</label>
-          <input id="close-time" v-model="form.closeTime" type="time" required />
+          <label for="close-time">Heure de fermeture</label>
+          <input id="close-time" v-model="form.closeTime" type="time" />
         </div>
       </div>
       <span class="hint">Cette plage horaire s'applique tous les jours de l'évènement.</span>
+
+      <div class="field">
+        <label for="source-url">Lien vers l'événement (source)</label>
+        <input
+          id="source-url"
+          v-model="form.sourceUrl"
+          type="url"
+          placeholder="https://…"
+        />
+      </div>
 
       <h2>Le lieu</h2>
 
