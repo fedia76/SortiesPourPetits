@@ -37,6 +37,14 @@ model User {
   moderatedEvents Event[] @relation("EventModerator")
 }
 
+model Category {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  events Event[]
+}
+
 model Venue {
   id         Int     @id @default(autoincrement())
   name       String
@@ -70,6 +78,9 @@ model Event {
   venue   Venue @relation(fields: [venueId], references: [id])
   venueId Int
 
+  category   Category @relation(fields: [categoryId], references: [id])
+  categoryId Int
+
   author      User @relation("EventAuthor", fields: [createdById], references: [id])
   createdById Int
 
@@ -80,6 +91,7 @@ model Event {
 
   @@index([status, dateEnd])
   @@index([createdById])
+  @@index([categoryId])
 }
 
 model OpeningHour {

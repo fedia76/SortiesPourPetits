@@ -5,7 +5,7 @@ import AddressPicker from '../components/AddressPicker.vue';
 import OpeningHoursEditor from '../components/OpeningHoursEditor.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
-import type { EventInput, EventItem, Setting } from '../types';
+import type { Category, EventInput, EventItem, Setting } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -22,6 +22,7 @@ const form = reactive({
   dateStart: '',
   dateEnd: '',
   setting: 'BOTH' as Setting,
+  categoryId: null as number | null,
   venueName: '',
   address: '',
   city: '',
@@ -36,6 +37,7 @@ const photoPreview = ref('');
 const existingPhotoUrl = ref<string | null>(null);
 const error = ref('');
 const loading = ref(false);
+const categories = ref<Category[]>([]);
 
 function onAddressSelect(s: GeoSuggestion) {
   form.address = s.name || s.label;
@@ -57,6 +59,10 @@ async function submit() {
     error.value = "Sélectionnez l'adresse du lieu dans les suggestions (pour la géolocalisation).";
     return;
   }
+  if (form.categoryId === null) {
+    error.value = 'Choisissez une catégorie.';
+    return;
+  }
   const payload: EventInput = {
     title: form.title,
     description: form.description,
@@ -67,6 +73,7 @@ async function submit() {
     dateStart: form.dateStart,
     dateEnd: form.dateEnd,
     setting: form.setting,
+    categoryId: form.categoryId,
     venue: {
       name: form.venueName,
       address: form.address,
@@ -92,6 +99,9 @@ async function submit() {
 }
 
 onMounted(async () => {
+  const { categories: cats } = await api.get<{ categories: Category[] }>('/api/categories');
+  categories.value = cats;
+
   if (!editId.value) return;
   const { event } = await api.get<{ event: EventItem }>(`/api/events/${editId.value}`);
   form.title = event.title;
@@ -103,6 +113,7 @@ onMounted(async () => {
   form.dateStart = event.dateStart;
   form.dateEnd = event.dateEnd;
   form.setting = event.setting;
+  form.categoryId = event.category.id;
   form.venueName = event.venue.name;
   form.address = event.venue.address;
   form.city = event.venue.city;
@@ -175,6 +186,13 @@ onMounted(async () => {
             <option value="INDOOR">Intérieur</option>
             <option value="OUTDOOR">Extérieur</option>
             <option value="BOTH">Les deux</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="category">Catégorie *</label>
+          <select id="category" v-model.number="form.categoryId" required>
+            <option :value="null" disabled>Choisissez…</option>
+            <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
         </div>
       </div>

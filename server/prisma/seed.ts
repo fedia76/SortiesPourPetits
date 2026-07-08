@@ -32,6 +32,20 @@ async function main() {
     }),
   ]);
 
+  const categoryNames = ['Parc', 'Musée', 'Spectacle', 'Sport', 'Atelier'];
+  const categories = Object.fromEntries(
+    await Promise.all(
+      categoryNames.map(async (name) => {
+        const category = await prisma.category.upsert({
+          where: { name },
+          update: {},
+          create: { name },
+        });
+        return [name, category] as const;
+      }),
+    ),
+  );
+
   const year = new Date().getFullYear();
   const demoEvents: Array<{
     title: string;
@@ -43,6 +57,7 @@ async function main() {
     dateStart: string;
     dateEnd: string;
     setting: Setting;
+    category: string;
     venue: { name: string; address: string; city: string; postalCode: string; lat: number; lng: number };
   }> = [
     {
@@ -56,6 +71,7 @@ async function main() {
       dateStart: `${year}-01-01`,
       dateEnd: `${year}-12-31`,
       setting: 'BOTH',
+      category: 'Parc',
       venue: {
         name: 'Jardin d’Acclimatation',
         address: 'Bois de Boulogne, Route de la Porte Dauphine',
@@ -76,6 +92,7 @@ async function main() {
       dateStart: `${year}-01-01`,
       dateEnd: `${year}-12-31`,
       setting: 'INDOOR',
+      category: 'Musée',
       venue: {
         name: 'Cité des sciences et de l’industrie',
         address: '30 Avenue Corentin Cariou',
@@ -96,6 +113,7 @@ async function main() {
       dateStart: `${year}-04-01`,
       dateEnd: `${year}-10-31`,
       setting: 'OUTDOOR',
+      category: 'Parc',
       venue: {
         name: 'Parc de Sceaux',
         address: '8 Avenue Claude Perrault',
@@ -116,6 +134,7 @@ async function main() {
       dateStart: `${year}-04-05`,
       dateEnd: `${year}-11-02`,
       setting: 'OUTDOOR',
+      category: 'Sport',
       venue: {
         name: 'France Miniature',
         address: 'Boulevard André Malraux',
@@ -148,6 +167,7 @@ async function main() {
         setting: e.setting,
         status: 'APPROVED',
         venueId: venue.id,
+        categoryId: categories[e.category].id,
         createdById: parent.id,
         moderatedById: modo.id,
         openingHours: {

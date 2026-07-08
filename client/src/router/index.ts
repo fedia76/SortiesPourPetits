@@ -38,6 +38,12 @@ const router = createRouter({
       component: () => import('../views/AdminUsersView.vue'),
       meta: { requiresAuth: true, requiresAdmin: true },
     },
+    {
+      path: '/admin/categories',
+      name: 'admin-categories',
+      component: () => import('../views/AdminCategoriesView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
   scrollBehavior: () => ({ top: 0 }),

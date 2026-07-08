@@ -46,6 +46,10 @@ onMounted(load);
 <template>
   <div class="container page">
     <h1>Administration — utilisateurs</h1>
+    <nav class="row" style="gap: 1rem; margin-bottom: 1rem">
+      <RouterLink to="/admin">Utilisateurs</RouterLink>
+      <RouterLink to="/admin/categories">Catégories</RouterLink>
+    </nav>
     <p v-if="error" class="error">{{ error }}</p>
 
     <div class="table-wrap card">

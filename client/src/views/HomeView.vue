@@ -4,7 +4,7 @@ import EventCard from '../components/EventCard.vue';
 import AddressPicker from '../components/AddressPicker.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
-import type { EventItem, Setting } from '../types';
+import type { Category, EventItem, Setting } from '../types';
 
 const events = ref<EventItem[]>([]);
 const total = ref(0);
@@ -12,6 +12,7 @@ const page = ref(1);
 const pageSize = 12;
 const loading = ref(false);
 const error = ref('');
+const categories = ref<Category[]>([]);
 
 const filters = reactive({
   q: '',
@@ -21,6 +22,7 @@ const filters = reactive({
   from: '',
   to: '',
   setting: '' as '' | Setting,
+  categoryId: '' as '' | number,
   address: '',
   lat: null as number | null,
   lng: null as number | null,
@@ -42,6 +44,7 @@ async function search(goToPage = 1) {
   if (filters.from) params.set('from', filters.from);
   if (filters.to) params.set('to', filters.to);
   if (filters.setting) params.set('setting', filters.setting);
+  if (filters.categoryId !== '') params.set('categoryId', String(filters.categoryId));
   if (geoActive.value) {
     params.set('lat', String(filters.lat));
     params.set('lng', String(filters.lng));
@@ -96,7 +99,11 @@ function useMyPosition() {
   );
 }
 
-onMounted(() => search());
+onMounted(async () => {
+  const { categories: cats } = await api.get<{ categories: Category[] }>('/api/categories');
+  categories.value = cats;
+  search();
+});
 </script>
 
 <template>
@@ -126,6 +133,13 @@ onMounted(() => search());
             <option value="INDOOR">Intérieur</option>
             <option value="OUTDOOR">Extérieur</option>
             <option value="BOTH">Les deux</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-category">Catégorie</label>
+          <select id="f-category" v-model="filters.categoryId">
+            <option value="">Toutes</option>
+            <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
         </div>
       </div>

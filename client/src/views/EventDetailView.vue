@@ -100,6 +100,10 @@ onMounted(async () => {
             <dd>{{ SETTING_LABELS[event.setting] }}</dd>
           </div>
           <div>
+            <dt>Catégorie</dt>
+            <dd>{{ event.category.name }}</dd>
+          </div>
+          <div>
             <dt>Lieu</dt>
             <dd>
               <strong>{{ event.venue.name }}</strong><br />

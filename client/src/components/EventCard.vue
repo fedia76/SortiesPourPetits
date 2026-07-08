@@ -26,6 +26,7 @@ const dateLabel = computed(() => {
         <span class="badge price">{{ priceLabel }}</span>
         <span class="badge">{{ event.ageMin }}–{{ event.ageMax }} ans</span>
         <span class="badge">{{ SETTING_LABELS[event.setting] }}</span>
+        <span class="badge">{{ event.category.name }}</span>
         <span v-if="event.distanceKm !== undefined" class="badge">📍 {{ event.distanceKm }} km</span>
       </div>
       <h3>{{ event.title }}</h3>

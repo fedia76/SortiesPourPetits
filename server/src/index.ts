@@ -6,6 +6,7 @@ import { authRouter } from './routes/auth';
 import { eventsRouter } from './routes/events';
 import { moderationRouter } from './routes/moderation';
 import { adminRouter } from './routes/admin';
+import { categoriesRouter } from './routes/categories';
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/events', eventsRouter);
 app.use('/api/moderation', moderationRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/categories', categoriesRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });

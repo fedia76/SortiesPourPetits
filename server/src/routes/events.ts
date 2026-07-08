@@ -10,6 +10,7 @@ export const eventsRouter = Router();
 type EventWithRelations = Prisma.EventGetPayload<{
   include: {
     venue: true;
+    category: true;
     openingHours: true;
     author: { select: { id: true; displayName: true } };
   };
@@ -17,6 +18,7 @@ type EventWithRelations = Prisma.EventGetPayload<{
 
 const EVENT_INCLUDE = {
   venue: true,
+  category: true,
   openingHours: true,
   author: { select: { id: true, displayName: true } },
 } as const;
@@ -75,6 +77,9 @@ eventsRouter.get('/', async (req, res) => {
   if (f.setting) {
     // Un lieu « les deux » satisfait une recherche intérieur OU extérieur.
     where.setting = f.setting === 'BOTH' ? 'BOTH' : { in: [f.setting, 'BOTH'] };
+  }
+  if (f.categoryId !== undefined) {
+    where.categoryId = f.categoryId;
   }
 
   // Filtre distance : liste des lieux dans le rayon + distance de chacun.
@@ -200,6 +205,7 @@ eventsRouter.post('/', requireAuth, photoUpload.single('photo'), async (req, res
       dateEnd: new Date(input.dateEnd),
       setting: input.setting,
       venueId: venue.id,
+      categoryId: input.categoryId,
       createdById: req.user!.id,
       openingHours: { create: input.openingHours },
     },
@@ -254,6 +260,7 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
       dateEnd: new Date(input.dateEnd),
       setting: input.setting,
       venueId: venue.id,
+      categoryId: input.categoryId,
       // Une modification par l'auteur repasse en modération.
       status: isModerator ? existing.status : 'PENDING',
       rejectionReason: isModerator ? existing.rejectionReason : null,

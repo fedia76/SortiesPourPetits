@@ -9,6 +9,11 @@ export interface User {
   role: Role;
 }
 
+export interface Category {
+  id: number;
+  name: string;
+}
+
 export interface Venue {
   id: number;
   name: string;
@@ -40,6 +45,7 @@ export interface EventItem {
   status: EventStatus;
   rejectionReason: string | null;
   venue: Venue;
+  category: Category;
   openingHours: OpeningHour[];
   author: { id: number; displayName: string; email?: string };
   distanceKm?: number;
@@ -55,6 +61,7 @@ export interface EventInput {
   dateStart: string;
   dateEnd: string;
   setting: Setting;
+  categoryId: number;
   venue: Omit<Venue, 'id'>;
   openingHours: OpeningHour[];
 }

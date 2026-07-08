@@ -32,6 +32,10 @@ export const venueSchema = z.object({
   lng: z.number().min(-180).max(180),
 });
 
+export const categorySchema = z.object({
+  name: z.string().trim().min(2, 'Nom trop court').max(50, 'Nom trop long'),
+});
+
 export const eventInputSchema = z
   .object({
     title: z.string().trim().min(3, 'Titre trop court').max(150),
@@ -43,6 +47,7 @@ export const eventInputSchema = z
     dateStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide (AAAA-MM-JJ)'),
     dateEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide (AAAA-MM-JJ)'),
     setting: z.enum(['INDOOR', 'OUTDOOR', 'BOTH']),
+    categoryId: z.number().int().positive('Catégorie requise'),
     venue: venueSchema,
     openingHours: z.array(openingHourSchema).max(21),
   })
@@ -64,6 +69,7 @@ export const searchSchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   setting: z.enum(['INDOOR', 'OUTDOOR', 'BOTH']).optional(),
+  categoryId: z.coerce.number().int().positive().optional(),
   lat: z.coerce.number().min(-90).max(90).optional(),
   lng: z.coerce.number().min(-180).max(180).optional(),
   radiusKm: z.coerce.number().min(0.1).max(300).optional(),
