@@ -33,8 +33,25 @@ model User {
   role         Role     @default(USER)
   createdAt    DateTime @default(now())
 
-  events          Event[] @relation("EventAuthor")
-  moderatedEvents Event[] @relation("EventModerator")
+  events          Event[]  @relation("EventAuthor")
+  moderatedEvents Event[]  @relation("EventModerator")
+  apiKeys         ApiKey[]
+}
+
+/// Clé d'API pour les programmes tiers. La clé en clair n'est jamais stockée :
+/// seul son hash SHA-256 l'est, et elle agit avec le rôle du compte rattaché.
+model ApiKey {
+  id         Int       @id @default(autoincrement())
+  name       String
+  keyHash    String    @unique
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  user   User @relation(fields: [userId], references: [id])
+  userId Int
+
+  @@index([userId])
 }
 
 model Category {

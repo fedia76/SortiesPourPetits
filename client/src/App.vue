@@ -21,6 +21,7 @@ async function logout() {
           <RouterLink v-if="auth.isLoggedIn" to="/proposer">Proposer une sortie</RouterLink>
           <RouterLink v-if="auth.isLoggedIn" to="/mes-sorties">Mes sorties</RouterLink>
           <RouterLink v-if="auth.isModerator" to="/moderation">Modération</RouterLink>
+          <RouterLink v-if="auth.isModerator" to="/cles-api">Clés d'API</RouterLink>
           <RouterLink v-if="auth.isAdmin" to="/admin">Admin</RouterLink>
           <template v-if="auth.isLoggedIn">
             <span class="muted">{{ auth.user!.displayName }}</span>

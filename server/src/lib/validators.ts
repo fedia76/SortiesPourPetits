@@ -79,3 +79,8 @@ export const moderateSchema = z.object({
 export const updateRoleSchema = z.object({
   role: z.enum(['USER', 'MODERATOR', 'ADMIN']),
 });
+
+export const createApiKeySchema = z.object({
+  name: z.string().trim().min(2, 'Libellé trop court').max(100, 'Libellé trop long'),
+  userId: z.number().int().positive('Compte requis'),
+});
