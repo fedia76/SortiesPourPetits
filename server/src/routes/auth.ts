@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { prisma } from '../db';
 import { config } from '../config';
 import { requireAuth, signToken } from '../middleware/auth';
@@ -14,11 +15,20 @@ const COOKIE_OPTIONS = {
   maxAge: config.sessionMaxAgeMs,
 };
 
+// Limite les tentatives de connexion/inscription par IP pour freiner le brute-force.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de tentatives, réessayez plus tard' },
+});
+
 function publicUser(user: { id: number; email: string; displayName: string; role: string }) {
   return { id: user.id, email: user.email, displayName: user.displayName, role: user.role };
 }
 
-authRouter.post('/register', async (req, res) => {
+authRouter.post('/register', authLimiter, async (req, res) => {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -40,7 +50,7 @@ authRouter.post('/register', async (req, res) => {
   res.status(201).json({ user: publicUser(user) });
 });
 
-authRouter.post('/login', async (req, res) => {
+authRouter.post('/login', authLimiter, async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Email ou mot de passe invalide' });

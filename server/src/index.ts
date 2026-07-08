@@ -10,6 +10,11 @@ import { categoriesRouter } from './routes/categories';
 
 const app = express();
 
+// Nécessaire derrière un reverse proxy (nginx/Caddy) : IP client et détection HTTPS correctes.
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 app.use(express.json());
 app.use(cookieParser());
 app.use(attachUser);
