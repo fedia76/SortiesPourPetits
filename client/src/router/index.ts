@@ -33,6 +33,12 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresModerator: true },
     },
     {
+      path: '/cles-api',
+      name: 'api-keys',
+      component: () => import('../views/ApiKeysView.vue'),
+      meta: { requiresAuth: true, requiresModerator: true },
+    },
+    {
       path: '/admin',
       name: 'admin',
       component: () => import('../views/AdminUsersView.vue'),

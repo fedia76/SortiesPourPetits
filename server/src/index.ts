@@ -1,5 +1,6 @@
 import express, { NextFunction, Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
 import { config } from './config';
 import { attachUser } from './middleware/auth';
 import { authRouter } from './routes/auth';
@@ -7,6 +8,7 @@ import { eventsRouter } from './routes/events';
 import { moderationRouter } from './routes/moderation';
 import { adminRouter } from './routes/admin';
 import { categoriesRouter } from './routes/categories';
+import { apiKeysRouter } from './routes/apiKeys';
 
 const app = express();
 
@@ -17,6 +19,22 @@ if (process.env.NODE_ENV === 'production') {
 
 app.use(express.json());
 app.use(cookieParser());
+
+// Limite les appels des programmes tiers, par clé d'API présentée.
+// Les sessions web (cookie) ne sont pas concernées.
+app.use(
+  '/api',
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => !req.headers.authorization?.startsWith('Bearer '),
+    keyGenerator: (req) => req.headers.authorization!,
+    message: { error: 'Trop de requêtes, réessayez plus tard' },
+  }),
+);
+
 app.use(attachUser);
 
 app.use('/uploads', express.static(config.uploadsDir, { maxAge: '7d', immutable: true }));
@@ -26,6 +44,7 @@ app.use('/api/events', eventsRouter);
 app.use('/api/moderation', moderationRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/categories', categoriesRouter);
+app.use('/api/keys', apiKeysRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
