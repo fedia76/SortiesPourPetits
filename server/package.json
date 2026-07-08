@@ -5,6 +5,7 @@
   "description": "API de SortiesPourPetits — idées de sorties avec des enfants en Île-de-France",
   "main": "dist/index.js",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",

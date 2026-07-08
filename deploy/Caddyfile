@@ -1,0 +1,15 @@
+votre-domaine.fr {
+	handle /api/* {
+		reverse_proxy localhost:3000
+	}
+
+	handle /uploads/* {
+		reverse_proxy localhost:3000
+	}
+
+	handle {
+		root * /opt/sortiespourpetits/client
+		try_files {path} /index.html
+		file_server
+	}
+}

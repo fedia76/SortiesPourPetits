@@ -1,0 +1,18 @@
+[Unit]
+Description=SortiesPourPetits API
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/sortiespourpetits/server
+EnvironmentFile=/opt/sortiespourpetits/server/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

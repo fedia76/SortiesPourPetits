@@ -80,3 +80,8 @@ cd client && npm run build                # fichiers statiques dans client/dist
 
 Servez `client/dist` derrière un reverse proxy (nginx, Caddy…) qui route
 `/api` et `/uploads` vers l'API Node.
+
+Déploiement automatisé sur un VPS via GitHub Actions : voir
+[`deploy/README.md`](deploy/README.md) (setup serveur en une fois) et
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) (build + push
+à chaque `git push` sur `main`).
