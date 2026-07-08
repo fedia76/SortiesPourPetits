@@ -83,15 +83,16 @@ onMounted(async () => {
             <dt>Prix</dt>
             <dd>{{ event.isFree ? 'Gratuit' : `${event.price} €` }}</dd>
           </div>
-          <div>
+          <div v-if="event.ageMin !== null && event.ageMax !== null">
             <dt>Âges</dt>
             <dd>De {{ event.ageMin }} à {{ event.ageMax }} ans</dd>
           </div>
           <div>
             <dt>Dates</dt>
-            <dd>Du {{ formatDate(event.dateStart) }} au {{ formatDate(event.dateEnd) }}</dd>
+            <dd v-if="event.isPermanent || !event.dateStart || !event.dateEnd">Toute l'année</dd>
+            <dd v-else>Du {{ formatDate(event.dateStart!) }} au {{ formatDate(event.dateEnd!) }}</dd>
           </div>
-          <div>
+          <div v-if="event.setting">
             <dt>Cadre</dt>
             <dd>{{ SETTING_LABELS[event.setting] }}</dd>
           </div>
@@ -108,9 +109,13 @@ onMounted(async () => {
               <a :href="mapsUrl" target="_blank" rel="noopener">Voir sur la carte ↗</a>
             </dd>
           </div>
-          <div>
+          <div v-if="event.openTime && event.closeTime">
             <dt>Horaires d'ouverture</dt>
             <dd>{{ event.openTime }} – {{ event.closeTime }}</dd>
+          </div>
+          <div v-if="event.sourceUrl">
+            <dt>Source</dt>
+            <dd><a :href="event.sourceUrl" target="_blank" rel="noopener">Voir l'événement ↗</a></dd>
           </div>
         </aside>
       </div>

@@ -1,0 +1,11 @@
+-- AlterTable
+ALTER TABLE `Event`
+  ADD COLUMN `sourceUrl` VARCHAR(191) NULL,
+  ADD COLUMN `isPermanent` BOOLEAN NOT NULL DEFAULT false,
+  MODIFY `ageMin` INTEGER NULL,
+  MODIFY `ageMax` INTEGER NULL,
+  MODIFY `dateStart` DATE NULL,
+  MODIFY `dateEnd` DATE NULL,
+  MODIFY `openTime` VARCHAR(191) NULL,
+  MODIFY `closeTime` VARCHAR(191) NULL,
+  MODIFY `setting` ENUM('INDOOR', 'OUTDOOR', 'BOTH') NULL;

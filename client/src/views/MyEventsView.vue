@@ -44,7 +44,7 @@ onMounted(async () => {
                 Motif : {{ e.rejectionReason }}
               </div>
             </td>
-            <td>{{ e.dateStart }} → {{ e.dateEnd }}</td>
+            <td>{{ e.isPermanent || !e.dateStart || !e.dateEnd ? "Toute l'année" : `${e.dateStart} → ${e.dateEnd}` }}</td>
             <td><span :class="`badge status-${e.status}`">{{ STATUS_LABELS[e.status] }}</span></td>
             <td>
               <RouterLink :to="`/sorties/${e.id}/modifier`" class="btn ghost small">Modifier</RouterLink>

@@ -80,16 +80,18 @@ model Event {
   id              Int         @id @default(autoincrement())
   title           String
   description     String      @db.Text
+  sourceUrl       String?
   isFree          Boolean     @default(false)
   price           Decimal?    @db.Decimal(8, 2)
   photoUrl        String?
-  ageMin          Int
-  ageMax          Int
-  dateStart       DateTime    @db.Date
-  dateEnd         DateTime    @db.Date
-  openTime        String // "HH:MM", valable tous les jours de l'évènement
-  closeTime       String // "HH:MM", valable tous les jours de l'évènement
-  setting         Setting
+  ageMin          Int?
+  ageMax          Int?
+  isPermanent     Boolean     @default(false)
+  dateStart       DateTime?   @db.Date
+  dateEnd         DateTime?   @db.Date
+  openTime        String? // "HH:MM", valable tous les jours de l'évènement
+  closeTime       String? // "HH:MM", valable tous les jours de l'évènement
+  setting         Setting?
   status          EventStatus @default(PENDING)
   rejectionReason String?
   createdAt       DateTime    @default(now())

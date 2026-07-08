@@ -26,32 +26,52 @@ export const categorySchema = z.object({
   name: z.string().trim().min(2, 'Nom trop court').max(50, 'Nom trop long'),
 });
 
+const dateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
+const emptyToNull = (v: unknown) => (v === '' ? null : v);
+
 export const eventInputSchema = z
   .object({
     title: z.string().trim().min(3, 'Titre trop court').max(150),
     description: z.string().trim().min(10, 'Description trop courte').max(10_000),
+    sourceUrl: z.preprocess(
+      emptyToNull,
+      z.string().trim().url('URL invalide').max(500).nullable().optional(),
+    ),
     isFree: z.boolean(),
     price: z.number().min(0).max(100_000).nullable().optional(),
-    ageMin: z.number().int().min(0).max(17),
-    ageMax: z.number().int().min(0).max(18),
-    dateStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide (AAAA-MM-JJ)'),
-    dateEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide (AAAA-MM-JJ)'),
-    openTime: z.string().regex(timeRegex, 'Heure invalide (HH:MM)'),
-    closeTime: z.string().regex(timeRegex, 'Heure invalide (HH:MM)'),
-    setting: z.enum(['INDOOR', 'OUTDOOR', 'BOTH']),
+    ageMin: z.number().int().min(0).max(17).nullable().optional(),
+    ageMax: z.number().int().min(0).max(18).nullable().optional(),
+    isPermanent: z.boolean().optional().default(false),
+    dateStart: z.preprocess(
+      emptyToNull,
+      z.string().regex(dateOnlyRegex, 'Date invalide (AAAA-MM-JJ)').nullable().optional(),
+    ),
+    dateEnd: z.preprocess(
+      emptyToNull,
+      z.string().regex(dateOnlyRegex, 'Date invalide (AAAA-MM-JJ)').nullable().optional(),
+    ),
+    openTime: z.preprocess(emptyToNull, z.string().regex(timeRegex, 'Heure invalide (HH:MM)').nullable().optional()),
+    closeTime: z.preprocess(emptyToNull, z.string().regex(timeRegex, 'Heure invalide (HH:MM)').nullable().optional()),
+    setting: z.enum(['INDOOR', 'OUTDOOR', 'BOTH']).nullable().optional(),
     categoryId: z.number().int().positive('Catégorie requise'),
     venue: venueSchema,
   })
-  .refine((e) => e.ageMin <= e.ageMax, {
+  .refine((e) => e.ageMin == null || e.ageMax == null || e.ageMin <= e.ageMax, {
     message: "La tranche d'âge est inversée",
   })
-  .refine((e) => e.dateStart <= e.dateEnd, {
+  .refine((e) => e.isPermanent || !!e.dateStart, {
+    message: 'Indiquez une date de début ou cochez « événement permanent »',
+  })
+  .refine((e) => e.isPermanent || !!e.dateEnd, {
+    message: 'Indiquez une date de fin ou cochez « événement permanent »',
+  })
+  .refine((e) => !e.dateStart || !e.dateEnd || e.dateStart <= e.dateEnd, {
     message: 'La date de fin précède la date de début',
   })
   .refine((e) => e.isFree || (e.price !== null && e.price !== undefined), {
     message: 'Indiquez un prix ou cochez « gratuit »',
   })
-  .refine((e) => e.openTime < e.closeTime, {
+  .refine((e) => !e.openTime || !e.closeTime || e.openTime < e.closeTime, {
     message: "L'heure d'ouverture doit précéder l'heure de fermeture",
   });
 

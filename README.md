@@ -18,9 +18,10 @@ communauté et validées par une équipe de modération.
 - **Comptes** : inscription / connexion (cookie de session httpOnly), trois
   niveaux — `USER` (propose des sorties), `MODERATOR` (approuve ou refuse),
   `ADMIN` (gère les rôles des utilisateurs).
-- **Sorties** : titre, description, prix ou gratuit, photo, tranche d'âge,
-  dates de début/fin, horaires d'ouverture par jour, intérieur/extérieur/les
-  deux, lieu géolocalisé.
+- **Sorties** : titre, description, prix ou gratuit, photo, lien vers la
+  source de l'événement (facultatif), tranche d'âge (facultative), dates de
+  début/fin ou événement permanent (facultatives), horaires d'ouverture par
+  jour et cadre intérieur/extérieur/les deux (facultatifs), lieu géolocalisé.
 - **Modération** : toute proposition passe en attente ; seules les sorties
   approuvées sont publiques. Une modification par l'auteur repasse en
   modération. Motif de refus visible par l'auteur.
