@@ -2,7 +2,6 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AddressPicker from '../components/AddressPicker.vue';
-import OpeningHoursEditor from '../components/OpeningHoursEditor.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
 import type { Category, EventInput, EventItem, Setting } from '../types';
@@ -21,6 +20,8 @@ const form = reactive({
   ageMax: 12,
   dateStart: '',
   dateEnd: '',
+  openTime: '10:00',
+  closeTime: '18:00',
   setting: 'BOTH' as Setting,
   categoryId: null as number | null,
   venueName: '',
@@ -29,7 +30,6 @@ const form = reactive({
   postalCode: '',
   lat: null as number | null,
   lng: null as number | null,
-  openingHours: [] as EventInput['openingHours'],
 });
 
 const photo = ref<File | null>(null);
@@ -72,6 +72,8 @@ async function submit() {
     ageMax: form.ageMax,
     dateStart: form.dateStart,
     dateEnd: form.dateEnd,
+    openTime: form.openTime,
+    closeTime: form.closeTime,
     setting: form.setting,
     categoryId: form.categoryId,
     venue: {
@@ -82,7 +84,6 @@ async function submit() {
       lat: form.lat,
       lng: form.lng,
     },
-    openingHours: form.openingHours,
   };
 
   loading.value = true;
@@ -112,6 +113,8 @@ onMounted(async () => {
   form.ageMax = event.ageMax;
   form.dateStart = event.dateStart;
   form.dateEnd = event.dateEnd;
+  form.openTime = event.openTime;
+  form.closeTime = event.closeTime;
   form.setting = event.setting;
   form.categoryId = event.category.id;
   form.venueName = event.venue.name;
@@ -120,11 +123,6 @@ onMounted(async () => {
   form.postalCode = event.venue.postalCode;
   form.lat = event.venue.lat;
   form.lng = event.venue.lng;
-  form.openingHours = event.openingHours.map((h) => ({
-    dayOfWeek: h.dayOfWeek,
-    openTime: h.openTime,
-    closeTime: h.closeTime,
-  }));
   existingPhotoUrl.value = event.photoUrl;
 });
 </script>
@@ -206,13 +204,16 @@ onMounted(async () => {
           <label for="date-end">Date de fin *</label>
           <input id="date-end" v-model="form.dateEnd" type="date" required />
         </div>
+        <div class="field">
+          <label for="open-time">Heure d'ouverture *</label>
+          <input id="open-time" v-model="form.openTime" type="time" required />
+        </div>
+        <div class="field">
+          <label for="close-time">Heure de fermeture *</label>
+          <input id="close-time" v-model="form.closeTime" type="time" required />
+        </div>
       </div>
-
-      <div class="field">
-        <label>Horaires d'ouverture</label>
-        <span class="hint">Ajoutez un créneau par jour d'ouverture.</span>
-        <OpeningHoursEditor v-model="form.openingHours" />
-      </div>
+      <span class="hint">Cette plage horaire s'applique tous les jours de l'évènement.</span>
 
       <h2>Le lieu</h2>
 

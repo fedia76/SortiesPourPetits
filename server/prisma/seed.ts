@@ -164,19 +164,14 @@ async function main() {
         ageMax: e.ageMax,
         dateStart: new Date(e.dateStart),
         dateEnd: new Date(e.dateEnd),
+        openTime: '10:00',
+        closeTime: '18:00',
         setting: e.setting,
         status: 'APPROVED',
         venueId: venue.id,
         categoryId: categories[e.category].id,
         createdById: parent.id,
         moderatedById: modo.id,
-        openingHours: {
-          create: [
-            { dayOfWeek: 2, openTime: '10:00', closeTime: '18:00' },
-            { dayOfWeek: 5, openTime: '10:00', closeTime: '19:00' },
-            { dayOfWeek: 6, openTime: '10:00', closeTime: '19:00' },
-          ],
-        },
       },
     });
   }

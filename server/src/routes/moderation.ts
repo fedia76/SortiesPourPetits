@@ -13,7 +13,6 @@ moderationRouter.get('/pending', async (_req, res) => {
     where: { status: 'PENDING' },
     include: {
       venue: true,
-      openingHours: true,
       author: { select: { id: true, displayName: true, email: true } },
     },
     orderBy: { createdAt: 'asc' },

@@ -70,6 +70,8 @@ model Event {
   ageMax          Int
   dateStart       DateTime    @db.Date
   dateEnd         DateTime    @db.Date
+  openTime        String // "HH:MM", valable tous les jours de l'évènement
+  closeTime       String // "HH:MM", valable tous les jours de l'évènement
   setting         Setting
   status          EventStatus @default(PENDING)
   rejectionReason String?
@@ -87,21 +89,7 @@ model Event {
   moderator     User? @relation("EventModerator", fields: [moderatedById], references: [id])
   moderatedById Int?
 
-  openingHours OpeningHour[]
-
   @@index([status, dateEnd])
   @@index([createdById])
   @@index([categoryId])
-}
-
-model OpeningHour {
-  id        Int    @id @default(autoincrement())
-  dayOfWeek Int // 0 = lundi … 6 = dimanche
-  openTime  String // "HH:MM"
-  closeTime String // "HH:MM"
-
-  event   Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  eventId Int
-
-  @@index([eventId])
 }

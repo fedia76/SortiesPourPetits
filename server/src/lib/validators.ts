@@ -13,16 +13,6 @@ export const loginSchema = z.object({
 
 const timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-export const openingHourSchema = z
-  .object({
-    dayOfWeek: z.number().int().min(0).max(6),
-    openTime: z.string().regex(timeRegex, 'Heure invalide (HH:MM)'),
-    closeTime: z.string().regex(timeRegex, 'Heure invalide (HH:MM)'),
-  })
-  .refine((h) => h.openTime < h.closeTime, {
-    message: "L'heure d'ouverture doit précéder l'heure de fermeture",
-  });
-
 export const venueSchema = z.object({
   name: z.string().trim().min(1, 'Nom du lieu requis').max(120),
   address: z.string().trim().min(1, 'Adresse requise').max(255),
@@ -46,10 +36,11 @@ export const eventInputSchema = z
     ageMax: z.number().int().min(0).max(18),
     dateStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide (AAAA-MM-JJ)'),
     dateEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide (AAAA-MM-JJ)'),
+    openTime: z.string().regex(timeRegex, 'Heure invalide (HH:MM)'),
+    closeTime: z.string().regex(timeRegex, 'Heure invalide (HH:MM)'),
     setting: z.enum(['INDOOR', 'OUTDOOR', 'BOTH']),
     categoryId: z.number().int().positive('Catégorie requise'),
     venue: venueSchema,
-    openingHours: z.array(openingHourSchema).max(21),
   })
   .refine((e) => e.ageMin <= e.ageMax, {
     message: "La tranche d'âge est inversée",
@@ -59,6 +50,9 @@ export const eventInputSchema = z
   })
   .refine((e) => e.isFree || (e.price !== null && e.price !== undefined), {
     message: 'Indiquez un prix ou cochez « gratuit »',
+  })
+  .refine((e) => e.openTime < e.closeTime, {
+    message: "L'heure d'ouverture doit précéder l'heure de fermeture",
   });
 
 export const searchSchema = z.object({

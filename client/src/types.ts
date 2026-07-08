@@ -24,12 +24,6 @@ export interface Venue {
   lng: number;
 }
 
-export interface OpeningHour {
-  dayOfWeek: number; // 0 = lundi … 6 = dimanche
-  openTime: string;
-  closeTime: string;
-}
-
 export interface EventItem {
   id: number;
   title: string;
@@ -41,12 +35,13 @@ export interface EventItem {
   ageMax: number;
   dateStart: string;
   dateEnd: string;
+  openTime: string;
+  closeTime: string;
   setting: Setting;
   status: EventStatus;
   rejectionReason: string | null;
   venue: Venue;
   category: Category;
-  openingHours: OpeningHour[];
   author: { id: number; displayName: string; email?: string };
   distanceKm?: number;
 }
@@ -60,21 +55,12 @@ export interface EventInput {
   ageMax: number;
   dateStart: string;
   dateEnd: string;
+  openTime: string;
+  closeTime: string;
   setting: Setting;
   categoryId: number;
   venue: Omit<Venue, 'id'>;
-  openingHours: OpeningHour[];
 }
-
-export const DAY_NAMES = [
-  'Lundi',
-  'Mardi',
-  'Mercredi',
-  'Jeudi',
-  'Vendredi',
-  'Samedi',
-  'Dimanche',
-] as const;
 
 export const SETTING_LABELS: Record<Setting, string> = {
   INDOOR: 'Intérieur',

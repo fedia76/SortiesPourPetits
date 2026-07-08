@@ -11,7 +11,6 @@ type EventWithRelations = Prisma.EventGetPayload<{
   include: {
     venue: true;
     category: true;
-    openingHours: true;
     author: { select: { id: true; displayName: true } };
   };
 }>;
@@ -19,7 +18,6 @@ type EventWithRelations = Prisma.EventGetPayload<{
 const EVENT_INCLUDE = {
   venue: true,
   category: true,
-  openingHours: true,
   author: { select: { id: true, displayName: true } },
 } as const;
 
@@ -203,11 +201,12 @@ eventsRouter.post('/', requireAuth, photoUpload.single('photo'), async (req, res
       ageMax: input.ageMax,
       dateStart: new Date(input.dateStart),
       dateEnd: new Date(input.dateEnd),
+      openTime: input.openTime,
+      closeTime: input.closeTime,
       setting: input.setting,
       venueId: venue.id,
       categoryId: input.categoryId,
       createdById: req.user!.id,
-      openingHours: { create: input.openingHours },
     },
     include: EVENT_INCLUDE,
   });
@@ -258,13 +257,14 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
       ageMax: input.ageMax,
       dateStart: new Date(input.dateStart),
       dateEnd: new Date(input.dateEnd),
+      openTime: input.openTime,
+      closeTime: input.closeTime,
       setting: input.setting,
       venueId: venue.id,
       categoryId: input.categoryId,
       // Une modification par l'auteur repasse en modération.
       status: isModerator ? existing.status : 'PENDING',
       rejectionReason: isModerator ? existing.rejectionReason : null,
-      openingHours: { deleteMany: {}, create: input.openingHours },
     },
     include: EVENT_INCLUDE,
   });

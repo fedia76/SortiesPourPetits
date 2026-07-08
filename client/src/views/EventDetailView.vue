@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
 import { useAuthStore } from '../stores/auth';
 import type { EventItem } from '../types';
-import { DAY_NAMES, SETTING_LABELS, STATUS_LABELS } from '../types';
+import { SETTING_LABELS, STATUS_LABELS } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -18,10 +18,6 @@ const canEdit = computed(
     event.value &&
     auth.isLoggedIn &&
     (auth.user!.id === event.value.author.id || auth.isModerator),
-);
-
-const sortedHours = computed(() =>
-  event.value ? [...event.value.openingHours].sort((a, b) => a.dayOfWeek - b.dayOfWeek) : [],
 );
 
 const mapsUrl = computed(() => {
@@ -112,13 +108,9 @@ onMounted(async () => {
               <a :href="mapsUrl" target="_blank" rel="noopener">Voir sur la carte ↗</a>
             </dd>
           </div>
-          <div v-if="sortedHours.length">
+          <div>
             <dt>Horaires d'ouverture</dt>
-            <dd>
-              <div v-for="(h, i) in sortedHours" :key="i">
-                {{ DAY_NAMES[h.dayOfWeek] }} : {{ h.openTime }} – {{ h.closeTime }}
-              </div>
-            </dd>
+            <dd>{{ event.openTime }} – {{ event.closeTime }}</dd>
           </div>
         </aside>
       </div>
