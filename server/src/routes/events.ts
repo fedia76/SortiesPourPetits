@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { hasRole, requireAuth } from '../middleware/auth';
 import { deletePhoto, photoUpload, savePhoto } from '../lib/upload';
+import { hasCoordinates } from '../lib/incomplete';
 import { eventInputSchema, searchSchema } from '../lib/validators';
 
 export const eventsRouter = Router();
@@ -177,7 +178,16 @@ async function upsertVenue(venue: {
   const existing = await prisma.venue.findFirst({
     where: { name: venue.name, address: venue.address, city: venue.city },
   });
-  return existing ?? prisma.venue.create({ data: venue });
+  if (!existing) return prisma.venue.create({ data: venue });
+  // Un lieu créé sans coordonnées (import non géocodé) est complété dès qu'une
+  // position arrive : sans ça, le modérateur corrigerait l'adresse sans effet.
+  if (!hasCoordinates(existing) && hasCoordinates(venue)) {
+    return prisma.venue.update({
+      where: { id: existing.id },
+      data: { lat: venue.lat, lng: venue.lng, postalCode: venue.postalCode },
+    });
+  }
+  return existing;
 }
 
 eventsRouter.post('/', requireAuth, photoUpload.single('photo'), async (req, res) => {

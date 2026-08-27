@@ -1,0 +1,49 @@
+# Exemple de configuration : les spectacles du week-end qui vient.
+# Toutes les clés sauf `name` et `theme` ont une valeur par défaut ;
+# `python -m sortiesbot --config ce-fichier.yaml` suffit à lancer un dry-run.
+
+name: spectacles-weekend
+theme: >-
+  des spectacles, théâtres et contes pour enfants (0 à 12 ans) programmés
+  ce week-end
+
+area: Île-de-France
+period: le week-end qui vient
+horizon_days: 7
+
+# Nombre maximum de sorties retenues par run.
+max_events: 20
+# Plafonds des outils serveur : ils bornent le coût d'un run.
+max_searches: 12
+max_fetches: 15
+
+# Catégorie utilisée quand aucune catégorie du site ne correspond.
+default_category: Non classé
+
+# Un géocodage hors de ces départements est traité comme un échec.
+postal_prefixes: ["75", "77", "78", "91", "92", "93", "94", "95"]
+
+# Domaines écartés d'office (pages illisibles ou sans contenu exploitable).
+blocked_domains:
+  - facebook.com
+  - instagram.com
+  - x.com
+  - twitter.com
+  - tiktok.com
+  - youtube.com
+  - pinterest.fr
+
+provider: anthropic
+discovery_model: claude-opus-5
+extraction_model: claude-haiku-4-5
+
+# Pour personnaliser les prompts, décommentez et modifiez. Les variables
+# disponibles sont listées dans sortiesbot/prompts.py.
+#
+# discovery_prompt: |
+#   Tu cherches ...
+#   Recherche demandée : $theme
+#   Zone : $area — période : $period (du $date_from au $date_to)
+#
+# extraction_prompt: |
+#   Lis la page $url et ...

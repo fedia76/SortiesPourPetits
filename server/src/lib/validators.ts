@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { UNKNOWN_PRICE } from './incomplete';
 
 export const registerSchema = z.object({
   email: z.string().email('Email invalide'),
@@ -38,7 +39,10 @@ export const eventInputSchema = z
       z.string().trim().url('URL invalide').max(500).nullable().optional(),
     ),
     isFree: z.boolean(),
-    price: z.number().min(0).max(100_000).nullable().optional(),
+    // La borne basse est négative pour laisser passer UNKNOWN_PRICE, le tarif
+    // qu'un import n'a pas su déterminer (voir lib/incomplete.ts). La sortie
+    // reste alors inapprouvable tant qu'un modérateur ne l'a pas corrigé.
+    price: z.number().min(UNKNOWN_PRICE).max(100_000).nullable().optional(),
     ageMin: z.number().int().min(0).max(17).nullable().optional(),
     ageMax: z.number().int().min(0).max(18).nullable().optional(),
     isPermanent: z.boolean().optional().default(false),

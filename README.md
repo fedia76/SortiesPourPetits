@@ -10,8 +10,9 @@ communauté et validées par une équipe de modération.
 | Front | Vue 3 + TypeScript + Vite, Pinia, Vue Router |
 | Back | Node.js + TypeScript, Express |
 | BDD | MySQL 8 (ou MariaDB), accès via Prisma |
-| Géocodage | [API Adresse](https://adresse.data.gouv.fr/api-doc/adresse) (gratuite, sans clé) |
+| Géocodage | [Photon](https://photon.komoot.io) (OpenStreetMap, gratuit, sans clé ; l'[API Adresse](https://adresse.data.gouv.fr/api-doc/adresse) reste sélectionnable dans `client/src/lib/geocode.ts`) |
 | Photos | Upload local, redimensionnement WebP via sharp |
+| Scraper | Python 3.10+, API Claude (`web_search` / `web_fetch`) — voir [`scraper/`](scraper/README.md) |
 
 ## Fonctionnalités
 
@@ -33,6 +34,12 @@ communauté et validées par une équipe de modération.
 - **Recherche** : texte, gratuit / prix max, âge de l'enfant, période, cadre,
   et **distance** (rayon en km autour d'une adresse ou de la position du
   navigateur — formule de Haversine en SQL).
+- **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
+  sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
+  une clé d'API. Ce qu'un import n'a pas su déterminer part avec une valeur
+  convenue plutôt que de faire perdre la sortie — adresse non géocodée en
+  `(0, 0)`, tarif introuvable à `-1` : la modération les signale et refuse
+  l'approbation tant qu'ils ne sont pas complétés.
 
 ## Démarrage
 

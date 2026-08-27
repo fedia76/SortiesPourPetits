@@ -50,6 +50,45 @@ jobs:
           rsync -az --delete client/dist/ \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/client/"
 
+      # Le scraper part en sources (c'est du Python) : tout le dossier, sauf ce
+      # qui appartient au VPS — l'environnement virtuel, les secrets, les
+      # journaux de run et la mémoire des URLs déjà vues.
+      - name: Déployer le scraper
+        run: |
+          rsync -az --delete \
+            --exclude '.venv/' \
+            --exclude '.env' \
+            --exclude 'runs/' \
+            --exclude 'state/' \
+            --exclude '__pycache__/' \
+            --exclude '*.egg-info/' \
+            scraper/ \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/scraper/"
+
+      # Le fichier .env du scraper est régénéré à chaque déploiement : il se
+      # modifie dans les secrets GitHub, jamais sur le VPS. Il passe par
+      # l'entrée standard de ssh pour ne pas apparaître dans la liste des
+      # processus du VPS, et `umask 077` le crée illisible par les autres.
+      - name: Configurer le scraper
+        env:
+          CLAUDE_KEY: ${{ secrets.CLAUDE_KEY }}
+          SPP_API_KEY: ${{ secrets.SPP_API_KEY }}
+        run: |
+          printf '%s\n' \
+            "ANTHROPIC_API_KEY=$CLAUDE_KEY" \
+            "SPP_API_URL=http://localhost:3000" \
+            "SPP_API_KEY=$SPP_API_KEY" \
+          | ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+              "umask 077 && cat > '${{ secrets.VPS_APP_DIR }}/scraper/.env'"
+
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "
+            set -e
+            cd '${{ secrets.VPS_APP_DIR }}/scraper'
+            python3 -m venv .venv
+            .venv/bin/pip install --quiet --upgrade pip
+            .venv/bin/pip install --quiet -e .
+          "
+
       - name: Installer les dépendances et migrer la base
         run: |
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "

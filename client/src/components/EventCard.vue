@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { EventItem } from '../types';
-import { SETTING_LABELS } from '../types';
+import { SETTING_LABELS, priceLabel } from '../types';
 
 const props = defineProps<{ event: EventItem }>();
 
-const priceLabel = computed(() =>
-  props.event.isFree ? 'Gratuit' : `${props.event.price} €`,
-);
+const price = computed(() => priceLabel(props.event));
 
 const dateLabel = computed(() => {
   if (props.event.isPermanent || !props.event.dateStart || !props.event.dateEnd) return 'Toute l’année';
@@ -24,7 +22,7 @@ const dateLabel = computed(() => {
     <div v-else class="photo placeholder">🎠</div>
     <div class="body">
       <div class="badges">
-        <span class="badge price">{{ priceLabel }}</span>
+        <span class="badge price">{{ price }}</span>
         <span v-if="event.ageMin !== null && event.ageMax !== null" class="badge">
           {{ event.ageMin }}–{{ event.ageMax }} ans
         </span>

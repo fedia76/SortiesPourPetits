@@ -24,6 +24,29 @@ export interface Venue {
   lng: number;
 }
 
+/**
+ * Champs qu'un programme d'import laisse à compléter par la modération
+ * (voir server/src/lib/incomplete.ts) : une adresse qui n'a pas pu être
+ * géocodée arrive à (0, 0), un tarif indéterminé arrive négatif. Le serveur
+ * refuse d'approuver la sortie tant que ce n'est pas corrigé.
+ */
+export const UNKNOWN_PRICE = -1;
+
+export function hasCoordinates(venue: Pick<Venue, 'lat' | 'lng'>): boolean {
+  return venue.lat !== 0 || venue.lng !== 0;
+}
+
+export function hasPrice(event: { isFree: boolean; price: number | null }): boolean {
+  return event.isFree || (event.price !== null && event.price >= 0);
+}
+
+/** Badge de tarif, y compris pour une sortie importée sans tarif connu. */
+export function priceLabel(event: { isFree: boolean; price: number | null }): string {
+  if (event.isFree) return 'Gratuit';
+  if (!hasPrice(event)) return 'Tarif à compléter';
+  return `${event.price} €`;
+}
+
 /** Pourquoi et à quel point une sortie ressemble à celle en cours de modération. */
 export interface Similarity {
   /** Note de 0 à 100 : plus c'est haut, plus le doublon est probable. */

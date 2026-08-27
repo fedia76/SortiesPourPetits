@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { api } from '../lib/api';
 import type { EventItem } from '../types';
-import { SETTING_LABELS, STATUS_LABELS } from '../types';
+import { SETTING_LABELS, STATUS_LABELS, hasCoordinates, hasPrice, priceLabel } from '../types';
 
 /** Résultat de la recherche de doublons pour une sortie de la file. */
 interface DuplicateCheck {
@@ -105,6 +105,15 @@ function periodLabel(e: EventItem) {
   return `du ${e.dateStart} au ${e.dateEnd}`;
 }
 
+/** Ce qu'il reste à compléter avant de pouvoir approuver. */
+function incompleteHint(e: EventItem) {
+  const missing = [
+    !hasCoordinates(e.venue) ? 'l’adresse du lieu' : '',
+    !hasPrice(e) ? 'le tarif' : '',
+  ].filter(Boolean);
+  return missing.length ? `Complétez d’abord ${missing.join(' et ')}` : '';
+}
+
 function scoreLevel(score: number) {
   if (score >= LIKELY_DUPLICATE_SCORE) return 'high';
   return score >= 45 ? 'medium' : 'low';
@@ -125,7 +134,7 @@ onMounted(load);
 
     <div v-for="e in events" :key="e.id" class="card" style="padding: 1.2rem; margin-bottom: 1rem">
       <div class="badges" style="margin-bottom: 0.4rem">
-        <span class="badge price">{{ e.isFree ? 'Gratuit' : `${e.price} €` }}</span>
+        <span class="badge price">{{ priceLabel(e) }}</span>
         <span v-if="e.ageMin !== null && e.ageMax !== null" class="badge">{{ e.ageMin }}–{{ e.ageMax }} ans</span>
         <span v-if="e.setting" class="badge">{{ SETTING_LABELS[e.setting] }}</span>
       </div>
@@ -136,6 +145,21 @@ onMounted(load);
         {{ e.venue.name }} · {{ e.venue.city }} ·
         {{ periodLabel(e) }}
         · proposé par {{ e.author.displayName }}
+      </p>
+
+      <!-- Sortie importée dont l'adresse n'a pas pu être géocodée. -->
+      <p v-if="!hasCoordinates(e.venue)" class="incomplete">
+        📍 Lieu non géolocalisé — <strong>{{ e.venue.address || 'adresse à préciser' }}</strong
+        >. Cette sortie n'apparaîtra dans aucune recherche par distance : complétez l'adresse
+        avant de l'approuver.
+        <RouterLink :to="`/sorties/${e.id}/modifier`">Compléter l'adresse</RouterLink>
+      </p>
+
+      <!-- Sortie importée dont le tarif n'a pas pu être déterminé. -->
+      <p v-if="!hasPrice(e)" class="incomplete">
+        🏷 Tarif indéterminé — la page source ne l'indiquait pas clairement.
+        Renseignez-le (ou cochez « gratuit ») avant d'approuver.
+        <RouterLink :to="`/sorties/${e.id}/modifier`">Compléter le tarif</RouterLink>
       </p>
       <p style="white-space: pre-line">{{ e.description }}</p>
       <img
@@ -190,7 +214,14 @@ onMounted(load);
       </div>
 
       <div class="row" style="margin-top: 0.8rem">
-        <button class="btn" @click="moderate(e.id, 'approve')">✓ Approuver</button>
+        <button
+          class="btn"
+          :disabled="!hasCoordinates(e.venue) || !hasPrice(e)"
+          :title="incompleteHint(e)"
+          @click="moderate(e.id, 'approve')"
+        >
+          ✓ Approuver
+        </button>
         <button class="btn danger" @click="moderate(e.id, 'reject')">✕ Refuser</button>
       </div>
     </div>
@@ -198,6 +229,21 @@ onMounted(load);
 </template>
 
 <style scoped>
+.incomplete {
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: 12px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.9rem;
+}
+
+.incomplete a {
+  color: var(--warn);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .dup {
   margin-top: 0.9rem;
   padding: 0.6rem 0.8rem;

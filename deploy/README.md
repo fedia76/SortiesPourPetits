@@ -9,7 +9,7 @@ En root sur le VPS :
 
 ```bash
 adduser --disabled-password --gecos "" deploy
-mkdir -p /opt/sortiespourpetits/{server,client}
+mkdir -p /opt/sortiespourpetits/{server,client,scraper}
 chown -R deploy:deploy /opt/sortiespourpetits
 ```
 
@@ -129,6 +129,12 @@ Actions`) :
 | `VPS_USER` | `deploy` |
 | `VPS_SSH_KEY` | clé privée générée ci-dessus |
 | `VPS_APP_DIR` | `/opt/sortiespourpetits` |
+| `CLAUDE_KEY` | clé de l'API Claude, pour le scraper |
+| `SPP_API_KEY` | clé `spp_…` du scraper (facultative : inutile pour un dry-run) |
+
+Les deux dernières alimentent le fichier `scraper/.env` sur le VPS, **régénéré
+à chaque déploiement** : il se modifie ici, dans les secrets, jamais à la main
+sur le serveur.
 
 ## 8. Premier déploiement (manuel)
 
@@ -167,3 +173,30 @@ systemctl start sortiespourpetits-api
 
 Les déploiements suivants (après un `git push` sur `main`) sont ensuite
 automatiques.
+
+## 9. Le scraper
+
+Le [scraper](../scraper/README.md) est déployé en même temps que le reste :
+son dossier part en sources dans `/opt/sortiespourpetits/scraper`, son
+environnement virtuel est créé et mis à jour, et son `.env` est écrit depuis
+les secrets `CLAUDE_KEY` et `SPP_API_KEY`. Ce qui appartient au VPS — le
+`.venv`, les journaux de `runs/` et la mémoire des URLs de `state/` — survit
+aux déploiements.
+
+Une seule dépendance système, à installer en root avant le premier
+déploiement :
+
+```bash
+apt install -y python3-venv
+```
+
+Puis, pour lancer une recherche depuis le VPS (en tant que `deploy`) :
+
+```bash
+cd /opt/sortiespourpetits/scraper
+.venv/bin/python -m sortiesbot --config configs/spectacles-weekend.yaml --limit 3
+```
+
+Sans `--submit`, rien n'est envoyé au site : le run écrit dans `runs/` le
+journal de ce qu'il a consulté et le JSON des sorties retenues. Un dry-run n'a
+besoin que de `CLAUDE_KEY`.

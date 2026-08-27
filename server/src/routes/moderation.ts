@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
 import { moderateSchema, similarSchema } from '../lib/validators';
+import { hasCoordinates, hasPrice } from '../lib/incomplete';
 import { rankSimilar, significantWords, type SimilarityScore } from '../lib/similarity';
 
 export const moderationRouter = Router();
@@ -121,7 +122,7 @@ moderationRouter.post('/:id', async (req, res) => {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
-  const event = await prisma.event.findUnique({ where: { id } });
+  const event = await prisma.event.findUnique({ where: { id }, include: { venue: true } });
   if (!event) {
     res.status(404).json({ error: 'Événement introuvable' });
     return;
@@ -132,6 +133,20 @@ moderationRouter.post('/:id', async (req, res) => {
   }
 
   const { action, reason } = parsed.data;
+  // Rien de public tant qu'un champ laissé à compléter par un import n'a pas
+  // été corrigé (voir lib/incomplete.ts).
+  if (action === 'approve' && !hasCoordinates(event.venue)) {
+    res.status(409).json({
+      error: "Le lieu n'est pas géolocalisé : complétez l'adresse avant d'approuver cette sortie",
+    });
+    return;
+  }
+  if (action === 'approve' && !hasPrice(event)) {
+    res.status(409).json({
+      error: "Le tarif n'a pas pu être déterminé : renseignez-le avant d'approuver cette sortie",
+    });
+    return;
+  }
   const updated = await prisma.event.update({
     where: { id },
     data: {
