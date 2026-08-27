@@ -29,7 +29,12 @@ from typing import Any
 from ..config import Config
 from ..journal import RunLog
 from ..models import Candidate, ExtractedEvent, Usage
+from ..store import normalize_url
 from .base import ProviderError
+
+#: Toute adresse http(s) dans le texte d'une page ouverte. Sert à savoir ce
+#: que le modèle a réellement vu, pour rejeter ce qu'il aurait inventé.
+URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>)\]]+")
 
 #: Les outils serveur sont versionnés, et la version dépend du modèle.
 #:
@@ -215,6 +220,7 @@ class AnthropicProvider:
                 **_blocked(config),
             },
         ]
+        seen: set[str] = set()
         data = self._ask(
             model=config.discovery_model,
             prompt=config.render_discovery(),
@@ -223,10 +229,23 @@ class AnthropicProvider:
             max_tokens=DISCOVERY_MAX_TOKENS,
             stage="discovery",
             log=log,
+            seen_urls=seen,
         )
         raw = data.get("candidates") or []
         candidates = [Candidate.from_json(c) for c in raw if isinstance(c, dict)]
-        return [c for c in candidates if c.url.startswith(("http://", "https://"))]
+        candidates = [c for c in candidates if c.url.startswith(("http://", "https://"))]
+
+        if not seen:
+            # Aucune recherche, aucune page ouverte : le modèle a répondu de
+            # mémoire. Ses URL sont des souvenirs, presque toujours morts.
+            log.error(
+                "discovery",
+                "aucune recherche lancée : la réponse vient de la mémoire du "
+                "modèle, les candidats sont écartés",
+            )
+            return []
+
+        return [c for c in candidates if _was_seen(c, seen, log)]
 
     def extract(
         self, url: str, config: Config, categories: list[str], log: RunLog
@@ -264,6 +283,7 @@ class AnthropicProvider:
         max_tokens: int,
         stage: str,
         log: RunLog,
+        seen_urls: set[str] | None = None,
     ) -> dict[str, Any]:
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
         params: dict[str, Any] = {
@@ -279,7 +299,9 @@ class AnthropicProvider:
             params["thinking"] = {"type": "adaptive", "display": "summarized"}
 
         for _ in range(MAX_CONTINUATIONS + 1):
-            response = self._stream(params, messages, stage=stage, model=model, log=log)
+            response = self._stream(
+                params, messages, stage=stage, model=model, log=log, seen_urls=seen_urls
+            )
 
             if getattr(response, "stop_reason", None) != "pause_turn":
                 return _parse_json(response)
@@ -306,6 +328,7 @@ class AnthropicProvider:
         stage: str,
         model: str,
         log: RunLog,
+        seen_urls: set[str] | None = None,
     ) -> Any:
         """Un tour, journalisé au fil de l'eau plutôt qu'à la fin."""
         step = Usage()
@@ -321,7 +344,14 @@ class AnthropicProvider:
                 if kind == "content_block_stop":
                     block = getattr(event, "content_block", None)
                     if block is not None:
-                        self._trace_block(block, stage=stage, log=log, step=step, asked=asked)
+                        self._trace_block(
+                            block,
+                            stage=stage,
+                            log=log,
+                            step=step,
+                            asked=asked,
+                            seen_urls=seen_urls,
+                        )
                     continue
 
                 if kind == "content_block_delta":
@@ -351,6 +381,7 @@ class AnthropicProvider:
         log: RunLog,
         step: Usage,
         asked: dict[str, str],
+        seen_urls: set[str] | None = None,
     ) -> None:
         """Journalise un bloc dès qu'il est complet : c'est ce qui donne à
         l'utilisateur la liste des recherches et des pages, en direct."""
@@ -372,12 +403,9 @@ class AnthropicProvider:
             content = getattr(block, "content", None)
             if isinstance(content, list):
                 for result in content:
-                    log.event(
-                        "search_result",
-                        stage=stage,
-                        url=getattr(result, "url", ""),
-                        title=getattr(result, "title", ""),
-                    )
+                    url = str(getattr(result, "url", ""))
+                    _remember(seen_urls, url)
+                    log.event("search_result", stage=stage, url=url, title=getattr(result, "title", ""))
             else:
                 log.error(stage, f"recherche web en échec : {_error_code(content)}")
 
@@ -390,6 +418,11 @@ class AnthropicProvider:
                 log.error(stage, f"page refusée ({code})", url=url)
             else:
                 step.pages_read += 1
+                _remember(seen_urls, url)
+                # Les liens contenus dans la page comptent aussi : c'est là que
+                # le modèle est censé trouver les pages d'événement.
+                for found in URL_IN_TEXT.findall(_document_text(block)):
+                    _remember(seen_urls, found)
                 log.event("visited", stage=stage, url=url)
 
 
@@ -410,6 +443,40 @@ def _flush_thinking(buffer: str, stage: str, log: RunLog) -> str:
         if chunk:
             log.event("thinking", stage=stage, text=chunk)
     return buffer
+
+
+#: Ponctuation qui colle à une URL dans du texte courant, sans en faire partie.
+_TRAILING = ".,;:!?\"')]}»"
+
+
+def _remember(seen: set[str] | None, url: str) -> None:
+    url = url.rstrip(_TRAILING)
+    if seen is not None and url.startswith(("http://", "https://")):
+        seen.add(normalize_url(url))
+
+
+def _was_seen(candidate: Candidate, seen: set[str], log: RunLog) -> bool:
+    """Écarte une URL que le modèle n'a jamais eue sous les yeux.
+
+    Sans ce filtre, un modèle qui « se souvient » d'une adresse plausible fait
+    payer une extraction sur une page qui n'existe pas.
+    """
+    if normalize_url(candidate.url) in seen:
+        return True
+    log.error(
+        "discovery",
+        "URL absente des résultats de recherche et des pages ouvertes "
+        "(inventée par le modèle)",
+        url=candidate.url,
+    )
+    return False
+
+
+def _document_text(block: Any) -> str:
+    """Texte d'une page ouverte, si l'API l'a renvoyé sous forme de texte."""
+    source = getattr(getattr(getattr(block, "content", None), "content", None), "source", None)
+    data = getattr(source, "data", "")
+    return data if isinstance(data, str) else ""
 
 
 def _error_code(content: Any) -> str:

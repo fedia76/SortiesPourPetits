@@ -44,6 +44,20 @@ def text_block(payload: dict) -> dict:
 CANDIDATES = {"candidates": [{"url": "https://exemple.fr/a", "title": "A", "city": "Paris", "reason": "ok"}]}
 
 
+def search_for(*urls: str, tool_use_id: str = "s1") -> list[dict]:
+    """Une recherche et ses résultats : le modèle a vraiment vu ces URL."""
+    return [
+        {"type": "server_tool_use", "id": tool_use_id, "name": "web_search",
+         "input": {"query": "spectacle enfant"}},
+        {"type": "web_search_tool_result", "tool_use_id": tool_use_id,
+         "content": [
+             {"type": "web_search_result", "url": u, "title": u,
+              "encrypted_content": "x", "page_age": None}
+             for u in urls
+         ]},
+    ]
+
+
 def sse(message: dict) -> bytes:
     """Sérialise un message en flux d'événements, comme le fait l'API."""
     lines: list[str] = []
@@ -133,7 +147,9 @@ def provider_for(server: FakeApiServer) -> AnthropicProvider:
 
 
 def test_forme_de_la_requete_de_decouverte(log):
-    server = FakeApiServer([message([text_block(CANDIDATES)])])
+    server = FakeApiServer(
+        [message(search_for("https://exemple.fr/a") + [text_block(CANDIDATES)])]
+    )
     config = Config(name="t", theme="spectacles", discovery_model="claude-opus-5")
     try:
         candidates = provider_for(server).discover(config, log)
@@ -156,7 +172,9 @@ def test_reprise_apres_pause_turn(log):
         [{"type": "server_tool_use", "id": "srv_1", "name": "web_search", "input": {"query": "spectacle enfant"}}],
         stop_reason="pause_turn",
     )
-    server = FakeApiServer([paused, message([text_block(CANDIDATES)])])
+    server = FakeApiServer(
+        [paused, message(search_for("https://exemple.fr/a") + [text_block(CANDIDATES)])]
+    )
     try:
         candidates = provider_for(server).discover(Config(name="t", theme="spectacles"), log)
     finally:
@@ -246,6 +264,73 @@ def test_page_refusee_est_nommee_et_ne_compte_pas_comme_lue():
     assert "https://interdit.fr/agenda" in console  # la page fautive est nommée
     assert provider.usage.web_fetches == 2  # deux tentatives, deux quotas consommés
     assert provider.usage.pages_read == 1  # mais une seule page réellement lue
+
+
+def test_url_inventee_est_rejetee():
+    """Le modèle renvoie une URL qu'aucune recherche n'a remontée : c'est un
+    souvenir, presque toujours mort. On ne paiera pas une extraction dessus."""
+    stream = io.StringIO()
+    log = RunLog(path=None, verbose=True, stream=stream)
+    inventee = {"candidates": [
+        {"url": "https://exemple.fr/a", "title": "vue", "city": "", "reason": ""},
+        {"url": "https://paris.fr/listing/9475", "title": "inventée", "city": "", "reason": ""},
+    ]}
+    server = FakeApiServer(
+        [message(search_for("https://exemple.fr/a") + [text_block(inventee)])]
+    )
+    try:
+        candidates = provider_for(server).discover(Config(name="t", theme="x"), log)
+    finally:
+        server.close()
+
+    assert [c.url for c in candidates] == ["https://exemple.fr/a"]
+    assert "inventée par le modèle" in stream.getvalue()
+
+
+def test_reponse_de_memoire_sans_aucune_recherche_est_rejetee():
+    """Zéro recherche, zéro page : tout ce que le modèle propose vient de sa
+    mémoire. On jette le lot plutôt que de payer des extractions."""
+    stream = io.StringIO()
+    log = RunLog(path=None, verbose=True, stream=stream)
+    server = FakeApiServer([message([text_block(CANDIDATES)])])
+    try:
+        candidates = provider_for(server).discover(Config(name="t", theme="x"), log)
+    finally:
+        server.close()
+
+    assert candidates == []
+    assert "aucune recherche lancée" in stream.getvalue()
+
+
+def test_lien_trouve_dans_une_page_ouverte_est_accepte():
+    """Une page d'événement repérée DANS un agenda ouvert est exactement ce
+    qu'on cherche : le filtre ne doit pas la confondre avec une invention."""
+    stream = io.StringIO()
+    log = RunLog(path=None, verbose=True, stream=stream)
+    dans_la_page = {"candidates": [
+        {"url": "https://theatre.fr/le-petit-chaperon", "title": "Spectacle", "city": "", "reason": ""},
+    ]}
+    server = FakeApiServer([message(
+        search_for("https://agenda.fr/week-end")
+        + [
+            {"type": "server_tool_use", "id": "f1", "name": "web_fetch",
+             "input": {"url": "https://agenda.fr/week-end"}},
+            {"type": "web_fetch_tool_result", "tool_use_id": "f1",
+             "content": {"type": "web_fetch_result", "url": "https://agenda.fr/week-end",
+                         "content": {"type": "document",
+                                     "source": {"type": "text", "media_type": "text/plain",
+                                                "data": "Au programme : "
+                                                        "https://theatre.fr/le-petit-chaperon"}},
+                         "retrieved_at": "2026-08-27T10:00:00Z"}},
+            text_block(dans_la_page),
+        ]
+    )])
+    try:
+        candidates = provider_for(server).discover(Config(name="t", theme="x"), log)
+    finally:
+        server.close()
+
+    assert [c.url for c in candidates] == ["https://theatre.fr/le-petit-chaperon"]
 
 
 def test_erreur_doutil_serveur_est_journalisee():
