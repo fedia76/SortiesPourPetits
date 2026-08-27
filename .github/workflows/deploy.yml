@@ -50,9 +50,25 @@ jobs:
           rsync -az --delete client/dist/ \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/client/"
 
-      # Le scraper part en sources (c'est du Python) : tout le dossier, sauf ce
-      # qui appartient au VPS — l'environnement virtuel, les secrets, les
-      # journaux de run et la mémoire des URLs déjà vues.
+      - name: Installer les dépendances et migrer la base
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "
+            set -e
+            cd '${{ secrets.VPS_APP_DIR }}/server'
+            npm ci --omit=dev
+            npm run db:deploy
+          "
+
+      - name: Redémarrer l'API
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            'sudo systemctl restart sortiespourpetits-api'
+
+      # Le scraper vient en dernier, après le redémarrage de l'API : un
+      # problème de son côté ne doit jamais empêcher le site d'être livré.
+      # Il part en sources (c'est du Python) : tout le dossier, sauf ce qui
+      # appartient au VPS — l'environnement virtuel, les secrets, les journaux
+      # de run et la mémoire des URLs déjà vues.
       - name: Déployer le scraper
         run: |
           rsync -az --delete \
@@ -84,21 +100,13 @@ jobs:
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "
             set -e
             cd '${{ secrets.VPS_APP_DIR }}/scraper'
-            python3 -m venv .venv
+            python3 -m venv .venv || {
+              echo 'Le module venv de Python manque sur le VPS. En root :'
+              echo '    apt install -y python3-venv'
+              echo '(ou le paquet versionné que le message ci-dessus indique,'
+              echo ' par exemple python3.14-venv)'
+              exit 1
+            }
             .venv/bin/pip install --quiet --upgrade pip
             .venv/bin/pip install --quiet -e .
           "
-
-      - name: Installer les dépendances et migrer la base
-        run: |
-          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "
-            set -e
-            cd '${{ secrets.VPS_APP_DIR }}/server'
-            npm ci --omit=dev
-            npm run db:deploy
-          "
-
-      - name: Redémarrer l'API
-        run: |
-          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
-            'sudo systemctl restart sortiespourpetits-api'
