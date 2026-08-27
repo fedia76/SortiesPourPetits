@@ -69,6 +69,39 @@ Chaque run écrit deux fichiers dans `runs/` :
 
 ## Comment ça marche
 
+### Qui décide quoi
+
+Point le plus contre-intuitif : **le script ne pilote pas les recherches**. Il
+envoie un prompt, une fois, et reçoit du JSON. Entre les deux, tout se passe
+sur les serveurs d'Anthropic, dans ce qu'on appelle la boucle serveur :
+
+```
+   sortiesbot                    api.anthropic.com
+   ──────────                    ─────────────────
+   1 appel HTTP  ───────────────▶ le modèle lit le prompt
+                                  ├─ décide « je cherche X »   ─┐
+                                  ├─ l'API exécute la recherche │ jusqu'à 10
+                                  ├─ le résultat entre en       │ itérations,
+                                  │  contexte                   │ tout le
+                                  ├─ le modèle décide de la     │ contexte
+                                  │  suite (chercher ? lire ?)  │ refacturé
+                                  └─ …                         ─┘ à chaque tour
+   JSON  ◀─────────────────────── réponse finale
+```
+
+Le nombre de recherches n'est donc écrit nulle part dans le code : le prompt
+le demande, `max_uses` le plafonne, et **c'est le modèle qui décide** dans
+cette fourchette. Les deux doivent dire la même chose — un prompt qui réclame
+six recherches quand l'outil en autorise deux fait échouer les quatre
+dernières en `max_uses_exceeded`. C'est pour ça que le nombre vient de la
+configuration, des deux côtés.
+
+Cette boucle explique aussi le reste : la durée d'un run (dix allers-retours
+de modèle dans un seul appel HTTP), le besoin de streaming pour voir quoi que
+ce soit, et la facture (voir « Coût d'un run »).
+
+### Le pipeline
+
 ```
 découverte → filtre (domaines bloqués, URLs déjà vues) → extraction
   → géocodage → construction du payload → photo → soumission
@@ -181,11 +214,20 @@ Trois garde-fous automatiques :
 - une **reprise après `pause_turn`** est journalisée avec le coût déjà engagé,
   et limitée à deux — chaque reprise renvoie tout le contexte accumulé.
 
-Le journal totalise les jetons et leur prix par étage. **La facturation des
-recherches web n'y est pas incluse** (0,01 $ par recherche, à ajouter
-mentalement) : le relevé de la console Anthropic fait foi. Un workspace dédié
-avec un plafond mensuel reste la protection de dernier recours — voir
+Le journal totalise, par étage, les jetons, les recherches et le coût des deux
+(`token_cost_usd`, `search_cost_usd`, `total_usd`). Le relevé de la console
+Anthropic reste la référence, mais l'écart devrait être minime. Un workspace
+dédié avec un plafond mensuel reste la protection de dernier recours — voir
 `deploy/README.md`.
+
+### Ordre de grandeur mesuré
+
+Un run avec les réglages d'origine (Opus 5, `max_fetches: 15`,
+`max_page_tokens: 30 000`) a coûté **3,24 $** : 590 000 jetons d'entrée,
+6 700 de sortie, 12 recherches. Les 590 000 jetons ne sont pas 590 000 jetons
+de contenu — c'est le même contexte, d'au plus ~90 000 jetons, refacturé à
+chacune des douze itérations de la boucle serveur. C'est cette somme que les
+réglages actuels visent à réduire.
 
 ## Et ensuite
 

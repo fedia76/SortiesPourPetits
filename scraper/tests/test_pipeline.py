@@ -282,6 +282,18 @@ def test_limite_reduit_aussi_le_budget_de_recherche():
     assert essai.max_searches >= 2  # mais pas au point de ne rien chercher
 
 
+def test_le_prompt_annonce_le_meme_quota_que_les_outils():
+    """Le prompt et `max_uses` doivent dire la même chose : un prompt qui
+    réclame six recherches alors que l'outil en autorise deux fait échouer
+    les quatre dernières en `max_uses_exceeded`."""
+    from sortiesbot.config import with_limit
+
+    config = with_limit(Config(name="t", theme="x"), 3)
+    rendu = config.render_discovery()
+    assert f"Lance {config.max_searches} recherches" in rendu
+    assert f"au plus {config.max_fetches} pages" in rendu
+
+
 def test_categorie_inconnue_bascule_sur_le_defaut():
     categories = {"Spectacle": 3, "Non classé": 9}
     assert resolve_category("Ferme pédagogique", categories, "Non classé") == 9

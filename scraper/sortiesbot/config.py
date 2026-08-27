@@ -83,6 +83,11 @@ class Config:
             date_from=self.date_from.isoformat(),
             date_to=self.date_to.isoformat(),
             max_events=self.max_events,
+            # Le prompt doit annoncer le même quota que celui imposé aux
+            # outils : sinon le modèle tente des recherches qui échouent en
+            # `max_uses_exceeded`.
+            max_searches=self.max_searches,
+            max_fetches=self.max_fetches,
         )
 
     def render_extraction(self, url: str, categories: list[str]) -> str:
