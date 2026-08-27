@@ -183,12 +183,16 @@ les secrets `CLAUDE_KEY` et `SPP_API_KEY`. Ce qui appartient au VPS — le
 `.venv`, les journaux de `runs/` et la mémoire des URLs de `state/` — survit
 aux déploiements.
 
-Une seule dépendance système, à installer en root avant le premier
-déploiement :
+Une seule dépendance système, à installer en root **avant** le premier
+déploiement — sans elle, l'étape « Configurer le scraper » échoue :
 
 ```bash
 apt install -y python3-venv
 ```
+
+Selon la version de Python du serveur, le paquet peut être versionné
+(`python3.14-venv`, `python3.12-venv`…) : le message d'erreur du déploiement
+indique lequel installer.
 
 Puis, pour lancer une recherche depuis le VPS (en tant que `deploy`) :
 
