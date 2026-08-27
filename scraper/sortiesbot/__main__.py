@@ -100,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
                 "config": config.name,
                 "mode": "submit" if args.submit else "dry-run",
                 "summary": result.summary.as_dict(),
+                "candidates": result.candidates,
                 "events": result.events,
             },
             ensure_ascii=False,
@@ -113,6 +114,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Sorties  : {output}")
         if not args.submit and result.events:
             print("Relisez le JSON, puis relancez avec --submit pour proposer ces sorties.")
+        elif result.candidates:
+            print(
+                f"{len(result.candidates)} page(s) repérée(s) mais non exploitée(s) — "
+                "elles sont dans le JSON, sous « candidates »."
+            )
 
     return 1 if result.summary.errors and not result.events else 0
 

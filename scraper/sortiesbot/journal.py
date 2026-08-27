@@ -39,7 +39,10 @@ _CONSOLE = {
     "paused": lambda f: (
         f"  ⏸ tour en pause (limite serveur), reprise — {f.get('cost_usd')} $ déjà engagés"
     ),
-    "budget": lambda f: f"  ⛔ budget atteint ({f.get('spent')} $ / {f.get('limit')} $) : run arrêté",
+    "budget": lambda f: (
+        f"  ⛔ budget atteint ({f.get('spent')} $ / {f.get('limit')} $) : extractions arrêtées, "
+        f"les {f.get('candidates')} page(s) trouvée(s) sont conservées dans le JSON"
+    ),
     "thinking": lambda f: f"     … {f.get('text')}",
     "photo": lambda f: f"  🖼 photo {f.get('status')} : {f.get('url')}",
     "submit": lambda f: f"  ✅ soumise (#{f.get('event_id')}) : {f.get('title')}",

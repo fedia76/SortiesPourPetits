@@ -276,7 +276,7 @@ def test_decouverte_vide_est_signalee():
 
 def test_budget_ecourte_le_run(log):
     """La découverte a coûté plus que le plafond : on n'enchaîne pas les
-    extractions par-dessus."""
+    extractions par-dessus — mais on garde ce qu'elle a trouvé, c'est payé."""
     candidats = [Candidate(url=f"https://exemple.fr/{i}", title=str(i)) for i in range(3)]
     provider = FakeProvider(candidats, {c.url: sortie() for c in candidats})
     provider.usage = Usage(input_tokens=0, output_tokens=0, cost_usd=1.20)
@@ -287,6 +287,9 @@ def test_budget_ecourte_le_run(log):
     assert provider.extracted == []  # aucune page relue après le dépassement
     assert result.summary.stopped_on_budget is True
     assert result.summary.submitted == 0
+    # Le résultat de la découverte survit : c'est l'étage le plus cher.
+    assert result.summary.candidates == 3
+    assert [c["url"] for c in result.candidates] == [c.url for c in candidats]
 
 
 def test_limite_reduit_aussi_le_budget_de_recherche():

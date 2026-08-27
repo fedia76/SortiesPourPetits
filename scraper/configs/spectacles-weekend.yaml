@@ -20,8 +20,10 @@ max_events: 20
 max_searches: 6
 max_fetches: 5
 max_page_tokens: 5000
-# Le run s'arrête s'il dépasse ce coût en jetons (dollars).
-max_cost_usd: 0.50
+# Plafond de coût du run (dollars), vérifié entre deux extractions. À poser
+# au-dessus du coût d'une découverte (~0,55 $ sur Sonnet 5), sinon le run
+# s'arrête juste après l'avoir payée.
+max_cost_usd: 1.50
 
 # Catégorie utilisée quand aucune catégorie du site ne correspond.
 default_category: Non classé
