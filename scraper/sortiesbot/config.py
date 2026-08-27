@@ -61,7 +61,7 @@ class Config:
     postal_prefixes: list[str] = field(default_factory=lambda: list(IDF_POSTAL_PREFIXES))
     blocked_domains: list[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS))
     provider: str = "anthropic"
-    discovery_model: str = "claude-opus-5"
+    discovery_model: str = "claude-haiku-4-5"
     extraction_model: str = "claude-haiku-4-5"
     discovery_prompt: str = prompts.DISCOVERY
     extraction_prompt: str = prompts.EXTRACTION

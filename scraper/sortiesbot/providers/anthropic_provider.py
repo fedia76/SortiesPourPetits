@@ -31,9 +31,33 @@ from ..journal import RunLog
 from ..models import Candidate, ExtractedEvent, Usage
 from .base import ProviderError
 
-#: Variantes à filtrage dynamique, disponibles sur Opus 5 / Sonnet 5 et 4.6+.
-WEB_SEARCH_TOOL = "web_search_20260209"
-WEB_FETCH_TOOL = "web_fetch_20260209"
+#: Les outils serveur sont versionnés, et la version dépend du modèle.
+#:
+#: Les variantes 2026-02-09 ajoutent le « filtrage dynamique » : le modèle
+#: écrit du code qui trie les résultats avant qu'ils n'entrent en contexte, ce
+#: qui réduit la facture sur les requêtes chargées en recherches. Elles
+#: réclament un modèle Claude 4.6 ou plus récent ; ailleurs, il faut les
+#: variantes de base, sous peine de 400.
+WEB_TOOLS_MODERN = ("web_search_20260209", "web_fetch_20260209")
+WEB_TOOLS_BASIC = ("web_search_20250305", "web_fetch_20250910")
+
+#: Modèles Claude 4.6 et suivants. Deux capacités s'y rattachent : le filtrage
+#: dynamique des outils web, et `thinking: {"type": "adaptive"}`.
+CLAUDE_4_6_PLUS = {
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+}
+
+
+def web_tools_for(model: str) -> tuple[str, str]:
+    """`(type de web_search, type de web_fetch)` adaptés au modèle."""
+    return WEB_TOOLS_MODERN if model in CLAUDE_4_6_PLUS else WEB_TOOLS_BASIC
 
 #: Recherche orientée France, pour des résultats francophones et locaux.
 USER_LOCATION = {
@@ -58,18 +82,6 @@ MAX_CONTINUATIONS = 2
 #: Un tour de découverte est long : on laisse largement de marge, le streaming
 #: garantissant que la connexion n'est jamais silencieuse très longtemps.
 TIMEOUT_SECONDS = 900.0
-
-#: Modèles acceptant `thinking: {"type": "adaptive"}`. Sur les autres, le
-#: paramètre est refusé : on ne l'envoie pas.
-ADAPTIVE_THINKING = {
-    "claude-fable-5",
-    "claude-opus-5",
-    "claude-opus-4-8",
-    "claude-opus-4-7",
-    "claude-opus-4-6",
-    "claude-sonnet-5",
-    "claude-sonnet-4-6",
-}
 
 #: Longueur d'un fragment de raisonnement journalisé.
 THINKING_CHUNK = 160
@@ -184,16 +196,17 @@ class AnthropicProvider:
     # ------------------------------------------------------------------ étages
 
     def discover(self, config: Config, log: RunLog) -> list[Candidate]:
+        search_tool, fetch_tool = web_tools_for(config.discovery_model)
         tools = [
             {
-                "type": WEB_SEARCH_TOOL,
+                "type": search_tool,
                 "name": "web_search",
                 "max_uses": config.max_searches,
                 "user_location": USER_LOCATION,
                 **_blocked(config),
             },
             {
-                "type": WEB_FETCH_TOOL,
+                "type": fetch_tool,
                 "name": "web_fetch",
                 "max_uses": config.max_fetches,
                 # À la découverte on ne cherche que des liens : une page
@@ -220,7 +233,7 @@ class AnthropicProvider:
     ) -> ExtractedEvent:
         tools = [
             {
-                "type": WEB_FETCH_TOOL,
+                "type": web_tools_for(config.extraction_model)[1],
                 "name": "web_fetch",
                 "max_uses": 2,
                 # L'extraction lit vraiment la page, mais une seule, dans une
@@ -260,7 +273,7 @@ class AnthropicProvider:
             "tools": tools,
             "output_config": {"format": {"type": "json_schema", "schema": schema}},
         }
-        if model in ADAPTIVE_THINKING:
+        if model in CLAUDE_4_6_PLUS:
             # Un résumé du raisonnement : c'est la seule chose qui bouge à
             # l'écran pendant que le modèle prépare ses recherches.
             params["thinking"] = {"type": "adaptive", "display": "summarized"}

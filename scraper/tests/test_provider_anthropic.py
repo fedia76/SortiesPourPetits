@@ -134,8 +134,9 @@ def provider_for(server: FakeApiServer) -> AnthropicProvider:
 
 def test_forme_de_la_requete_de_decouverte(log):
     server = FakeApiServer([message([text_block(CANDIDATES)])])
+    config = Config(name="t", theme="spectacles", discovery_model="claude-opus-5")
     try:
-        candidates = provider_for(server).discover(Config(name="t", theme="spectacles"), log)
+        candidates = provider_for(server).discover(config, log)
     finally:
         server.close()
 
@@ -203,8 +204,9 @@ def test_journal_des_recherches_et_des_pages(log):
     assert "https://exemple.fr/agenda" in console
     assert provider.usage.web_searches == 1
     assert provider.usage.web_fetches == 1
-    # Tarif Opus 5 : 1000 jetons d'entrée et 100 de sortie.
-    assert provider.usage.cost_usd == pytest.approx(1000 * 5 / 1e6 + 100 * 25 / 1e6)
+    # Tarif du modèle de découverte par défaut (Haiku 4.5, 1 $ / 5 $ le
+    # million) sur 1000 jetons d'entrée et 100 de sortie.
+    assert provider.usage.cost_usd == pytest.approx(1000 * 1 / 1e6 + 100 * 5 / 1e6)
 
 
 def test_erreur_doutil_serveur_est_journalisee():
@@ -257,9 +259,10 @@ def test_raisonnement_journalise_pendant_lappel():
     assert console.index("départements") < console.index("jetons")
 
 
-def test_pas_de_thinking_sur_un_modele_qui_ne_le_supporte_pas(log):
-    """`adaptive` est refusé par les modèles qui ne le connaissent pas : sur
-    ceux-là, le paramètre ne doit tout simplement pas partir."""
+def test_outils_et_thinking_suivent_le_modele(log):
+    """Le filtrage dynamique et `thinking: adaptive` réclament un modèle 4.6+ :
+    sur Haiku, il faut les variantes de base et pas de `thinking`, sinon
+    l'API répond 400."""
     server = FakeApiServer([message([text_block(CANDIDATES)])])
     config = Config(name="t", theme="x", discovery_model="claude-haiku-4-5")
     try:
@@ -267,7 +270,9 @@ def test_pas_de_thinking_sur_un_modele_qui_ne_le_supporte_pas(log):
     finally:
         server.close()
 
-    assert "thinking" not in server.requests[0]
+    body = server.requests[0]
+    assert [t["type"] for t in body["tools"]] == ["web_search_20250305", "web_fetch_20250910"]
+    assert "thinking" not in body
 
 
 def test_extraction_lit_une_url_precise(log):
@@ -303,5 +308,6 @@ def test_extraction_lit_une_url_precise(log):
 
     assert event.relevant and event.age_min == 3 and event.setting == "INDOOR"
     body = server.requests[0]
-    assert [t["type"] for t in body["tools"]] == ["web_fetch_20260209"]
+    # L'extraction tourne sur Haiku par défaut : variante de base obligatoire.
+    assert [t["type"] for t in body["tools"]] == ["web_fetch_20250910"]
     assert "https://exemple.fr/a" in body["messages"][0]["content"]

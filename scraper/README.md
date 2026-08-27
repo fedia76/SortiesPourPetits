@@ -74,14 +74,14 @@ découverte → filtre (domaines bloqués, URLs déjà vues) → extraction
   → géocodage → construction du payload → photo → soumission
 ```
 
-1. **Découverte** (`claude-opus-5` par défaut) — plusieurs recherches web
+1. **Découverte** (`claude-haiku-4-5` par défaut) — plusieurs recherches web
    variées, puis lecture des pages d'agenda rencontrées pour en tirer les liens
    d'événements. C'est l'étage qui découvre des sites qu'on n'aurait pas listés.
 2. **Filtre** — les domaines bloqués et les URLs déjà traitées lors d'un run
    précédent sont écartées **avant** l'extraction : une page connue ne coûte
    jamais un second jeton. La mémoire est un SQLite dans `state/`.
-3. **Extraction** (`claude-haiku-4-5` par défaut) — une page, une sortie
-   structurée. Tâche bornée, donc un modèle plus modeste suffit.
+3. **Extraction** (`claude-haiku-4-5`) — une page, une sortie structurée.
+   Tâche bornée, dans une conversation neuve.
 4. **Géocodage** — Photon (OpenStreetMap), le même fournisseur que le
    formulaire du site. Une position hors des départements attendus est traitée
    comme un échec : mieux vaut pas de position qu'une position fausse.
@@ -123,6 +123,14 @@ Le choix des modèles est par configuration (`discovery_model`,
 `extraction_model`), ce qui permet de comparer les coûts d'une recherche à
 l'autre.
 
+**Attention en changeant de modèle** : la version des outils serveur en dépend.
+Le filtrage dynamique (`web_search_20260209`, qui fait trier les résultats par
+du code avant qu'ils n'entrent en contexte) et `thinking: adaptive` réclament un
+modèle Claude 4.6 ou plus récent ; sur Haiku 4.5, ce sont les variantes de base
+qui partent, sinon l'API répond 400. Le script choisit tout seul selon le
+modèle configuré — mais ça veut dire qu'un modèle bon marché laisse entrer plus
+de jetons en contexte, ce qui mange une partie de l'économie.
+
 ## Tests
 
 ```bash
@@ -149,7 +157,7 @@ Les quatre leviers, du plus au moins efficace :
 |---|---|---|
 | `max_page_tokens` | 5 000 | taille d'une page lue à la découverte — le facteur dominant |
 | `max_fetches` | 5 | nombre de pages lues, chacune alourdissant le contexte |
-| `discovery_model` | `claude-opus-5` | 5 $/M en entrée ; `claude-sonnet-5` coûte 2,5 fois moins |
+| `discovery_model` | `claude-haiku-4-5` | 1 $/M en entrée, contre 2 $ pour Sonnet 5 et 5 $ pour Opus 5 |
 | `max_searches` | 6 | 0,01 $ l'unité, plus les résultats en contexte |
 
 Trois garde-fous automatiques :
