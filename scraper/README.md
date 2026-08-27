@@ -44,6 +44,13 @@ python -m sortiesbot --config configs/spectacles-weekend.yaml
 python -m sortiesbot --config configs/spectacles-weekend.yaml --submit
 ```
 
+**Un run dure plusieurs minutes.** L'étage découverte enchaîne une dizaine de
+recherches et de lectures de pages dans un seul appel, côté Anthropic ; il faut
+le laisser aller au bout. La console affiche le temps écoulé en tête de chaque
+ligne et se remplit au fur et à mesure — résumé du raisonnement, puis chaque
+recherche et chaque page ouverte. Si rien n'apparaît pendant plus d'une minute,
+c'est anormal ; sinon, c'est que ça travaille.
+
 | Option | Effet |
 |---|---|
 | `--submit` | propose réellement les sorties (sinon rien n'est envoyé) |
