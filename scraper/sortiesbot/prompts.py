@@ -21,30 +21,35 @@ Recherche demandée : $theme
 Zone géographique : $area
 Période : $period (du $date_from au $date_to — nous sommes le $today)
 
-Procède ainsi :
-1. Lance $max_searches recherches web variées — pas une de plus, c'est un
-   quota strict — en changeant les formulations et en couvrant les différents
-   départements de la zone. Une seule requête ne ramène qu'une seule bulle de
-   résultats.
-2. Quand une recherche tombe sur un agenda, un « que faire ce week-end » ou
-   une liste d'événements, ouvre la page : les liens qu'elle contient mènent
-   souvent à des sorties qu'aucune recherche ne remonte directement. Tu peux
-   ouvrir au plus $max_fetches pages, alors choisis-les bien.
+**Règle absolue** : chaque URL que tu renvoies doit provenir d'un résultat de
+recherche ou d'une page que tu as ouverte pendant ce tour. N'écris jamais une
+adresse de mémoire, même si elle te semble évidente : les sites réorganisent
+leurs pages, une URL mémorisée est presque toujours morte, et elle sera
+rejetée.
+
+Procède dans cet ordre :
+1. Commence par lancer $max_searches recherches web — tu en as le quota,
+   sers-t'en entièrement — en changeant les formulations et en couvrant les
+   différents départements de la zone. Une seule requête ne ramène qu'une
+   seule bulle de résultats. Sans recherche, ta réponse est inutilisable.
+2. Ouvre ensuite jusqu'à $max_fetches des pages remontées, en choisissant les
+   agendas et les « que faire ce week-end » : les liens qu'ils contiennent
+   mènent aux sorties qu'aucune recherche ne remonte directement.
 3. Ce qu'on attend en sortie, ce sont les URL de pages décrivant UNE sortie
-   précise — un événement, un lieu, un spectacle. Les liens que tu relèves à
-   l'intérieur des pages d'agenda que tu viens d'ouvrir sont exactement ça :
-   renvoie-les. Une page de liste, une billetterie générique ou un article
-   qui compile dix idées n'en est pas une.
+   précise — un événement, un lieu, un spectacle. Les liens relevés à
+   l'intérieur des agendas que tu viens d'ouvrir sont exactement ça. Une page
+   de liste, une billetterie générique ou un article qui compile dix idées
+   n'en est pas une.
 
 Renvoie au plus $max_events candidats, triés du plus au moins prometteur.
 Écarte tout ce qui est hors zone, hors période, payant pour les adultes
 seulement, ou manifestement inadapté aux enfants.
 
-Si tu ne trouves aucune page d'événement individuelle — pages refusées,
-agendas peu fournis, résultats hors sujet — ne renvoie pas une liste vide :
-donne les meilleures pages dont tu disposes en expliquant la réserve dans
-`reason`. Une piste imparfaite se trie ensuite ; une liste vide ne s'exploite
-pas.
+Si aucune page d'événement individuelle ne ressort — pages refusées, agendas
+peu fournis, résultats hors sujet — ne renvoie pas une liste vide : donne les
+meilleures pages **parmi celles que tes recherches ont remontées**, en
+expliquant la réserve dans `reason`. Une piste imparfaite se trie ensuite ;
+une liste vide ne s'exploite pas.
 """
 
 EXTRACTION = """\

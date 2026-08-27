@@ -110,6 +110,13 @@ découverte → filtre (domaines bloqués, URLs déjà vues) → extraction
 1. **Découverte** (`claude-haiku-4-5` par défaut) — plusieurs recherches web
    variées, puis lecture des pages d'agenda rencontrées pour en tirer les liens
    d'événements. C'est l'étage qui découvre des sites qu'on n'aurait pas listés.
+
+   > **Filtre anti-invention.** Le fournisseur retient toute URL réellement
+   > vue — résultats de recherche, pages ouvertes, et liens trouvés dans le
+   > texte de ces pages — et rejette tout candidat absent de cet ensemble. Un
+   > modèle qui répond de mémoire produit des adresses plausibles et mortes ;
+   > sans ce filtre, chacune coûte une extraction pour rien. Si le tour n'a
+   > lancé aucune recherche, le lot entier est écarté.
 2. **Filtre** — les domaines bloqués et les URLs déjà traitées lors d'un run
    précédent sont écartées **avant** l'extraction : une page connue ne coûte
    jamais un second jeton. La mémoire est un SQLite dans `state/`.

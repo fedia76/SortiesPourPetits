@@ -309,8 +309,8 @@ def test_le_prompt_annonce_le_meme_quota_que_les_outils():
 
     config = with_limit(Config(name="t", theme="x"), 3)
     rendu = config.render_discovery()
-    assert f"Lance {config.max_searches} recherches" in rendu
-    assert f"au plus {config.max_fetches} pages" in rendu
+    assert f"lancer {config.max_searches} recherches" in rendu
+    assert f"jusqu'à {config.max_fetches} des pages" in rendu
 
 
 def test_categorie_inconnue_bascule_sur_le_defaut():
