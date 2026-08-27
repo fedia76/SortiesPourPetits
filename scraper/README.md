@@ -69,6 +69,39 @@ Chaque run écrit deux fichiers dans `runs/` :
 
 ## Comment ça marche
 
+### Qui décide quoi
+
+Point le plus contre-intuitif : **le script ne pilote pas les recherches**. Il
+envoie un prompt, une fois, et reçoit du JSON. Entre les deux, tout se passe
+sur les serveurs d'Anthropic, dans ce qu'on appelle la boucle serveur :
+
+```
+   sortiesbot                    api.anthropic.com
+   ──────────                    ─────────────────
+   1 appel HTTP  ───────────────▶ le modèle lit le prompt
+                                  ├─ décide « je cherche X »   ─┐
+                                  ├─ l'API exécute la recherche │ jusqu'à 10
+                                  ├─ le résultat entre en       │ itérations,
+                                  │  contexte                   │ tout le
+                                  ├─ le modèle décide de la     │ contexte
+                                  │  suite (chercher ? lire ?)  │ refacturé
+                                  └─ …                         ─┘ à chaque tour
+   JSON  ◀─────────────────────── réponse finale
+```
+
+Le nombre de recherches n'est donc écrit nulle part dans le code : le prompt
+le demande, `max_uses` le plafonne, et **c'est le modèle qui décide** dans
+cette fourchette. Les deux doivent dire la même chose — un prompt qui réclame
+six recherches quand l'outil en autorise deux fait échouer les quatre
+dernières en `max_uses_exceeded`. C'est pour ça que le nombre vient de la
+configuration, des deux côtés.
+
+Cette boucle explique aussi le reste : la durée d'un run (dix allers-retours
+de modèle dans un seul appel HTTP), le besoin de streaming pour voir quoi que
+ce soit, et la facture (voir « Coût d'un run »).
+
+### Le pipeline
+
 ```
 découverte → filtre (domaines bloqués, URLs déjà vues) → extraction
   → géocodage → construction du payload → photo → soumission
