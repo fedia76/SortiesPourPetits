@@ -9,6 +9,7 @@ texte n'ont pas besoin d'être échappées.
 
 Variables disponibles :
   découverte  $theme $area $period $today $date_from $date_to $max_events
+              $max_searches $max_fetches
   extraction  $url $today $categories
 """
 
@@ -21,12 +22,14 @@ Zone géographique : $area
 Période : $period (du $date_from au $date_to — nous sommes le $today)
 
 Procède ainsi :
-1. Lance plusieurs recherches web variées (au moins six), en changeant les
-   formulations et en couvrant les différents départements de la zone. Une
-   seule requête ne ramène qu'une seule bulle de résultats.
+1. Lance $max_searches recherches web variées — pas une de plus, c'est un
+   quota strict — en changeant les formulations et en couvrant les différents
+   départements de la zone. Une seule requête ne ramène qu'une seule bulle de
+   résultats.
 2. Quand une recherche tombe sur un agenda, un « que faire ce week-end » ou
    une liste d'événements, ouvre la page : les liens qu'elle contient mènent
-   souvent à des sorties qu'aucune recherche ne remonte directement.
+   souvent à des sorties qu'aucune recherche ne remonte directement. Tu peux
+   ouvrir au plus $max_fetches pages, alors choisis-les bien.
 3. Privilégie les pages qui décrivent UNE sortie précise (un événement, un
    lieu, un spectacle), pas les pages de liste, les billetteries génériques
    ni les articles de blog qui compilent dix idées.
