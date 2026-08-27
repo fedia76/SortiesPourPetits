@@ -123,13 +123,25 @@ Le choix des modèles est par configuration (`discovery_model`,
 `extraction_model`), ce qui permet de comparer les coûts d'une recherche à
 l'autre.
 
-**Attention en changeant de modèle** : la version des outils serveur en dépend.
-Le filtrage dynamique (`web_search_20260209`, qui fait trier les résultats par
-du code avant qu'ils n'entrent en contexte) et `thinking: adaptive` réclament un
-modèle Claude 4.6 ou plus récent ; sur Haiku 4.5, ce sont les variantes de base
-qui partent, sinon l'API répond 400. Le script choisit tout seul selon le
-modèle configuré — mais ça veut dire qu'un modèle bon marché laisse entrer plus
-de jetons en contexte, ce qui mange une partie de l'économie.
+**Attention en changeant de modèle** : la version des outils serveur en dépend,
+et le script la choisit tout seul (`web_tools_for`).
+
+Le *filtrage dynamique* (`web_search_20260209`) fait écrire au modèle du code
+qui trie les résultats de recherche avant qu'ils n'entrent en contexte. Ça
+repose sur le *programmatic tool calling*, que Haiku 4.5 ne sait pas faire :
+sur lui partent donc `web_search_20250305` et `web_fetch_20250910`, sinon l'API
+répond 400. Même chose pour `thinking: adaptive`, réservé aux modèles 4.6+.
+
+Ce n'est pas un réglage : envoyer la version récente à Haiku obligerait à
+`allowed_callers: ["direct"]`, c'est-à-dire sans filtrage — le comportement de
+la variante de base, avec un piège en plus.
+
+Ce que ça coûte : d'après la mesure d'Anthropic sur des tests de recherche
+agentique, le filtrage dynamique économise **24 % de jetons d'entrée** et
+améliore les résultats de 11 %. Haiku reste donc le moins cher malgré tout
+(1 $/M contre 2 $ pour Sonnet 5 : ~1,5× moins cher une fois le filtrage pris en
+compte), mais c'est bien la qualité de la recherche qu'on met en jeu, pas la
+facture.
 
 ## Tests
 
