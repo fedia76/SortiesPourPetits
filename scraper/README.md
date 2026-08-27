@@ -11,6 +11,11 @@ qui va sur le web, le script n'embarque ni navigateur ni analyseur HTML.
 
 ## Installation
 
+Sur le VPS, rien à faire : le déploiement automatique envoie le dossier, crée
+l'environnement virtuel et écrit le `.env` depuis les secrets GitHub (voir
+[`deploy/README.md`](../deploy/README.md)). Les instructions ci-dessous sont
+pour une installation locale.
+
 ```bash
 cd scraper
 python3 -m venv .venv && source .venv/bin/activate
