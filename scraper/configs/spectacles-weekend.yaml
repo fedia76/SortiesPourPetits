@@ -40,12 +40,11 @@ blocked_domains:
   - pinterest.fr
 
 provider: anthropic
-# Haiku pour les deux étages : le moins cher, et suffisant pour « chercher
-# large puis repérer les pages qui décrivent une sortie précise ». Passer la
-# découverte sur claude-sonnet-5 ou claude-opus-5 si la qualité déçoit —
-# ce sont les seuls à savoir filtrer les résultats avant de les mettre en
-# contexte, ce qui compense une partie de leur prix au jeton.
-discovery_model: claude-haiku-4-5
+# La découverte est une tâche en plusieurs temps : chercher, ouvrir les
+# agendas, en tirer des liens, trier. Haiku 4.5 s'y arrête après la première
+# étape (essayé : il cherche puis conclut sans rien ouvrir), d'où Sonnet 5.
+# L'extraction, elle, est bornée — une page, une sortie — et Haiku y suffit.
+discovery_model: claude-sonnet-5
 extraction_model: claude-haiku-4-5
 
 # Pour personnaliser les prompts, décommentez et modifiez. Les variables

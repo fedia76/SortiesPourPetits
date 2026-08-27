@@ -32,9 +32,11 @@ Procède dans cet ordre :
    sers-t'en entièrement — en changeant les formulations et en couvrant les
    différents départements de la zone. Une seule requête ne ramène qu'une
    seule bulle de résultats. Sans recherche, ta réponse est inutilisable.
-2. Ouvre ensuite jusqu'à $max_fetches des pages remontées, en choisissant les
-   agendas et les « que faire ce week-end » : les liens qu'ils contiennent
-   mènent aux sorties qu'aucune recherche ne remonte directement.
+2. Tes recherches vont remonter presque exclusivement des agendas, des
+   annuaires et des « que faire ce week-end ». C'est normal et c'est attendu :
+   ce sont ton point de départ, pas ton résultat. Ouvre-en jusqu'à
+   $max_fetches — cette étape n'est pas facultative, c'est elle qui fait tout
+   le travail — et relève dedans les liens vers les pages d'événement.
 3. Ce qu'on attend en sortie, ce sont les URL de pages décrivant UNE sortie
    précise — un événement, un lieu, un spectacle. Les liens relevés à
    l'intérieur des agendas que tu viens d'ouvrir sont exactement ça. Une page
