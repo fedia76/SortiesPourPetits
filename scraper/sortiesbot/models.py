@@ -158,6 +158,8 @@ class Summary:
     unpriced: int = 0
     submitted: int = 0
     errors: int = 0
+    #: Vrai si le plafond de coût a écourté le run.
+    stopped_on_budget: bool = False
     usage: Usage = field(default_factory=Usage)
 
     def as_dict(self) -> dict[str, Any]:
@@ -172,5 +174,6 @@ class Summary:
             "unpriced": self.unpriced,
             "submitted": self.submitted,
             "errors": self.errors,
+            "stopped_on_budget": self.stopped_on_budget,
             "usage": self.usage.as_dict(),
         }

@@ -50,8 +50,10 @@ SYSTEM = (
     "aucune date, aucun tarif et aucune adresse inventés."
 )
 
-#: Nombre de reprises acceptées après un `pause_turn`.
-MAX_CONTINUATIONS = 5
+#: Nombre de reprises acceptées après un `pause_turn`. Chaque reprise renvoie
+#: tout le contexte accumulé, donc repart pour une dizaine d'itérations
+#: serveur facturées sur ce contexte : au-delà de deux, la note s'envole.
+MAX_CONTINUATIONS = 2
 
 #: Un tour de découverte est long : on laisse largement de marge, le streaming
 #: garantissant que la connexion n'est jamais silencieuse très longtemps.
@@ -194,7 +196,9 @@ class AnthropicProvider:
                 "type": WEB_FETCH_TOOL,
                 "name": "web_fetch",
                 "max_uses": config.max_fetches,
-                "max_content_tokens": 30_000,
+                # À la découverte on ne cherche que des liens : une page
+                # entière serait refacturée à chaque itération de la boucle.
+                "max_content_tokens": config.max_page_tokens,
                 **_blocked(config),
             },
         ]
@@ -218,8 +222,10 @@ class AnthropicProvider:
             {
                 "type": WEB_FETCH_TOOL,
                 "name": "web_fetch",
-                "max_uses": 3,
-                "max_content_tokens": 30_000,
+                "max_uses": 2,
+                # L'extraction lit vraiment la page, mais une seule, dans une
+                # conversation neuve et sur un modèle bon marché.
+                "max_content_tokens": 15_000,
             }
         ]
         data = self._ask(
@@ -267,6 +273,8 @@ class AnthropicProvider:
 
             # Tour interrompu par la limite d'itérations serveur : on renvoie le
             # même tour, sans message supplémentaire, et le serveur enchaîne.
+            # C'est coûteux (tout le contexte repart), donc ça se voit.
+            log.event("paused", stage=stage, cost_usd=round(self.usage.cost_usd, 4))
             blocks = list(response.content)
             if messages[-1]["role"] == "assistant":
                 messages[-1]["content"] = list(messages[-1]["content"]) + blocks

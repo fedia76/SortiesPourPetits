@@ -137,10 +137,35 @@ ce qui est envoyé (outils serveur, format structuré, reprise après
 
 ## Coût d'un run
 
-Le journal totalise les jetons consommés par étage et leur prix. **La
-facturation des recherches web n'y est pas estimée** — le journal compte les
-recherches lancées, c'est le relevé de la console Anthropic qui fait foi.
-`max_searches`, `max_fetches` et `max_events` bornent un run.
+**C'est le point à surveiller.** Les recherches web coûtent 0,01 $ pièce — une
+broutille. Ce qui coûte, ce sont les jetons d'entrée : pendant un tour, la
+boucle serveur d'Anthropic **refacture tout le contexte accumulé à chacune de
+ses itérations** (jusqu'à dix). Chaque page lue est donc payée plusieurs fois,
+proportionnellement à sa taille.
+
+Les quatre leviers, du plus au moins efficace :
+
+| Levier | Défaut | Effet |
+|---|---|---|
+| `max_page_tokens` | 5 000 | taille d'une page lue à la découverte — le facteur dominant |
+| `max_fetches` | 5 | nombre de pages lues, chacune alourdissant le contexte |
+| `discovery_model` | `claude-opus-5` | 5 $/M en entrée ; `claude-sonnet-5` coûte 2,5 fois moins |
+| `max_searches` | 6 | 0,01 $ l'unité, plus les résultats en contexte |
+
+Trois garde-fous automatiques :
+
+- **`max_cost_usd`** (0,50 $ par défaut) arrête le run entre deux étages dès
+  que le coût en jetons le dépasse ;
+- **`--limit N`** réduit aussi les budgets de recherche, pas seulement le
+  nombre de sorties : un essai reste un essai ;
+- une **reprise après `pause_turn`** est journalisée avec le coût déjà engagé,
+  et limitée à deux — chaque reprise renvoie tout le contexte accumulé.
+
+Le journal totalise les jetons et leur prix par étage. **La facturation des
+recherches web n'y est pas incluse** (0,01 $ par recherche, à ajouter
+mentalement) : le relevé de la console Anthropic fait foi. Un workspace dédié
+avec un plafond mensuel reste la protection de dernier recours — voir
+`deploy/README.md`.
 
 ## Et ensuite
 

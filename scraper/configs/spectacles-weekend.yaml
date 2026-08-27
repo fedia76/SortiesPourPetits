@@ -13,9 +13,15 @@ horizon_days: 7
 
 # Nombre maximum de sorties retenues par run.
 max_events: 20
-# Plafonds des outils serveur : ils bornent le coût d'un run.
-max_searches: 12
-max_fetches: 15
+
+# Plafonds de coût. Pendant un tour, la boucle serveur refacture en entrée
+# tout le contexte accumulé à chacune de ses itérations : chaque page lue est
+# donc payée plusieurs fois. C'est max_page_tokens qui pèse le plus lourd.
+max_searches: 6
+max_fetches: 5
+max_page_tokens: 5000
+# Le run s'arrête s'il dépasse ce coût en jetons (dollars).
+max_cost_usd: 0.50
 
 # Catégorie utilisée quand aucune catégorie du site ne correspond.
 default_category: Non classé

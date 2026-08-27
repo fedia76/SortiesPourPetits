@@ -45,9 +45,18 @@ class Config:
     period: str = "les prochaines semaines"
     horizon_days: int = 30
     max_events: int = 20
-    # Plafonds passés aux outils serveur : ils bornent le coût d'un run.
-    max_searches: int = 12
-    max_fetches: int = 15
+    # Plafonds passés aux outils serveur. Ils comptent bien plus qu'il n'y
+    # paraît : pendant un tour, la boucle serveur refacture en entrée tout le
+    # contexte accumulé à CHACUNE de ses itérations. Chaque page lue est donc
+    # payée plusieurs fois, et c'est `max_page_tokens` qui pèse le plus lourd.
+    max_searches: int = 6
+    max_fetches: int = 5
+    #: Taille maximale d'une page lue à la découverte. On n'y cherche que des
+    #: liens et des titres : inutile d'embarquer l'article entier.
+    max_page_tokens: int = 5_000
+    #: Le run s'arrête s'il dépasse ce coût en jetons (dollars). Garde-fou de
+    #: dernier recours, vérifié entre deux étages.
+    max_cost_usd: float = 0.50
     default_category: str = "Non classé"
     postal_prefixes: list[str] = field(default_factory=lambda: list(IDF_POSTAL_PREFIXES))
     blocked_domains: list[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS))
@@ -121,10 +130,22 @@ def load_config(path: str | Path) -> Config:
 
 
 def with_limit(config: Config, limit: int | None) -> Config:
-    """Applique un plafond de sorties venu de la ligne de commande."""
+    """Applique un plafond de sorties venu de la ligne de commande.
+
+    Le budget de recherche suit la même réduction : sans ça, un essai à trois
+    sorties coûterait autant qu'un run complet — la découverte, qui est la
+    partie chère, tournerait à pleine taille pour ne rien en faire.
+    """
     if limit is None:
         return config
-    return replace(config, max_events=min(config.max_events, max(1, limit)))
+    events = min(config.max_events, max(1, limit))
+    ratio = events / config.max_events
+    return replace(
+        config,
+        max_events=events,
+        max_searches=max(2, round(config.max_searches * ratio)),
+        max_fetches=max(2, round(config.max_fetches * ratio)),
+    )
 
 
 @dataclass(frozen=True)

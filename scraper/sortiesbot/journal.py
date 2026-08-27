@@ -31,6 +31,10 @@ _CONSOLE = {
         else f"  📍 non géolocalisé ({f.get('reason')}) : {f.get('query')}"
     ),
     "incomplete": lambda f: f"  ⚑ {f.get('field')} à compléter par la modération : {f.get('title')}",
+    "paused": lambda f: (
+        f"  ⏸ tour en pause (limite serveur), reprise — {f.get('cost_usd')} $ déjà engagés"
+    ),
+    "budget": lambda f: f"  ⛔ budget atteint ({f.get('spent')} $ / {f.get('limit')} $) : run arrêté",
     "thinking": lambda f: f"     … {f.get('text')}",
     "photo": lambda f: f"  🖼 photo {f.get('status')} : {f.get('url')}",
     "submit": lambda f: f"  ✅ soumise (#{f.get('event_id')}) : {f.get('title')}",
