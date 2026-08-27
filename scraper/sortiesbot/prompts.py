@@ -30,13 +30,21 @@ Procède ainsi :
    une liste d'événements, ouvre la page : les liens qu'elle contient mènent
    souvent à des sorties qu'aucune recherche ne remonte directement. Tu peux
    ouvrir au plus $max_fetches pages, alors choisis-les bien.
-3. Privilégie les pages qui décrivent UNE sortie précise (un événement, un
-   lieu, un spectacle), pas les pages de liste, les billetteries génériques
-   ni les articles de blog qui compilent dix idées.
+3. Ce qu'on attend en sortie, ce sont les URL de pages décrivant UNE sortie
+   précise — un événement, un lieu, un spectacle. Les liens que tu relèves à
+   l'intérieur des pages d'agenda que tu viens d'ouvrir sont exactement ça :
+   renvoie-les. Une page de liste, une billetterie générique ou un article
+   qui compile dix idées n'en est pas une.
 
 Renvoie au plus $max_events candidats, triés du plus au moins prometteur.
 Écarte tout ce qui est hors zone, hors période, payant pour les adultes
 seulement, ou manifestement inadapté aux enfants.
+
+Si tu ne trouves aucune page d'événement individuelle — pages refusées,
+agendas peu fournis, résultats hors sujet — ne renvoie pas une liste vide :
+donne les meilleures pages dont tu disposes en expliquant la réserve dans
+`reason`. Une piste imparfaite se trie ensuite ; une liste vide ne s'exploite
+pas.
 """
 
 EXTRACTION = """\

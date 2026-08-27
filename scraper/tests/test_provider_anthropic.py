@@ -212,6 +212,42 @@ def test_journal_des_recherches_et_des_pages(log):
     assert provider.usage.total_usd == pytest.approx(provider.usage.cost_usd + 0.01)
 
 
+def test_page_refusee_est_nommee_et_ne_compte_pas_comme_lue():
+    """Une page bloquée par robots.txt consomme le quota sans rien rapporter :
+    le journal doit dire laquelle, et ne pas la compter comme lue."""
+    stream = io.StringIO()
+    log = RunLog(path=None, verbose=True, stream=stream)
+    response = message(
+        [
+            {"type": "server_tool_use", "id": "f1", "name": "web_fetch",
+             "input": {"url": "https://interdit.fr/agenda"}},
+            {"type": "web_fetch_tool_result", "tool_use_id": "f1",
+             "content": {"type": "web_fetch_tool_result_error", "error_code": "url_not_allowed"}},
+            {"type": "server_tool_use", "id": "f2", "name": "web_fetch",
+             "input": {"url": "https://ouvert.fr/agenda"}},
+            {"type": "web_fetch_tool_result", "tool_use_id": "f2",
+             "content": {"type": "web_fetch_result", "url": "https://ouvert.fr/agenda",
+                         "content": {"type": "document",
+                                     "source": {"type": "text", "media_type": "text/plain",
+                                                "data": "des liens"}},
+                         "retrieved_at": "2026-08-27T10:00:00Z"}},
+            text_block(CANDIDATES),
+        ]
+    )
+    server = FakeApiServer([response])
+    try:
+        provider = provider_for(server)
+        provider.discover(Config(name="t", theme="x"), log)
+    finally:
+        server.close()
+
+    console = stream.getvalue()
+    assert "url_not_allowed" in console
+    assert "https://interdit.fr/agenda" in console  # la page fautive est nommée
+    assert provider.usage.web_fetches == 2  # deux tentatives, deux quotas consommés
+    assert provider.usage.pages_read == 1  # mais une seule page réellement lue
+
+
 def test_erreur_doutil_serveur_est_journalisee():
     stream = io.StringIO()
     log = RunLog(path=None, verbose=True, stream=stream)

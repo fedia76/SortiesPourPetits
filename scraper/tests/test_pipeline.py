@@ -255,6 +255,25 @@ def test_plafond_de_sorties(log):
     assert result.summary.submitted == 2
 
 
+def test_decouverte_vide_est_signalee():
+    """Zéro candidat n'est pas un run réussi : il faut le dire, avec de quoi
+    comprendre (combien de recherches, combien de pages vraiment lues)."""
+    import io as _io
+
+    stream = _io.StringIO()
+    log = RunLog(path=None, verbose=True, stream=stream)
+    provider = FakeProvider([], {})
+    provider.usage = Usage(web_searches=2, web_fetches=2, pages_read=1)
+
+    with SeenStore() as store:
+        result = run(config(), provider, store, FakeApi(), log, submit=False)
+
+    assert result.summary.candidates == 0
+    console = stream.getvalue()
+    assert "aucun candidat retenu" in console
+    assert "1 page(s) réellement lue(s)" in console
+
+
 def test_budget_ecourte_le_run(log):
     """La découverte a coûté plus que le plafond : on n'enchaîne pas les
     extractions par-dessus."""
