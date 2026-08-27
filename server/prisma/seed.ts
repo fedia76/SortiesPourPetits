@@ -32,7 +32,7 @@ async function main() {
     }),
   ]);
 
-  const categoryNames = ['Parc', 'Musée', 'Spectacle', 'Sport', 'Atelier'];
+  const categoryNames = ['Parc', 'Musée', 'Spectacle', 'Sport', 'Atelier', 'Non classé'];
   const categories = Object.fromEntries(
     await Promise.all(
       categoryNames.map(async (name) => {

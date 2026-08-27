@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { api } from '../lib/api';
 import type { EventItem } from '../types';
-import { SETTING_LABELS, STATUS_LABELS } from '../types';
+import { SETTING_LABELS, STATUS_LABELS, hasCoordinates } from '../types';
 
 /** Résultat de la recherche de doublons pour une sortie de la file. */
 interface DuplicateCheck {
@@ -137,6 +137,14 @@ onMounted(load);
         {{ periodLabel(e) }}
         · proposé par {{ e.author.displayName }}
       </p>
+
+      <!-- Sortie importée dont l'adresse n'a pas pu être géocodée. -->
+      <p v-if="!hasCoordinates(e.venue)" class="no-coords">
+        📍 Lieu non géolocalisé — <strong>{{ e.venue.address || 'adresse à préciser' }}</strong
+        >. Cette sortie n'apparaîtra dans aucune recherche par distance : complétez l'adresse
+        avant de l'approuver.
+        <RouterLink :to="`/sorties/${e.id}/modifier`">Compléter l'adresse</RouterLink>
+      </p>
       <p style="white-space: pre-line">{{ e.description }}</p>
       <img
         v-if="e.photoUrl"
@@ -190,7 +198,14 @@ onMounted(load);
       </div>
 
       <div class="row" style="margin-top: 0.8rem">
-        <button class="btn" @click="moderate(e.id, 'approve')">✓ Approuver</button>
+        <button
+          class="btn"
+          :disabled="!hasCoordinates(e.venue)"
+          :title="hasCoordinates(e.venue) ? '' : 'Complétez d’abord l’adresse du lieu'"
+          @click="moderate(e.id, 'approve')"
+        >
+          ✓ Approuver
+        </button>
         <button class="btn danger" @click="moderate(e.id, 'reject')">✕ Refuser</button>
       </div>
     </div>
@@ -198,6 +213,21 @@ onMounted(load);
 </template>
 
 <style scoped>
+.no-coords {
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: 12px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.9rem;
+}
+
+.no-coords a {
+  color: var(--warn);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .dup {
   margin-top: 0.9rem;
   padding: 0.6rem 0.8rem;

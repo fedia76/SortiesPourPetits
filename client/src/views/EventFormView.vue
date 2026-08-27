@@ -5,6 +5,7 @@ import AddressPicker from '../components/AddressPicker.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
 import type { Category, EventInput, EventItem, Setting } from '../types';
+import { hasCoordinates } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -127,8 +128,11 @@ onMounted(async () => {
   form.address = event.venue.address;
   form.city = event.venue.city;
   form.postalCode = event.venue.postalCode;
-  form.lat = event.venue.lat;
-  form.lng = event.venue.lng;
+  // Sortie importée sans géocodage : on repart de zéro sur la position pour
+  // forcer la sélection d'une vraie adresse dans les suggestions.
+  const located = hasCoordinates(event.venue);
+  form.lat = located ? event.venue.lat : null;
+  form.lng = located ? event.venue.lng : null;
   existingPhotoUrl.value = event.photoUrl;
 });
 </script>

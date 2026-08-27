@@ -24,6 +24,15 @@ export interface Venue {
   lng: number;
 }
 
+/**
+ * Un lieu proposé par un programme d'import dont l'adresse n'a pas pu être
+ * géocodée arrive avec des coordonnées à zéro. Le serveur refuse d'approuver
+ * une telle sortie : le modérateur doit d'abord compléter l'adresse.
+ */
+export function hasCoordinates(venue: Pick<Venue, 'lat' | 'lng'>): boolean {
+  return venue.lat !== 0 || venue.lng !== 0;
+}
+
 /** Pourquoi et à quel point une sortie ressemble à celle en cours de modération. */
 export interface Similarity {
   /** Note de 0 à 100 : plus c'est haut, plus le doublon est probable. */

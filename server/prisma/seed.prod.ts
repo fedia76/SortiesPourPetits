@@ -25,7 +25,7 @@ async function main() {
     );
   }
 
-  const categoryNames = ['Parc', 'Musée', 'Spectacle', 'Sport', 'Atelier'];
+  const categoryNames = ['Parc', 'Musée', 'Spectacle', 'Sport', 'Atelier', 'Non classé'];
   await Promise.all(
     categoryNames.map((name) =>
       prisma.category.upsert({ where: { name }, update: {}, create: { name } }),
