@@ -43,6 +43,10 @@ Procède dans cet ordre :
    de liste, une billetterie générique ou un article qui compile dix idées
    n'en est pas une.
 
+Ces deux quotas sont durs : une fois épuisés, tout nouvel appel échoue. Si ça
+arrive, n'insiste pas et ne réessaie pas — conclus immédiatement avec ce que
+tu as déjà lu. Chaque tentative supplémentaire coûte cher et ne rapporte rien.
+
 Renvoie au plus $max_events candidats, triés du plus au moins prometteur.
 Écarte tout ce qui est hors zone, hors période, payant pour les adultes
 seulement, ou manifestement inadapté aux enfants.

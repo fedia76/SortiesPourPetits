@@ -28,6 +28,9 @@ from . import geocode as geocoding
 @dataclass
 class RunResult:
     summary: Summary = field(default_factory=Summary)
+    #: Pages repérées par la découverte, telles quelles. Conservées même si la
+    #: suite s'arrête : c'est le résultat d'un étage déjà payé.
+    candidates: list[dict[str, Any]] = field(default_factory=list)
     #: Sorties retenues : payload prêt pour l'API, plus de quoi les relire.
     events: list[dict[str, Any]] = field(default_factory=list)
 
@@ -90,6 +93,16 @@ def run(
         log.event("run_end", summary=summary.as_dict())
         return result
 
+    # La découverte est payée, quoi qu'il arrive ensuite : ses trouvailles
+    # sont enregistrées tout de suite. Un budget épuisé ou une extraction en
+    # échec ne doivent jamais faire disparaître ce pour quoi on a payé.
+    summary.candidates = len(candidates)
+    result.candidates = [
+        {"url": c.url, "title": c.title, "city": c.city, "reason": c.reason} for c in candidates
+    ]
+    for candidate in candidates:
+        log.event("candidate", url=candidate.url, title=candidate.title, why=candidate.reason)
+
     if not candidates:
         log.event(
             "nothing_found",
@@ -109,6 +122,7 @@ def run(
                 "budget",
                 spent=round(provider.usage.total_usd, 4),
                 limit=config.max_cost_usd,
+                candidates=len(candidates),
             )
             break
         _process(candidate, config, provider, store, api, log, submit, categories, result)
@@ -132,7 +146,6 @@ def _process(
 ) -> None:
     summary = result.summary
     url = candidate.url
-    summary.candidates += 1
 
     if _is_blocked(url, config.blocked_domains):
         summary.skipped_blocked += 1
@@ -142,8 +155,6 @@ def _process(
         summary.skipped_seen += 1
         log.event("skip", reason="déjà vue lors d'un run précédent", url=url)
         return
-
-    log.event("candidate", url=url, title=candidate.title, why=candidate.reason)
 
     try:
         extracted = provider.extract(url, config, sorted(categories), log)

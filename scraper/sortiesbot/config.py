@@ -55,9 +55,11 @@ class Config:
     #: liens et des titres, mais trop court tronque la page avant sa liste
     #: d'événements — c'est-à-dire avant ce qu'on est venu chercher.
     max_page_tokens: int = 12_000
-    #: Le run s'arrête s'il dépasse ce coût en jetons (dollars). Garde-fou de
-    #: dernier recours, vérifié entre deux étages.
-    max_cost_usd: float = 0.50
+    #: Plafond de coût du run, en dollars. Vérifié entre deux extractions,
+    #: donc il n'interrompt jamais la découverte en cours : il faut le poser
+    #: au-dessus de ce qu'une découverte coûte (~0,55 $ mesuré sur Sonnet 5),
+    #: sinon le run s'arrête juste après l'avoir payée sans rien en faire.
+    max_cost_usd: float = 1.50
     default_category: str = "Non classé"
     postal_prefixes: list[str] = field(default_factory=lambda: list(IDF_POSTAL_PREFIXES))
     blocked_domains: list[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS))

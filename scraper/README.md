@@ -239,14 +239,23 @@ Anthropic reste la référence, mais l'écart devrait être minime. Un workspace
 dédié avec un plafond mensuel reste la protection de dernier recours — voir
 `deploy/README.md`.
 
-### Ordre de grandeur mesuré
+### Ordres de grandeur mesurés
 
-Un run avec les réglages d'origine (Opus 5, `max_fetches: 15`,
-`max_page_tokens: 30 000`) a coûté **3,24 $** : 590 000 jetons d'entrée,
-6 700 de sortie, 12 recherches. Les 590 000 jetons ne sont pas 590 000 jetons
-de contenu — c'est le même contexte, d'au plus ~90 000 jetons, refacturé à
-chacune des douze itérations de la boucle serveur. C'est cette somme que les
-réglages actuels visent à réduire.
+| Réglages | Coût | Résultat |
+|---|---|---|
+| Opus 5, `max_fetches: 15`, pages de 30 000 jetons | 3,24 $ | rien (run interrompu) |
+| Haiku 4.5, pages de 5 000 puis 12 000 jetons | 0,02 à 0,11 $ | rien : Haiku ne déroule pas la procédure |
+| **Sonnet 5, pages de 12 000 jetons, `--limit 3`** | **0,54 $** | **3 sorties trouvées** |
+
+Les 590 000 jetons du premier run ne sont pas 590 000 jetons de contenu :
+c'est le même contexte, d'au plus ~90 000 jetons, refacturé à chacune des
+douze itérations de la boucle serveur.
+
+**Le coût de la découverte est presque fixe** — il dépend des recherches et
+des pages lues, pas du nombre de sorties rapportées. `--limit 3` est donc le
+pire rapport qualité-prix : un run complet coûte à peine plus et rapporte
+vingt sorties au lieu de trois. Le `--limit` sert à valider une configuration,
+pas à mesurer un coût par sortie.
 
 ## Et ensuite
 
