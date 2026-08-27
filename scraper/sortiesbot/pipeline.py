@@ -90,6 +90,13 @@ def run(
         log.event("run_end", summary=summary.as_dict())
         return result
 
+    if not candidates:
+        log.event(
+            "nothing_found",
+            searches=provider.usage.web_searches,
+            pages_read=provider.usage.pages_read,
+        )
+
     for candidate in candidates:
         if len(result.events) >= config.max_events:
             break

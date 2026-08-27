@@ -128,7 +128,12 @@ class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
     web_searches: int = 0
+    #: Pages demandées, succès ou non — c'est ce que le quota `max_uses` compte.
     web_fetches: int = 0
+    #: Pages effectivement lues. L'écart avec `web_fetches`, ce sont les pages
+    #: refusées (robots.txt, filtrage de domaine) : elles consomment le quota
+    #: sans rien rapporter.
+    pages_read: int = 0
     #: Coût des jetons. Les recherches web se facturent à part (voir total_usd).
     cost_usd: float = 0.0
 
@@ -137,6 +142,7 @@ class Usage:
         self.output_tokens += other.output_tokens
         self.web_searches += other.web_searches
         self.web_fetches += other.web_fetches
+        self.pages_read += other.pages_read
         self.cost_usd += other.cost_usd
 
     @property
@@ -154,6 +160,7 @@ class Usage:
             "output_tokens": self.output_tokens,
             "web_searches": self.web_searches,
             "web_fetches": self.web_fetches,
+            "pages_read": self.pages_read,
             "token_cost_usd": round(self.cost_usd, 4),
             "search_cost_usd": round(self.search_cost_usd, 4),
             "total_usd": round(self.total_usd, 4),

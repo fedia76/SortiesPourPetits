@@ -20,7 +20,12 @@ from typing import Any, TextIO
 _CONSOLE = {
     "run_start": lambda f: f"▶ Run « {f.get('config', {}).get('name', '?')} » — {f.get('mode')}",
     "query": lambda f: f"  🔎 recherche : {f.get('query')}",
+    "fetching": lambda f: f"  ↓ ouverture : {f.get('url')}",
     "visited": lambda f: f"  📄 page lue : {f.get('url')}",
+    "nothing_found": lambda f: (
+        "  ∅ aucun candidat retenu — "
+        f"{f.get('searches')} recherche(s), {f.get('pages_read')} page(s) réellement lue(s)"
+    ),
     "search_result": lambda f: f"     · {f.get('url')}",
     "candidate": lambda f: f"  ★ candidat : {f.get('title')} — {f.get('url')}",
     "skip": lambda f: f"  ⊘ ignoré ({f.get('reason')}) : {f.get('url')}",
@@ -42,9 +47,14 @@ _CONSOLE = {
     "usage": lambda f: (
         f"  ⚙ {f.get('stage')} [{f.get('model')}] "
         f"{f.get('input_tokens')} entrée / {f.get('output_tokens')} sortie jetons"
-        f" · {f.get('web_searches')} recherche(s) · {f.get('total_usd')} $"
+        f" · {f.get('web_searches')} recherche(s)"
+        f" · {f.get('pages_read')}/{f.get('web_fetches')} page(s) lue(s)"
+        f" · {f.get('total_usd')} $"
     ),
-    "error": lambda f: f"  ✗ erreur ({f.get('stage')}) : {f.get('message')}",
+    "error": lambda f: (
+        f"  ✗ erreur ({f.get('stage')}) : {f.get('message')}"
+        + (f" — {f.get('url')}" if f.get("url") else "")
+    ),
     "run_end": lambda f: f"■ Fin du run — {json.dumps(f.get('summary', {}), ensure_ascii=False)}",
 }
 

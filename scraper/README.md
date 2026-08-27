@@ -113,6 +113,11 @@ découverte → filtre (domaines bloqués, URLs déjà vues) → extraction
 2. **Filtre** — les domaines bloqués et les URLs déjà traitées lors d'un run
    précédent sont écartées **avant** l'extraction : une page connue ne coûte
    jamais un second jeton. La mémoire est un SQLite dans `state/`.
+
+   > Une page peut être refusée à la lecture (`url_not_allowed` : `robots.txt`
+   > ou filtrage de domaine). Elle consomme quand même un `max_uses`, donc le
+   > journal distingue les pages **demandées** des pages **lues** —
+   > `2/3 page(s) lue(s)` veut dire qu'une a été refusée, et nomme laquelle.
 3. **Extraction** (`claude-haiku-4-5`) — une page, une sortie structurée.
    Tâche bornée, dans une conversation neuve.
 4. **Géocodage** — Photon (OpenStreetMap), le même fournisseur que le
@@ -200,7 +205,7 @@ Les quatre leviers, du plus au moins efficace :
 
 | Levier | Défaut | Effet |
 |---|---|---|
-| `max_page_tokens` | 5 000 | taille d'une page lue à la découverte — le facteur dominant |
+| `max_page_tokens` | 12 000 | taille d'une page lue à la découverte — le facteur dominant, mais trop bas tronque l'agenda avant sa liste d'événements |
 | `max_fetches` | 5 | nombre de pages lues, chacune alourdissant le contexte |
 | `discovery_model` | `claude-haiku-4-5` | 1 $/M en entrée, contre 2 $ pour Sonnet 5 et 5 $ pour Opus 5 |
 | `max_searches` | 6 | 0,01 $ l'unité, plus les résultats en contexte |

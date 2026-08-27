@@ -52,8 +52,9 @@ class Config:
     max_searches: int = 6
     max_fetches: int = 5
     #: Taille maximale d'une page lue à la découverte. On n'y cherche que des
-    #: liens et des titres : inutile d'embarquer l'article entier.
-    max_page_tokens: int = 5_000
+    #: liens et des titres, mais trop court tronque la page avant sa liste
+    #: d'événements — c'est-à-dire avant ce qu'on est venu chercher.
+    max_page_tokens: int = 12_000
     #: Le run s'arrête s'il dépasse ce coût en jetons (dollars). Garde-fou de
     #: dernier recours, vérifié entre deux étages.
     max_cost_usd: float = 0.50
@@ -149,7 +150,9 @@ def with_limit(config: Config, limit: int | None) -> Config:
         config,
         max_events=events,
         max_searches=max(2, round(config.max_searches * ratio)),
-        max_fetches=max(2, round(config.max_fetches * ratio)),
+        # Plancher à trois pages : une page refusée (robots.txt) ou pauvre en
+        # liens ne doit pas suffire à faire échouer toute la découverte.
+        max_fetches=max(3, round(config.max_fetches * ratio)),
     )
 
 

@@ -308,8 +308,11 @@ class AnthropicProvider:
         log: RunLog,
     ) -> Any:
         """Un tour, journalisé au fil de l'eau plutôt qu'à la fin."""
-        searches = fetches = 0
+        step = Usage()
         thinking = ""
+        # `tool_use_id` → URL demandée, pour nommer la page dans le résultat :
+        # un échec de lecture qui ne dit pas quelle page est inexploitable.
+        asked: dict[str, str] = {}
 
         with self._client.messages.stream(**params, messages=messages) as stream:
             for event in stream:
@@ -318,9 +321,7 @@ class AnthropicProvider:
                 if kind == "content_block_stop":
                     block = getattr(event, "content_block", None)
                     if block is not None:
-                        searches, fetches = self._trace_block(
-                            block, stage=stage, log=log, searches=searches, fetches=fetches
-                        )
+                        self._trace_block(block, stage=stage, log=log, step=step, asked=asked)
                     continue
 
                 if kind == "content_block_delta":
@@ -335,20 +336,22 @@ class AnthropicProvider:
             log.event("thinking", stage=stage, text=thinking.strip()[:THINKING_CHUNK])
 
         usage = getattr(response, "usage", None)
-        step = Usage(
-            input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
-            output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
-            web_searches=searches,
-            web_fetches=fetches,
-        )
+        step.input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        step.output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
         step.cost_usd = _token_cost(model, step)
         self.usage.add(step)
         log.event("usage", stage=stage, model=model, **step.as_dict())
         return response
 
     def _trace_block(
-        self, block: Any, *, stage: str, log: RunLog, searches: int, fetches: int
-    ) -> tuple[int, int]:
+        self,
+        block: Any,
+        *,
+        stage: str,
+        log: RunLog,
+        step: Usage,
+        asked: dict[str, str],
+    ) -> None:
         """Journalise un bloc dès qu'il est complet : c'est ce qui donne à
         l'utilisateur la liste des recherches et des pages, en direct."""
         kind = getattr(block, "type", "")
@@ -357,11 +360,13 @@ class AnthropicProvider:
             params = getattr(block, "input", {}) or {}
             name = getattr(block, "name", "")
             if name == "web_search":
-                searches += 1
+                step.web_searches += 1
                 log.event("query", stage=stage, query=params.get("query", ""))
             elif name == "web_fetch":
-                fetches += 1
-                log.event("visited", stage=stage, url=params.get("url", ""))
+                step.web_fetches += 1
+                url = str(params.get("url", ""))
+                asked[str(getattr(block, "id", ""))] = url
+                log.event("fetching", stage=stage, url=url)
 
         elif kind == "web_search_tool_result":
             content = getattr(block, "content", None)
@@ -377,11 +382,15 @@ class AnthropicProvider:
                 log.error(stage, f"recherche web en échec : {_error_code(content)}")
 
         elif kind == "web_fetch_tool_result":
+            url = asked.get(str(getattr(block, "tool_use_id", "")), "")
             code = _error_code(getattr(block, "content", None))
             if code:
-                log.error(stage, f"lecture de page en échec : {code}")
-
-        return searches, fetches
+                # Une page refusée (robots.txt, filtrage de domaine) consomme
+                # quand même un quota : il faut savoir laquelle.
+                log.error(stage, f"page refusée ({code})", url=url)
+            else:
+                step.pages_read += 1
+                log.event("visited", stage=stage, url=url)
 
 
 # ---------------------------------------------------------------------- outils
