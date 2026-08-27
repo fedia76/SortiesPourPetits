@@ -107,7 +107,7 @@ découverte → filtre (domaines bloqués, URLs déjà vues) → extraction
   → géocodage → construction du payload → photo → soumission
 ```
 
-1. **Découverte** (`claude-haiku-4-5` par défaut) — plusieurs recherches web
+1. **Découverte** (`claude-sonnet-5` par défaut) — plusieurs recherches web
    variées, puis lecture des pages d'agenda rencontrées pour en tirer les liens
    d'événements. C'est l'étage qui découvre des sites qu'on n'aurait pas listés.
 
@@ -168,6 +168,13 @@ Le choix des modèles est par configuration (`discovery_model`,
 `extraction_model`), ce qui permet de comparer les coûts d'une recherche à
 l'autre.
 
+**Pourquoi pas Haiku à la découverte.** Essayé, trois fois : la découverte est
+une tâche en plusieurs temps (chercher, ouvrir les agendas, en tirer des
+liens, trier), et Haiku 4.5 s'arrête après la première étape — il cherche puis
+conclut sans rien ouvrir, ou répond de mémoire sans chercher. L'extraction,
+elle, est bornée — une page, une sortie — et Haiku y suffit très bien. C'est
+la différence entre suivre une procédure et remplir un formulaire.
+
 **Attention en changeant de modèle** : la version des outils serveur en dépend,
 et le script la choisit tout seul (`web_tools_for`).
 
@@ -214,7 +221,7 @@ Les quatre leviers, du plus au moins efficace :
 |---|---|---|
 | `max_page_tokens` | 12 000 | taille d'une page lue à la découverte — le facteur dominant, mais trop bas tronque l'agenda avant sa liste d'événements |
 | `max_fetches` | 5 | nombre de pages lues, chacune alourdissant le contexte |
-| `discovery_model` | `claude-haiku-4-5` | 1 $/M en entrée, contre 2 $ pour Sonnet 5 et 5 $ pour Opus 5 |
+| `discovery_model` | `claude-sonnet-5` | 2 $/M en entrée, contre 1 $ pour Haiku 4.5 et 5 $ pour Opus 5 |
 | `max_searches` | 6 | 0,01 $ l'unité, plus les résultats en contexte |
 
 Trois garde-fous automatiques :
