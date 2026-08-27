@@ -96,6 +96,13 @@ export const moderateSchema = z.object({
   reason: z.string().trim().max(1000).optional(),
 });
 
+/** Réglages de la recherche de doublons proposée au modérateur. */
+export const similarSchema = z.object({
+  radiusKm: z.coerce.number().min(0.1).max(100).default(5),
+  minScore: z.coerce.number().min(0).max(100).default(30),
+  limit: z.coerce.number().int().min(1).max(20).default(5),
+});
+
 export const updateRoleSchema = z.object({
   role: z.enum(['USER', 'MODERATOR', 'ADMIN']),
 });

@@ -25,6 +25,11 @@ communauté et validées par une équipe de modération.
 - **Modération** : toute proposition passe en attente ; seules les sorties
   approuvées sont publiques. Une modification par l'auteur repasse en
   modération. Motif de refus visible par l'auteur.
+- **Détection de doublons** : pour chaque sortie de la file, les sorties
+  ressemblantes sont cherchées automatiquement et notées sur 100 (même lieu ou
+  lieu proche, titre et description, chevauchement des dates, catégorie,
+  auteur). Le modérateur voit les raisons du rapprochement et peut refuser en
+  pointant la sortie d'origine, motif pré-rempli.
 - **Recherche** : texte, gratuit / prix max, âge de l'enfant, période, cadre,
   et **distance** (rayon en km autour d'une adresse ou de la position du
   navigateur — formule de Haversine en SQL).
@@ -68,6 +73,7 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | PUT | `/api/events/:id` | auteur/modérateur | Modifier |
 | DELETE | `/api/events/:id` | auteur/modérateur | Supprimer |
 | GET | `/api/moderation/pending` | modérateur | File d'attente |
+| GET | `/api/moderation/:id/similar` | modérateur | Doublons potentiels (`radiusKm`, `minScore`, `limit`) |
 | POST | `/api/moderation/:id` | modérateur | `{action: "approve"\|"reject", reason?}` |
 | GET | `/api/admin/users` | admin | Liste des utilisateurs |
 | PATCH | `/api/admin/users/:id/role` | admin | Changer un rôle |

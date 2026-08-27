@@ -24,6 +24,14 @@ export interface Venue {
   lng: number;
 }
 
+/** Pourquoi et à quel point une sortie ressemble à celle en cours de modération. */
+export interface Similarity {
+  /** Note de 0 à 100 : plus c'est haut, plus le doublon est probable. */
+  score: number;
+  reasons: string[];
+  distanceKm?: number;
+}
+
 export interface EventItem {
   id: number;
   title: string;
@@ -46,6 +54,8 @@ export interface EventItem {
   category: Category;
   author: { id: number; displayName: string; email?: string };
   distanceKm?: number;
+  /** Renseigné par la recherche de doublons de la modération. */
+  similarity?: Similarity;
 }
 
 export interface EventInput {
