@@ -205,8 +205,11 @@ def test_journal_des_recherches_et_des_pages(log):
     assert provider.usage.web_searches == 1
     assert provider.usage.web_fetches == 1
     # Tarif du modèle de découverte par défaut (Haiku 4.5, 1 $ / 5 $ le
-    # million) sur 1000 jetons d'entrée et 100 de sortie.
+    # million) sur 1000 jetons d'entrée et 100 de sortie…
     assert provider.usage.cost_usd == pytest.approx(1000 * 1 / 1e6 + 100 * 5 / 1e6)
+    # …plus la recherche web, facturée à part (0,01 $ pièce).
+    assert provider.usage.search_cost_usd == pytest.approx(0.01)
+    assert provider.usage.total_usd == pytest.approx(provider.usage.cost_usd + 0.01)
 
 
 def test_erreur_doutil_serveur_est_journalisee():

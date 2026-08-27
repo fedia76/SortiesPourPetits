@@ -117,6 +117,10 @@ class ExtractedEvent:
         )
 
 
+#: Tarif d'une recherche web : 10 $ les 1000.
+SEARCH_PRICE_USD = 0.01
+
+
 @dataclass
 class Usage:
     """Consommation cumulée d'un run, pour le résumé de fin."""
@@ -125,6 +129,7 @@ class Usage:
     output_tokens: int = 0
     web_searches: int = 0
     web_fetches: int = 0
+    #: Coût des jetons. Les recherches web se facturent à part (voir total_usd).
     cost_usd: float = 0.0
 
     def add(self, other: "Usage") -> None:
@@ -134,6 +139,15 @@ class Usage:
         self.web_fetches += other.web_fetches
         self.cost_usd += other.cost_usd
 
+    @property
+    def search_cost_usd(self) -> float:
+        """10 $ les 1000 recherches, facturés en plus des jetons."""
+        return self.web_searches * SEARCH_PRICE_USD
+
+    @property
+    def total_usd(self) -> float:
+        return self.cost_usd + self.search_cost_usd
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "input_tokens": self.input_tokens,
@@ -141,6 +155,8 @@ class Usage:
             "web_searches": self.web_searches,
             "web_fetches": self.web_fetches,
             "token_cost_usd": round(self.cost_usd, 4),
+            "search_cost_usd": round(self.search_cost_usd, 4),
+            "total_usd": round(self.total_usd, 4),
         }
 
 

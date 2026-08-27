@@ -42,6 +42,7 @@ _CONSOLE = {
     "usage": lambda f: (
         f"  ⚙ {f.get('stage')} [{f.get('model')}] "
         f"{f.get('input_tokens')} entrée / {f.get('output_tokens')} sortie jetons"
+        f" · {f.get('web_searches')} recherche(s) · {f.get('total_usd')} $"
     ),
     "error": lambda f: f"  ✗ erreur ({f.get('stage')}) : {f.get('message')}",
     "run_end": lambda f: f"■ Fin du run — {json.dumps(f.get('summary', {}), ensure_ascii=False)}",
