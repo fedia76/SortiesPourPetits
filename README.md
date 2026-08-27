@@ -36,9 +36,10 @@ communauté et validées par une équipe de modération.
   navigateur — formule de Haversine en SQL).
 - **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
   sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
-  une clé d'API. Une sortie dont l'adresse n'a pas pu être géocodée est
-  acceptée avec des coordonnées à `(0, 0)` : la modération la signale et refuse
-  son approbation tant que l'adresse n'est pas complétée.
+  une clé d'API. Ce qu'un import n'a pas su déterminer part avec une valeur
+  convenue plutôt que de faire perdre la sortie — adresse non géocodée en
+  `(0, 0)`, tarif introuvable à `-1` : la modération les signale et refuse
+  l'approbation tant qu'ils ne sont pas complétés.
 
 ## Démarrage
 

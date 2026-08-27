@@ -75,19 +75,28 @@ découverte → filtre (domaines bloqués, URLs déjà vues) → extraction
    comme un échec : mieux vaut pas de position qu'une position fausse.
 5. **Payload** — les règles de `server/src/lib/validators.ts` sont appliquées
    ici. Ce qui peut être réparé l'est (troncatures, âges inversés, horaires
-   incohérents) ; ce qui demanderait d'inventer une information (un tarif, une
-   date) fait écarter la sortie, motif à l'appui dans le journal.
+   incohérents) ; ce qui manque part avec une valeur convenue que la modération
+   sait reconnaître (voir ci-dessous). Seules les pages inexploitables — sans
+   titre, sans description, sans date — sont écartées, motif à l'appui dans le
+   journal.
 6. **Soumission** — avec la photo trouvée sur la page, le cas échéant. Les
    droits d'usage de l'image ne sont pas vérifiables automatiquement : le
    `sourceUrl` accompagne la sortie et c'est le modérateur qui tranche.
 
-### Sorties sans coordonnées
+### Champs laissés à la modération
 
-Quand le géocodage échoue, la sortie est quand même proposée, avec des
-coordonnées à `(0, 0)`. Le site connaît cette convention : la sortie n'apparaît
-dans aucune recherche par distance, la file de modération l'affiche avec un
-bandeau « lieu non géolocalisé », et **son approbation est refusée** tant qu'un
-modérateur n'a pas complété l'adresse.
+Une information introuvable ne fait pas perdre la sortie : elle est proposée
+avec une valeur convenue que le site reconnaît
+(`server/src/lib/incomplete.ts`).
+
+| Information | Valeur envoyée | Effet côté site |
+|---|---|---|
+| Position (géocodage en échec ou hors zone) | `lat = 0`, `lng = 0` | invisible dans les recherches par distance ; bandeau « lieu non géolocalisé » |
+| Tarif introuvable sur la page | `price = -1`, `isFree = false` | badge « Tarif à compléter » au lieu du prix ; bandeau « tarif indéterminé » |
+
+Dans les deux cas, **l'approbation est refusée** tant qu'un modérateur n'a pas
+corrigé le champ, et le bandeau pointe vers le formulaire d'édition, qui repart
+d'un champ vide pour forcer une vraie saisie.
 
 ## Configuration
 

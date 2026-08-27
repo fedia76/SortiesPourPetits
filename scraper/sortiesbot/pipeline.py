@@ -18,7 +18,7 @@ from .api import ApiError, SppApi
 from .config import Config, describe
 from .journal import RunLog
 from .models import Candidate, Summary
-from .payload import Rejected, build_payload
+from .payload import UNKNOWN_PRICE, Rejected, build_payload
 from .photo import PhotoError, download
 from .providers.base import Provider, ProviderError
 from .store import SeenStore
@@ -168,6 +168,12 @@ def _process(
         log.event("skip", reason=str(err), url=url)
         store.remember(url, "invalid", title=extracted.title or candidate.title)
         return
+
+    if payload["price"] == UNKNOWN_PRICE:
+        summary.unpriced += 1
+        log.event("incomplete", field="tarif", url=url, title=payload["title"])
+    if not geo.located:
+        log.event("incomplete", field="adresse", url=url, title=payload["title"])
 
     photo = None
     if submit and extracted.photo_url:

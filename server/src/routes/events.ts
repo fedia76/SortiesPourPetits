@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { hasRole, requireAuth } from '../middleware/auth';
 import { deletePhoto, photoUpload, savePhoto } from '../lib/upload';
-import { hasCoordinates } from '../lib/geo';
+import { hasCoordinates } from '../lib/incomplete';
 import { eventInputSchema, searchSchema } from '../lib/validators';
 
 export const eventsRouter = Router();

@@ -5,7 +5,7 @@ import AddressPicker from '../components/AddressPicker.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
 import type { Category, EventInput, EventItem, Setting } from '../types';
-import { hasCoordinates } from '../types';
+import { hasCoordinates, hasPrice } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -114,7 +114,8 @@ onMounted(async () => {
   form.description = event.description;
   form.sourceUrl = event.sourceUrl ?? '';
   form.isFree = event.isFree;
-  form.price = event.price ?? '';
+  // Tarif indéterminé (import) : on repart vide pour forcer la saisie.
+  form.price = hasPrice(event) ? event.price ?? '' : '';
   form.ageMin = event.ageMin ?? '';
   form.ageMax = event.ageMax ?? '';
   form.isPermanent = event.isPermanent;

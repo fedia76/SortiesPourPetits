@@ -29,6 +29,7 @@ _CONSOLE = {
         if f.get("located")
         else f"  📍 non géolocalisé ({f.get('reason')}) : {f.get('query')}"
     ),
+    "incomplete": lambda f: f"  ⚑ {f.get('field')} à compléter par la modération : {f.get('title')}",
     "photo": lambda f: f"  🖼 photo {f.get('status')} : {f.get('url')}",
     "submit": lambda f: f"  ✅ soumise (#{f.get('event_id')}) : {f.get('title')}",
     "dry_run": lambda f: f"  ○ retenue (dry-run) : {f.get('title')}",

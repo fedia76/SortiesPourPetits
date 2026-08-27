@@ -167,15 +167,31 @@ def test_page_hors_sujet(log):
     assert result.summary.skipped_irrelevant == 1
 
 
-def test_sortie_invalide_est_ecartee(log):
+def test_sortie_inexploitable_est_ecartee(log):
     provider = FakeProvider(
         [Candidate(url="https://exemple.fr/a", title="A")],
-        {"https://exemple.fr/a": sortie(free=False, price=None)},
+        {"https://exemple.fr/a": sortie(description="Court")},
     )
     with SeenStore() as store:
         result = run(config(), provider, store, FakeApi(), log, submit=True)
     assert result.summary.skipped_invalid == 1
     assert result.summary.submitted == 0
+
+
+def test_tarif_inconnu_est_soumis_a_completer(log):
+    """Une sortie sans tarif est proposée quand même : c'est le modérateur qui
+    tranche, le serveur refusant de l'approuver telle quelle."""
+    provider = FakeProvider(
+        [Candidate(url="https://exemple.fr/a", title="A")],
+        {"https://exemple.fr/a": sortie(free=False, price=None)},
+    )
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(), provider, store, api, log, submit=True)
+
+    assert result.summary.unpriced == 1
+    assert result.summary.submitted == 1
+    assert api.created[0]["price"] == -1
 
 
 def test_echec_de_geocodage_passe_en_zero(log, monkeypatch):

@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 
 from sortiesbot.models import UNLOCATED, ExtractedEvent, Location
-from sortiesbot.payload import POSTAL_PLACEHOLDER, Rejected, build_payload
+from sortiesbot.payload import POSTAL_PLACEHOLDER, UNKNOWN_PRICE, Rejected, build_payload
 
 TODAY = date(2026, 8, 27)
 PARIS = Location(lat=48.8566, lng=2.3522, city="Paris", postal_code="75001")
@@ -50,9 +50,19 @@ def test_sans_geocodage_les_champs_obligatoires_sont_remplis():
     assert payload["venue"]["postalCode"] == POSTAL_PLACEHOLDER
 
 
-def test_tarif_inconnu_est_ecarte():
-    with pytest.raises(Rejected, match="tarif"):
-        build_payload(make(free=False, price=None), PARIS, 1, "https://x.fr", today=TODAY)
+def test_tarif_inconnu_part_avec_la_valeur_convenue():
+    # La sortie n'est pas perdue : elle arrive avec un tarif que la modération
+    # sait reconnaître, et que le serveur refuse d'approuver tel quel.
+    payload = build_payload(make(free=False, price=None), PARIS, 1, "https://x.fr", today=TODAY)
+    assert payload["isFree"] is False
+    assert payload["price"] == UNKNOWN_PRICE
+
+
+def test_prix_aberrant_bascule_sur_la_valeur_convenue():
+    payload = build_payload(
+        make(free=False, price=999_999), PARIS, 1, "https://x.fr", today=TODAY
+    )
+    assert payload["price"] == UNKNOWN_PRICE
 
 
 def test_sortie_terminee_est_ecartee():

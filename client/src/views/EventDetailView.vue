@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
 import { useAuthStore } from '../stores/auth';
 import type { EventItem } from '../types';
-import { SETTING_LABELS, STATUS_LABELS } from '../types';
+import { SETTING_LABELS, STATUS_LABELS, priceLabel } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -81,7 +81,7 @@ onMounted(async () => {
         <aside class="info-panel card">
           <div>
             <dt>Prix</dt>
-            <dd>{{ event.isFree ? 'Gratuit' : `${event.price} €` }}</dd>
+            <dd>{{ priceLabel(event) }}</dd>
           </div>
           <div v-if="event.ageMin !== null && event.ageMax !== null">
             <dt>Âges</dt>

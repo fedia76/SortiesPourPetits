@@ -155,6 +155,7 @@ class Summary:
     skipped_irrelevant: int = 0
     skipped_invalid: int = 0
     ungeocoded: int = 0
+    unpriced: int = 0
     submitted: int = 0
     errors: int = 0
     usage: Usage = field(default_factory=Usage)
@@ -168,6 +169,7 @@ class Summary:
             "skipped_irrelevant": self.skipped_irrelevant,
             "skipped_invalid": self.skipped_invalid,
             "ungeocoded": self.ungeocoded,
+            "unpriced": self.unpriced,
             "submitted": self.submitted,
             "errors": self.errors,
             "usage": self.usage.as_dict(),

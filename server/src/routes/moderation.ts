@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
 import { moderateSchema, similarSchema } from '../lib/validators';
-import { hasCoordinates } from '../lib/geo';
+import { hasCoordinates, hasPrice } from '../lib/incomplete';
 import { rankSimilar, significantWords, type SimilarityScore } from '../lib/similarity';
 
 export const moderationRouter = Router();
@@ -133,11 +133,17 @@ moderationRouter.post('/:id', async (req, res) => {
   }
 
   const { action, reason } = parsed.data;
-  // Rien de public sans position : une sortie importée sans géocodage doit
-  // voir son adresse complétée avant d'être approuvée.
+  // Rien de public tant qu'un champ laissé à compléter par un import n'a pas
+  // été corrigé (voir lib/incomplete.ts).
   if (action === 'approve' && !hasCoordinates(event.venue)) {
     res.status(409).json({
       error: "Le lieu n'est pas géolocalisé : complétez l'adresse avant d'approuver cette sortie",
+    });
+    return;
+  }
+  if (action === 'approve' && !hasPrice(event)) {
+    res.status(409).json({
+      error: "Le tarif n'a pas pu être déterminé : renseignez-le avant d'approuver cette sortie",
     });
     return;
   }

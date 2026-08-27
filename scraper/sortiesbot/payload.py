@@ -6,8 +6,10 @@ proposition acceptable — ou pour l'écarter en le disant, plutôt que de
 collectionner des 400 côté serveur.
 
 Ce qui peut être réparé sans mentir l'est (troncatures, bornes d'âge, horaires
-incohérents). Ce qui demanderait d'inventer une information (un tarif, une
-date) fait écarter la sortie : le journal du run garde la trace du motif.
+incohérents). Ce qui manque et ne peut pas être deviné part avec une valeur
+convenue que la modération sait reconnaître (tarif à `UNKNOWN_PRICE`, position
+à zéro). Restent les sorties inexploitables — sans titre, sans description,
+sans date — écartées avec leur motif dans le journal du run.
 """
 
 from __future__ import annotations
@@ -35,6 +37,12 @@ PRICE_MAX = 100_000
 #: exige une ville et un code postal, le modérateur les corrigera avec l'adresse.
 CITY_PLACEHOLDER = "À préciser"
 POSTAL_PLACEHOLDER = "00000"
+
+#: Tarif qu'aucune lecture n'a permis de déterminer. Le site connaît cette
+#: convention (server/src/lib/incomplete.ts) : la sortie est proposée, la
+#: modération la signale et refuse de l'approuver tant qu'elle n'est pas
+#: corrigée. Un prix négatif est impossible à confondre avec la gratuité.
+UNKNOWN_PRICE = -1
 
 
 class Rejected(Exception):
@@ -125,8 +133,10 @@ def build_payload(
     price = event.price
     if price is not None and not (0 <= price <= PRICE_MAX):
         price = None
+    # Un tarif introuvable ne fait pas perdre la sortie : elle part avec la
+    # valeur convenue et c'est le modérateur qui tranche.
     if not event.free and price is None:
-        raise Rejected("tarif inconnu (ni gratuité ni prix)")
+        price = UNKNOWN_PRICE
 
     permanent, date_start, date_end = _clean_dates(event, today)
     open_time, close_time = _clean_times(event.open_time, event.close_time)
