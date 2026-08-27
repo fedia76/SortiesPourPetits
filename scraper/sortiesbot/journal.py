@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
@@ -30,6 +31,11 @@ _CONSOLE = {
         else f"  📍 non géolocalisé ({f.get('reason')}) : {f.get('query')}"
     ),
     "incomplete": lambda f: f"  ⚑ {f.get('field')} à compléter par la modération : {f.get('title')}",
+    "paused": lambda f: (
+        f"  ⏸ tour en pause (limite serveur), reprise — {f.get('cost_usd')} $ déjà engagés"
+    ),
+    "budget": lambda f: f"  ⛔ budget atteint ({f.get('spent')} $ / {f.get('limit')} $) : run arrêté",
+    "thinking": lambda f: f"     … {f.get('text')}",
     "photo": lambda f: f"  🖼 photo {f.get('status')} : {f.get('url')}",
     "submit": lambda f: f"  ✅ soumise (#{f.get('event_id')}) : {f.get('title')}",
     "dry_run": lambda f: f"  ○ retenue (dry-run) : {f.get('title')}",
@@ -49,6 +55,9 @@ class RunLog:
         self.path = path
         self.verbose = verbose
         self.stream = stream if stream is not None else sys.stdout
+        # Un run dure plusieurs minutes : le temps écoulé en tête de chaque
+        # ligne dit d'un coup d'œil que ça avance encore.
+        self.started_at = time.monotonic()
         self._file: TextIO | None = None
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,7 +86,8 @@ class RunLog:
         if self.verbose:
             render = _CONSOLE.get(kind)
             line = render(fields) if render else f"  {kind}: {json.dumps(fields, ensure_ascii=False)}"
-            print(line, file=self.stream, flush=True)
+            elapsed = int(time.monotonic() - self.started_at)
+            print(f"[{elapsed // 60:d}:{elapsed % 60:02d}] {line}", file=self.stream, flush=True)
 
     def error(self, stage: str, message: str, **fields: Any) -> None:
         self.event("error", stage=stage, message=message, **fields)

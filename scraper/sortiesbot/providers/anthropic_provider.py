@@ -7,13 +7,17 @@ n'a donc aucun navigateur ni analyseur HTML à maintenir — mais il ne voit du
 web que ce que le modèle lui rapporte, d'où le journal détaillé de chaque
 requête et de chaque page ouverte.
 
-Deux particularités de ces outils :
+Trois particularités de ces outils :
   - `web_fetch` ne peut ouvrir qu'une URL déjà présente dans la conversation.
     À la découverte, ce sont les résultats de recherche ; à l'extraction, c'est
     l'URL qu'on lui donne dans le message.
   - la boucle serveur s'arrête au bout de dix itérations avec
     `stop_reason: "pause_turn"` ; on relance alors la requête avec le tour en
     cours, sans rien ajouter, et le serveur reprend où il en était.
+  - une découverte enchaîne une dizaine de recherches et de lectures **dans un
+    seul appel** : elle dure plusieurs minutes. D'où le streaming — sans lui,
+    la requête reste muette du début à la fin, on ne sait pas si elle avance,
+    et le journal du run n'est écrit qu'une fois tout terminé.
 """
 
 from __future__ import annotations
@@ -27,9 +31,33 @@ from ..journal import RunLog
 from ..models import Candidate, ExtractedEvent, Usage
 from .base import ProviderError
 
-#: Variantes à filtrage dynamique, disponibles sur Opus 5 / Sonnet 5 et 4.6+.
-WEB_SEARCH_TOOL = "web_search_20260209"
-WEB_FETCH_TOOL = "web_fetch_20260209"
+#: Les outils serveur sont versionnés, et la version dépend du modèle.
+#:
+#: Les variantes 2026-02-09 ajoutent le « filtrage dynamique » : le modèle
+#: écrit du code qui trie les résultats avant qu'ils n'entrent en contexte, ce
+#: qui réduit la facture sur les requêtes chargées en recherches. Elles
+#: réclament un modèle Claude 4.6 ou plus récent ; ailleurs, il faut les
+#: variantes de base, sous peine de 400.
+WEB_TOOLS_MODERN = ("web_search_20260209", "web_fetch_20260209")
+WEB_TOOLS_BASIC = ("web_search_20250305", "web_fetch_20250910")
+
+#: Modèles Claude 4.6 et suivants. Deux capacités s'y rattachent : le filtrage
+#: dynamique des outils web, et `thinking: {"type": "adaptive"}`.
+CLAUDE_4_6_PLUS = {
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+}
+
+
+def web_tools_for(model: str) -> tuple[str, str]:
+    """`(type de web_search, type de web_fetch)` adaptés au modèle."""
+    return WEB_TOOLS_MODERN if model in CLAUDE_4_6_PLUS else WEB_TOOLS_BASIC
 
 #: Recherche orientée France, pour des résultats francophones et locaux.
 USER_LOCATION = {
@@ -46,8 +74,17 @@ SYSTEM = (
     "aucune date, aucun tarif et aucune adresse inventés."
 )
 
-#: Nombre de reprises acceptées après un `pause_turn`.
-MAX_CONTINUATIONS = 5
+#: Nombre de reprises acceptées après un `pause_turn`. Chaque reprise renvoie
+#: tout le contexte accumulé, donc repart pour une dizaine d'itérations
+#: serveur facturées sur ce contexte : au-delà de deux, la note s'envole.
+MAX_CONTINUATIONS = 2
+
+#: Un tour de découverte est long : on laisse largement de marge, le streaming
+#: garantissant que la connexion n'est jamais silencieuse très longtemps.
+TIMEOUT_SECONDS = 900.0
+
+#: Longueur d'un fragment de raisonnement journalisé.
+THINKING_CHUNK = 160
 
 DISCOVERY_MAX_TOKENS = 16_000
 EXTRACTION_MAX_TOKENS = 8_000
@@ -150,24 +187,31 @@ class AnthropicProvider:
             ) from err
         # Sans clé explicite, le SDK lit ANTHROPIC_API_KEY puis les profils
         # d'authentification locaux.
-        self._client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+        self._client = (
+            anthropic.Anthropic(api_key=api_key, timeout=TIMEOUT_SECONDS)
+            if api_key
+            else anthropic.Anthropic(timeout=TIMEOUT_SECONDS)
+        )
 
     # ------------------------------------------------------------------ étages
 
     def discover(self, config: Config, log: RunLog) -> list[Candidate]:
+        search_tool, fetch_tool = web_tools_for(config.discovery_model)
         tools = [
             {
-                "type": WEB_SEARCH_TOOL,
+                "type": search_tool,
                 "name": "web_search",
                 "max_uses": config.max_searches,
                 "user_location": USER_LOCATION,
                 **_blocked(config),
             },
             {
-                "type": WEB_FETCH_TOOL,
+                "type": fetch_tool,
                 "name": "web_fetch",
                 "max_uses": config.max_fetches,
-                "max_content_tokens": 30_000,
+                # À la découverte on ne cherche que des liens : une page
+                # entière serait refacturée à chaque itération de la boucle.
+                "max_content_tokens": config.max_page_tokens,
                 **_blocked(config),
             },
         ]
@@ -189,10 +233,12 @@ class AnthropicProvider:
     ) -> ExtractedEvent:
         tools = [
             {
-                "type": WEB_FETCH_TOOL,
+                "type": web_tools_for(config.extraction_model)[1],
                 "name": "web_fetch",
-                "max_uses": 3,
-                "max_content_tokens": 30_000,
+                "max_uses": 2,
+                # L'extraction lit vraiment la page, mais une seule, dans une
+                # conversation neuve et sur un modèle bon marché.
+                "max_content_tokens": 15_000,
             }
         ]
         data = self._ask(
@@ -220,23 +266,28 @@ class AnthropicProvider:
         log: RunLog,
     ) -> dict[str, Any]:
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+        params: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": SYSTEM,
+            "tools": tools,
+            "output_config": {"format": {"type": "json_schema", "schema": schema}},
+        }
+        if model in CLAUDE_4_6_PLUS:
+            # Un résumé du raisonnement : c'est la seule chose qui bouge à
+            # l'écran pendant que le modèle prépare ses recherches.
+            params["thinking"] = {"type": "adaptive", "display": "summarized"}
 
         for _ in range(MAX_CONTINUATIONS + 1):
-            response = self._client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                system=SYSTEM,
-                messages=messages,
-                tools=tools,
-                output_config={"format": {"type": "json_schema", "schema": schema}},
-            )
-            self._trace(response, stage=stage, model=model, log=log)
+            response = self._stream(params, messages, stage=stage, model=model, log=log)
 
             if getattr(response, "stop_reason", None) != "pause_turn":
                 return _parse_json(response)
 
             # Tour interrompu par la limite d'itérations serveur : on renvoie le
             # même tour, sans message supplémentaire, et le serveur enchaîne.
+            # C'est coûteux (tout le contexte repart), donc ça se voit.
+            log.event("paused", stage=stage, cost_usd=round(self.usage.cost_usd, 4))
             blocks = list(response.content)
             if messages[-1]["role"] == "assistant":
                 messages[-1]["content"] = list(messages[-1]["content"]) + blocks
@@ -247,40 +298,41 @@ class AnthropicProvider:
             f"{stage} : le tour est toujours en pause après {MAX_CONTINUATIONS} reprises"
         )
 
-    def _trace(self, response: Any, *, stage: str, model: str, log: RunLog) -> None:
-        """Journalise ce que le modèle a cherché et lu, puis la consommation."""
+    def _stream(
+        self,
+        params: dict[str, Any],
+        messages: list[dict[str, Any]],
+        *,
+        stage: str,
+        model: str,
+        log: RunLog,
+    ) -> Any:
+        """Un tour, journalisé au fil de l'eau plutôt qu'à la fin."""
         searches = fetches = 0
+        thinking = ""
 
-        for block in getattr(response, "content", []) or []:
-            kind = getattr(block, "type", "")
+        with self._client.messages.stream(**params, messages=messages) as stream:
+            for event in stream:
+                kind = getattr(event, "type", "")
 
-            if kind == "server_tool_use":
-                params = getattr(block, "input", {}) or {}
-                if getattr(block, "name", "") == "web_search":
-                    searches += 1
-                    log.event("query", stage=stage, query=params.get("query", ""))
-                elif getattr(block, "name", "") == "web_fetch":
-                    fetches += 1
-                    log.event("visited", stage=stage, url=params.get("url", ""))
-
-            elif kind == "web_search_tool_result":
-                content = getattr(block, "content", None)
-                if isinstance(content, list):
-                    for result in content:
-                        log.event(
-                            "search_result",
-                            stage=stage,
-                            url=getattr(result, "url", ""),
-                            title=getattr(result, "title", ""),
+                if kind == "content_block_stop":
+                    block = getattr(event, "content_block", None)
+                    if block is not None:
+                        searches, fetches = self._trace_block(
+                            block, stage=stage, log=log, searches=searches, fetches=fetches
                         )
-                else:
-                    log.error(stage, f"recherche web en échec : {_error_code(content)}")
+                    continue
 
-            elif kind == "web_fetch_tool_result":
-                content = getattr(block, "content", None)
-                code = _error_code(content)
-                if code:
-                    log.error(stage, f"lecture de page en échec : {code}")
+                if kind == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    if getattr(delta, "type", "") == "thinking_delta":
+                        thinking += getattr(delta, "thinking", "")
+                        thinking = _flush_thinking(thinking, stage, log)
+
+            response = stream.get_final_message()
+
+        if thinking.strip():
+            log.event("thinking", stage=stage, text=thinking.strip()[:THINKING_CHUNK])
 
         usage = getattr(response, "usage", None)
         step = Usage(
@@ -292,6 +344,44 @@ class AnthropicProvider:
         step.cost_usd = _token_cost(model, step)
         self.usage.add(step)
         log.event("usage", stage=stage, model=model, **step.as_dict())
+        return response
+
+    def _trace_block(
+        self, block: Any, *, stage: str, log: RunLog, searches: int, fetches: int
+    ) -> tuple[int, int]:
+        """Journalise un bloc dès qu'il est complet : c'est ce qui donne à
+        l'utilisateur la liste des recherches et des pages, en direct."""
+        kind = getattr(block, "type", "")
+
+        if kind == "server_tool_use":
+            params = getattr(block, "input", {}) or {}
+            name = getattr(block, "name", "")
+            if name == "web_search":
+                searches += 1
+                log.event("query", stage=stage, query=params.get("query", ""))
+            elif name == "web_fetch":
+                fetches += 1
+                log.event("visited", stage=stage, url=params.get("url", ""))
+
+        elif kind == "web_search_tool_result":
+            content = getattr(block, "content", None)
+            if isinstance(content, list):
+                for result in content:
+                    log.event(
+                        "search_result",
+                        stage=stage,
+                        url=getattr(result, "url", ""),
+                        title=getattr(result, "title", ""),
+                    )
+            else:
+                log.error(stage, f"recherche web en échec : {_error_code(content)}")
+
+        elif kind == "web_fetch_tool_result":
+            code = _error_code(getattr(block, "content", None))
+            if code:
+                log.error(stage, f"lecture de page en échec : {code}")
+
+        return searches, fetches
 
 
 # ---------------------------------------------------------------------- outils
@@ -299,6 +389,18 @@ class AnthropicProvider:
 
 def _blocked(config: Config) -> dict[str, Any]:
     return {"blocked_domains": config.blocked_domains} if config.blocked_domains else {}
+
+
+def _flush_thinking(buffer: str, stage: str, log: RunLog) -> str:
+    """Journalise le raisonnement par fragments lisibles, et rend le reste."""
+    while len(buffer) >= THINKING_CHUNK or "\n" in buffer:
+        cut = buffer.find("\n") + 1
+        if not 0 < cut <= THINKING_CHUNK:
+            cut = buffer.rfind(" ", 0, THINKING_CHUNK) + 1 or THINKING_CHUNK
+        chunk, buffer = buffer[:cut].strip(), buffer[cut:]
+        if chunk:
+            log.event("thinking", stage=stage, text=chunk)
+    return buffer
 
 
 def _error_code(content: Any) -> str:

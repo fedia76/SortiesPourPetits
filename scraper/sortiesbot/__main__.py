@@ -82,6 +82,14 @@ def main(argv: list[str] | None = None) -> int:
 
     api = SppApi(env.api_url, env.api_key)
 
+    if not args.quiet:
+        print(f"Journal : {log_path}")
+        print(
+            "La découverte enchaîne recherches et lectures de pages dans un seul\n"
+            "appel : comptez plusieurs minutes. Les lignes ci-dessous arrivent au\n"
+            "fur et à mesure, le temps écoulé est indiqué à gauche.\n"
+        )
+
     with RunLog(log_path, verbose=not args.quiet) as log, SeenStore(state_path) as store:
         result = run(config, provider, store, api, log, submit=args.submit)
 

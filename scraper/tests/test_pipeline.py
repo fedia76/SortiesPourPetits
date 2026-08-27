@@ -255,6 +255,33 @@ def test_plafond_de_sorties(log):
     assert result.summary.submitted == 2
 
 
+def test_budget_ecourte_le_run(log):
+    """La découverte a coûté plus que le plafond : on n'enchaîne pas les
+    extractions par-dessus."""
+    candidats = [Candidate(url=f"https://exemple.fr/{i}", title=str(i)) for i in range(3)]
+    provider = FakeProvider(candidats, {c.url: sortie() for c in candidats})
+    provider.usage = Usage(input_tokens=0, output_tokens=0, cost_usd=1.20)
+
+    with SeenStore() as store:
+        result = run(config(max_cost_usd=0.50), provider, store, FakeApi(), log, submit=True)
+
+    assert provider.extracted == []  # aucune page relue après le dépassement
+    assert result.summary.stopped_on_budget is True
+    assert result.summary.submitted == 0
+
+
+def test_limite_reduit_aussi_le_budget_de_recherche():
+    """Un essai à trois sorties ne doit pas payer une découverte pleine taille."""
+    from sortiesbot.config import with_limit
+
+    complet = Config(name="t", theme="x")
+    essai = with_limit(complet, 3)
+    assert essai.max_events == 3
+    assert essai.max_searches < complet.max_searches
+    assert essai.max_fetches < complet.max_fetches
+    assert essai.max_searches >= 2  # mais pas au point de ne rien chercher
+
+
 def test_categorie_inconnue_bascule_sur_le_defaut():
     categories = {"Spectacle": 3, "Non classé": 9}
     assert resolve_category("Ferme pédagogique", categories, "Non classé") == 9

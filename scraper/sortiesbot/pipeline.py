@@ -93,6 +93,17 @@ def run(
     for candidate in candidates:
         if len(result.events) >= config.max_events:
             break
+        # Garde-fou : la découverte a pu coûter plus que prévu, et chaque
+        # extraction ajoute au total. Mieux vaut un run écourté qu'une facture
+        # découverte le lendemain.
+        if provider.usage.cost_usd >= config.max_cost_usd:
+            summary.stopped_on_budget = True
+            log.event(
+                "budget",
+                spent=round(provider.usage.cost_usd, 4),
+                limit=config.max_cost_usd,
+            )
+            break
         _process(candidate, config, provider, store, api, log, submit, categories, result)
 
     summary.retained = len(result.events)

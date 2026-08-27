@@ -13,9 +13,15 @@ horizon_days: 7
 
 # Nombre maximum de sorties retenues par run.
 max_events: 20
-# Plafonds des outils serveur : ils bornent le coût d'un run.
-max_searches: 12
-max_fetches: 15
+
+# Plafonds de coût. Pendant un tour, la boucle serveur refacture en entrée
+# tout le contexte accumulé à chacune de ses itérations : chaque page lue est
+# donc payée plusieurs fois. C'est max_page_tokens qui pèse le plus lourd.
+max_searches: 6
+max_fetches: 5
+max_page_tokens: 5000
+# Le run s'arrête s'il dépasse ce coût en jetons (dollars).
+max_cost_usd: 0.50
 
 # Catégorie utilisée quand aucune catégorie du site ne correspond.
 default_category: Non classé
@@ -34,7 +40,12 @@ blocked_domains:
   - pinterest.fr
 
 provider: anthropic
-discovery_model: claude-opus-5
+# Haiku pour les deux étages : le moins cher, et suffisant pour « chercher
+# large puis repérer les pages qui décrivent une sortie précise ». Passer la
+# découverte sur claude-sonnet-5 ou claude-opus-5 si la qualité déçoit —
+# ce sont les seuls à savoir filtrer les résultats avant de les mettre en
+# contexte, ce qui compense une partie de leur prix au jeton.
+discovery_model: claude-haiku-4-5
 extraction_model: claude-haiku-4-5
 
 # Pour personnaliser les prompts, décommentez et modifiez. Les variables

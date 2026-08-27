@@ -44,6 +44,13 @@ python -m sortiesbot --config configs/spectacles-weekend.yaml
 python -m sortiesbot --config configs/spectacles-weekend.yaml --submit
 ```
 
+**Un run dure plusieurs minutes.** L'étage découverte enchaîne une dizaine de
+recherches et de lectures de pages dans un seul appel, côté Anthropic ; il faut
+le laisser aller au bout. La console affiche le temps écoulé en tête de chaque
+ligne et se remplit au fur et à mesure — résumé du raisonnement, puis chaque
+recherche et chaque page ouverte. Si rien n'apparaît pendant plus d'une minute,
+c'est anormal ; sinon, c'est que ça travaille.
+
 | Option | Effet |
 |---|---|
 | `--submit` | propose réellement les sorties (sinon rien n'est envoyé) |
@@ -67,14 +74,14 @@ découverte → filtre (domaines bloqués, URLs déjà vues) → extraction
   → géocodage → construction du payload → photo → soumission
 ```
 
-1. **Découverte** (`claude-opus-5` par défaut) — plusieurs recherches web
+1. **Découverte** (`claude-haiku-4-5` par défaut) — plusieurs recherches web
    variées, puis lecture des pages d'agenda rencontrées pour en tirer les liens
    d'événements. C'est l'étage qui découvre des sites qu'on n'aurait pas listés.
 2. **Filtre** — les domaines bloqués et les URLs déjà traitées lors d'un run
    précédent sont écartées **avant** l'extraction : une page connue ne coûte
    jamais un second jeton. La mémoire est un SQLite dans `state/`.
-3. **Extraction** (`claude-haiku-4-5` par défaut) — une page, une sortie
-   structurée. Tâche bornée, donc un modèle plus modeste suffit.
+3. **Extraction** (`claude-haiku-4-5`) — une page, une sortie structurée.
+   Tâche bornée, dans une conversation neuve.
 4. **Géocodage** — Photon (OpenStreetMap), le même fournisseur que le
    formulaire du site. Une position hors des départements attendus est traitée
    comme un échec : mieux vaut pas de position qu'une position fausse.
@@ -116,6 +123,26 @@ Le choix des modèles est par configuration (`discovery_model`,
 `extraction_model`), ce qui permet de comparer les coûts d'une recherche à
 l'autre.
 
+**Attention en changeant de modèle** : la version des outils serveur en dépend,
+et le script la choisit tout seul (`web_tools_for`).
+
+Le *filtrage dynamique* (`web_search_20260209`) fait écrire au modèle du code
+qui trie les résultats de recherche avant qu'ils n'entrent en contexte. Ça
+repose sur le *programmatic tool calling*, que Haiku 4.5 ne sait pas faire :
+sur lui partent donc `web_search_20250305` et `web_fetch_20250910`, sinon l'API
+répond 400. Même chose pour `thinking: adaptive`, réservé aux modèles 4.6+.
+
+Ce n'est pas un réglage : envoyer la version récente à Haiku obligerait à
+`allowed_callers: ["direct"]`, c'est-à-dire sans filtrage — le comportement de
+la variante de base, avec un piège en plus.
+
+Ce que ça coûte : d'après la mesure d'Anthropic sur des tests de recherche
+agentique, le filtrage dynamique économise **24 % de jetons d'entrée** et
+améliore les résultats de 11 %. Haiku reste donc le moins cher malgré tout
+(1 $/M contre 2 $ pour Sonnet 5 : ~1,5× moins cher une fois le filtrage pris en
+compte), mais c'est bien la qualité de la recherche qu'on met en jeu, pas la
+facture.
+
 ## Tests
 
 ```bash
@@ -130,10 +157,35 @@ ce qui est envoyé (outils serveur, format structuré, reprise après
 
 ## Coût d'un run
 
-Le journal totalise les jetons consommés par étage et leur prix. **La
-facturation des recherches web n'y est pas estimée** — le journal compte les
-recherches lancées, c'est le relevé de la console Anthropic qui fait foi.
-`max_searches`, `max_fetches` et `max_events` bornent un run.
+**C'est le point à surveiller.** Les recherches web coûtent 0,01 $ pièce — une
+broutille. Ce qui coûte, ce sont les jetons d'entrée : pendant un tour, la
+boucle serveur d'Anthropic **refacture tout le contexte accumulé à chacune de
+ses itérations** (jusqu'à dix). Chaque page lue est donc payée plusieurs fois,
+proportionnellement à sa taille.
+
+Les quatre leviers, du plus au moins efficace :
+
+| Levier | Défaut | Effet |
+|---|---|---|
+| `max_page_tokens` | 5 000 | taille d'une page lue à la découverte — le facteur dominant |
+| `max_fetches` | 5 | nombre de pages lues, chacune alourdissant le contexte |
+| `discovery_model` | `claude-haiku-4-5` | 1 $/M en entrée, contre 2 $ pour Sonnet 5 et 5 $ pour Opus 5 |
+| `max_searches` | 6 | 0,01 $ l'unité, plus les résultats en contexte |
+
+Trois garde-fous automatiques :
+
+- **`max_cost_usd`** (0,50 $ par défaut) arrête le run entre deux étages dès
+  que le coût en jetons le dépasse ;
+- **`--limit N`** réduit aussi les budgets de recherche, pas seulement le
+  nombre de sorties : un essai reste un essai ;
+- une **reprise après `pause_turn`** est journalisée avec le coût déjà engagé,
+  et limitée à deux — chaque reprise renvoie tout le contexte accumulé.
+
+Le journal totalise les jetons et leur prix par étage. **La facturation des
+recherches web n'y est pas incluse** (0,01 $ par recherche, à ajouter
+mentalement) : le relevé de la console Anthropic fait foi. Un workspace dédié
+avec un plafond mensuel reste la protection de dernier recours — voir
+`deploy/README.md`.
 
 ## Et ensuite
 

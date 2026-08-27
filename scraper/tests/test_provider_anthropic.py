@@ -1,9 +1,11 @@
 """Forme des requêtes envoyées à l'API Claude, vérifiée hors ligne.
 
 Le SDK est branché sur un serveur HTTP local qui enregistre les corps reçus et
-renvoie des réponses préparées. Ça verrouille ce que le fournisseur envoie
-réellement (outils serveur, format structuré) et sa façon de reprendre un tour
-mis en pause, sans dépenser un jeton ni dépendre du réseau.
+rejoue des réponses préparées, en SSE puisque le fournisseur travaille en
+streaming. Ça verrouille ce que le fournisseur envoie réellement (outils
+serveur, format structuré, raisonnement), sa façon de reprendre un tour mis en
+pause, et surtout le fait que les recherches sont journalisées **pendant**
+l'appel et non à la fin — sans dépenser un jeton ni dépendre du réseau.
 """
 
 from __future__ import annotations
@@ -42,6 +44,48 @@ def text_block(payload: dict) -> dict:
 CANDIDATES = {"candidates": [{"url": "https://exemple.fr/a", "title": "A", "city": "Paris", "reason": "ok"}]}
 
 
+def sse(message: dict) -> bytes:
+    """Sérialise un message en flux d'événements, comme le fait l'API."""
+    lines: list[str] = []
+
+    def emit(payload: dict) -> None:
+        lines.append(f"event: {payload['type']}\ndata: {json.dumps(payload)}\n\n")
+
+    opening = {**message, "content": [], "stop_reason": None}
+    emit({"type": "message_start", "message": opening})
+
+    for index, block in enumerate(message["content"]):
+        kind = block["type"]
+        if kind == "text":
+            emit({"type": "content_block_start", "index": index,
+                  "content_block": {"type": "text", "text": ""}})
+            emit({"type": "content_block_delta", "index": index,
+                  "delta": {"type": "text_delta", "text": block["text"]}})
+        elif kind == "thinking":
+            emit({"type": "content_block_start", "index": index,
+                  "content_block": {"type": "thinking", "thinking": "", "signature": ""}})
+            emit({"type": "content_block_delta", "index": index,
+                  "delta": {"type": "thinking_delta", "thinking": block["thinking"]}})
+            emit({"type": "content_block_delta", "index": index,
+                  "delta": {"type": "signature_delta", "signature": "sig"}})
+        elif kind == "server_tool_use":
+            emit({"type": "content_block_start", "index": index,
+                  "content_block": {**block, "input": {}}})
+            emit({"type": "content_block_delta", "index": index,
+                  "delta": {"type": "input_json_delta",
+                            "partial_json": json.dumps(block["input"])}})
+        else:
+            # Les résultats d'outils serveur arrivent d'un bloc.
+            emit({"type": "content_block_start", "index": index, "content_block": block})
+        emit({"type": "content_block_stop", "index": index})
+
+    emit({"type": "message_delta",
+          "delta": {"stop_reason": message["stop_reason"], "stop_sequence": None},
+          "usage": {"output_tokens": message["usage"]["output_tokens"]}})
+    emit({"type": "message_stop"})
+    return "".join(lines).encode()
+
+
 class FakeApiServer:
     """Sert les réponses dans l'ordre et garde une trace des requêtes."""
 
@@ -54,11 +98,11 @@ class FakeApiServer:
             def do_POST(self):  # noqa: N802 - imposé par BaseHTTPRequestHandler
                 length = int(self.headers.get("Content-Length", 0))
                 outer.requests.append(json.loads(self.rfile.read(length)))
-                body = json.dumps(
+                body = sse(
                     outer.responses.pop(0) if outer.responses else message([text_block(CANDIDATES)])
-                ).encode()
+                )
                 self.send_response(200)
-                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -90,8 +134,9 @@ def provider_for(server: FakeApiServer) -> AnthropicProvider:
 
 def test_forme_de_la_requete_de_decouverte(log):
     server = FakeApiServer([message([text_block(CANDIDATES)])])
+    config = Config(name="t", theme="spectacles", discovery_model="claude-opus-5")
     try:
-        candidates = provider_for(server).discover(Config(name="t", theme="spectacles"), log)
+        candidates = provider_for(server).discover(config, log)
     finally:
         server.close()
 
@@ -101,6 +146,9 @@ def test_forme_de_la_requete_de_decouverte(log):
     assert body["output_config"]["format"]["type"] == "json_schema"
     assert body["tools"][0]["blocked_domains"]  # les domaines bloqués sont transmis
     assert body["system"]
+    # Streaming obligatoire : un tour de découverte dure plusieurs minutes.
+    assert body["stream"] is True
+    assert body["thinking"] == {"type": "adaptive", "display": "summarized"}
 
 
 def test_reprise_apres_pause_turn(log):
@@ -156,8 +204,9 @@ def test_journal_des_recherches_et_des_pages(log):
     assert "https://exemple.fr/agenda" in console
     assert provider.usage.web_searches == 1
     assert provider.usage.web_fetches == 1
-    # Tarif Opus 5 : 1000 jetons d'entrée et 100 de sortie.
-    assert provider.usage.cost_usd == pytest.approx(1000 * 5 / 1e6 + 100 * 25 / 1e6)
+    # Tarif du modèle de découverte par défaut (Haiku 4.5, 1 $ / 5 $ le
+    # million) sur 1000 jetons d'entrée et 100 de sortie.
+    assert provider.usage.cost_usd == pytest.approx(1000 * 1 / 1e6 + 100 * 5 / 1e6)
 
 
 def test_erreur_doutil_serveur_est_journalisee():
@@ -180,6 +229,50 @@ def test_erreur_doutil_serveur_est_journalisee():
         server.close()
 
     assert "max_uses_exceeded" in stream.getvalue()
+
+
+def test_raisonnement_journalise_pendant_lappel():
+    """Le résumé du raisonnement est écrit au fil de l'eau : c'est ce qui
+    montre que le run avance pendant les minutes d'attente."""
+    stream = io.StringIO()
+    log = RunLog(path=None, verbose=True, stream=stream)
+    response = message(
+        [
+            {
+                "type": "thinking",
+                "thinking": "Je vais couvrir les huit départements franciliens.\n"
+                "Puis j'ouvrirai les agendas trouvés pour en tirer des liens.\n",
+                "signature": "sig",
+            },
+            text_block(CANDIDATES),
+        ]
+    )
+    server = FakeApiServer([response])
+    try:
+        provider_for(server).discover(Config(name="t", theme="spectacles"), log)
+    finally:
+        server.close()
+
+    console = stream.getvalue()
+    assert "huit départements franciliens" in console
+    # Et le raisonnement précède le décompte de jetons de fin de tour.
+    assert console.index("départements") < console.index("jetons")
+
+
+def test_outils_et_thinking_suivent_le_modele(log):
+    """Le filtrage dynamique et `thinking: adaptive` réclament un modèle 4.6+ :
+    sur Haiku, il faut les variantes de base et pas de `thinking`, sinon
+    l'API répond 400."""
+    server = FakeApiServer([message([text_block(CANDIDATES)])])
+    config = Config(name="t", theme="x", discovery_model="claude-haiku-4-5")
+    try:
+        provider_for(server).discover(config, log)
+    finally:
+        server.close()
+
+    body = server.requests[0]
+    assert [t["type"] for t in body["tools"]] == ["web_search_20250305", "web_fetch_20250910"]
+    assert "thinking" not in body
 
 
 def test_extraction_lit_une_url_precise(log):
@@ -215,5 +308,6 @@ def test_extraction_lit_une_url_precise(log):
 
     assert event.relevant and event.age_min == 3 and event.setting == "INDOOR"
     body = server.requests[0]
-    assert [t["type"] for t in body["tools"]] == ["web_fetch_20260209"]
+    # L'extraction tourne sur Haiku par défaut : variante de base obligatoire.
+    assert [t["type"] for t in body["tools"]] == ["web_fetch_20250910"]
     assert "https://exemple.fr/a" in body["messages"][0]["content"]
