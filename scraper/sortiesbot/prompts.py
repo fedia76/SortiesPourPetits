@@ -1,67 +1,79 @@
-"""
-Gabarits de prompts par défaut.
+"""Gabarits de prompts par défaut, un par appel du pipeline.
 
-Chaque configuration peut les remplacer intégralement (clés `discovery_prompt`
-et `extraction_prompt` du YAML) : c'est le point d'entrée pour ajuster la
-recherche sans toucher au code. Les variables sont substituées par
+Chaque configuration peut les remplacer intégralement (clés `search_prompt`,
+`select_prompt`, `extraction_prompt` du YAML) : c'est le point d'entrée pour
+ajuster la recherche sans toucher au code. Les variables sont substituées par
 `string.Template`, donc elles s'écrivent `$theme` et les accolades JSON du
 texte n'ont pas besoin d'être échappées.
 
-Variables disponibles :
-  découverte  $theme $area $period $today $date_from $date_to $max_events
-              $max_searches $max_fetches
+Trois appels, trois tâches bornées — plutôt qu'un seul appel à qui l'on
+demanderait de dérouler toute une procédure :
+
+  recherche   $theme $area $period $today $date_from $date_to $max_searches
+  sélection   $theme $area $date_from $date_to $today $page $max_links
   extraction  $url $today $categories
 """
 
-DISCOVERY = """\
-Tu cherches des idées de sorties à faire avec des enfants, pour un site
+SEARCH = """\
+Tu prépares une collecte de sorties à faire avec des enfants, pour un site
 communautaire francophone.
 
 Recherche demandée : $theme
 Zone géographique : $area
 Période : $period (du $date_from au $date_to — nous sommes le $today)
 
-**Règle absolue** : chaque URL que tu renvoies doit provenir d'un résultat de
-recherche ou d'une page que tu as ouverte pendant ce tour. N'écris jamais une
-adresse de mémoire, même si elle te semble évidente : les sites réorganisent
-leurs pages, une URL mémorisée est presque toujours morte, et elle sera
-rejetée.
+Lance $max_searches recherches web variées, en changeant les formulations et
+en couvrant les différents départements de la zone. Une seule requête ne
+ramène qu'une seule bulle de résultats.
 
-Procède dans cet ordre :
-1. Commence par lancer $max_searches recherches web — tu en as le quota,
-   sers-t'en entièrement — en changeant les formulations et en couvrant les
-   différents départements de la zone. Une seule requête ne ramène qu'une
-   seule bulle de résultats. Sans recherche, ta réponse est inutilisable.
-2. Tes recherches vont remonter presque exclusivement des agendas, des
-   annuaires et des « que faire ce week-end ». C'est normal et c'est attendu :
-   ce sont ton point de départ, pas ton résultat. Ouvre-en jusqu'à
-   $max_fetches — cette étape n'est pas facultative, c'est elle qui fait tout
-   le travail — et relève dedans les liens vers les pages d'événement.
-3. Ce qu'on attend en sortie, ce sont les URL de pages décrivant UNE sortie
-   précise — un événement, un lieu, un spectacle. Les liens relevés à
-   l'intérieur des agendas que tu viens d'ouvrir sont exactement ça. Une page
-   de liste, une billetterie générique ou un article qui compile dix idées
-   n'en est pas une.
+Puis désigne, parmi les résultats obtenus, les pages à ouvrir : celles qui
+**listent des événements** avec leurs dates — agendas départementaux,
+« que faire ce week-end », programmations de saison. Ce sont elles qui
+contiennent les liens vers les sorties elles-mêmes.
 
-Ces deux quotas sont durs : une fois épuisés, tout nouvel appel échoue. Si ça
-arrive, n'insiste pas et ne réessaie pas — conclus immédiatement avec ce que
-tu as déjà lu. Chaque tentative supplémentaire coûte cher et ne rapporte rien.
+Écarte les billetteries généralistes, les annuaires de prestataires pour
+fêtes privées, les articles de blog sans dates, et tout ce qui est hors zone.
 
-Renvoie au plus $max_events candidats, triés du plus au moins prometteur.
-Écarte tout ce qui est hors zone, hors période, payant pour les adultes
-seulement, ou manifestement inadapté aux enfants.
+Ne cherche pas à identifier les sorties maintenant : leur contenu sera lu
+séparément. Ton seul travail ici est de choisir les bonnes pages d'agenda.
+N'écris aucune URL de mémoire — uniquement celles que les recherches ont
+remontées.
+"""
 
-Si aucune page d'événement individuelle ne ressort — pages refusées, agendas
-peu fournis, résultats hors sujet — ne renvoie pas une liste vide : donne les
-meilleures pages **parmi celles que tes recherches ont remontées**, en
-expliquant la réserve dans `reason`. Une piste imparfaite se trie ensuite ;
-une liste vide ne s'exploite pas.
+SELECT = """\
+Voici les liens relevés sur une page d'agenda de sorties : $page
+
+Recherche en cours : $theme
+Zone : $area — période : du $date_from au $date_to (nous sommes le $today)
+
+Chaque ligne donne le texte du lien puis, après « | », le texte qui l'entoure
+sur la page — c'est là que se trouvent en général la date et le lieu.
+
+$links
+
+Retiens les numéros des liens qui mènent à la page d'UNE sortie précise
+correspondant à la recherche, à la zone et à la période. Au plus $max_links.
+
+Écarte :
+- les liens de navigation, de catégorie ou de pagination ;
+- les sorties dont le contexte indique clairement une date hors période ;
+- les sorties manifestement hors zone ;
+- ce qui ne correspond pas au thème demandé.
+
+Dans le doute sur une date ou un lieu que le contexte n'indique pas, retiens
+le lien : la page sera lue ensuite et pourra encore être écartée.
+
+Réponds uniquement avec les numéros retenus.
 """
 
 EXTRACTION = """\
-Lis la page $url et décris la sortie pour enfants qu'elle présente.
+Voici le contenu de la page $url, telle qu'elle est aujourd'hui, $today.
 
-Nous sommes le $today.
+--- début de la page ---
+$content
+--- fin de la page ---
+
+Décris la sortie pour enfants que cette page présente.
 
 Règles :
 - `relevant` vaut false si la page ne décrit pas une sortie précise adaptée
@@ -79,8 +91,8 @@ Règles :
   sortie est ouverte toute l'année, mets `permanent` à true et laisse les
   dates vides.
 - `category` doit être choisie parmi : $categories
-- `photo_url` : l'URL absolue d'une photo représentative de la page (souvent
-  l'image de partage), ou vide.
+- `photo_url` : l'URL absolue d'une photo représentative si la page en donne
+  une, sinon vide.
 
 Ne renseigne que ce que la page dit réellement : un champ inconnu reste vide.
 """

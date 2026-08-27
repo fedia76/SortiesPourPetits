@@ -14,16 +14,15 @@ horizon_days: 7
 # Nombre maximum de sorties retenues par run.
 max_events: 20
 
-# Plafonds de coût. Pendant un tour, la boucle serveur refacture en entrée
-# tout le contexte accumulé à chacune de ses itérations : chaque page lue est
-# donc payée plusieurs fois. C'est max_page_tokens qui pèse le plus lourd.
+# Recherches web (0,01 $ pièce). Les pages d'agenda, elles, sont téléchargées
+# en Python : elles ne coûtent rien, d'où un plafond confortable.
 max_searches: 6
-max_fetches: 5
-max_page_tokens: 5000
-# Plafond de coût du run (dollars), vérifié entre deux extractions. À poser
-# au-dessus du coût d'une découverte (~0,55 $ sur Sonnet 5), sinon le run
-# s'arrête juste après l'avoir payée.
-max_cost_usd: 1.50
+max_agendas: 6
+max_links_per_agenda: 8
+# Caractères de page transmis au modèle pour remplir une fiche de sortie.
+max_page_chars: 8000
+# Plafond de coût du run, vérifié avant chaque appel payant.
+max_cost_usd: 1.00
 
 # Catégorie utilisée quand aucune catégorie du site ne correspond.
 default_category: Non classé
@@ -42,20 +41,20 @@ blocked_domains:
   - pinterest.fr
 
 provider: anthropic
-# La découverte est une tâche en plusieurs temps : chercher, ouvrir les
-# agendas, en tirer des liens, trier. Haiku 4.5 s'y arrête après la première
-# étape (essayé : il cherche puis conclut sans rien ouvrir), d'où Sonnet 5.
-# L'extraction, elle, est bornée — une page, une sortie — et Haiku y suffit.
-discovery_model: claude-sonnet-5
+# Les trois appels sont bornés — chercher, trier des liens, remplir une fiche.
+# Aucun ne demande de dérouler une procédure, donc Haiku suffit partout.
+search_model: claude-haiku-4-5
+select_model: claude-haiku-4-5
 extraction_model: claude-haiku-4-5
 
 # Pour personnaliser les prompts, décommentez et modifiez. Les variables
 # disponibles sont listées dans sortiesbot/prompts.py.
 #
-# discovery_prompt: |
-#   Tu cherches ...
-#   Recherche demandée : $theme
-#   Zone : $area — période : $period (du $date_from au $date_to)
+# search_prompt: |
+#   Lance $max_searches recherches ...
+#
+# select_prompt: |
+#   Voici les liens de $page ... $links
 #
 # extraction_prompt: |
-#   Lis la page $url et ...
+#   Voici le contenu de $url : $content

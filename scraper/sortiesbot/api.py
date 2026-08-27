@@ -9,7 +9,8 @@ humaine.
 from __future__ import annotations
 
 import json
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 import requests
 
@@ -17,7 +18,17 @@ _TIMEOUT = 30
 
 
 class ApiError(RuntimeError):
-    """Erreur remontée par l'API, avec son message tel quel."""
+    """Erreur remontée par l'API, ou impossibilité de la joindre."""
+
+
+@contextmanager
+def _as_api_error() -> Iterator[None]:
+    """Un site injoignable est une erreur d'API comme une autre : le pipeline
+    sait la traiter, alors qu'une exception réseau brute ferait tomber le run."""
+    try:
+        yield
+    except requests.RequestException as err:
+        raise ApiError(f"API injoignable : {err.__class__.__name__}") from err
 
 
 class SppApi:
@@ -44,7 +55,8 @@ class SppApi:
 
     def categories(self) -> dict[str, int]:
         """Catégories existantes, indexées par nom (route publique)."""
-        response = self.session.get(f"{self.base_url}/api/categories", timeout=_TIMEOUT)
+        with _as_api_error():
+            response = self.session.get(f"{self.base_url}/api/categories", timeout=_TIMEOUT)
         body = self._check(response)
         return {c["name"]: c["id"] for c in body.get("categories", [])}
 
@@ -64,21 +76,30 @@ class SppApi:
         headers = self._headers(authenticated=True)
         url = f"{self.base_url}/api/events"
 
+        with _as_api_error():
+            response = self._post(url, headers, data, photo)
+        body = self._check(response)
+        return body.get("event", {})
+
+    def _post(
+        self,
+        url: str,
+        headers: dict[str, str],
+        data: str,
+        photo: tuple[str, bytes, str] | None,
+    ) -> requests.Response:
         if photo is None:
-            response = self.session.post(
+            return self.session.post(
                 url,
                 headers={**headers, "Content-Type": "application/json"},
                 data=json.dumps({"data": data}).encode("utf-8"),
                 timeout=_TIMEOUT,
             )
-        else:
-            filename, content, mime = photo
-            response = self.session.post(
-                url,
-                headers=headers,
-                data={"data": data},
-                files={"photo": (filename, content, mime)},
-                timeout=_TIMEOUT,
-            )
-        body = self._check(response)
-        return body.get("event", {})
+        filename, content, mime = photo
+        return self.session.post(
+            url,
+            headers=headers,
+            data={"data": data},
+            files={"photo": (filename, content, mime)},
+            timeout=_TIMEOUT,
+        )

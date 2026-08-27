@@ -11,22 +11,22 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class Agenda:
+    """Une page qui liste des événements, à ouvrir pour en tirer des liens."""
+
+    url: str
+    title: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class Candidate:
-    """Une page repérée à l'étage découverte, pas encore lue en détail."""
+    """Une page de sortie repérée dans un agenda, pas encore lue en détail."""
 
     url: str
     title: str
-    city: str = ""
-    reason: str = ""
-
-    @classmethod
-    def from_json(cls, data: dict[str, Any]) -> "Candidate":
-        return cls(
-            url=str(data.get("url", "")).strip(),
-            title=str(data.get("title", "")).strip(),
-            city=str(data.get("city", "")).strip(),
-            reason=str(data.get("reason", "")).strip(),
-        )
+    source: str = ""
+    context: str = ""
 
 
 @dataclass(frozen=True)
@@ -128,12 +128,6 @@ class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
     web_searches: int = 0
-    #: Pages demandées, succès ou non — c'est ce que le quota `max_uses` compte.
-    web_fetches: int = 0
-    #: Pages effectivement lues. L'écart avec `web_fetches`, ce sont les pages
-    #: refusées (robots.txt, filtrage de domaine) : elles consomment le quota
-    #: sans rien rapporter.
-    pages_read: int = 0
     #: Coût des jetons. Les recherches web se facturent à part (voir total_usd).
     cost_usd: float = 0.0
 
@@ -141,8 +135,6 @@ class Usage:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.web_searches += other.web_searches
-        self.web_fetches += other.web_fetches
-        self.pages_read += other.pages_read
         self.cost_usd += other.cost_usd
 
     @property
@@ -159,8 +151,6 @@ class Usage:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "web_searches": self.web_searches,
-            "web_fetches": self.web_fetches,
-            "pages_read": self.pages_read,
             "token_cost_usd": round(self.cost_usd, 4),
             "search_cost_usd": round(self.search_cost_usd, 4),
             "total_usd": round(self.total_usd, 4),
@@ -172,6 +162,8 @@ class Summary:
     """Compteurs d'un run, repris tels quels par la console d'administration."""
 
     candidates: int = 0
+    #: Pages d'agenda téléchargées et dépouillées (gratuit).
+    pages: int = 0
     retained: int = 0
     skipped_seen: int = 0
     skipped_blocked: int = 0
@@ -188,6 +180,7 @@ class Summary:
     def as_dict(self) -> dict[str, Any]:
         return {
             "candidates": self.candidates,
+            "pages": self.pages,
             "retained": self.retained,
             "skipped_seen": self.skipped_seen,
             "skipped_blocked": self.skipped_blocked,

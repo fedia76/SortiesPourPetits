@@ -45,28 +45,27 @@ class Config:
     period: str = "les prochaines semaines"
     horizon_days: int = 30
     max_events: int = 20
-    # Plafonds passés aux outils serveur. Ils comptent bien plus qu'il n'y
-    # paraît : pendant un tour, la boucle serveur refacture en entrée tout le
-    # contexte accumulé à CHACUNE de ses itérations. Chaque page lue est donc
-    # payée plusieurs fois, et c'est `max_page_tokens` qui pèse le plus lourd.
+    #: Recherches web lancées (0,01 $ pièce, plus les résultats en contexte).
     max_searches: int = 6
-    max_fetches: int = 5
-    #: Taille maximale d'une page lue à la découverte. On n'y cherche que des
-    #: liens et des titres, mais trop court tronque la page avant sa liste
-    #: d'événements — c'est-à-dire avant ce qu'on est venu chercher.
-    max_page_tokens: int = 12_000
-    #: Plafond de coût du run, en dollars. Vérifié entre deux extractions,
-    #: donc il n'interrompt jamais la découverte en cours : il faut le poser
-    #: au-dessus de ce qu'une découverte coûte (~0,55 $ mesuré sur Sonnet 5),
-    #: sinon le run s'arrête juste après l'avoir payée sans rien en faire.
-    max_cost_usd: float = 1.50
+    #: Pages d'agenda ouvertes. Elles sont téléchargées en Python : gratuites.
+    max_agendas: int = 6
+    #: Liens retenus par agenda, pour ne pas noyer l'étage extraction.
+    max_links_per_agenda: int = 8
+    #: Caractères de page transmis au modèle à l'extraction (~4 jetons pour
+    #: 3 caractères en français).
+    max_page_chars: int = 8_000
+    #: Plafond de coût du run, en dollars. Vérifié avant chaque appel payant.
+    max_cost_usd: float = 1.00
     default_category: str = "Non classé"
     postal_prefixes: list[str] = field(default_factory=lambda: list(IDF_POSTAL_PREFIXES))
     blocked_domains: list[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS))
     provider: str = "anthropic"
-    discovery_model: str = "claude-sonnet-5"
+    #: Chacun des trois appels est borné : Haiku suffit partout.
+    search_model: str = "claude-haiku-4-5"
+    select_model: str = "claude-haiku-4-5"
     extraction_model: str = "claude-haiku-4-5"
-    discovery_prompt: str = prompts.DISCOVERY
+    search_prompt: str = prompts.SEARCH
+    select_prompt: str = prompts.SELECT
     extraction_prompt: str = prompts.EXTRACTION
 
     @property
@@ -77,25 +76,35 @@ class Config:
     def date_to(self) -> date:
         return date.today() + timedelta(days=self.horizon_days)
 
-    def render_discovery(self) -> str:
-        return Template(self.discovery_prompt).safe_substitute(
+    def render_search(self) -> str:
+        return Template(self.search_prompt).safe_substitute(
             theme=self.theme,
             area=self.area,
             period=self.period,
             today=date.today().isoformat(),
             date_from=self.date_from.isoformat(),
             date_to=self.date_to.isoformat(),
-            max_events=self.max_events,
-            # Le prompt doit annoncer le même quota que celui imposé aux
-            # outils : sinon le modèle tente des recherches qui échouent en
-            # `max_uses_exceeded`.
+            # Le prompt annonce le même quota que celui imposé à l'outil,
+            # sinon le modèle tente des recherches qui échouent.
             max_searches=self.max_searches,
-            max_fetches=self.max_fetches,
         )
 
-    def render_extraction(self, url: str, categories: list[str]) -> str:
+    def render_select(self, page: str, links: str) -> str:
+        return Template(self.select_prompt).safe_substitute(
+            page=page,
+            links=links,
+            theme=self.theme,
+            area=self.area,
+            today=date.today().isoformat(),
+            date_from=self.date_from.isoformat(),
+            date_to=self.date_to.isoformat(),
+            max_links=self.max_links_per_agenda,
+        )
+
+    def render_extraction(self, url: str, content: str, categories: list[str]) -> str:
         return Template(self.extraction_prompt).safe_substitute(
             url=url,
+            content=content,
             today=date.today().isoformat(),
             categories=", ".join(categories) if categories else self.default_category,
         )
@@ -152,9 +161,9 @@ def with_limit(config: Config, limit: int | None) -> Config:
         config,
         max_events=events,
         max_searches=max(2, round(config.max_searches * ratio)),
-        # Plancher à trois pages : une page refusée (robots.txt) ou pauvre en
-        # liens ne doit pas suffire à faire échouer toute la découverte.
-        max_fetches=max(3, round(config.max_fetches * ratio)),
+        # Plancher à deux agendas : un site refusé par robots.txt ou pauvre en
+        # liens ne doit pas suffire à faire échouer tout le run.
+        max_agendas=max(2, round(config.max_agendas * ratio)),
     )
 
 
@@ -205,7 +214,10 @@ def describe(config: Config) -> dict[str, Any]:
         "date_from": config.date_from.isoformat(),
         "date_to": config.date_to.isoformat(),
         "max_events": config.max_events,
+        "max_searches": config.max_searches,
+        "max_agendas": config.max_agendas,
         "provider": config.provider,
-        "discovery_model": config.discovery_model,
+        "search_model": config.search_model,
+        "select_model": config.select_model,
         "extraction_model": config.extraction_model,
     }
