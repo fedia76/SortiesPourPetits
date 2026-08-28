@@ -98,6 +98,11 @@ Règles :
 - Les dates sont au format AAAA-MM-JJ, les horaires au format HH:MM. Si la
   sortie est ouverte toute l'année, mets `permanent` à true et laisse les
   dates vides.
+- Une page qui n'annonce qu'une date de fin — « jusqu'au 23 octobre », « à
+  l'affiche jusqu'au 8 novembre » — décrit une sortie **en cours** : mets
+  $today dans `date_start` et la date annoncée dans `date_end`. Ne fabrique
+  jamais une date de début proche de la fin : « jusqu'au 23 octobre » ne veut
+  pas dire « du 22 au 23 octobre ».
 - `date_start` et `date_end` bornent la sortie. Mais une sortie ne se tient
   pas forcément tous les jours de cette plage, et c'est ce qui compte pour un
   parent qui cherche une date précise :
