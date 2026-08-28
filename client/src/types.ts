@@ -110,3 +110,94 @@ export const STATUS_LABELS: Record<EventStatus, string> = {
   APPROVED: 'Approuvée',
   REJECTED: 'Refusée',
 };
+
+export type ScraperRunStatus = 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED';
+
+export const RUN_STATUS_LABELS: Record<ScraperRunStatus, string> = {
+  QUEUED: 'En file',
+  RUNNING: 'En cours',
+  DONE: 'Terminée',
+  FAILED: 'En échec',
+};
+
+/**
+ * Une recherche paramétrée du scraper. Thème, période et zone orientent la
+ * recherche ; ils ne filtrent pas le résultat quand `keepOutOfScope` est vrai,
+ * parce qu'une page déjà lue est déjà payée.
+ */
+export interface ScraperConfig {
+  id: number;
+  name: string;
+  enabled: boolean;
+  theme: string;
+  area: string;
+  period: string;
+  horizonDays: number;
+  maxEvents: number;
+  maxSearches: number;
+  maxAgendas: number;
+  maxLinksPerAgenda: number;
+  maxPageChars: number;
+  maxCostUsd: number;
+  keepOutOfScope: boolean;
+  defaultCategory: string;
+  postalPrefixes: string;
+  blockedDomains: string;
+  searchModel: string;
+  selectModel: string;
+  extractionModel: string;
+  searchPrompt: string | null;
+  selectPrompt: string | null;
+  extractionPrompt: string | null;
+  createdAt: string;
+  _count?: { runs: number };
+  runs?: Pick<ScraperRun, 'id' | 'status' | 'queuedAt' | 'finishedAt' | 'retained'>[];
+}
+
+export interface ScraperRun {
+  id: number;
+  status: ScraperRunStatus;
+  submit: boolean;
+  queuedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+  candidates: number;
+  pages: number;
+  retained: number;
+  submitted: number;
+  duplicates: number;
+  skipped: number;
+  errors: number;
+  inputTokens: number;
+  outputTokens: number;
+  webSearches: number;
+  costUsd: number;
+  config?: { id: number; name: string };
+  requestedBy?: { id: number; displayName: string } | null;
+  items?: ScraperRunItem[];
+}
+
+export interface ScraperRunItem {
+  id: number;
+  url: string;
+  title: string | null;
+  decision: string;
+  reason: string | null;
+  eventId: number | null;
+  at: string;
+}
+
+/** Ce que le scraper a décidé d'une page, en clair. */
+export const DECISION_LABELS: Record<string, string> = {
+  submitted: 'Proposée au site',
+  dry_run: 'Retenue (essai)',
+  duplicate: 'Doublon',
+  irrelevant: 'Pas une sortie',
+  invalid: 'Inexploitable',
+  out_of_period: 'Hors période',
+  out_of_area: 'Hors zone',
+  seen: 'Déjà connue',
+  blocked: 'Domaine bloqué',
+  error: 'Erreur',
+};

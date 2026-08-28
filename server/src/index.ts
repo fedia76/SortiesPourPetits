@@ -8,6 +8,7 @@ import { eventsRouter } from './routes/events';
 import { moderationRouter } from './routes/moderation';
 import { adminRouter } from './routes/admin';
 import { categoriesRouter } from './routes/categories';
+import { scraperRouter } from './routes/scraper';
 import { apiKeysRouter } from './routes/apiKeys';
 
 const app = express();
@@ -45,6 +46,7 @@ app.use('/api/moderation', moderationRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/keys', apiKeysRouter);
+app.use('/api/scraper', scraperRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
