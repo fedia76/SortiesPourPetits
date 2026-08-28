@@ -4,8 +4,10 @@ Le SDK est branché sur un serveur HTTP local qui enregistre les corps reçus et
 rejoue des réponses préparées, en SSE puisque le fournisseur travaille en
 streaming. Ça verrouille ce que le fournisseur envoie réellement (outils
 serveur, format structuré, raisonnement), sa façon de reprendre un tour mis en
-pause, et surtout le fait que les recherches sont journalisées **pendant**
-l'appel et non à la fin — sans dépenser un jeton ni dépendre du réseau.
+pause, et surtout qu'aucun des trois appels ne dépasse ce qu'il doit faire :
+la recherche est le seul à recevoir un outil, la sélection ne rend que des
+numéros, l'extraction reçoit sa page en clair. Sans dépenser un jeton ni
+dépendre du réseau.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import pytest
 anthropic = pytest.importorskip("anthropic")
 
 from sortiesbot.config import Config
+from sortiesbot.harvest import Link
 from sortiesbot.journal import RunLog
 from sortiesbot.providers.anthropic_provider import AnthropicProvider
 
@@ -41,7 +44,7 @@ def text_block(payload: dict) -> dict:
     return {"type": "text", "text": json.dumps(payload)}
 
 
-CANDIDATES = {"candidates": [{"url": "https://exemple.fr/a", "title": "A", "city": "Paris", "reason": "ok"}]}
+AGENDAS = {"agendas": [{"url": "https://agenda.fr/jeune-public/", "title": "Agenda 92", "reason": "liste des spectacles"}]}
 
 
 def search_for(*urls: str, tool_use_id: str = "s1") -> list[dict]:
@@ -113,7 +116,7 @@ class FakeApiServer:
                 length = int(self.headers.get("Content-Length", 0))
                 outer.requests.append(json.loads(self.rfile.read(length)))
                 body = sse(
-                    outer.responses.pop(0) if outer.responses else message([text_block(CANDIDATES)])
+                    outer.responses.pop(0) if outer.responses else message([text_block(AGENDAS)])
                 )
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -146,292 +149,171 @@ def provider_for(server: FakeApiServer) -> AnthropicProvider:
     return AnthropicProvider(client=client)
 
 
-def test_forme_de_la_requete_de_decouverte(log):
+def test_la_recherche_ne_recoit_que_web_search(log):
     server = FakeApiServer(
-        [message(search_for("https://exemple.fr/a") + [text_block(CANDIDATES)])]
+        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(AGENDAS)])]
     )
-    config = Config(name="t", theme="spectacles", discovery_model="claude-opus-5")
     try:
-        candidates = provider_for(server).discover(config, log)
+        agendas = provider_for(server).search(Config(name="t", theme="spectacles"), log)
     finally:
         server.close()
 
-    assert [c.url for c in candidates] == ["https://exemple.fr/a"]
+    assert [a.url for a in agendas] == ["https://agenda.fr/jeune-public/"]
     body = server.requests[0]
-    assert [t["type"] for t in body["tools"]] == ["web_search_20260209", "web_fetch_20260209"]
+    # Un seul outil, et la variante de base : on ne fait plus lire de pages au
+    # modèle, le filtrage dynamique n'a plus d'objet.
+    assert [t["type"] for t in body["tools"]] == ["web_search_20250305"]
     assert body["output_config"]["format"]["type"] == "json_schema"
-    assert body["tools"][0]["blocked_domains"]  # les domaines bloqués sont transmis
-    assert body["system"]
-    # Streaming obligatoire : un tour de découverte dure plusieurs minutes.
     assert body["stream"] is True
-    assert body["thinking"] == {"type": "adaptive", "display": "summarized"}
 
 
-def test_reprise_apres_pause_turn(log):
-    paused = message(
-        [{"type": "server_tool_use", "id": "srv_1", "name": "web_search", "input": {"query": "spectacle enfant"}}],
-        stop_reason="pause_turn",
-    )
-    server = FakeApiServer(
-        [paused, message(search_for("https://exemple.fr/a") + [text_block(CANDIDATES)])]
-    )
-    try:
-        candidates = provider_for(server).discover(Config(name="t", theme="spectacles"), log)
-    finally:
-        server.close()
-
-    assert len(candidates) == 1
-    assert len(server.requests) == 2
-    # La reprise renvoie le tour en cours, sans message utilisateur ajouté.
-    roles = [m["role"] for m in server.requests[1]["messages"]]
-    assert roles == ["user", "assistant"]
-
-
-def test_journal_des_recherches_et_des_pages(log):
+def test_agenda_invente_est_rejete():
+    """Le modèle propose une page qu'aucune recherche n'a remontée."""
     stream = io.StringIO()
     log = RunLog(path=None, verbose=True, stream=stream)
-    response = message(
-        [
-            {"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {"query": "spectacle enfant Paris"}},
-            {
-                "type": "web_search_tool_result",
-                "tool_use_id": "s1",
-                "content": [
-                    {
-                        "type": "web_search_result",
-                        "url": "https://exemple.fr/agenda",
-                        "title": "Agenda",
-                        "encrypted_content": "x",
-                        "page_age": None,
-                    }
-                ],
-            },
-            {"type": "server_tool_use", "id": "f1", "name": "web_fetch", "input": {"url": "https://exemple.fr/agenda"}},
-            text_block(CANDIDATES),
-        ]
-    )
-    server = FakeApiServer([response])
-    try:
-        provider = provider_for(server)
-        provider.discover(Config(name="t", theme="spectacles"), log)
-    finally:
-        server.close()
-
-    console = stream.getvalue()
-    assert "spectacle enfant Paris" in console
-    assert "https://exemple.fr/agenda" in console
-    assert provider.usage.web_searches == 1
-    assert provider.usage.web_fetches == 1
-    # Tarif du modèle de découverte par défaut (Sonnet 5, 2 $ / 10 $ le
-    # million) sur 1000 jetons d'entrée et 100 de sortie…
-    assert provider.usage.cost_usd == pytest.approx(1000 * 2 / 1e6 + 100 * 10 / 1e6)
-    # …plus la recherche web, facturée à part (0,01 $ pièce).
-    assert provider.usage.search_cost_usd == pytest.approx(0.01)
-    assert provider.usage.total_usd == pytest.approx(provider.usage.cost_usd + 0.01)
-
-
-def test_page_refusee_est_nommee_et_ne_compte_pas_comme_lue():
-    """Une page bloquée par robots.txt consomme le quota sans rien rapporter :
-    le journal doit dire laquelle, et ne pas la compter comme lue."""
-    stream = io.StringIO()
-    log = RunLog(path=None, verbose=True, stream=stream)
-    response = message(
-        [
-            {"type": "server_tool_use", "id": "f1", "name": "web_fetch",
-             "input": {"url": "https://interdit.fr/agenda"}},
-            {"type": "web_fetch_tool_result", "tool_use_id": "f1",
-             "content": {"type": "web_fetch_tool_result_error", "error_code": "url_not_allowed"}},
-            {"type": "server_tool_use", "id": "f2", "name": "web_fetch",
-             "input": {"url": "https://ouvert.fr/agenda"}},
-            {"type": "web_fetch_tool_result", "tool_use_id": "f2",
-             "content": {"type": "web_fetch_result", "url": "https://ouvert.fr/agenda",
-                         "content": {"type": "document",
-                                     "source": {"type": "text", "media_type": "text/plain",
-                                                "data": "des liens"}},
-                         "retrieved_at": "2026-08-27T10:00:00Z"}},
-            text_block(CANDIDATES),
-        ]
-    )
-    server = FakeApiServer([response])
-    try:
-        provider = provider_for(server)
-        provider.discover(Config(name="t", theme="x"), log)
-    finally:
-        server.close()
-
-    console = stream.getvalue()
-    assert "url_not_allowed" in console
-    assert "https://interdit.fr/agenda" in console  # la page fautive est nommée
-    assert provider.usage.web_fetches == 2  # deux tentatives, deux quotas consommés
-    assert provider.usage.pages_read == 1  # mais une seule page réellement lue
-
-
-def test_url_inventee_est_rejetee():
-    """Le modèle renvoie une URL qu'aucune recherche n'a remontée : c'est un
-    souvenir, presque toujours mort. On ne paiera pas une extraction dessus."""
-    stream = io.StringIO()
-    log = RunLog(path=None, verbose=True, stream=stream)
-    inventee = {"candidates": [
-        {"url": "https://exemple.fr/a", "title": "vue", "city": "", "reason": ""},
-        {"url": "https://paris.fr/listing/9475", "title": "inventée", "city": "", "reason": ""},
+    invente = {"agendas": [
+        {"url": "https://agenda.fr/jeune-public/", "title": "vu", "reason": ""},
+        {"url": "https://paris.fr/listing/9475", "title": "inventé", "reason": ""},
     ]}
     server = FakeApiServer(
-        [message(search_for("https://exemple.fr/a") + [text_block(inventee)])]
+        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(invente)])]
     )
     try:
-        candidates = provider_for(server).discover(Config(name="t", theme="x"), log)
+        agendas = provider_for(server).search(Config(name="t", theme="x"), log)
     finally:
         server.close()
 
-    assert [c.url for c in candidates] == ["https://exemple.fr/a"]
-    assert "inventée par le modèle" in stream.getvalue()
+    assert [a.url for a in agendas] == ["https://agenda.fr/jeune-public/"]
+    assert "absente des résultats" in stream.getvalue()
 
 
 def test_reponse_de_memoire_sans_aucune_recherche_est_rejetee():
-    """Zéro recherche, zéro page : tout ce que le modèle propose vient de sa
-    mémoire. On jette le lot plutôt que de payer des extractions."""
     stream = io.StringIO()
     log = RunLog(path=None, verbose=True, stream=stream)
-    server = FakeApiServer([message([text_block(CANDIDATES)])])
+    server = FakeApiServer([message([text_block(AGENDAS)])])
     try:
-        candidates = provider_for(server).discover(Config(name="t", theme="x"), log)
+        agendas = provider_for(server).search(Config(name="t", theme="x"), log)
     finally:
         server.close()
 
-    assert candidates == []
+    assert agendas == []
     assert "aucune recherche lancée" in stream.getvalue()
 
 
-def test_lien_trouve_dans_une_page_ouverte_est_accepte():
-    """Une page d'événement repérée DANS un agenda ouvert est exactement ce
-    qu'on cherche : le filtre ne doit pas la confondre avec une invention."""
-    stream = io.StringIO()
-    log = RunLog(path=None, verbose=True, stream=stream)
-    dans_la_page = {"candidates": [
-        {"url": "https://theatre.fr/le-petit-chaperon", "title": "Spectacle", "city": "", "reason": ""},
-    ]}
-    server = FakeApiServer([message(
-        search_for("https://agenda.fr/week-end")
-        + [
-            {"type": "server_tool_use", "id": "f1", "name": "web_fetch",
-             "input": {"url": "https://agenda.fr/week-end"}},
-            {"type": "web_fetch_tool_result", "tool_use_id": "f1",
-             "content": {"type": "web_fetch_result", "url": "https://agenda.fr/week-end",
-                         "content": {"type": "document",
-                                     "source": {"type": "text", "media_type": "text/plain",
-                                                "data": "Au programme : "
-                                                        "https://theatre.fr/le-petit-chaperon"}},
-                         "retrieved_at": "2026-08-27T10:00:00Z"}},
-            text_block(dans_la_page),
-        ]
-    )])
+def test_la_selection_ne_rend_que_des_numeros(log):
+    """Le modèle choisit par index : il ne peut pas inventer d'URL, et sa
+    réponse tient en quelques jetons."""
+    liens = [
+        Link(text="Le Petit Chaperon", url="https://agenda.fr/a.html", context="le 30 août"),
+        Link(text="Newsletter", url="https://agenda.fr/b.html", context=""),
+        Link(text="Simon le saumon", url="https://agenda.fr/c.html", context="jusqu'au 23 oct."),
+    ]
+    server = FakeApiServer([message([text_block({"kept": [1, 3]})])])
     try:
-        candidates = provider_for(server).discover(Config(name="t", theme="x"), log)
+        gardes = provider_for(server).select(
+            "https://agenda.fr/jeune-public/", liens, Config(name="t", theme="x"), log
+        )
     finally:
         server.close()
 
-    assert [c.url for c in candidates] == ["https://theatre.fr/le-petit-chaperon"]
-
-
-def test_erreur_doutil_serveur_est_journalisee():
-    stream = io.StringIO()
-    log = RunLog(path=None, verbose=True, stream=stream)
-    response = message(
-        [
-            {
-                "type": "web_search_tool_result",
-                "tool_use_id": "s1",
-                "content": {"type": "web_search_tool_result_error", "error_code": "max_uses_exceeded"},
-            },
-            text_block(CANDIDATES),
-        ]
-    )
-    server = FakeApiServer([response])
-    try:
-        provider_for(server).discover(Config(name="t", theme="spectacles"), log)
-    finally:
-        server.close()
-
-    assert "max_uses_exceeded" in stream.getvalue()
-
-
-def test_raisonnement_journalise_pendant_lappel():
-    """Le résumé du raisonnement est écrit au fil de l'eau : c'est ce qui
-    montre que le run avance pendant les minutes d'attente."""
-    stream = io.StringIO()
-    log = RunLog(path=None, verbose=True, stream=stream)
-    response = message(
-        [
-            {
-                "type": "thinking",
-                "thinking": "Je vais couvrir les huit départements franciliens.\n"
-                "Puis j'ouvrirai les agendas trouvés pour en tirer des liens.\n",
-                "signature": "sig",
-            },
-            text_block(CANDIDATES),
-        ]
-    )
-    server = FakeApiServer([response])
-    try:
-        provider_for(server).discover(Config(name="t", theme="spectacles"), log)
-    finally:
-        server.close()
-
-    console = stream.getvalue()
-    assert "huit départements franciliens" in console
-    # Et le raisonnement précède le décompte de jetons de fin de tour.
-    assert console.index("départements") < console.index("jetons")
-
-
-def test_outils_et_thinking_suivent_le_modele(log):
-    """Le filtrage dynamique et `thinking: adaptive` réclament un modèle 4.6+ :
-    sur Haiku, il faut les variantes de base et pas de `thinking`, sinon
-    l'API répond 400."""
-    server = FakeApiServer([message([text_block(CANDIDATES)])])
-    config = Config(name="t", theme="x", discovery_model="claude-haiku-4-5")
-    try:
-        provider_for(server).discover(config, log)
-    finally:
-        server.close()
-
+    assert [l.url for l in gardes] == ["https://agenda.fr/a.html", "https://agenda.fr/c.html"]
     body = server.requests[0]
-    assert [t["type"] for t in body["tools"]] == ["web_search_20250305", "web_fetch_20250910"]
-    assert "thinking" not in body
+    assert "tools" not in body  # aucun outil : aucune boucle serveur possible
+    # Les liens partent avec leur contexte, numérotés.
+    assert "1. Le Petit Chaperon | le 30 août" in body["messages"][0]["content"]
 
 
-def test_extraction_lit_une_url_precise(log):
-    extraction = {
-        "relevant": True,
-        "skip_reason": "",
-        "title": "Spectacle",
+def test_la_selection_ignore_les_numeros_hors_bornes(log):
+    liens = [Link(text="Un spectacle", url="https://agenda.fr/a.html", context="")]
+    server = FakeApiServer([message([text_block({"kept": [1, 7, -2]})])])
+    try:
+        gardes = provider_for(server).select("https://agenda.fr/x", liens,
+                                             Config(name="t", theme="x"), log)
+    finally:
+        server.close()
+    assert [l.url for l in gardes] == ["https://agenda.fr/a.html"]
+
+
+def test_extraction_recoit_la_page_en_clair(log):
+    fiche = {
+        "relevant": True, "skip_reason": "", "title": "Spectacle",
         "description": "Une belle description de spectacle pour enfants.",
-        "free": True,
-        "price": None,
-        "age_min": 3,
-        "age_max": 8,
-        "permanent": False,
-        "date_start": "2026-09-01",
-        "date_end": "2026-09-02",
-        "open_time": "10:00",
-        "close_time": "12:00",
-        "setting": "INDOOR",
-        "category": "Spectacle",
-        "venue_name": "Théâtre",
-        "venue_address": "1 rue A",
-        "venue_city": "Paris",
-        "venue_postal_code": "75001",
+        "free": True, "price": None, "age_min": 3, "age_max": 8,
+        "permanent": False, "date_start": "2026-09-01", "date_end": "2026-09-02",
+        "open_time": "10:00", "close_time": "12:00", "setting": "INDOOR",
+        "category": "Spectacle", "venue_name": "Théâtre", "venue_address": "1 rue A",
+        "venue_city": "Paris", "venue_postal_code": "75001",
         "photo_url": "https://exemple.fr/p.jpg",
     }
-    server = FakeApiServer([message([text_block(extraction)])])
+    server = FakeApiServer([message([text_block(fiche)])])
     try:
         event = provider_for(server).extract(
-            "https://exemple.fr/a", Config(name="t", theme="x"), ["Spectacle"], log
+            "https://exemple.fr/a", "Le contenu réel de la page.",
+            Config(name="t", theme="x"), ["Spectacle"], log
         )
     finally:
         server.close()
 
     assert event.relevant and event.age_min == 3 and event.setting == "INDOOR"
     body = server.requests[0]
-    # L'extraction tourne sur Haiku par défaut : variante de base obligatoire.
-    assert [t["type"] for t in body["tools"]] == ["web_fetch_20250910"]
-    assert "https://exemple.fr/a" in body["messages"][0]["content"]
+    assert "tools" not in body
+    contenu = body["messages"][0]["content"]
+    assert "Le contenu réel de la page." in contenu
+    assert "https://exemple.fr/a" in contenu
+
+
+def test_reprise_apres_pause_turn(log):
+    paused = message(
+        [{"type": "server_tool_use", "id": "srv_1", "name": "web_search",
+          "input": {"query": "spectacle enfant"}}],
+        stop_reason="pause_turn",
+    )
+    server = FakeApiServer(
+        [paused, message(search_for("https://agenda.fr/jeune-public/") + [text_block(AGENDAS)])]
+    )
+    try:
+        agendas = provider_for(server).search(Config(name="t", theme="spectacles"), log)
+    finally:
+        server.close()
+
+    assert len(agendas) == 1
+    assert len(server.requests) == 2
+    assert [m["role"] for m in server.requests[1]["messages"]] == ["user", "assistant"]
+
+
+def test_journal_des_recherches():
+    stream = io.StringIO()
+    log = RunLog(path=None, verbose=True, stream=stream)
+    server = FakeApiServer(
+        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(AGENDAS)])]
+    )
+    try:
+        provider = provider_for(server)
+        provider.search(Config(name="t", theme="spectacles"), log)
+    finally:
+        server.close()
+
+    console = stream.getvalue()
+    assert "spectacle enfant" in console
+    assert "https://agenda.fr/jeune-public/" in console
+    assert provider.usage.web_searches == 1
+    assert provider.usage.search_cost_usd == pytest.approx(0.01)
+    # Tarif Haiku 4.5 (1 $ / 5 $ le million) sur 1000 entrée et 100 sortie.
+    assert provider.usage.cost_usd == pytest.approx(1000 * 1 / 1e6 + 100 * 5 / 1e6)
+
+
+def test_erreur_de_recherche_est_journalisee():
+    stream = io.StringIO()
+    log = RunLog(path=None, verbose=True, stream=stream)
+    response = message([
+        {"type": "web_search_tool_result", "tool_use_id": "s1",
+         "content": {"type": "web_search_tool_result_error", "error_code": "max_uses_exceeded"}},
+        text_block(AGENDAS),
+    ])
+    server = FakeApiServer([response])
+    try:
+        provider_for(server).search(Config(name="t", theme="x"), log)
+    finally:
+        server.close()
+
+    assert "max_uses_exceeded" in stream.getvalue()

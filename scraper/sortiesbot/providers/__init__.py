@@ -1,9 +1,9 @@
 """Fournisseurs de recherche et d'extraction.
 
-Un fournisseur encapsule tout ce qui dépend d'un modèle : la recherche sur le
-web et la lecture d'une page. Le reste du pipeline (mémoire des URLs,
-géocodage, photo, soumission) n'en sait rien, ce qui permettra d'ajouter un
-fournisseur OpenRouter — et donc d'autres modèles — sans y toucher.
+Un fournisseur encapsule les trois moments où un modèle est nécessaire :
+chercher, choisir des liens, remplir une fiche. Le reste du pipeline —
+téléchargement, extraction des liens, géocodage, photo, soumission — n'en sait
+rien, ce qui permettra d'ajouter un fournisseur OpenRouter sans y toucher.
 """
 
 from .base import Provider, ProviderError, get_provider

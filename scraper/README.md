@@ -5,9 +5,9 @@ propose au site comme n'importe quel programme tiers : via `POST /api/events`
 avec une clé d'API. Les sorties trouvées arrivent **en attente de modération**,
 jamais publiées directement.
 
-La recherche et la lecture des pages sont confiées aux outils serveur
-`web_search` et `web_fetch` de l'API Claude : c'est l'infrastructure d'Anthropic
-qui va sur le web, le script n'embarque ni navigateur ni analyseur HTML.
+Seule la recherche passe par l'API Claude (outil serveur `web_search`) : le
+téléchargement des pages et l'extraction de leurs liens se font en Python, et
+le modèle n'intervient que pour trancher — trier des liens, remplir une fiche.
 
 ## Installation
 
@@ -69,76 +69,61 @@ Chaque run écrit deux fichiers dans `runs/` :
 
 ## Comment ça marche
 
-### Qui décide quoi
+### Le partage des rôles
 
-Point le plus contre-intuitif : **le script ne pilote pas les recherches**. Il
-envoie un prompt, une fois, et reçoit du JSON. Entre les deux, tout se passe
-sur les serveurs d'Anthropic, dans ce qu'on appelle la boucle serveur :
-
-```
-   sortiesbot                    api.anthropic.com
-   ──────────                    ─────────────────
-   1 appel HTTP  ───────────────▶ le modèle lit le prompt
-                                  ├─ décide « je cherche X »   ─┐
-                                  ├─ l'API exécute la recherche │ jusqu'à 10
-                                  ├─ le résultat entre en       │ itérations,
-                                  │  contexte                   │ tout le
-                                  ├─ le modèle décide de la     │ contexte
-                                  │  suite (chercher ? lire ?)  │ refacturé
-                                  └─ …                         ─┘ à chaque tour
-   JSON  ◀─────────────────────── réponse finale
-```
-
-Le nombre de recherches n'est donc écrit nulle part dans le code : le prompt
-le demande, `max_uses` le plafonne, et **c'est le modèle qui décide** dans
-cette fourchette. Les deux doivent dire la même chose — un prompt qui réclame
-six recherches quand l'outil en autorise deux fait échouer les quatre
-dernières en `max_uses_exceeded`. C'est pour ça que le nombre vient de la
-configuration, des deux côtés.
-
-Cette boucle explique aussi le reste : la durée d'un run (dix allers-retours
-de modèle dans un seul appel HTTP), le besoin de streaming pour voir quoi que
-ce soit, et la facture (voir « Coût d'un run »).
-
-### Le pipeline
+Python fait tout ce qui est mécanique — télécharger, parser, extraire des
+liens — et ne coûte rien. Le modèle n'intervient qu'aux trois moments où il
+faut du jugement, et **aucun de ces appels ne boucle** :
 
 ```
-découverte → filtre (domaines bloqués, URLs déjà vues) → extraction
-  → géocodage → construction du payload → photo → soumission
+1. recherche        modèle + web_search   → pages d'agenda à ouvrir
+2. téléchargement   Python                → HTML                      gratuit
+3. extraction liens Python (BeautifulSoup)→ (texte, url, contexte)     gratuit
+4. sélection        modèle, sans outil    → liens menant à une sortie
+5. lecture + fiche  Python puis modèle    → sortie structurée
+   puis géocodage, validation, photo, soumission — sans modèle
 ```
 
-1. **Découverte** (`claude-sonnet-5` par défaut) — plusieurs recherches web
-   variées, puis lecture des pages d'agenda rencontrées pour en tirer les liens
-   d'événements. C'est l'étage qui découvre des sites qu'on n'aurait pas listés.
+C'est ce découpage qui rend le coût prévisible. La version précédente confiait
+toute la procédure à un seul appel agentique : le modèle ouvrait les pages
+lui-même, et la boucle serveur d'Anthropic refacturait tout le contexte
+accumulé à chacune de ses itérations. Un run mesuré à **2,35 $** pour six
+sorties, dont 2,29 $ de jetons d'entrée — un million de jetons pour six
+recherches et cinq pages.
 
-   > **Filtre anti-invention.** Le fournisseur retient toute URL réellement
-   > vue — résultats de recherche, pages ouvertes, et liens trouvés dans le
-   > texte de ces pages — et rejette tout candidat absent de cet ensemble. Un
-   > modèle qui répond de mémoire produit des adresses plausibles et mortes ;
-   > sans ce filtre, chacune coûte une extraction pour rien. Si le tour n'a
-   > lancé aucune recherche, le lot entier est écarté.
-2. **Filtre** — les domaines bloqués et les URLs déjà traitées lors d'un run
-   précédent sont écartées **avant** l'extraction : une page connue ne coûte
-   jamais un second jeton. La mémoire est un SQLite dans `state/`.
+### Étape 3, en détail
 
-   > Une page peut être refusée à la lecture (`url_not_allowed` : `robots.txt`
-   > ou filtrage de domaine). Elle consomme quand même un `max_uses`, donc le
-   > journal distingue les pages **demandées** des pages **lues** —
-   > `2/3 page(s) lue(s)` veut dire qu'une a été refusée, et nomme laquelle.
-3. **Extraction** (`claude-haiku-4-5`) — une page, une sortie structurée.
-   Tâche bornée, dans une conversation neuve.
-4. **Géocodage** — Photon (OpenStreetMap), le même fournisseur que le
-   formulaire du site. Une position hors des départements attendus est traitée
-   comme un échec : mieux vaut pas de position qu'une position fausse.
-5. **Payload** — les règles de `server/src/lib/validators.ts` sont appliquées
-   ici. Ce qui peut être réparé l'est (troncatures, âges inversés, horaires
-   incohérents) ; ce qui manque part avec une valeur convenue que la modération
-   sait reconnaître (voir ci-dessous). Seules les pages inexploitables — sans
-   titre, sans description, sans date — sont écartées, motif à l'appui dans le
-   journal.
-6. **Soumission** — avec la photo trouvée sur la page, le cas échéant. Les
-   droits d'usage de l'image ne sont pas vérifiables automatiquement : le
-   `sourceUrl` accompagne la sortie et c'est le modérateur qui tranche.
+Une page d'agenda, ce qu'on y cherche, ce sont ses liens. Les faire lire au
+modèle coûtait 12 000 jetons par page ; BeautifulSoup les extrait pour rien :
+
+```python
+for lien in soup.find_all("a", href=True):
+    texte  = lien.get_text(strip=True)          # "Les Caprices de l'enfant roi"
+    url    = urljoin(page, lien["href"])
+    autour = lien.find_parent(...).get_text()   # "jusqu'au 30 août — Théâtre de Vanves"
+```
+
+Le contexte est le gain caché : les agendas affichent la date et le lieu à
+côté du titre, donc l'étape 4 tranche souvent **sans ouvrir la page**.
+
+Un premier tri mécanique retire ensuite le bruit évident — liens vides, ancres,
+`mailto:`, liens sortants, textes de moins de 15 caractères (« Accueil »,
+« Contact »), chemins de service (`/mentions-legales`, `/cgu`, `/newsletter`…),
+doublons. Il n'a pas à être parfait : il doit réduire deux cents liens à une
+cinquantaine pour que le modèle en juge à moindre coût.
+
+### Étape 4 : le modèle répond par des numéros
+
+Les liens lui sont soumis numérotés, et il renvoie les numéros retenus — jamais
+des URL. **Il lui est donc matériellement impossible d'en inventer une**, ce qui
+était un vrai problème dans la version précédente. Sa réponse tient en quelques
+jetons.
+
+### Politesse
+
+Puisque le scraper télécharge lui-même, il assume ce qu'Anthropic assumait :
+`robots.txt` est lu et respecté, un `User-Agent` identifie le robot et renvoie
+vers le site, et une seconde sépare deux requêtes vers le même hôte.
 
 ### Champs laissés à la modération
 
@@ -152,48 +137,31 @@ avec une valeur convenue que le site reconnaît
 | Tarif introuvable sur la page | `price = -1`, `isFree = false` | badge « Tarif à compléter » au lieu du prix ; bandeau « tarif indéterminé » |
 
 Dans les deux cas, **l'approbation est refusée** tant qu'un modérateur n'a pas
-corrigé le champ, et le bandeau pointe vers le formulaire d'édition, qui repart
-d'un champ vide pour forcer une vraie saisie.
+corrigé le champ, et le bandeau pointe vers le formulaire d'édition.
 
 ## Configuration
 
 Une configuration = un fichier YAML dans `configs/` (voir
 `spectacles-weekend.yaml`, commenté). Seules `name` et `theme` sont
 obligatoires. Les prompts eux-mêmes sont des clés de la configuration
-(`discovery_prompt`, `extraction_prompt`) : on peut les réécrire entièrement
+(`search_prompt`, `select_prompt`, `extraction_prompt`) : on peut les réécrire
 sans toucher au code — les variables disponibles sont listées en tête de
 `sortiesbot/prompts.py`.
 
-Le choix des modèles est par configuration (`discovery_model`,
+Le choix des modèles est par configuration (`search_model`, `select_model`,
 `extraction_model`), ce qui permet de comparer les coûts d'une recherche à
 l'autre.
 
-**Pourquoi pas Haiku à la découverte.** Essayé, trois fois : la découverte est
-une tâche en plusieurs temps (chercher, ouvrir les agendas, en tirer des
-liens, trier), et Haiku 4.5 s'arrête après la première étape — il cherche puis
-conclut sans rien ouvrir, ou répond de mémoire sans chercher. L'extraction,
-elle, est bornée — une page, une sortie — et Haiku y suffit très bien. C'est
-la différence entre suivre une procédure et remplir un formulaire.
+**Pourquoi Haiku partout.** Haiku 4.5 échoue dès qu'on lui demande de dérouler
+une procédure en plusieurs temps — essayé trois fois : il cherche puis conclut
+sans rien ouvrir, ou répond de mémoire sans chercher. Il est en revanche
+parfaitement à l'aise sur une tâche bornée. Le pipeline actuel n'en contient
+que : chercher, trier une liste, remplir un formulaire. C'est le découpage qui
+permet le modèle bon marché, pas l'inverse.
 
-**Attention en changeant de modèle** : la version des outils serveur en dépend,
-et le script la choisit tout seul (`web_tools_for`).
-
-Le *filtrage dynamique* (`web_search_20260209`) fait écrire au modèle du code
-qui trie les résultats de recherche avant qu'ils n'entrent en contexte. Ça
-repose sur le *programmatic tool calling*, que Haiku 4.5 ne sait pas faire :
-sur lui partent donc `web_search_20250305` et `web_fetch_20250910`, sinon l'API
-répond 400. Même chose pour `thinking: adaptive`, réservé aux modèles 4.6+.
-
-Ce n'est pas un réglage : envoyer la version récente à Haiku obligerait à
-`allowed_callers: ["direct"]`, c'est-à-dire sans filtrage — le comportement de
-la variante de base, avec un piège en plus.
-
-Ce que ça coûte : d'après la mesure d'Anthropic sur des tests de recherche
-agentique, le filtrage dynamique économise **24 % de jetons d'entrée** et
-améliore les résultats de 11 %. Haiku reste donc le moins cher malgré tout
-(1 $/M contre 2 $ pour Sonnet 5 : ~1,5× moins cher une fois le filtrage pris en
-compte), mais c'est bien la qualité de la recherche qu'on met en jeu, pas la
-facture.
+Le seul outil serveur encore utilisé est `web_search_20250305`, la variante de
+base : le filtrage dynamique des variantes récentes servait à alléger les pages
+que le modèle lisait, et il ne lit plus de pages.
 
 ## Tests
 
@@ -209,53 +177,26 @@ ce qui est envoyé (outils serveur, format structuré, reprise après
 
 ## Coût d'un run
 
-**C'est le point à surveiller.** Les recherches web coûtent 0,01 $ pièce — une
-broutille. Ce qui coûte, ce sont les jetons d'entrée : pendant un tour, la
-boucle serveur d'Anthropic **refacture tout le contexte accumulé à chacune de
-ses itérations** (jusqu'à dix). Chaque page lue est donc payée plusieurs fois,
-proportionnellement à sa taille.
+Trois postes seulement, tous bornés :
 
-Les quatre leviers, du plus au moins efficace :
+| Poste | Prix |
+|---|---|
+| Recherches web | 0,01 $ pièce (`max_searches`, 6 par défaut) |
+| Téléchargement et dépouillement des agendas | **0 $** — c'est du Python |
+| Sélection des liens | ~0,005 $ par agenda |
+| Lecture d'une sortie | ~0,006 $ par sortie |
 
-| Levier | Défaut | Effet |
-|---|---|---|
-| `max_page_tokens` | 12 000 | taille d'une page lue à la découverte — le facteur dominant, mais trop bas tronque l'agenda avant sa liste d'événements |
-| `max_fetches` | 5 | nombre de pages lues, chacune alourdissant le contexte |
-| `discovery_model` | `claude-sonnet-5` | 2 $/M en entrée, contre 1 $ pour Haiku 4.5 et 5 $ pour Opus 5 |
-| `max_searches` | 6 | 0,01 $ l'unité, plus les résultats en contexte |
+Soit de l'ordre de **0,20 $ pour un run complet de vingt sorties**. Aucun appel
+n'ayant d'outil hormis la recherche, il n'y a plus de boucle serveur, donc plus
+de contexte refacturé — c'est un changement de mécanisme, pas un réglage.
 
-Trois garde-fous automatiques :
+`max_cost_usd` (1 $ par défaut) arrête le run avant un appel payant s'il est
+dépassé ; ce qui a déjà été trouvé est conservé dans le JSON. Le journal
+totalise jetons, recherches et coût, par étape.
 
-- **`max_cost_usd`** (0,50 $ par défaut) arrête le run entre deux étages dès
-  que le coût en jetons le dépasse ;
-- **`--limit N`** réduit aussi les budgets de recherche, pas seulement le
-  nombre de sorties : un essai reste un essai ;
-- une **reprise après `pause_turn`** est journalisée avec le coût déjà engagé,
-  et limitée à deux — chaque reprise renvoie tout le contexte accumulé.
-
-Le journal totalise, par étage, les jetons, les recherches et le coût des deux
-(`token_cost_usd`, `search_cost_usd`, `total_usd`). Le relevé de la console
-Anthropic reste la référence, mais l'écart devrait être minime. Un workspace
-dédié avec un plafond mensuel reste la protection de dernier recours — voir
-`deploy/README.md`.
-
-### Ordres de grandeur mesurés
-
-| Réglages | Coût | Résultat |
-|---|---|---|
-| Opus 5, `max_fetches: 15`, pages de 30 000 jetons | 3,24 $ | rien (run interrompu) |
-| Haiku 4.5, pages de 5 000 puis 12 000 jetons | 0,02 à 0,11 $ | rien : Haiku ne déroule pas la procédure |
-| **Sonnet 5, pages de 12 000 jetons, `--limit 3`** | **0,54 $** | **3 sorties trouvées** |
-
-Les 590 000 jetons du premier run ne sont pas 590 000 jetons de contenu :
-c'est le même contexte, d'au plus ~90 000 jetons, refacturé à chacune des
-douze itérations de la boucle serveur.
-
-**Le coût de la découverte est presque fixe** — il dépend des recherches et
-des pages lues, pas du nombre de sorties rapportées. `--limit 3` est donc le
-pire rapport qualité-prix : un run complet coûte à peine plus et rapporte
-vingt sorties au lieu de trois. Le `--limit` sert à valider une configuration,
-pas à mesurer un coût par sortie.
+Pour mémoire, les mesures des versions précédentes : 3,24 $ avec Opus 5 et des
+pages de 30 000 jetons, 2,35 $ avec Sonnet 5 — dans les deux cas, la boucle
+serveur refacturant le contexte accumulé à chaque itération.
 
 ## Et ensuite
 
@@ -266,8 +207,7 @@ Ce script est la première étape. La suite prévue :
    d'administration (le JSONL est déjà écrit dans ce format) ;
 2. un worker `systemd` sur le VPS qui prend les runs mis en file par la console
    et porte le cron des configurations ;
-3. un fournisseur OpenRouter (`openrouter:web_search` / `openrouter:web_fetch`,
-   utilisables par n'importe quel modèle) — l'interface `Provider` est déjà en
-   place pour ça ;
+3. un fournisseur OpenRouter — l'interface `Provider` (trois méthodes) est déjà
+   en place pour ça, et seule la recherche y demande un outil ;
 4. un second script en liste blanche, alimenté par les domaines dont les
    sorties ont été le plus souvent approuvées.
