@@ -286,6 +286,56 @@ def test_budget_ecourte_le_run(log):
     assert result.candidates[0]["url"] == EVENT_URL
 
 
+def test_meme_sortie_sur_deux_agendas_nest_traitee_qu_une_fois(log):
+    """Constaté : deux pages d'un même site listaient les mêmes spectacles,
+    et chacun a été lu, extrait et retenu deux fois."""
+    autre = "https://agenda.fr/spectacles/"
+    provider = FakeProvider(
+        [Agenda(url=AGENDA_URL), Agenda(url=autre)],
+        {EVENT_URL: sortie()},
+    )
+    fetcher = FakeFetcher(
+        {AGENDA_URL: AGENDA_HTML, autre: AGENDA_HTML, EVENT_URL: EVENT_HTML}
+    )
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
+
+    assert result.summary.pages == 2  # les deux agendas sont bien dépouillés
+    assert result.summary.duplicates == 1
+    assert provider.extracted == [EVENT_URL]  # mais une seule extraction payée
+    assert result.summary.submitted == 1
+
+
+def test_sortie_hors_zone_est_ecartee(log):
+    """Un spectacle à Chantilly (Oise, 60500) est remonté dans un run
+    Île-de-France : il partait en (0, 0) « adresse à compléter » au lieu
+    d'être écarté."""
+    provider, fetcher = standard()
+    provider.extractions[EVENT_URL] = sortie(
+        venue_city="Chantilly", venue_postal_code="60500"
+    )
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
+
+    assert result.summary.skipped_out_of_area == 1
+    assert api.created == []
+
+
+def test_code_postal_inconnu_ne_fait_pas_ecarter(log):
+    """Sans code postal, on ne peut pas juger : la sortie part en (0, 0) et
+    c'est le modérateur qui tranche."""
+    provider, fetcher = standard()
+    provider.extractions[EVENT_URL] = sortie(venue_postal_code="")
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
+
+    assert result.summary.skipped_out_of_area == 0
+    assert result.summary.submitted == 1
+
+
 def test_categorie_inconnue_bascule_sur_le_defaut():
     categories = {"Spectacle": 3, "Non classé": 9}
     assert resolve_category("Ferme pédagogique", categories, "Non classé") == 9

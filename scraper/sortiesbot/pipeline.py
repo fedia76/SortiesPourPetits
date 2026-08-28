@@ -27,7 +27,7 @@ from .models import Candidate, Summary
 from .payload import UNKNOWN_PRICE, Rejected, build_payload
 from .photo import PhotoError, download
 from .providers.base import Provider, ProviderError
-from .store import SeenStore
+from .store import SeenStore, normalize_url
 from . import geocode as geocoding
 
 
@@ -61,6 +61,17 @@ def resolve_category(name: str, categories: dict[str, int], default: str) -> int
         if found is not None:
             return found
     raise Rejected(f"catégorie « {name or '?'} » inconnue et « {default} » absente du site")
+
+
+def _out_of_area(postal_code: str, prefixes: list[str]) -> bool:
+    """Un code postal connu hors zone écarte la sortie.
+
+    Un géocodage hors zone échoue déjà, mais la sortie partait quand même en
+    (0, 0) « adresse à compléter » — un spectacle à Chantilly, dans l'Oise,
+    s'est retrouvé dans un run Île-de-France.
+    """
+    code = postal_code.strip()
+    return bool(code and prefixes and not code.startswith(tuple(prefixes)))
 
 
 def _is_blocked(url: str, blocked: list[str]) -> bool:
@@ -104,8 +115,19 @@ def run(
 
     # 2 à 4. Chaque agenda est téléchargé, dépouillé, puis trié par le modèle.
     candidates: list[Candidate] = []
+    vues: set[str] = set()
     for agenda in agendas[: config.max_agendas]:
-        candidates.extend(_harvest(agenda.url, config, provider, fetcher, log, summary))
+        for candidate in _harvest(agenda.url, config, provider, fetcher, log, summary):
+            # Deux agendas listent souvent la même sortie — parfois la même
+            # page sous deux URLs. Sans ce filtre, elle est lue, extraite et
+            # soumise deux fois.
+            key = normalize_url(candidate.url)
+            if key in vues:
+                summary.duplicates += 1
+                log.event("skip", reason="déjà repérée sur un autre agenda", url=candidate.url)
+                continue
+            vues.add(key)
+            candidates.append(candidate)
 
     summary.candidates = len(candidates)
     result.candidates = [
@@ -232,6 +254,16 @@ def _process(
         title=extracted.title,
         venue=f"{extracted.venue_name} — {extracted.venue_city}".strip(" —"),
     )
+
+    if _out_of_area(extracted.venue_postal_code, config.postal_prefixes):
+        summary.skipped_out_of_area += 1
+        log.event(
+            "skip",
+            reason=f"code postal {extracted.venue_postal_code} hors de la zone demandée",
+            url=url,
+        )
+        store.remember(url, "out_of_area", title=extracted.title)
+        return
 
     geo = geocoding.geocode(extracted, config.postal_prefixes)
     log.event(
