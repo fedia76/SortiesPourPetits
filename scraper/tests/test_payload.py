@@ -65,6 +65,25 @@ def test_prix_aberrant_bascule_sur_la_valeur_convenue():
     assert payload["price"] == UNKNOWN_PRICE
 
 
+def test_sortie_apres_la_periode_demandee_est_ecartee():
+    """La période de la configuration est une contrainte. Sans ce filtre, un
+    run « ce week-end » ramène des spectacles de décembre — constaté."""
+    with pytest.raises(Rejected, match="après la période"):
+        build_payload(
+            make(date_start="2026-12-17", date_end="2026-12-20"),
+            PARIS, 1, "https://x.fr", today=TODAY, until=date(2026, 9, 3),
+        )
+
+
+def test_sortie_qui_chevauche_la_periode_est_gardee():
+    """Commencée avant, finie après : elle a bien lieu pendant la période."""
+    payload = build_payload(
+        make(date_start="2026-05-27", date_end="2026-09-16"),
+        PARIS, 1, "https://x.fr", today=TODAY, until=date(2026, 9, 3),
+    )
+    assert payload["dateStart"] == "2026-05-27"
+
+
 def test_sortie_terminee_est_ecartee():
     with pytest.raises(Rejected, match="terminée"):
         build_payload(

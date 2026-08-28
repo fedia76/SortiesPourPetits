@@ -1,10 +1,17 @@
-"""Géocodage des lieux, via Photon (OpenStreetMap).
+"""Géocodage des lieux : Photon d'abord, Base Adresse Nationale en secours.
 
-Même fournisseur que le formulaire du site (`client/src/lib/geocode.ts`), pour
-que les positions issues du scraper et celles saisies à la main viennent de la
-même source. Photon connaît aussi les lieux d'intérêt (parcs, musées, fermes
-pédagogiques), ce qui compte ici : les pages d'événement donnent souvent un nom
-de lieu plutôt qu'une adresse.
+Photon (OpenStreetMap) est le fournisseur du formulaire du site
+(`client/src/lib/geocode.ts`), pour que les positions saisies à la main et
+celles du scraper viennent de la même source. Il connaît aussi les lieux
+d'intérêt — parcs, musées, théâtres — ce qui compte ici : les pages
+d'événement donnent souvent un nom de salle plutôt qu'une adresse.
+
+Mais son instance publique est en « fair use » et refuse les clients qu'elle
+n'aime pas : un run entier a rendu vingt sorties non géolocalisées sur vingt,
+toutes sur des 403. D'où deux précautions — on s'annonce avec un User-Agent
+identifiable, et la Base Adresse Nationale prend le relais si Photon se
+dérobe. Elle ne connaît que les adresses, mais elle est gratuite, publique et
+sans quota.
 
 Une position hors de la zone attendue est traitée comme un échec : mieux vaut
 laisser le modérateur compléter que publier une sortie à l'autre bout du monde.
@@ -16,9 +23,11 @@ from typing import Any, Callable, Iterable
 
 import requests
 
+from .harvest import USER_AGENT
 from .models import UNLOCATED, ExtractedEvent, Location
 
 PHOTON_URL = "https://photon.komoot.io/api/"
+BAN_URL = "https://api-adresse.data.gouv.fr/search/"
 
 #: Biais de recherche : centre de Paris, pour que « Le Zèbre » sorte en IDF.
 _BIAS = {"lat": 48.8566, "lon": 2.3522}
@@ -56,15 +65,48 @@ def _queries(event: ExtractedEvent) -> Iterable[str]:
             yield query
 
 
+#: Passe à faux dès la première rebuffade de Photon : inutile de rejouer un
+#: 403 pour chacune des vingt sorties d'un run.
+_photon_available = True
+
+
 def _photon_search(query: str) -> list[dict[str, Any]]:
     response = requests.get(
         PHOTON_URL,
         params={"q": query, "limit": 5, "lang": "fr", **_BIAS},
+        headers={"User-Agent": USER_AGENT},
         timeout=_TIMEOUT,
     )
     response.raise_for_status()
     body = response.json()
     return body.get("features", []) if isinstance(body, dict) else []
+
+
+def _ban_search(query: str) -> list[dict[str, Any]]:
+    """Base Adresse Nationale : adresses françaises uniquement, même forme de
+    réponse que Photon (`features` avec `postcode` et `city`)."""
+    response = requests.get(
+        BAN_URL,
+        params={"q": query, "limit": 5},
+        headers={"User-Agent": USER_AGENT},
+        timeout=_TIMEOUT,
+    )
+    response.raise_for_status()
+    body = response.json()
+    return body.get("features", []) if isinstance(body, dict) else []
+
+
+def _search(query: str) -> list[dict[str, Any]]:
+    """Photon, puis la BAN s'il refuse ou ne trouve rien."""
+    global _photon_available
+    if _photon_available:
+        try:
+            results = _photon_search(query)
+            if results:
+                return results
+        except requests.RequestException:
+            _photon_available = False
+    return _ban_search(query)
 
 
 def _to_location(feature: dict[str, Any]) -> Location | None:
@@ -93,9 +135,10 @@ def geocode(
 ) -> GeocodeResult:
     """Cherche la position d'un lieu ; retourne `UNLOCATED` en cas d'échec.
 
-    `search` est injectable pour les tests ; par défaut c'est Photon.
+    `search` est injectable pour les tests ; par défaut c'est Photon avec
+    repli sur la Base Adresse Nationale.
     """
-    search = search or _photon_search
+    search = search or _search
     last_query = event.venue_name or event.venue_city or "(lieu inconnu)"
     out_of_area = False
 

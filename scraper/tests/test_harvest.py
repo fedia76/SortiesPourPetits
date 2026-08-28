@@ -60,6 +60,31 @@ def test_bruit_ecarte(raison, html):
     assert links_of(f"<html><body>{html}</body></html>", PAGE) == [], raison
 
 
+def test_contexte_remonte_jusqu_a_la_carte():
+    """Cas réel : le parent immédiat du lien n'enveloppe que le titre, et la
+    date est un cran plus haut. S'y arrêter fait perdre ce qui sert à trier."""
+    html = """<html><body><article class="card">
+        <div class="titre"><a href="/spectacle/le-chaperon.html">Le Petit Chaperon rouge</a></div>
+        <div class="infos">du 29 au 30 août 2026 — Théâtre de Vanves — dès 8 ans — 12 €</div>
+      </article></body></html>"""
+    lien = links_of(html, PAGE)[0]
+    assert "29 au 30 août 2026" in lien.context
+    assert "Théâtre de Vanves" in lien.context
+
+
+def test_contexte_ne_deborde_pas_sur_la_liste_entiere():
+    """Si la carte n'existe pas, on ne doit pas remonter jusqu'à happer les
+    trente autres événements : un contexte faux est pire qu'un contexte court."""
+    autres = "".join(
+        f'<div><a href="/spectacle/{i}-un-titre-de-spectacle.html">Spectacle numéro {i}</a>'
+        f"<span>du 1er au 30 septembre 2026, salle des fêtes</span></div>"
+        for i in range(30)
+    )
+    lien = links_of(f"<html><body><section>{autres}</section></body></html>", PAGE)[0]
+    assert "Spectacle numéro 0" in lien.context
+    assert "Spectacle numéro 5" not in lien.context
+
+
 def test_doublons_fusionnes():
     html = """<a href="/spectacle/le-petit-chaperon.html">Le Petit Chaperon rouge</a>
               <a href="/spectacle/le-petit-chaperon.html">Le Petit Chaperon rouge (réserver)</a>"""
@@ -149,3 +174,34 @@ def test_page_inaccessible(monkeypatch):
     fetcher = Fetcher(session=FakeSession())
     with pytest.raises(FetchError, match="inaccessible"):
         fetcher.get_html("https://site.fr/disparue")
+
+
+def test_geocodeur_bascule_sur_la_ban_quand_photon_refuse(monkeypatch):
+    """Un run entier a rendu 20 sorties non géolocalisées sur 20, toutes sur
+    des 403 de Photon. La BAN doit prendre le relais — et Photon ne doit pas
+    être rejoué vingt fois."""
+    import requests
+
+    from sortiesbot import geocode as g
+
+    appels = {"photon": 0, "ban": 0}
+
+    def photon(query):
+        appels["photon"] += 1
+        raise requests.HTTPError("403 Client Error: Forbidden")
+
+    def ban(query):
+        appels["ban"] += 1
+        return [{"properties": {"city": "Orsay", "postcode": "91400"},
+                 "geometry": {"coordinates": [2.1873, 48.6997]}}]
+
+    monkeypatch.setattr(g, "_photon_available", True)
+    monkeypatch.setattr(g, "_photon_search", photon)
+    monkeypatch.setattr(g, "_ban_search", ban)
+
+    assert g._search("14bis avenue Saint Laurent, 91400, Orsay")[0]["properties"]["postcode"] == "91400"
+    g._search("une autre adresse")
+    g._search("une troisième adresse")
+
+    assert appels["photon"] == 1  # une rebuffade suffit, on n'insiste pas
+    assert appels["ban"] == 3

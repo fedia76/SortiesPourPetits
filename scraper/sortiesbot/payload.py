@@ -93,7 +93,9 @@ def _clean_postal_code(value: str) -> str:
     return digits if 4 <= len(digits) <= 10 else POSTAL_PLACEHOLDER
 
 
-def _clean_dates(event: ExtractedEvent, today: date) -> tuple[bool, str | None, str | None]:
+def _clean_dates(
+    event: ExtractedEvent, today: date, until: date | None
+) -> tuple[bool, str | None, str | None]:
     if event.permanent:
         return True, None, None
 
@@ -109,6 +111,10 @@ def _clean_dates(event: ExtractedEvent, today: date) -> tuple[bool, str | None, 
         start, end = end, start
     if end < today:
         raise Rejected(f"sortie déjà terminée le {end.isoformat()}")
+    # La période de la configuration est une contrainte : une sortie qui
+    # commence après n'a rien à faire dans ce run, même si elle est bonne.
+    if until is not None and start > until:
+        raise Rejected(f"commence le {start.isoformat()}, après la période demandée")
     return False, start.isoformat(), end.isoformat()
 
 
@@ -118,6 +124,7 @@ def build_payload(
     category_id: int,
     source_url: str,
     today: date | None = None,
+    until: date | None = None,
 ) -> dict[str, Any]:
     """Corps prêt pour l'API, ou `Rejected` avec le motif."""
     today = today or date.today()
@@ -138,7 +145,7 @@ def build_payload(
     if not event.free and price is None:
         price = UNKNOWN_PRICE
 
-    permanent, date_start, date_end = _clean_dates(event, today)
+    permanent, date_start, date_end = _clean_dates(event, today, until)
     open_time, close_time = _clean_times(event.open_time, event.close_time)
     age_min, age_max = _clean_ages(event.age_min, event.age_max)
 

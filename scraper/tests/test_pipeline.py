@@ -129,7 +129,7 @@ def geocodeur_simule(monkeypatch):
     from sortiesbot import geocode as geocoding
 
     monkeypatch.setattr(
-        geocoding, "_photon_search",
+        geocoding, "_search",
         lambda query: [{"properties": {"city": "Vanves", "postcode": "92170"},
                         "geometry": {"coordinates": [2.2896, 48.8226]}}],
     )
@@ -253,7 +253,7 @@ def test_tarif_inconnu_est_soumis_a_completer(log):
 def test_echec_de_geocodage_passe_en_zero(log, monkeypatch):
     from sortiesbot import geocode as geocoding
 
-    monkeypatch.setattr(geocoding, "_photon_search", lambda query: [])
+    monkeypatch.setattr(geocoding, "_search", lambda query: [])
     provider, fetcher = standard()
     api = FakeApi()
     with SeenStore() as store:
