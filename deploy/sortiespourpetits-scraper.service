@@ -1,0 +1,24 @@
+[Unit]
+Description=SortiesPourPetits — worker de recherche automatique
+# Le worker interroge l'API du site : la démarrer d'abord évite une volée
+# d'échecs au boot (il réessaie de toute façon).
+After=network.target sortiespourpetits-api.service
+Wants=sortiespourpetits-api.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/sortiespourpetits/scraper
+# Les clés (ANTHROPIC_API_KEY, SPP_API_KEY) sont écrites par le déploiement.
+EnvironmentFile=/opt/sortiespourpetits/scraper/.env
+ExecStart=/opt/sortiespourpetits/scraper/.venv/bin/python -m sortiesbot.worker
+# Une recherche dure plusieurs minutes : on la laisse finir avant de couper.
+KillSignal=SIGTERM
+TimeoutStopSec=600
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

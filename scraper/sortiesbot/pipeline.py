@@ -1,15 +1,27 @@
 """Enchaînement d'un run.
 
-    1. recherche       (modèle)  → pages d'agenda à ouvrir
+    1. recherche       (modèle)  → pages à ouvrir : agendas et sorties
     2. téléchargement  (Python)  → HTML des agendas               gratuit
     3. extraction liens(Python)  → (texte, url, contexte)          gratuit
     4. sélection       (modèle)  → liens menant à une sortie
     5. lecture + fiche (Python + modèle) → sortie structurée
     puis géocodage, validation, photo, soumission — inchangés.
 
+Thème, période et zone sont une **stratégie de recherche**, pas un filtre de
+sortie : ils orientent les requêtes et le tri des liens, là où ils font gagner
+du temps et de l'argent. Une fois la page lue, elle est payée — l'écarter
+parce qu'elle déborde de la fenêtre reviendrait à payer pour rien, alors que
+le site sait filtrer par date et par distance, et qu'un modérateur relit tout.
+Seul ce qui est inexploitable est écarté.
+
 Le partage est toujours le même : Python fait ce qui est mécanique, le modèle
 fait ce qui demande du jugement, et aucun appel ne boucle. Le filtre des URLs
 déjà vues intervient avant l'étape 5, la seule qui coûte par sortie.
+
+Chaque page traitée est rendue à la mémoire (`store.report`) avec ce qu'on en
+a fait. Une décision définitive y est mémorisée — la page ne sera plus jamais
+relue, par aucune configuration ; une décision provisoire (déjà connue,
+doublon, essai sans soumission, erreur réseau) est seulement journalisée.
 """
 
 from __future__ import annotations
@@ -23,11 +35,11 @@ from .api import ApiError, SppApi
 from .config import Config, describe
 from .harvest import FetchError, Fetcher, Link, links_of, page_text
 from .journal import RunLog
-from .models import Candidate, Summary
-from .payload import UNKNOWN_PRICE, Rejected, build_payload
+from .models import Candidate, FoundPage, Summary
+from .payload import UNKNOWN_PRICE, OutOfPeriod, Rejected, build_payload
 from .photo import PhotoError, download
 from .providers.base import Provider, ProviderError
-from .store import SeenStore
+from .store import Memory, normalize_url
 from . import geocode as geocoding
 
 
@@ -63,6 +75,17 @@ def resolve_category(name: str, categories: dict[str, int], default: str) -> int
     raise Rejected(f"catégorie « {name or '?'} » inconnue et « {default} » absente du site")
 
 
+def _out_of_area(postal_code: str, prefixes: list[str]) -> bool:
+    """Un code postal connu hors zone écarte la sortie.
+
+    Un géocodage hors zone échoue déjà, mais la sortie partait quand même en
+    (0, 0) « adresse à compléter » — un spectacle à Chantilly, dans l'Oise,
+    s'est retrouvé dans un run Île-de-France.
+    """
+    code = postal_code.strip()
+    return bool(code and prefixes and not code.startswith(tuple(prefixes)))
+
+
 def _is_blocked(url: str, blocked: list[str]) -> bool:
     host = urlsplit(url).netloc.lower()
     host = host[4:] if host.startswith("www.") else host
@@ -72,7 +95,7 @@ def _is_blocked(url: str, blocked: list[str]) -> bool:
 def run(
     config: Config,
     provider: Provider,
-    store: SeenStore,
+    store: Memory,
     api: SppApi,
     log: RunLog,
     submit: bool = False,
@@ -95,17 +118,50 @@ def run(
 
     # 1. Recherche.
     try:
-        agendas = provider.search(config, log)
+        found = provider.search(config, log)
     except ProviderError as err:
         log.error("search", str(err))
         summary.errors += 1
         log.event("run_end", summary=summary.as_dict())
         return result
 
-    # 2 à 4. Chaque agenda est téléchargé, dépouillé, puis trié par le modèle.
+    # 2 à 4. Un agenda est téléchargé puis dépouillé ; une page de sortie
+    # trouvée directement par la recherche part telle quelle à l'extraction.
     candidates: list[Candidate] = []
-    for agenda in agendas[: config.max_agendas]:
-        candidates.extend(_harvest(agenda.url, config, provider, fetcher, log, summary))
+    vues: set[str] = set()
+    agendas = [p for p in found if p.is_agenda][: config.max_agendas]
+    directes = [p for p in found if not p.is_agenda]
+
+    for page in directes:
+        log.event("direct", url=page.url, title=page.title, why=page.reason)
+
+    trouvees = [
+        Candidate(url=p.url, title=p.title, source="recherche", context=p.reason)
+        for p in directes
+    ]
+    for agenda in agendas:
+        trouvees.extend(_harvest(agenda.url, config, provider, fetcher, log, summary))
+
+    for candidate in trouvees:
+        # Deux agendas listent souvent la même sortie — parfois la même page
+        # sous deux URLs. Sans ce filtre, elle est lue, extraite et soumise
+        # deux fois.
+        key = normalize_url(candidate.url)
+        if key in vues:
+            summary.duplicates += 1
+            log.event("skip", reason="déjà repérée ailleurs", url=candidate.url)
+            # Provisoire : c'est le premier exemplaire qui décidera du sort
+            # de la page, pas ce doublon.
+            store.report(
+                candidate.url,
+                "duplicate",
+                title=candidate.title,
+                reason="déjà repérée ailleurs dans ce run",
+                remember=False,
+            )
+            continue
+        vues.add(key)
+        candidates.append(candidate)
 
     summary.candidates = len(candidates)
     result.candidates = [
@@ -117,6 +173,10 @@ def run(
 
     if not candidates:
         log.event("nothing_found", searches=provider.usage.web_searches, pages=summary.pages)
+
+    # Une seule question à la mémoire pour tout le lot : la suite ne fait plus
+    # que consulter le résultat.
+    store.preload([c.url for c in candidates])
 
     # 5. Une sortie à la fois.
     for candidate in candidates:
@@ -135,6 +195,7 @@ def run(
 
     summary.retained = len(result.events)
     summary.usage.add(provider.usage)
+    store.flush()
     log.event("run_end", summary=summary.as_dict())
     return result
 
@@ -159,7 +220,10 @@ def _harvest(
     summary.pages += 1
     log.event("harvested", url=url, links=len(links))
     if not links:
-        return []
+        # Pas un seul lien exploitable : ce n'est pas un agenda. La page est
+        # téléchargée, autant la lire comme une sortie.
+        log.event("fallback", url=url)
+        return [Candidate(url=url, title="", source="recherche", context="")]
 
     try:
         kept = provider.select(url, links, config, log)
@@ -169,6 +233,13 @@ def _harvest(
         return []
 
     log.event("selected", url=url, kept=len(kept), among=len(links))
+    if not kept:
+        # Un agenda dont on ne tire aucun lien est peut-être une page de
+        # sortie que la recherche a mal classée. Elle est déjà téléchargée :
+        # la lire coûte une extraction, l'ignorer coûte la sortie.
+        log.event("fallback", url=url)
+        return [Candidate(url=url, title="", source="recherche", context="")]
+
     return [
         Candidate(url=link.url, title=link.text, source=url, context=link.context)
         for link in kept
@@ -179,7 +250,7 @@ def _process(
     candidate: Candidate,
     config: Config,
     provider: Provider,
-    store: SeenStore,
+    store: Memory,
     api: SppApi,
     fetcher: Fetcher,
     log: RunLog,
@@ -193,10 +264,14 @@ def _process(
     if _is_blocked(url, config.blocked_domains):
         summary.skipped_blocked += 1
         log.event("skip", reason="domaine bloqué", url=url)
+        # Provisoire : la liste des domaines bloqués est un réglage, pas un
+        # jugement sur la page. La retirer de la liste doit suffire à la lire.
+        store.report(url, "blocked", title=candidate.title, remember=False)
         return
     if store.seen(url):
         summary.skipped_seen += 1
         log.event("skip", reason="déjà vue lors d'un run précédent", url=url)
+        store.report(url, "seen", title=candidate.title, remember=False)
         return
 
     # La page est lue en Python : le modèle ne reçoit que du texte, sans outil,
@@ -206,11 +281,14 @@ def _process(
     except FetchError as err:
         summary.errors += 1
         log.error("extraction", str(err), url=url)
+        # Un site injoignable aujourd'hui peut répondre demain : on ne
+        # mémorise pas, le prochain run réessaiera.
+        store.report(url, "error", title=candidate.title, reason=str(err), remember=False)
         return
     if len(content) < MIN_PAGE_CHARS:
         summary.skipped_invalid += 1
         log.event("skip", reason="page vide ou illisible", url=url)
-        store.remember(url, "invalid", title=candidate.title)
+        store.report(url, "invalid", title=candidate.title, reason="page vide ou illisible")
         return
 
     try:
@@ -218,12 +296,18 @@ def _process(
     except ProviderError as err:
         summary.errors += 1
         log.error("extraction", str(err), url=url)
+        store.report(url, "error", title=candidate.title, reason=str(err), remember=False)
         return
 
     if not extracted.relevant:
         summary.skipped_irrelevant += 1
         log.event("skip", reason=extracted.skip_reason or "hors sujet", url=url)
-        store.remember(url, "irrelevant", title=candidate.title)
+        store.report(
+            url,
+            "irrelevant",
+            title=candidate.title,
+            reason=extracted.skip_reason or "hors sujet",
+        )
         return
 
     log.event(
@@ -233,7 +317,16 @@ def _process(
         venue=f"{extracted.venue_name} — {extracted.venue_city}".strip(" —"),
     )
 
-    geo = geocoding.geocode(extracted, config.postal_prefixes)
+    if _out_of_area(extracted.venue_postal_code, config.postal_prefixes):
+        summary.out_of_area += 1
+        if not config.keep_out_of_scope:
+            reason = f"code postal {extracted.venue_postal_code} hors zone"
+            log.event("skip", reason=reason, url=url)
+            store.report(url, "out_of_area", title=extracted.title, reason=reason)
+            return
+        log.event("out_of_scope", field="zone", url=url, detail=extracted.venue_postal_code)
+
+    geo = geocoding.geocode(extracted)
     log.event(
         "geocode", url=url, query=geo.query, located=geo.located,
         lat=geo.location.lat, lng=geo.location.lng, reason=geo.reason,
@@ -243,13 +336,32 @@ def _process(
 
     try:
         category_id = resolve_category(extracted.category, categories, config.default_category)
-        payload = build_payload(extracted, geo.location, category_id, url,
-                                until=config.date_to)
+        payload = build_payload(
+            extracted,
+            geo.location,
+            category_id,
+            url,
+            until=None if config.keep_out_of_scope else config.date_to,
+        )
+    except OutOfPeriod as err:
+        summary.out_of_period += 1
+        log.event("skip", reason=str(err), url=url)
+        store.report(url, "out_of_period", title=extracted.title, reason=str(err))
+        return
     except Rejected as err:
         summary.skipped_invalid += 1
         log.event("skip", reason=str(err), url=url)
-        store.remember(url, "invalid", title=extracted.title or candidate.title)
+        store.report(
+            url,
+            "invalid",
+            title=extracted.title or candidate.title,
+            reason=str(err),
+        )
         return
+
+    if payload["dateStart"] and payload["dateStart"] > config.date_to.isoformat():
+        summary.out_of_period += 1
+        log.event("out_of_scope", field="période", url=url, detail=payload["dateStart"])
 
     if payload["price"] == UNKNOWN_PRICE:
         summary.unpriced += 1
@@ -276,6 +388,9 @@ def _process(
     if not submit:
         result.events.append(record)
         log.event("dry_run", title=payload["title"], url=url)
+        # Un essai ne mémorise pas : sinon la sortie qu'il vient de repérer ne
+        # serait jamais proposée, le run réel la sautant comme « déjà vue ».
+        store.report(url, "dry_run", title=payload["title"], remember=False)
         return
 
     try:
@@ -283,12 +398,12 @@ def _process(
     except ApiError as err:
         summary.errors += 1
         log.error("submit", str(err), url=url)
-        store.remember(url, "error", title=payload["title"])
+        store.report(url, "error", title=payload["title"], reason=str(err), remember=False)
         return
 
     event_id = event.get("id")
     record["event_id"] = event_id
     result.events.append(record)
     summary.submitted += 1
-    store.remember(url, "submitted", title=payload["title"], event_id=event_id)
+    store.report(url, "submitted", title=payload["title"], event_id=event_id)
     log.event("submit", event_id=event_id, title=payload["title"], url=url)

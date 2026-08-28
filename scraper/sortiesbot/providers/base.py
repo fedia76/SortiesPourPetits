@@ -13,7 +13,7 @@ from typing import Protocol
 from ..config import Config
 from ..harvest import Link
 from ..journal import RunLog
-from ..models import Agenda, ExtractedEvent, Usage
+from ..models import ExtractedEvent, FoundPage, Usage
 
 
 class ProviderError(RuntimeError):
@@ -26,8 +26,9 @@ class Provider(Protocol):
     name: str
     usage: Usage
 
-    def search(self, config: Config, log: RunLog) -> list[Agenda]:
-        """Lance les recherches web et désigne les pages d'agenda à ouvrir."""
+    def search(self, config: Config, log: RunLog) -> list[FoundPage]:
+        """Lance les recherches web et désigne les pages à ouvrir, chacune
+        classée en agenda (à dépouiller) ou en sortie (à lire telle quelle)."""
         ...
 
     def select(

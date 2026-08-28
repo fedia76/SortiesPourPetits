@@ -11,12 +11,23 @@ from typing import Any
 
 
 @dataclass(frozen=True)
-class Agenda:
-    """Une page qui liste des événements, à ouvrir pour en tirer des liens."""
+class FoundPage:
+    """Une page retenue par la recherche.
+
+    Une recherche ne remonte pas que des agendas : elle tombe aussi
+    directement sur la page d'une sortie. Les deux se traitent différemment —
+    l'agenda est dépouillé de ses liens, la sortie est lue telle quelle — d'où
+    ce `kind`.
+    """
 
     url: str
     title: str = ""
+    kind: str = "agenda"
     reason: str = ""
+
+    @property
+    def is_agenda(self) -> bool:
+        return self.kind != "sortie"
 
 
 @dataclass(frozen=True)
@@ -168,6 +179,12 @@ class Summary:
     skipped_seen: int = 0
     skipped_blocked: int = 0
     skipped_irrelevant: int = 0
+    #: Sorties listées par deux agendas différents.
+    duplicates: int = 0
+    #: Sorties gardées bien qu'en dehors de la fenêtre visée : la
+    #: configuration oriente la recherche, elle ne filtre pas le résultat.
+    out_of_period: int = 0
+    out_of_area: int = 0
     skipped_invalid: int = 0
     ungeocoded: int = 0
     unpriced: int = 0
@@ -185,6 +202,9 @@ class Summary:
             "skipped_seen": self.skipped_seen,
             "skipped_blocked": self.skipped_blocked,
             "skipped_irrelevant": self.skipped_irrelevant,
+            "duplicates": self.duplicates,
+            "out_of_period": self.out_of_period,
+            "out_of_area": self.out_of_area,
             "skipped_invalid": self.skipped_invalid,
             "ungeocoded": self.ungeocoded,
             "unpriced": self.unpriced,

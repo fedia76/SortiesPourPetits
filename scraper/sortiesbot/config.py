@@ -1,7 +1,11 @@
-"""Configuration d'une recherche, chargée depuis un fichier YAML.
+"""Configuration d'une recherche.
 
-En v1 les configurations sont des fichiers ; elles deviendront des lignes de
-la table `ScraperConfig` quand la console d'administration pilotera les runs.
+Deux origines, un seul objet `Config` :
+
+* un fichier YAML (`configs/*.yaml`), pour les runs lancés à la main ;
+* une ligne de la table `ScraperConfig` du site, que la console
+  d'administration édite et que le worker reçoit en JSON.
+
 Les champs sont donc volontairement plats et sérialisables tels quels.
 """
 
@@ -57,6 +61,13 @@ class Config:
     #: Plafond de coût du run, en dollars. Vérifié avant chaque appel payant.
     max_cost_usd: float = 1.00
     default_category: str = "Non classé"
+    #: Le thème, la période et la zone orientent les recherches et le tri des
+    #: liens — c'est là qu'ils servent. Une fois la page lue, elle est payée :
+    #: la garder ne coûte plus rien, et le site sait filtrer par date et par
+    #: distance. Passer à false pour un run strictement cantonné à sa fenêtre.
+    keep_out_of_scope: bool = True
+    #: Départements visés par la recherche. Sert au tri, et au filtre strict
+    #: si `keep_out_of_scope` est désactivé.
     postal_prefixes: list[str] = field(default_factory=lambda: list(IDF_POSTAL_PREFIXES))
     blocked_domains: list[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS))
     provider: str = "anthropic"
@@ -144,6 +155,64 @@ def load_config(path: str | Path) -> Config:
     if config.horizon_days < 1:
         raise ConfigError("horizon_days doit valoir au moins 1")
     return config
+
+
+def _split(value: Any, fallback: list[str]) -> list[str]:
+    """« 75, 77,78 » → ["75", "77", "78"]. Vide : on garde la liste par défaut."""
+    if isinstance(value, list):
+        items = [str(v).strip() for v in value]
+    else:
+        items = [part.strip() for part in str(value or "").split(",")]
+    items = [item for item in items if item]
+    return items or fallback
+
+
+def config_from_api(raw: dict[str, Any]) -> Config:
+    """Traduit une configuration du site (JSON camelCase) en `Config`.
+
+    Une clé absente reprend le défaut du dataclass, et un prompt vide veut
+    dire « garde celui du scraper » — la console l'affiche ainsi.
+    """
+    if not raw.get("name") or not raw.get("theme"):
+        raise ConfigError("Configuration incomplète : « name » et « theme » sont obligatoires")
+
+    def prompt(key: str, default: str) -> str:
+        value = raw.get(key)
+        return value.strip() if isinstance(value, str) and value.strip() else default
+
+    def number(key: str, default: float) -> float:
+        value = raw.get(key)
+        try:
+            return default if value is None else float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def integer(key: str, default: int) -> int:
+        return int(number(key, default))
+
+    defaults = Config(name=str(raw["name"]), theme=str(raw["theme"]))
+    return replace(
+        defaults,
+        area=str(raw.get("area") or defaults.area),
+        period=str(raw.get("period") or defaults.period),
+        horizon_days=integer("horizonDays", defaults.horizon_days),
+        max_events=integer("maxEvents", defaults.max_events),
+        max_searches=integer("maxSearches", defaults.max_searches),
+        max_agendas=integer("maxAgendas", defaults.max_agendas),
+        max_links_per_agenda=integer("maxLinksPerAgenda", defaults.max_links_per_agenda),
+        max_page_chars=integer("maxPageChars", defaults.max_page_chars),
+        max_cost_usd=number("maxCostUsd", defaults.max_cost_usd),
+        keep_out_of_scope=bool(raw.get("keepOutOfScope", defaults.keep_out_of_scope)),
+        default_category=str(raw.get("defaultCategory") or defaults.default_category),
+        postal_prefixes=_split(raw.get("postalPrefixes"), defaults.postal_prefixes),
+        blocked_domains=_split(raw.get("blockedDomains"), defaults.blocked_domains),
+        search_model=str(raw.get("searchModel") or defaults.search_model),
+        select_model=str(raw.get("selectModel") or defaults.select_model),
+        extraction_model=str(raw.get("extractionModel") or defaults.extraction_model),
+        search_prompt=prompt("searchPrompt", defaults.search_prompt),
+        select_prompt=prompt("selectPrompt", defaults.select_prompt),
+        extraction_prompt=prompt("extractionPrompt", defaults.extraction_prompt),
+    )
 
 
 def with_limit(config: Config, limit: int | None) -> Config:

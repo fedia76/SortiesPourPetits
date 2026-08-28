@@ -25,6 +25,13 @@ enum EventStatus {
   REJECTED
 }
 
+enum ScraperRunStatus {
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+}
+
 model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique
@@ -33,9 +40,10 @@ model User {
   role         Role     @default(USER)
   createdAt    DateTime @default(now())
 
-  events          Event[]  @relation("EventAuthor")
-  moderatedEvents Event[]  @relation("EventModerator")
+  events          Event[]      @relation("EventAuthor")
+  moderatedEvents Event[]      @relation("EventModerator")
   apiKeys         ApiKey[]
+  scraperRuns     ScraperRun[] @relation("ScraperRunRequester")
 }
 
 /// Clé d'API pour les programmes tiers. La clé en clair n'est jamais stockée :
@@ -108,7 +116,128 @@ model Event {
   moderator     User? @relation("EventModerator", fields: [moderatedById], references: [id])
   moderatedById Int?
 
+  scraperItems ScraperRunItem[]
+  scrapedUrls  ScrapedUrl[]
+
   @@index([status, dateEnd])
   @@index([createdById])
   @@index([categoryId])
+}
+
+/// Une recherche paramétrée du scraper. Le thème, la période et la zone
+/// orientent la recherche ; ils ne filtrent pas le résultat (voir
+/// `keepOutOfScope`). Plusieurs configurations spécialisées se complètent :
+/// chacune ratisse son angle et ramasse au passage ce que les autres ratent.
+model ScraperConfig {
+  id      Int     @id @default(autoincrement())
+  name    String  @unique
+  enabled Boolean @default(true)
+
+  theme       String @db.Text
+  area        String @default("Île-de-France")
+  period      String @default("les prochaines semaines")
+  horizonDays Int    @default(30)
+
+  maxEvents         Int     @default(20)
+  maxSearches       Int     @default(6)
+  maxAgendas        Int     @default(6)
+  maxLinksPerAgenda Int     @default(8)
+  maxPageChars      Int     @default(8000)
+  maxCostUsd        Decimal @default(1.00) @db.Decimal(6, 2)
+  keepOutOfScope    Boolean @default(true)
+
+  defaultCategory String @default("Non classé")
+  /// Préfixes de codes postaux visés, séparés par des virgules.
+  postalPrefixes  String @default("75,77,78,91,92,93,94,95")
+  /// Domaines écartés d'office, séparés par des virgules.
+  blockedDomains  String @default("") @db.Text
+
+  searchModel     String @default("claude-haiku-4-5")
+  selectModel     String @default("claude-haiku-4-5")
+  extractionModel String @default("claude-haiku-4-5")
+
+  /// Prompts personnalisés ; vides, le scraper utilise les siens.
+  searchPrompt     String? @db.Text
+  selectPrompt     String? @db.Text
+  extractionPrompt String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  runs ScraperRun[]
+}
+
+/// Une exécution : mise en file depuis la console, prise en charge par le
+/// worker, puis close avec ses compteurs.
+model ScraperRun {
+  id     Int              @id @default(autoincrement())
+  status ScraperRunStatus @default(QUEUED)
+  /// Faux : le run explore sans rien proposer au site.
+  submit Boolean          @default(false)
+
+  queuedAt   DateTime  @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+  error      String?   @db.Text
+
+  candidates Int @default(0)
+  pages      Int @default(0)
+  retained   Int @default(0)
+  submitted  Int @default(0)
+  duplicates Int @default(0)
+  skipped    Int @default(0)
+  errors     Int @default(0)
+
+  inputTokens  Int     @default(0)
+  outputTokens Int     @default(0)
+  webSearches  Int     @default(0)
+  costUsd      Decimal @default(0) @db.Decimal(8, 4)
+
+  config   ScraperConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  configId Int
+
+  requestedBy   User? @relation("ScraperRunRequester", fields: [requestedById], references: [id])
+  requestedById Int?
+
+  items ScraperRunItem[]
+
+  @@index([status, queuedAt])
+  @@index([configId])
+}
+
+/// Ce qu'un run a fait de chaque page : c'est le journal, consultable depuis
+/// la console.
+model ScraperRunItem {
+  id       Int      @id @default(autoincrement())
+  url      String   @db.VarChar(500)
+  title    String?
+  /// submitted, dry_run, irrelevant, invalid, duplicate, out_of_period…
+  decision String
+  reason   String?  @db.Text
+  at       DateTime @default(now())
+
+  run   ScraperRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId Int
+
+  event   Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  eventId Int?
+
+  @@index([runId])
+}
+
+/// Mémoire des pages déjà analysées, tous runs et toutes configurations
+/// confondus. C'est ce qui empêche de relire — donc de repayer — une page
+/// connue, et ce qui évite de reproposer une sortie déjà refusée.
+model ScrapedUrl {
+  id        Int      @id @default(autoincrement())
+  url       String   @unique @db.VarChar(500)
+  title     String?
+  decision  String
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @updatedAt
+
+  event   Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  eventId Int?
+
+  @@index([decision])
 }

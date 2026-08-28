@@ -21,6 +21,8 @@ _CONSOLE = {
     "run_start": lambda f: f"▶ Run « {f.get('config', {}).get('name', '?')} » — {f.get('mode')}",
     "query": lambda f: f"  🔎 recherche : {f.get('query')}",
     "fetching": lambda f: f"  ↓ ouverture : {f.get('url')}",
+    "direct": lambda f: f"  ★ sortie trouvée directement : {f.get('title')} — {f.get('url')}",
+    "fallback": lambda f: f"  ↺ aucun lien retenu, la page est relue comme une sortie : {f.get('url')}",
     "harvested": lambda f: f"  🔗 {f.get('links')} lien(s) extrait(s) : {f.get('url')}",
     "selected": lambda f: f"  ✔ {f.get('kept')} retenu(s) sur {f.get('among')} : {f.get('url')}",
     "visited": lambda f: f"  📄 page lue : {f.get('url')}",
@@ -36,6 +38,9 @@ _CONSOLE = {
         f"  📍 {f.get('query')} → {f.get('lat')}, {f.get('lng')}"
         if f.get("located")
         else f"  📍 non géolocalisé ({f.get('reason')}) : {f.get('query')}"
+    ),
+    "out_of_scope": lambda f: (
+        f"  ± hors {f.get('field')} ({f.get('detail')}) mais gardée : {f.get('url')}"
     ),
     "incomplete": lambda f: f"  ⚑ {f.get('field')} à compléter par la modération : {f.get('title')}",
     "paused": lambda f: (

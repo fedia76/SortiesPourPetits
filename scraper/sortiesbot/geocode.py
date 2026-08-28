@@ -13,8 +13,10 @@ identifiable, et la Base Adresse Nationale prend le relais si Photon se
 dérobe. Elle ne connaît que les adresses, mais elle est gratuite, publique et
 sans quota.
 
-Une position hors de la zone attendue est traitée comme un échec : mieux vaut
-laisser le modérateur compléter que publier une sortie à l'autre bout du monde.
+Le contrôle porte sur le pays : une position hors de France est traitée comme
+un échec, parce que c'est le signe d'une homonymie — il y a un Montreuil au
+Québec. Le département, lui, n'est plus une condition : une sortie voisine de
+la zone visée reste une bonne sortie.
 """
 
 from __future__ import annotations
@@ -109,8 +111,16 @@ def _search(query: str) -> list[dict[str, Any]]:
     return _ban_search(query)
 
 
+def _in_france(props: dict[str, Any]) -> bool:
+    """Photon donne le pays ; la BAN est française par construction."""
+    code = str(props.get("countrycode") or props.get("country") or "").strip().upper()
+    return code in ("", "FR", "FRANCE")
+
+
 def _to_location(feature: dict[str, Any]) -> Location | None:
     props = feature.get("properties") or {}
+    if not _in_france(props):
+        return None
     coords = (feature.get("geometry") or {}).get("coordinates") or []
     if len(coords) < 2:
         return None
@@ -130,7 +140,6 @@ def _to_location(feature: dict[str, Any]) -> Location | None:
 
 def geocode(
     event: ExtractedEvent,
-    postal_prefixes: list[str],
     search: Callable[[str], list[dict[str, Any]]] | None = None,
 ) -> GeocodeResult:
     """Cherche la position d'un lieu ; retourne `UNLOCATED` en cas d'échec.
@@ -140,7 +149,6 @@ def geocode(
     """
     search = search or _search
     last_query = event.venue_name or event.venue_city or "(lieu inconnu)"
-    out_of_area = False
 
     for query in _queries(event):
         last_query = query
@@ -154,13 +162,9 @@ def geocode(
             if location is None:
                 continue
             if not location.postal_code:
-                # Sans code postal, impossible de vérifier qu'on est dans la
-                # zone : on préfère la tentative suivante, plus précise.
-                continue
-            if postal_prefixes and not location.postal_code.startswith(tuple(postal_prefixes)):
-                out_of_area = True
+                # Sans code postal, la réponse est trop vague : on tente la
+                # requête suivante, plus précise.
                 continue
             return GeocodeResult(location, query)
 
-    reason = "hors zone" if out_of_area else "aucun résultat"
-    return GeocodeResult(UNLOCATED, last_query, reason)
+    return GeocodeResult(UNLOCATED, last_query, "aucun résultat")

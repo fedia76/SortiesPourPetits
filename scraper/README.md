@@ -12,9 +12,12 @@ le modèle n'intervient que pour trancher — trier des liens, remplir une fiche
 ## Installation
 
 Sur le VPS, rien à faire : le déploiement automatique envoie le dossier, crée
-l'environnement virtuel et écrit le `.env` depuis les secrets GitHub (voir
-[`deploy/README.md`](../deploy/README.md)). Les instructions ci-dessous sont
-pour une installation locale.
+l'environnement virtuel et écrit le `.env` depuis les secrets GitHub. Seule
+l'unité systemd du worker s'installe à la main, une fois, en root — le
+déploiement la dépose à jour dans `/opt/sortiespourpetits/deploy/`, la
+procédure est au § 9 de [`deploy/README.md`](../deploy/README.md).
+
+Les instructions ci-dessous sont pour une installation locale.
 
 ```bash
 cd scraper
@@ -35,6 +38,40 @@ La clé du site hérite du rôle de son compte : rattachez-la à un compte dont 
 propositions doivent passer par la modération.
 
 ## Utilisation
+
+Deux façons de lancer une recherche, le même pipeline derrière :
+
+| | Console du site | Ligne de commande |
+|---|---|---|
+| Configuration | table `ScraperConfig`, éditée dans **Recherche auto** | fichier YAML de `configs/` |
+| Déclenchement | bouton « Essai » ou « Lancer et proposer » | `python -m sortiesbot` |
+| Mémoire des pages | table `ScrapedUrl`, **commune à toutes les recherches** | SQLite local `state/seen.sqlite3` |
+| Journal | consultable dans la console, page par page | fichiers de `runs/` |
+
+La console est le mode normal ; la ligne de commande sert à mettre au point une
+configuration ou à rejouer un run.
+
+### Depuis la console (worker)
+
+Le worker tourne en service sur le VPS (`sortiespourpetits-scraper`, installé
+selon le § 9 de [`deploy/README.md`](../deploy/README.md)) et attend le
+travail :
+
+```bash
+python -m sortiesbot.worker          # boucle, une passe toutes les 30 s
+python -m sortiesbot.worker --once   # traite au plus une exécution, puis sort
+```
+
+Il réclame l'exécution en attente (`POST /api/scraper/next`), joue la
+recherche avec la configuration que le site lui donne, rend compte page par
+page (`/runs/:id/items`) puis clôt l'exécution avec ses compteurs
+(`/runs/:id/finish`). Il ne décide de rien : tout se règle dans la console.
+
+Une exécution est close **quoi qu'il arrive**, y compris sur un plantage :
+sans clôture elle resterait « En cours » dans la console, et bloquerait toute
+nouvelle exécution de la même configuration.
+
+### En ligne de commande
 
 ```bash
 # Dry-run (défaut) : rien n'est envoyé au site.
@@ -76,13 +113,24 @@ liens — et ne coûte rien. Le modèle n'intervient qu'aux trois moments où il
 faut du jugement, et **aucun de ces appels ne boucle** :
 
 ```
-1. recherche        modèle + web_search   → pages d'agenda à ouvrir
-2. téléchargement   Python                → HTML                      gratuit
-3. extraction liens Python (BeautifulSoup)→ (texte, url, contexte)     gratuit
+1. recherche        modèle + web_search   → pages à ouvrir, classées
+                                            « agenda » ou « sortie »
+   ├─ sortie  ─────────────────────────────────────────┐
+   └─ agenda                                           │
+2. téléchargement   Python                → HTML       │           gratuit
+3. extraction liens Python (BeautifulSoup)→ (texte, url, contexte)  gratuit
 4. sélection        modèle, sans outil    → liens menant à une sortie
-5. lecture + fiche  Python puis modèle    → sortie structurée
+                                                       │
+5. lecture + fiche  Python puis modèle ◀───────────────┘
+                                          → sortie structurée
    puis géocodage, validation, photo, soumission — sans modèle
 ```
+
+Une recherche ne remonte pas que des agendas : elle tombe régulièrement sur la
+page d'une sortie précise. Le modèle classe donc chaque page retenue, et une
+sortie trouvée directement court-circuite les étapes 2 à 4. S'il se trompe et
+qu'un « agenda » ne donne aucun lien, la page est relue comme une sortie — elle
+est déjà téléchargée, la lire coûte 0,004 $, l'ignorer coûte la sortie.
 
 C'est ce découpage qui rend le coût prévisible. La version précédente confiait
 toute la procédure à un seul appel agentique : le modèle ouvrait les pages
@@ -119,6 +167,31 @@ des URL. **Il lui est donc matériellement impossible d'en inventer une**, ce qu
 était un vrai problème dans la version précédente. Sa réponse tient en quelques
 jetons.
 
+### La mémoire des pages analysées
+
+Une page lue est une page payée : la relire, c'est repayer. Toute page dont le
+sort est **définitif** est donc mémorisée, et plus jamais rouverte — par aucune
+recherche, la mémoire étant commune à toutes les configurations. C'est ce qui
+fait que dix recherches spécialisées se complètent au lieu de se répéter.
+
+Restent journalisées mais **non** mémorisées les décisions provisoires, qui ne
+doivent pas empêcher un run ultérieur de traiter la page :
+
+| Décision | Mémorisée ? | Pourquoi |
+|---|---|---|
+| `submitted` — proposée au site | oui | c'est fait |
+| `irrelevant` — pas une sortie | oui | la page ne changera pas de nature |
+| `invalid` — inexploitable | oui | idem |
+| `out_of_period`, `out_of_area` | oui | écartée sciemment (run strict) |
+| `dry_run` — retenue à l'essai | non | sinon le run réel la sauterait |
+| `seen`, `duplicate` | non | c'est la décision d'origine qui compte |
+| `blocked` — domaine bloqué | non | un réglage, pas un jugement |
+| `error` — site ou API injoignable | non | demain ça remarchera peut-être |
+
+La clé de mémorisation est l'URL normalisée (schéma, `www.`, barre finale et
+paramètres de suivi retirés) ; le lien exact, lui, reste affiché et cliquable
+dans la console.
+
 ### Politesse
 
 Puisque le scraper télécharge lui-même, il assume ce qu'Anthropic assumait :
@@ -138,6 +211,28 @@ avec une valeur convenue que le site reconnaît
 
 Dans les deux cas, **l'approbation est refusée** tant qu'un modérateur n'a pas
 corrigé le champ, et le bandeau pointe vers le formulaire d'édition.
+
+## La configuration oriente, elle ne filtre pas
+
+Thème, période et zone servent aux deux premières étapes : formuler les
+recherches, trier les liens. C'est là qu'ils font gagner du temps et de
+l'argent, en évitant d'ouvrir des pages sans intérêt.
+
+Passé l'extraction, ils ne servent plus à rien — parce que la page est
+**déjà lue et déjà payée**. L'écarter parce qu'elle déborde de la fenêtre,
+c'est payer pour ne rien garder, alors que le site sait filtrer par date et
+par distance, et qu'un modérateur relit chaque proposition.
+
+Une recherche « spectacles de ce week-end » qui croise un atelier de musée
+programmé dans trois mois le rapporte donc quand même. Plusieurs
+configurations spécialisées (musée, spectacle, fête foraine…) se complètent
+ainsi : chacune ratisse son thème et ramasse au passage ce que les autres
+auraient manqué. `keep_out_of_scope: false` rétablit la rigueur d'une fenêtre
+stricte si une configuration en a besoin.
+
+Le géocodeur suit la même logique : il vérifie que la position trouvée est en
+France — une homonymie, il y a un Montreuil au Québec — mais plus qu'elle est
+dans les départements visés.
 
 ## Configuration
 
@@ -200,14 +295,9 @@ serveur refacturant le contexte accumulé à chaque itération.
 
 ## Et ensuite
 
-Ce script est la première étape. La suite prévue :
-
-1. tables `ScraperConfig` / `ScraperRun` / `ScraperRunItem` côté site, avec les
-   configurations et les journaux consultables depuis la console
-   d'administration (le JSONL est déjà écrit dans ce format) ;
-2. un worker `systemd` sur le VPS qui prend les runs mis en file par la console
-   et porte le cron des configurations ;
-3. un fournisseur OpenRouter — l'interface `Provider` (trois méthodes) est déjà
+1. un déclenchement périodique des configurations (le worker sait déjà exécuter
+   ce qu'on lui met en file ; il manque qui l'y met, et quand) ;
+2. un fournisseur OpenRouter — l'interface `Provider` (trois méthodes) est déjà
    en place pour ça, et seule la recherche y demande un outil ;
-4. un second script en liste blanche, alimenté par les domaines dont les
+3. un second script en liste blanche, alimenté par les domaines dont les
    sorties ont été le plus souvent approuvées.
