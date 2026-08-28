@@ -42,6 +42,13 @@ _CONSOLE = {
     "out_of_scope": lambda f: (
         f"  ± hors {f.get('field')} ({f.get('detail')}) mais gardée : {f.get('url')}"
     ),
+    "schedule": lambda f: (
+        f"  🗓 {f.get('count')} date(s) [{f.get('source')}]"
+        + (f" — {', '.join(f.get('weekdays') or [])}" if f.get("weekdays") else "")
+        + f" : {f.get('title')}"
+        if f.get("source") != "plage"
+        else f"  🗓 plage entière, jours de représentation inconnus : {f.get('title')}"
+    ),
     "incomplete": lambda f: f"  ⚑ {f.get('field')} à compléter par la modération : {f.get('title')}",
     "paused": lambda f: (
         f"  ⏸ tour en pause (limite serveur), reprise — {f.get('cost_usd')} $ déjà engagés"

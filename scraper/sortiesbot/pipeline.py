@@ -33,12 +33,13 @@ from urllib.parse import urlsplit
 
 from .api import ApiError, SppApi
 from .config import Config, describe
-from .harvest import FetchError, Fetcher, Link, links_of, page_text
+from .harvest import FetchError, Fetcher, Link, json_ld_dates, links_of, page_text
 from .journal import RunLog
 from .models import Candidate, FoundPage, Summary
 from .payload import UNKNOWN_PRICE, OutOfPeriod, Rejected, build_payload
 from .photo import PhotoError, download
 from .providers.base import Provider, ProviderError
+from .schedule import Schedule, resolve as resolve_schedule
 from .store import Memory, normalize_url
 from . import geocode as geocoding
 
@@ -84,6 +85,16 @@ def _out_of_area(postal_code: str, prefixes: list[str]) -> bool:
     """
     code = postal_code.strip()
     return bool(code and prefixes and not code.startswith(tuple(prefixes)))
+
+
+def describe_schedule(schedule: Schedule, payload: dict[str, Any]) -> str:
+    """Le calendrier en une ligne, pour la colonne « Détail » de la console."""
+    plage = " → ".join(d for d in (payload["dateStart"], payload["dateEnd"]) if d)
+    if not schedule.precise:
+        return f"{plage} — tous les jours" if plage else "sortie permanente"
+    jours = ", ".join(schedule.weekdays)
+    detail = f"{len(schedule.dates)} date(s) [{schedule.source}]"
+    return f"{plage} — {detail}" + (f" : {jours}" if jours else "")
 
 
 def _is_blocked(url: str, blocked: list[str]) -> bool:
@@ -275,9 +286,12 @@ def _process(
         return
 
     # La page est lue en Python : le modèle ne reçoit que du texte, sans outil,
-    # donc sans boucle serveur ni refacturation.
+    # donc sans boucle serveur ni refacturation. Le HTML brut sert une seconde
+    # fois, pour le JSON-LD que le nettoyage du texte jetterait.
     try:
-        content = page_text(fetcher.get_html(url), limit=config.max_page_chars)
+        html = fetcher.get_html(url)
+        content = page_text(html, limit=config.max_page_chars)
+        declared = json_ld_dates(html)
     except FetchError as err:
         summary.errors += 1
         log.error("extraction", str(err), url=url)
@@ -363,6 +377,19 @@ def _process(
         summary.out_of_period += 1
         log.event("out_of_scope", field="période", url=url, detail=payload["dateStart"])
 
+    # Dates réelles de la sortie. Rien n'en dépend encore : on mesure ce que
+    # chaque source donne sur de vrais runs avant d'en faire une table.
+    schedule = resolve_schedule(
+        payload["dateStart"] or "",
+        payload["dateEnd"] or "",
+        weekdays=extracted.weekdays,
+        announced=extracted.dates,
+        json_ld=declared,
+    )
+    if schedule.precise:
+        summary.scheduled += 1
+    log.event("schedule", url=url, title=payload["title"], **schedule.as_dict())
+
     if payload["price"] == UNKNOWN_PRICE:
         summary.unpriced += 1
         log.event("incomplete", field="tarif", url=url, title=payload["title"])
@@ -383,6 +410,7 @@ def _process(
         "found_on": candidate.source,
         "photo_url": extracted.photo_url,
         "located": geo.located,
+        "schedule": schedule.as_dict(),
     }
 
     if not submit:
@@ -390,7 +418,13 @@ def _process(
         log.event("dry_run", title=payload["title"], url=url)
         # Un essai ne mémorise pas : sinon la sortie qu'il vient de repérer ne
         # serait jamais proposée, le run réel la sautant comme « déjà vue ».
-        store.report(url, "dry_run", title=payload["title"], remember=False)
+        store.report(
+            url,
+            "dry_run",
+            title=payload["title"],
+            reason=describe_schedule(schedule, payload),
+            remember=False,
+        )
         return
 
     try:
@@ -405,5 +439,11 @@ def _process(
     record["event_id"] = event_id
     result.events.append(record)
     summary.submitted += 1
-    store.report(url, "submitted", title=payload["title"], event_id=event_id)
+    store.report(
+        url,
+        "submitted",
+        title=payload["title"],
+        reason=describe_schedule(schedule, payload),
+        event_id=event_id,
+    )
     log.event("submit", event_id=event_id, title=payload["title"], url=url)

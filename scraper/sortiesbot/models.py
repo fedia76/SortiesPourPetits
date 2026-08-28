@@ -75,6 +75,11 @@ class ExtractedEvent:
     permanent: bool = False
     date_start: str = ""
     date_end: str = ""
+    #: Jours de représentation lus dans la prose (« tous les dimanches »).
+    #: C'est ce qui distingue un spectacle du dimanche d'une plage continue.
+    weekdays: tuple[str, ...] = ()
+    #: Dates annoncées une à une par la page (« les 3, 7 et 12 août »).
+    dates: tuple[str, ...] = ()
     open_time: str = ""
     close_time: str = ""
     setting: str = ""
@@ -104,6 +109,12 @@ class ExtractedEvent:
             value = number(key)
             return None if value is None else int(value)
 
+        def strings(key: str) -> tuple[str, ...]:
+            value = data.get(key)
+            if not isinstance(value, (list, tuple)):
+                return ()
+            return tuple(str(v).strip() for v in value if str(v).strip())
+
         return cls(
             relevant=bool(data.get("relevant", False)),
             skip_reason=text("skip_reason"),
@@ -116,6 +127,8 @@ class ExtractedEvent:
             permanent=bool(data.get("permanent", False)),
             date_start=text("date_start"),
             date_end=text("date_end"),
+            weekdays=strings("weekdays"),
+            dates=strings("dates"),
             open_time=text("open_time"),
             close_time=text("close_time"),
             setting=text("setting").upper(),
@@ -188,6 +201,9 @@ class Summary:
     skipped_invalid: int = 0
     ungeocoded: int = 0
     unpriced: int = 0
+    #: Sorties dont on connaît les dates réelles, et non la seule plage.
+    #: Mesure de l'étape en cours : savoir si ça vaut une table en base.
+    scheduled: int = 0
     submitted: int = 0
     errors: int = 0
     #: Vrai si le plafond de coût a écourté le run.
@@ -208,6 +224,7 @@ class Summary:
             "skipped_invalid": self.skipped_invalid,
             "ungeocoded": self.ungeocoded,
             "unpriced": self.unpriced,
+            "scheduled": self.scheduled,
             "submitted": self.submitted,
             "errors": self.errors,
             "stopped_on_budget": self.stopped_on_budget,

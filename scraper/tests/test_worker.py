@@ -249,6 +249,23 @@ def test_un_plantage_imprevu_clot_quand_meme_lexecution(tmp_path, monkeypatch):
     assert "boum" in counters["error"]
 
 
+def test_journal_fichier_impossible_narrete_pas_le_run(tmp_path, monkeypatch, geocodeur_simule):
+    """Le vrai journal est en base : un `runs/` inutilisable ne doit pas coûter
+    une recherche. En production le cas se présente en droits — le dossier créé
+    par root lors d'un essai, alors que le service tourne en `deploy` ; ici on
+    le provoque autrement, pour que le test vaille aussi quand il est joué en
+    root, qui passe outre les permissions."""
+    bouche = tmp_path / "runs"
+    bouche.write_text("ceci n'est pas un dossier")
+    provider, fetcher = standard()
+    api = ScraperApi()
+    run_job(api, monkeypatch, provider, fetcher, bouche)
+
+    run_id, status, counters = api.finished[0]
+    assert (run_id, status) == (42, "DONE")
+    assert counters["candidates"] == 1
+
+
 def test_compteurs_du_resume():
     summary = Summary(
         candidates=6,

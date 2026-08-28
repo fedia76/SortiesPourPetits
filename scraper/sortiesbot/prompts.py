@@ -12,6 +12,10 @@ demanderait de dérouler toute une procédure :
   recherche   $theme $area $period $today $date_from $date_to $max_searches
   sélection   $theme $area $date_from $date_to $today $page $max_links
   extraction  $url $today $categories
+
+Le schéma de sortie de l'extraction est défini côté fournisseur
+(`providers/anthropic_provider.py`) : un champ ajouté ici doit l'être là
+aussi, sinon le modèle n'a pas le droit de le renseigner.
 """
 
 SEARCH = """\
@@ -94,6 +98,18 @@ Règles :
 - Les dates sont au format AAAA-MM-JJ, les horaires au format HH:MM. Si la
   sortie est ouverte toute l'année, mets `permanent` à true et laisse les
   dates vides.
+- `date_start` et `date_end` bornent la sortie. Mais une sortie ne se tient
+  pas forcément tous les jours de cette plage, et c'est ce qui compte pour un
+  parent qui cherche une date précise :
+  - `weekdays` : les jours où elle a effectivement lieu, quand la page
+    l'indique — « tous les dimanches » donne ["dimanche"], « mercredis et
+    samedis à 14h30 » donne ["mercredi", "samedi"], « du mardi au dimanche »
+    donne les six jours, « relâche le lundi » aussi. Laisse la liste vide si
+    la page ne dit rien : cela vaut « tous les jours de la plage ».
+  - `dates` : les dates annoncées une à une (« les 3, 7 et 12 août »), au
+    format AAAA-MM-JJ. Vide s'il s'agit d'une période continue ou d'une
+    récurrence — dans ce cas `weekdays` suffit.
+  N'extrapole ni l'une ni l'autre : ne remplis que ce que la page affirme.
 - `category` doit être choisie parmi : $categories
 - `photo_url` : l'URL absolue d'une photo représentative si la page en donne
   une, sinon vide.

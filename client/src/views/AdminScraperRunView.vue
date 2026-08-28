@@ -153,10 +153,11 @@ onUnmounted(() => clearInterval(timer));
               <span class="badge" :class="{ kept: isKept(item.decision) }">{{ label(item.decision) }}</span>
             </td>
             <td class="muted small">
-              <RouterLink v-if="item.eventId" :to="`/sorties/${item.eventId}`">
+              <RouterLink v-if="item.eventId" :to="`/sorties/${item.eventId}`" class="block">
                 Voir la sortie
               </RouterLink>
-              <template v-else>{{ item.reason || '—' }}</template>
+              <span v-if="item.reason">{{ item.reason }}</span>
+              <template v-else-if="!item.eventId">—</template>
             </td>
             <td class="muted small">{{ when(item.at) }}</td>
           </tr>
