@@ -17,6 +17,11 @@ Seul ce qui est inexploitable est écarté.
 Le partage est toujours le même : Python fait ce qui est mécanique, le modèle
 fait ce qui demande du jugement, et aucun appel ne boucle. Le filtre des URLs
 déjà vues intervient avant l'étape 5, la seule qui coûte par sortie.
+
+Chaque page traitée est rendue à la mémoire (`store.report`) avec ce qu'on en
+a fait. Une décision définitive y est mémorisée — la page ne sera plus jamais
+relue, par aucune configuration ; une décision provisoire (déjà connue,
+doublon, essai sans soumission, erreur réseau) est seulement journalisée.
 """
 
 from __future__ import annotations
@@ -34,7 +39,7 @@ from .models import Candidate, FoundPage, Summary
 from .payload import UNKNOWN_PRICE, OutOfPeriod, Rejected, build_payload
 from .photo import PhotoError, download
 from .providers.base import Provider, ProviderError
-from .store import SeenStore, normalize_url
+from .store import Memory, normalize_url
 from . import geocode as geocoding
 
 
@@ -90,7 +95,7 @@ def _is_blocked(url: str, blocked: list[str]) -> bool:
 def run(
     config: Config,
     provider: Provider,
-    store: SeenStore,
+    store: Memory,
     api: SppApi,
     log: RunLog,
     submit: bool = False,
@@ -145,6 +150,15 @@ def run(
         if key in vues:
             summary.duplicates += 1
             log.event("skip", reason="déjà repérée ailleurs", url=candidate.url)
+            # Provisoire : c'est le premier exemplaire qui décidera du sort
+            # de la page, pas ce doublon.
+            store.report(
+                candidate.url,
+                "duplicate",
+                title=candidate.title,
+                reason="déjà repérée ailleurs dans ce run",
+                remember=False,
+            )
             continue
         vues.add(key)
         candidates.append(candidate)
@@ -159,6 +173,10 @@ def run(
 
     if not candidates:
         log.event("nothing_found", searches=provider.usage.web_searches, pages=summary.pages)
+
+    # Une seule question à la mémoire pour tout le lot : la suite ne fait plus
+    # que consulter le résultat.
+    store.preload([c.url for c in candidates])
 
     # 5. Une sortie à la fois.
     for candidate in candidates:
@@ -177,6 +195,7 @@ def run(
 
     summary.retained = len(result.events)
     summary.usage.add(provider.usage)
+    store.flush()
     log.event("run_end", summary=summary.as_dict())
     return result
 
@@ -231,7 +250,7 @@ def _process(
     candidate: Candidate,
     config: Config,
     provider: Provider,
-    store: SeenStore,
+    store: Memory,
     api: SppApi,
     fetcher: Fetcher,
     log: RunLog,
@@ -245,10 +264,14 @@ def _process(
     if _is_blocked(url, config.blocked_domains):
         summary.skipped_blocked += 1
         log.event("skip", reason="domaine bloqué", url=url)
+        # Provisoire : la liste des domaines bloqués est un réglage, pas un
+        # jugement sur la page. La retirer de la liste doit suffire à la lire.
+        store.report(url, "blocked", title=candidate.title, remember=False)
         return
     if store.seen(url):
         summary.skipped_seen += 1
         log.event("skip", reason="déjà vue lors d'un run précédent", url=url)
+        store.report(url, "seen", title=candidate.title, remember=False)
         return
 
     # La page est lue en Python : le modèle ne reçoit que du texte, sans outil,
@@ -258,11 +281,14 @@ def _process(
     except FetchError as err:
         summary.errors += 1
         log.error("extraction", str(err), url=url)
+        # Un site injoignable aujourd'hui peut répondre demain : on ne
+        # mémorise pas, le prochain run réessaiera.
+        store.report(url, "error", title=candidate.title, reason=str(err), remember=False)
         return
     if len(content) < MIN_PAGE_CHARS:
         summary.skipped_invalid += 1
         log.event("skip", reason="page vide ou illisible", url=url)
-        store.remember(url, "invalid", title=candidate.title)
+        store.report(url, "invalid", title=candidate.title, reason="page vide ou illisible")
         return
 
     try:
@@ -270,12 +296,18 @@ def _process(
     except ProviderError as err:
         summary.errors += 1
         log.error("extraction", str(err), url=url)
+        store.report(url, "error", title=candidate.title, reason=str(err), remember=False)
         return
 
     if not extracted.relevant:
         summary.skipped_irrelevant += 1
         log.event("skip", reason=extracted.skip_reason or "hors sujet", url=url)
-        store.remember(url, "irrelevant", title=candidate.title)
+        store.report(
+            url,
+            "irrelevant",
+            title=candidate.title,
+            reason=extracted.skip_reason or "hors sujet",
+        )
         return
 
     log.event(
@@ -288,12 +320,9 @@ def _process(
     if _out_of_area(extracted.venue_postal_code, config.postal_prefixes):
         summary.out_of_area += 1
         if not config.keep_out_of_scope:
-            log.event(
-                "skip",
-                reason=f"code postal {extracted.venue_postal_code} hors zone",
-                url=url,
-            )
-            store.remember(url, "out_of_area", title=extracted.title)
+            reason = f"code postal {extracted.venue_postal_code} hors zone"
+            log.event("skip", reason=reason, url=url)
+            store.report(url, "out_of_area", title=extracted.title, reason=reason)
             return
         log.event("out_of_scope", field="zone", url=url, detail=extracted.venue_postal_code)
 
@@ -317,12 +346,17 @@ def _process(
     except OutOfPeriod as err:
         summary.out_of_period += 1
         log.event("skip", reason=str(err), url=url)
-        store.remember(url, "out_of_period", title=extracted.title)
+        store.report(url, "out_of_period", title=extracted.title, reason=str(err))
         return
     except Rejected as err:
         summary.skipped_invalid += 1
         log.event("skip", reason=str(err), url=url)
-        store.remember(url, "invalid", title=extracted.title or candidate.title)
+        store.report(
+            url,
+            "invalid",
+            title=extracted.title or candidate.title,
+            reason=str(err),
+        )
         return
 
     if payload["dateStart"] and payload["dateStart"] > config.date_to.isoformat():
@@ -354,6 +388,9 @@ def _process(
     if not submit:
         result.events.append(record)
         log.event("dry_run", title=payload["title"], url=url)
+        # Un essai ne mémorise pas : sinon la sortie qu'il vient de repérer ne
+        # serait jamais proposée, le run réel la sautant comme « déjà vue ».
+        store.report(url, "dry_run", title=payload["title"], remember=False)
         return
 
     try:
@@ -361,12 +398,12 @@ def _process(
     except ApiError as err:
         summary.errors += 1
         log.error("submit", str(err), url=url)
-        store.remember(url, "error", title=payload["title"])
+        store.report(url, "error", title=payload["title"], reason=str(err), remember=False)
         return
 
     event_id = event.get("id")
     record["event_id"] = event_id
     result.events.append(record)
     summary.submitted += 1
-    store.remember(url, "submitted", title=payload["title"], event_id=event_id)
+    store.report(url, "submitted", title=payload["title"], event_id=event_id)
     log.event("submit", event_id=event_id, title=payload["title"], url=url)

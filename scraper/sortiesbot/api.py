@@ -53,6 +53,47 @@ class SppApi:
             raise ApiError(f"HTTP {response.status_code} — {message}")
         return response.json()
 
+    def _post_json(self, path: str, payload: dict[str, Any] | None = None) -> Any:
+        with _as_api_error():
+            response = self.session.post(
+                f"{self.base_url}{path}",
+                headers={**self._headers(authenticated=True), "Content-Type": "application/json"},
+                data=json.dumps(payload or {}, ensure_ascii=False).encode("utf-8"),
+                timeout=_TIMEOUT,
+            )
+        return self._check(response)
+
+    # ------------------------------------------------------------- scraper
+    # Ces routes sont celles que pilote la console d'administration : le
+    # worker y prend son travail, y rend compte, et y consulte la mémoire des
+    # pages déjà analysées.
+
+    def next_run(self) -> dict[str, Any] | None:
+        """Réclame la prochaine exécution en file, ou None s'il n'y a rien."""
+        body = self._post_json("/api/scraper/next")
+        return body.get("run")
+
+    def report_items(self, run_id: int, items: list[dict[str, Any]]) -> None:
+        """Journalise des pages traitées et alimente la mémoire commune."""
+        if not items:
+            return
+        self._post_json(f"/api/scraper/runs/{run_id}/items", {"items": items})
+
+    def finish_run(self, run_id: int, status: str, **counters: Any) -> None:
+        """Clôt l'exécution avec ses compteurs (status : DONE ou FAILED)."""
+        self._post_json(f"/api/scraper/runs/{run_id}/finish", {"status": status, **counters})
+
+    def known_urls(self, urls: list[str]) -> set[str]:
+        """Parmi ces URLs, celles que le site a déjà vu analyser."""
+        if not urls:
+            return set()
+        known: set[str] = set()
+        # La route accepte 500 URLs par appel ; on reste large sous la limite.
+        for start in range(0, len(urls), 200):
+            body = self._post_json("/api/scraper/seen", {"urls": urls[start : start + 200]})
+            known.update(row["url"] for row in body.get("seen", []))
+        return known
+
     def categories(self) -> dict[str, int]:
         """Catégories existantes, indexées par nom (route publique)."""
         with _as_api_error():

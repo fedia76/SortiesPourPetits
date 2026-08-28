@@ -17,7 +17,7 @@ Autoriser uniquement le redémarrage du service, sans mot de passe, sans accès
 root complet :
 
 ```bash
-echo 'deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart sortiespourpetits-api' \
+echo 'deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart sortiespourpetits-api, /usr/bin/systemctl restart sortiespourpetits-scraper' \
   | tee /etc/sudoers.d/sortiespourpetits-deploy
 ```
 
@@ -28,7 +28,10 @@ de déploiement) doivent donc tous être envoyés **via `root`**, jamais via
 `deploy`. Depuis votre poste local :
 
 ```bash
-scp deploy/Caddyfile deploy/sortiespourpetits-api.service root@VOTRE_IP_VPS:/tmp/
+scp deploy/Caddyfile \
+    deploy/sortiespourpetits-api.service \
+    deploy/sortiespourpetits-scraper.service \
+    root@VOTRE_IP_VPS:/tmp/
 ```
 
 Ces fichiers restent dans `/tmp` sur le VPS jusqu'aux étapes 4 et 6
@@ -86,11 +89,17 @@ ufw enable
 
 ```bash
 cp /tmp/sortiespourpetits-api.service /etc/systemd/system/
+cp /tmp/sortiespourpetits-scraper.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable sortiespourpetits-api
+systemctl enable sortiespourpetits-scraper
 ```
 
-Le service ne démarrera qu'après l'étape 8 (premier déploiement + `.env`).
+Les services ne démarreront qu'après l'étape 8 (premier déploiement + `.env`).
+Le second, `sortiespourpetits-scraper`, est le worker de la recherche
+automatique : c'est lui qui exécute ce que la console d'administration met en
+file. Il est facultatif — sans lui le site fonctionne, les exécutions
+attendent simplement leur tour indéfiniment.
 
 ## 7. Clé SSH pour GitHub Actions
 
@@ -180,7 +189,7 @@ Le [scraper](../scraper/README.md) est déployé en même temps que le reste :
 son dossier part en sources dans `/opt/sortiespourpetits/scraper`, son
 environnement virtuel est créé et mis à jour, et son `.env` est écrit depuis
 les secrets `CLAUDE_KEY` et `SPP_API_KEY`. Ce qui appartient au VPS — le
-`.venv`, les journaux de `runs/` et la mémoire des URLs de `state/` — survit
+`.venv`, les journaux de `runs/` et la mémoire locale de `state/` — survit
 aux déploiements.
 
 Une seule dépendance système, à installer en root **avant** le premier
@@ -194,7 +203,28 @@ Selon la version de Python du serveur, le paquet peut être versionné
 (`python3.14-venv`, `python3.12-venv`…) : le message d'erreur du déploiement
 indique lequel installer.
 
-Puis, pour lancer une recherche depuis le VPS (en tant que `deploy`) :
+### Le worker
+
+En marche normale, les recherches se lancent depuis la console
+d'administration du site (menu **Recherche auto**, réservé aux modérateurs).
+Le worker est ce qui les exécute : il réclame le travail en attente à l'API,
+joue la recherche, propose les sorties à la modération et rend compte page par
+page dans la console.
+
+```bash
+systemctl status sortiespourpetits-scraper     # en marche ?
+journalctl -u sortiespourpetits-scraper -f     # ce qu'il fait en direct
+```
+
+Il lui faut les deux clés (`CLAUDE_KEY` **et** `SPP_API_KEY`) : il refuse de
+démarrer sans. Une exécution qui reste « En file » dans la console veut
+généralement dire que le worker est arrêté.
+
+### Lancer une recherche à la main
+
+Le mode ligne de commande reste disponible, avec un fichier YAML au lieu d'une
+configuration du site, et sa propre mémoire locale (`state/seen.sqlite3`) au
+lieu de celle de la base :
 
 ```bash
 cd /opt/sortiespourpetits/scraper

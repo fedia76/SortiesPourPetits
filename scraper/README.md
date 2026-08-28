@@ -36,6 +36,38 @@ propositions doivent passer par la modération.
 
 ## Utilisation
 
+Deux façons de lancer une recherche, le même pipeline derrière :
+
+| | Console du site | Ligne de commande |
+|---|---|---|
+| Configuration | table `ScraperConfig`, éditée dans **Recherche auto** | fichier YAML de `configs/` |
+| Déclenchement | bouton « Essai » ou « Lancer et proposer » | `python -m sortiesbot` |
+| Mémoire des pages | table `ScrapedUrl`, **commune à toutes les recherches** | SQLite local `state/seen.sqlite3` |
+| Journal | consultable dans la console, page par page | fichiers de `runs/` |
+
+La console est le mode normal ; la ligne de commande sert à mettre au point une
+configuration ou à rejouer un run.
+
+### Depuis la console (worker)
+
+Le worker tourne en service sur le VPS et attend le travail :
+
+```bash
+python -m sortiesbot.worker          # boucle, une passe toutes les 30 s
+python -m sortiesbot.worker --once   # traite au plus une exécution, puis sort
+```
+
+Il réclame l'exécution en attente (`POST /api/scraper/next`), joue la
+recherche avec la configuration que le site lui donne, rend compte page par
+page (`/runs/:id/items`) puis clôt l'exécution avec ses compteurs
+(`/runs/:id/finish`). Il ne décide de rien : tout se règle dans la console.
+
+Une exécution est close **quoi qu'il arrive**, y compris sur un plantage :
+sans clôture elle resterait « En cours » dans la console, et bloquerait toute
+nouvelle exécution de la même configuration.
+
+### En ligne de commande
+
 ```bash
 # Dry-run (défaut) : rien n'est envoyé au site.
 python -m sortiesbot --config configs/spectacles-weekend.yaml
@@ -129,6 +161,31 @@ Les liens lui sont soumis numérotés, et il renvoie les numéros retenus — ja
 des URL. **Il lui est donc matériellement impossible d'en inventer une**, ce qui
 était un vrai problème dans la version précédente. Sa réponse tient en quelques
 jetons.
+
+### La mémoire des pages analysées
+
+Une page lue est une page payée : la relire, c'est repayer. Toute page dont le
+sort est **définitif** est donc mémorisée, et plus jamais rouverte — par aucune
+recherche, la mémoire étant commune à toutes les configurations. C'est ce qui
+fait que dix recherches spécialisées se complètent au lieu de se répéter.
+
+Restent journalisées mais **non** mémorisées les décisions provisoires, qui ne
+doivent pas empêcher un run ultérieur de traiter la page :
+
+| Décision | Mémorisée ? | Pourquoi |
+|---|---|---|
+| `submitted` — proposée au site | oui | c'est fait |
+| `irrelevant` — pas une sortie | oui | la page ne changera pas de nature |
+| `invalid` — inexploitable | oui | idem |
+| `out_of_period`, `out_of_area` | oui | écartée sciemment (run strict) |
+| `dry_run` — retenue à l'essai | non | sinon le run réel la sauterait |
+| `seen`, `duplicate` | non | c'est la décision d'origine qui compte |
+| `blocked` — domaine bloqué | non | un réglage, pas un jugement |
+| `error` — site ou API injoignable | non | demain ça remarchera peut-être |
+
+La clé de mémorisation est l'URL normalisée (schéma, `www.`, barre finale et
+paramètres de suivi retirés) ; le lien exact, lui, reste affiché et cliquable
+dans la console.
 
 ### Politesse
 
@@ -233,14 +290,9 @@ serveur refacturant le contexte accumulé à chaque itération.
 
 ## Et ensuite
 
-Ce script est la première étape. La suite prévue :
-
-1. tables `ScraperConfig` / `ScraperRun` / `ScraperRunItem` côté site, avec les
-   configurations et les journaux consultables depuis la console
-   d'administration (le JSONL est déjà écrit dans ce format) ;
-2. un worker `systemd` sur le VPS qui prend les runs mis en file par la console
-   et porte le cron des configurations ;
-3. un fournisseur OpenRouter — l'interface `Provider` (trois méthodes) est déjà
+1. un déclenchement périodique des configurations (le worker sait déjà exécuter
+   ce qu'on lui met en file ; il manque qui l'y met, et quand) ;
+2. un fournisseur OpenRouter — l'interface `Provider` (trois méthodes) est déjà
    en place pour ça, et seule la recherche y demande un outil ;
-4. un second script en liste blanche, alimenté par les domaines dont les
+3. un second script en liste blanche, alimenté par les domaines dont les
    sorties ont été le plus souvent approuvées.

@@ -110,3 +110,12 @@ jobs:
             .venv/bin/pip install --quiet --upgrade pip
             .venv/bin/pip install --quiet -e .
           "
+
+      # Le worker exécute les recherches lancées depuis la console
+      # d'administration. Tant qu'il n'est pas installé (voir deploy/README.md
+      # § 9), le site reste livré : les exécutions attendent simplement en file.
+      - name: Redémarrer le worker du scraper
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            'sudo systemctl restart sortiespourpetits-scraper' \
+            || echo 'Worker non installé sur le VPS — voir deploy/README.md § 9.'
