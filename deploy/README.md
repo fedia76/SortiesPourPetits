@@ -246,6 +246,19 @@ le worker tout seuls. Si vous modifiez l'unité elle-même dans le dépôt, le
 déploiement en dépose la nouvelle version dans `deploy/` mais ne l'installe
 pas — refaites le `cp` + `daemon-reload` ci-dessus.
 
+Le worker tourne en `deploy`, comme l'API. Tout ce qu'il écrit — les journaux
+de `runs/`, l'environnement virtuel — doit donc lui appartenir. Un essai lancé
+en root crée ces dossiers à root, et le service ne peut plus y écrire :
+
+```bash
+chown -R deploy:deploy /opt/sortiespourpetits
+```
+
+Lancez toujours les essais en ligne de commande **en tant que `deploy`**, pas
+en root, pour ne pas reproduire le problème. Un journal fichier impossible à
+ouvrir n'arrête pas le run — la console garde la trace de chaque page — mais
+autant garder la trace sur disque aussi.
+
 ### Surveiller le worker
 
 ```bash

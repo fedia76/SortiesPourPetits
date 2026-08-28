@@ -48,6 +48,27 @@ def _handle_signal(*_args: object) -> None:
     print("Arrêt demandé : le worker s'arrêtera après l'exécution en cours.", flush=True)
 
 
+def open_log(runs_dir: Path, name: str, quiet: bool) -> RunLog:
+    """Ouvre le journal fichier du run, ou s'en passe.
+
+    Pour le worker, ce fichier est un confort : le vrai journal est en base,
+    page par page, et c'est lui que la console affiche. Un dossier `runs/`
+    devenu illisible — typiquement créé par root lors d'un essai en ligne de
+    commande, alors que le service tourne en `deploy` — ne doit donc pas faire
+    échouer une recherche.
+    """
+    try:
+        return RunLog(run_log_path(runs_dir, name), verbose=not quiet)
+    except OSError as err:
+        print(
+            f"Journal fichier indisponible ({err}) : le run continue, "
+            "la console garde la trace de chaque page.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return RunLog(None, verbose=not quiet)
+
+
 def counters(summary: Summary) -> dict[str, Any]:
     """Compteurs du run tels que la console les affiche."""
     return {
@@ -88,14 +109,15 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
         api.finish_run(run_id, "FAILED", error=str(err))
         return
 
-    log_path = run_log_path(runs_dir, config.name)
     if not quiet:
-        print(f"▶ Exécution #{run_id} — « {config.name} » — journal : {log_path}", flush=True)
+        print(f"▶ Exécution #{run_id} — « {config.name} »", flush=True)
 
     store = RemoteStore(api, run_id)
     try:
         provider = get_provider(config, api_key=env.anthropic_key)
-        with RunLog(log_path, verbose=not quiet) as log:
+        with open_log(runs_dir, config.name, quiet) as log:
+            if log.path and not quiet:
+                print(f"  journal : {log.path}", flush=True)
             result = run_pipeline(config, provider, store, api, log, submit=submit)
         summary = result.summary
         status, error = "DONE", None
