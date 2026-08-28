@@ -275,12 +275,17 @@ def json_ld_dates(html: str) -> list[str]:
 
     Beaucoup de sites de spectacle publient un `schema.org/Event` par
     représentation, pour apparaître dans Google Événements — ils ont donc
-    intérêt à le tenir à jour. Quand il est là, il vaut mieux que tout ce
-    qu'on pourrait deviner : ce sont les dates exactes, sans exécuter la
-    moindre ligne de JavaScript.
+    intérêt à le tenir à jour. Quand ces objets sont là, ce sont les dates
+    exactes, sans exécuter la moindre ligne de JavaScript.
 
-    Renvoie les `startDate` trouvées, telles quelles ; c'est `schedule.py`
-    qui les valide et les recoupe avec la plage.
+    Encore faut-il que ce soient des représentations. Un `Event` dont la
+    `endDate` tombe un autre jour décrit une **période**, pas une séance : sa
+    `startDate` n'est que le premier jour de l'affiche. La retenir comme date
+    unique serait pire que de ne rien savoir — un spectacle joué tous les
+    mercredis et samedis du mois se réduirait à sa première.
+
+    On ne garde donc que les objets d'un seul jour, et c'est `schedule.py` qui
+    juge si le lot obtenu constitue vraiment un calendrier.
     """
     dates: list[str] = []
     for block in _ld_blocks(html):
@@ -288,8 +293,12 @@ def json_ld_dates(html: str) -> list[str]:
             if not _is_event(node):
                 continue
             start = node.get("startDate")
-            if isinstance(start, str) and start.strip():
-                dates.append(start.strip())
+            if not isinstance(start, str) or not start.strip():
+                continue
+            end = node.get("endDate")
+            if isinstance(end, str) and end.strip()[:10] != start.strip()[:10]:
+                continue
+            dates.append(start.strip())
     return dates
 
 
