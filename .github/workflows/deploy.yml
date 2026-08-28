@@ -81,6 +81,15 @@ jobs:
             scraper/ \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/scraper/"
 
+      # Les fichiers de configuration système (unités systemd, Caddyfile) ne
+      # peuvent pas être installés par le déploiement : `deploy` n'est pas
+      # root. Ils sont simplement déposés à jour sur le VPS, prêts à être
+      # copiés à la main — voir deploy/README.md § 6 et § 9.
+      - name: Déposer les fichiers de configuration système
+        run: |
+          rsync -az --delete deploy/ \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/deploy/"
+
       # Le fichier .env du scraper est régénéré à chaque déploiement : il se
       # modifie dans les secrets GitHub, jamais sur le VPS. Il passe par
       # l'entrée standard de ssh pour ne pas apparaître dans la liste des

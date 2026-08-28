@@ -30,12 +30,17 @@ de déploiement) doivent donc tous être envoyés **via `root`**, jamais via
 ```bash
 scp deploy/Caddyfile \
     deploy/sortiespourpetits-api.service \
-    deploy/sortiespourpetits-scraper.service \
     root@VOTRE_IP_VPS:/tmp/
 ```
 
 Ces fichiers restent dans `/tmp` sur le VPS jusqu'aux étapes 4 et 6
 ci-dessous, qui les copient à leur emplacement final.
+
+Ce `scp` n'est nécessaire qu'ici, pour l'amorçage. Ensuite, chaque
+déploiement dépose le contenu à jour du dossier `deploy/` du dépôt dans
+`/opt/sortiespourpetits/deploy/` : c'est de là qu'on installe l'unité du
+worker à l'étape 9, et c'est de là qu'on reprendra un `Caddyfile` ou une
+unité modifiée, sans jamais avoir à les renvoyer à la main.
 
 ## 2. Node 24 (LTS)
 
@@ -89,17 +94,17 @@ ufw enable
 
 ```bash
 cp /tmp/sortiespourpetits-api.service /etc/systemd/system/
-cp /tmp/sortiespourpetits-scraper.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable sortiespourpetits-api
-systemctl enable sortiespourpetits-scraper
 ```
 
-Les services ne démarreront qu'après l'étape 8 (premier déploiement + `.env`).
-Le second, `sortiespourpetits-scraper`, est le worker de la recherche
-automatique : c'est lui qui exécute ce que la console d'administration met en
-file. Il est facultatif — sans lui le site fonctionne, les exécutions
-attendent simplement leur tour indéfiniment.
+Le service ne démarrera qu'après l'étape 8 (premier déploiement + `.env`).
+
+Il y a un second service, `sortiespourpetits-scraper` — le worker de la
+recherche automatique. Il s'installe à l'étape 9, une fois le premier
+déploiement passé : c'est le déploiement qui apporte son unité systemd sur le
+VPS. Il est facultatif ; sans lui le site fonctionne, seules les exécutions
+lancées depuis la console attendent leur tour indéfiniment.
 
 ## 7. Clé SSH pour GitHub Actions
 
@@ -203,13 +208,45 @@ Selon la version de Python du serveur, le paquet peut être versionné
 (`python3.14-venv`, `python3.12-venv`…) : le message d'erreur du déploiement
 indique lequel installer.
 
-### Le worker
+### Installer le worker
 
 En marche normale, les recherches se lancent depuis la console
 d'administration du site (menu **Recherche auto**, réservé aux modérateurs).
 Le worker est ce qui les exécute : il réclame le travail en attente à l'API,
 joue la recherche, propose les sorties à la modération et rend compte page par
-page dans la console.
+page dans la console. Sans lui, un clic sur « Lancer » laisse l'exécution
+en file, indéfiniment.
+
+Chaque déploiement dépose son unité systemd à jour dans
+`/opt/sortiespourpetits/deploy/`. L'installation, elle, demande les droits
+root — à faire **une fois**, après un premier déploiement :
+
+```bash
+cp /opt/sortiespourpetits/deploy/sortiespourpetits-scraper.service \
+   /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now sortiespourpetits-scraper
+```
+
+Il reste à autoriser `deploy` à le redémarrer — sans ça, chaque déploiement
+mettra le code à jour mais laissera tourner l'ancienne version. Si la règle de
+l'étape 1 date d'avant le worker, elle ne mentionne que l'API : réécrivez-la
+avec les deux services.
+
+```bash
+grep sortiespourpetits-scraper /etc/sudoers.d/sortiespourpetits-deploy
+# rien ? alors :
+echo 'deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart sortiespourpetits-api, /usr/bin/systemctl restart sortiespourpetits-scraper' \
+  | tee /etc/sudoers.d/sortiespourpetits-deploy
+visudo -c
+```
+
+C'est tout : les déploiements suivants mettent le code à jour et redémarrent
+le worker tout seuls. Si vous modifiez l'unité elle-même dans le dépôt, le
+déploiement en dépose la nouvelle version dans `deploy/` mais ne l'installe
+pas — refaites le `cp` + `daemon-reload` ci-dessus.
+
+### Surveiller le worker
 
 ```bash
 systemctl status sortiespourpetits-scraper     # en marche ?
@@ -217,8 +254,15 @@ journalctl -u sortiespourpetits-scraper -f     # ce qu'il fait en direct
 ```
 
 Il lui faut les deux clés (`CLAUDE_KEY` **et** `SPP_API_KEY`) : il refuse de
-démarrer sans. Une exécution qui reste « En file » dans la console veut
-généralement dire que le worker est arrêté.
+démarrer sans, et le journal le dit. Une exécution qui reste « En file » dans
+la console veut généralement dire que le worker est arrêté ; une exécution
+bloquée sur « En cours » se débloque avec le bouton « Annuler ».
+
+Un arrêt (`systemctl stop`, ou un redémarrage de déploiement) laisse
+l'exécution en cours aller au bout : le worker attrape le signal, finit ce
+qu'il a commencé et ne prend plus de travail. Au-delà de dix minutes systemd
+le tue quand même ; l'exécution reste alors « En cours » dans la console, et
+le bouton « Annuler » la débloque.
 
 ### Lancer une recherche à la main
 

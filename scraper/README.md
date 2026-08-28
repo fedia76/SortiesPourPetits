@@ -12,9 +12,12 @@ le modèle n'intervient que pour trancher — trier des liens, remplir une fiche
 ## Installation
 
 Sur le VPS, rien à faire : le déploiement automatique envoie le dossier, crée
-l'environnement virtuel et écrit le `.env` depuis les secrets GitHub (voir
-[`deploy/README.md`](../deploy/README.md)). Les instructions ci-dessous sont
-pour une installation locale.
+l'environnement virtuel et écrit le `.env` depuis les secrets GitHub. Seule
+l'unité systemd du worker s'installe à la main, une fois, en root — le
+déploiement la dépose à jour dans `/opt/sortiespourpetits/deploy/`, la
+procédure est au § 9 de [`deploy/README.md`](../deploy/README.md).
+
+Les instructions ci-dessous sont pour une installation locale.
 
 ```bash
 cd scraper
@@ -50,7 +53,9 @@ configuration ou à rejouer un run.
 
 ### Depuis la console (worker)
 
-Le worker tourne en service sur le VPS et attend le travail :
+Le worker tourne en service sur le VPS (`sortiespourpetits-scraper`, installé
+selon le § 9 de [`deploy/README.md`](../deploy/README.md)) et attend le
+travail :
 
 ```bash
 python -m sortiesbot.worker          # boucle, une passe toutes les 30 s
