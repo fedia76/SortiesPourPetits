@@ -167,6 +167,34 @@ des URL. **Il lui est donc matériellement impossible d'en inventer une**, ce qu
 était un vrai problème dans la version précédente. Sa réponse tient en quelques
 jetons.
 
+### Les vraies dates d'une sortie (mesure en cours)
+
+Un spectacle joué tous les dimanches de juillet et août arrive en base comme
+« du 1er juillet au 31 août ». Cherchez une sortie un jeudi d'août : le site
+le propose. Ce n'est pas approximatif, c'est faux.
+
+Le pipeline calcule donc maintenant les dates réelles, à partir de trois
+sources, de la plus sûre à la plus faible :
+
+| Source | D'où elle vient | Coût |
+|---|---|---|
+| `json-ld` | le `schema.org/Event` que le site publie pour Google, souvent une entrée par représentation | nul — c'est dans le HTML déjà téléchargé |
+| `dates annoncées` | « les 3, 7 et 12 août », relevé par le modèle à l'extraction | quelques jetons de sortie |
+| `récurrence` | « tous les dimanches à 15h », rendu en jours de la semaine puis déroulé en Python | idem |
+| `plage` | rien trouvé : la plage vaut pour tous ses jours, comme aujourd'hui | — |
+
+Aucun navigateur sans tête, aucun clic dans un widget de réservation : la
+page dit presque toujours en toutes lettres ce que le calendrier de
+réservation ne fait que ré-énumérer. Le JSON-LD, lui, était jusqu'ici détruit
+avant l'extraction — `page_text` supprime les balises `script`.
+
+**Rien n'en dépend encore.** Le calendrier est journalisé (ligne `schedule`),
+rendu dans le JSON du dry-run et affiché dans la console, mais la sortie part
+toujours au site avec sa seule plage. C'est une étape de mesure : savoir sur
+de vrais runs à quelle fréquence chaque source répond avant de créer une
+table d'occurrences en base. Le compteur `scheduled` du résumé dit combien de
+sorties du run ont des dates réelles plutôt qu'une plage.
+
 ### La mémoire des pages analysées
 
 Une page lue est une page payée : la relire, c'est repayer. Toute page dont le
@@ -295,9 +323,11 @@ serveur refacturant le contexte accumulé à chaque itération.
 
 ## Et ensuite
 
-1. un déclenchement périodique des configurations (le worker sait déjà exécuter
+1. une table d'occurrences en base, alimentée par le calendrier ci-dessus, et
+   la recherche du site qui s'appuie dessus plutôt que sur la plage ;
+2. un déclenchement périodique des configurations (le worker sait déjà exécuter
    ce qu'on lui met en file ; il manque qui l'y met, et quand) ;
-2. un fournisseur OpenRouter — l'interface `Provider` (trois méthodes) est déjà
+3. un fournisseur OpenRouter — l'interface `Provider` (trois méthodes) est déjà
    en place pour ça, et seule la recherche y demande un outil ;
-3. un second script en liste blanche, alimenté par les domaines dont les
+4. un second script en liste blanche, alimenté par les domaines dont les
    sorties ont été le plus souvent approuvées.

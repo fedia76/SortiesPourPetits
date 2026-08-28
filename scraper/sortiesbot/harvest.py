@@ -15,6 +15,7 @@ un serveur.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -219,6 +220,77 @@ def _context_of(anchor, text: str) -> str:
         if len(around) >= len(text) + CONTEXT_MIN_GAIN:
             return around[:CONTEXT_CHARS]
     return text[:CONTEXT_CHARS]
+
+
+#: Types schema.org qui décrivent un événement. Les sites de spectacle
+#: emploient rarement `Event` tout court.
+_EVENT_TYPES = re.compile(r"event$", re.I)
+
+
+def _ld_blocks(html: str) -> list[object]:
+    """Contenu des balises `<script type="application/ld+json">`.
+
+    C'est du JSON dans une balise `script`, donc il faut le lire AVANT le
+    nettoyage de `_soup`, qui détruit les scripts.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    blocks: list[object] = []
+    for tag in soup.find_all("script", attrs={"type": re.compile("ld\\+json", re.I)}):
+        raw = tag.string or tag.get_text() or ""
+        try:
+            blocks.append(json.loads(raw))
+        except (ValueError, TypeError):
+            # Un JSON-LD mal formé est fréquent et sans gravité : la page
+            # reste lisible par le modèle, on perd seulement ce raccourci.
+            continue
+    return blocks
+
+
+def _walk(node: object) -> list[dict]:
+    """Tous les objets d'un JSON-LD, quelle que soit son imbrication.
+
+    Les sites emboîtent librement : liste à la racine, `@graph`, `subEvent`
+    pour les représentations d'un même spectacle.
+    """
+    found: list[dict] = []
+    if isinstance(node, list):
+        for item in node:
+            found.extend(_walk(item))
+    elif isinstance(node, dict):
+        found.append(node)
+        for value in node.values():
+            if isinstance(value, (list, dict)):
+                found.extend(_walk(value))
+    return found
+
+
+def _is_event(node: dict) -> bool:
+    types = node.get("@type")
+    types = types if isinstance(types, list) else [types]
+    return any(isinstance(t, str) and _EVENT_TYPES.search(t) for t in types)
+
+
+def json_ld_dates(html: str) -> list[str]:
+    """Dates de représentation déclarées en JSON-LD, en clair et gratuitement.
+
+    Beaucoup de sites de spectacle publient un `schema.org/Event` par
+    représentation, pour apparaître dans Google Événements — ils ont donc
+    intérêt à le tenir à jour. Quand il est là, il vaut mieux que tout ce
+    qu'on pourrait deviner : ce sont les dates exactes, sans exécuter la
+    moindre ligne de JavaScript.
+
+    Renvoie les `startDate` trouvées, telles quelles ; c'est `schedule.py`
+    qui les valide et les recoupe avec la plage.
+    """
+    dates: list[str] = []
+    for block in _ld_blocks(html):
+        for node in _walk(block):
+            if not _is_event(node):
+                continue
+            start = node.get("startDate")
+            if isinstance(start, str) and start.strip():
+                dates.append(start.strip())
+    return dates
 
 
 def page_text(html: str, limit: int = 8000) -> str:

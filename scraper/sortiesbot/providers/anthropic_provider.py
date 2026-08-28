@@ -113,6 +113,19 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
         "permanent": {"type": "boolean"},
         "date_start": {"type": "string"},
         "date_end": {"type": "string"},
+        # Les jours de représentation : sans eux, un spectacle du dimanche
+        # devient une plage continue, donc proposé un jeudi.
+        "weekdays": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": [
+                    "lundi", "mardi", "mercredi", "jeudi",
+                    "vendredi", "samedi", "dimanche",
+                ],
+            },
+        },
+        "dates": {"type": "array", "items": {"type": "string"}},
         "open_time": {"type": "string"},
         "close_time": {"type": "string"},
         "setting": {"type": "string", "enum": ["INDOOR", "OUTDOOR", "BOTH", ""]},
@@ -126,6 +139,7 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
     "required": [
         "relevant", "skip_reason", "title", "description", "free", "price",
         "age_min", "age_max", "permanent", "date_start", "date_end",
+        "weekdays", "dates",
         "open_time", "close_time", "setting", "category", "venue_name",
         "venue_address", "venue_city", "venue_postal_code", "photo_url",
     ],
