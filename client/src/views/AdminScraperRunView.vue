@@ -1,26 +1,39 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import type { ScraperRun } from '../types';
 import { DECISION_LABELS, RUN_STATUS_LABELS } from '../types';
 
 const route = useRoute();
 const run = ref<ScraperRun | null>(null);
 const error = ref('');
+/** Panne de rafraîchissement — voir AdminScraperView : on continue d'essayer. */
+const offline = ref('');
 const loading = ref(true);
 
 let timer: ReturnType<typeof setInterval> | undefined;
+let misses = 0;
 
 async function load() {
   try {
     const res = await api.get<{ run: ScraperRun }>(`/api/scraper/runs/${route.params.id}`);
     run.value = res.run;
+    misses = 0;
+    offline.value = '';
     // Une exécution terminée ne bouge plus : inutile de continuer à interroger.
     if (res.run.status === 'DONE' || res.run.status === 'FAILED') clearInterval(timer);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
-    clearInterval(timer);
+    const message = e instanceof Error ? e.message : 'Erreur';
+    // Seule une exécution introuvable est définitive. Une coupure ne doit pas
+    // arrêter le suivi d'un run qui, lui, continue sur le serveur.
+    if (e instanceof ApiError && e.status === 404) {
+      clearInterval(timer);
+      error.value = message;
+    } else {
+      misses += 1;
+      if (misses >= 2) offline.value = message;
+    }
   } finally {
     loading.value = false;
   }
@@ -76,7 +89,12 @@ onUnmounted(() => clearInterval(timer));
   <div class="container page">
     <RouterLink to="/admin/scraper" class="back">← Recherche automatique</RouterLink>
     <p v-if="error" class="error">{{ error }}</p>
-    <p v-else-if="loading" class="muted">Chargement…</p>
+    <p v-if="offline" class="error">
+      Le site ne répond plus ({{ offline }}). Cette page date de la dernière
+      réponse ; l'exécution, elle, tourne sur le serveur. Nouvelle tentative
+      dans quelques secondes.
+    </p>
+    <p v-if="loading && !error" class="muted">Chargement…</p>
 
     <template v-if="run">
       <h1>

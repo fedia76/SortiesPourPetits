@@ -7,6 +7,13 @@ import { RUN_STATUS_LABELS } from '../types';
 const configs = ref<ScraperConfig[]>([]);
 const runs = ref<ScraperRun[]>([]);
 const error = ref('');
+/**
+ * Panne de rafraîchissement, distincte d'une erreur d'action. Le tableau se
+ * recharge toutes les dix secondes pendant des minutes : une coupure d'une
+ * seconde — réveil de veille, Wi-Fi, redémarrage de l'API — ne doit pas
+ * peindre une erreur définitive sur une page qui, elle, refonctionne.
+ */
+const offline = ref('');
 const loading = ref(true);
 /** Configuration en cours d'édition ; `0` pour une création. */
 const editingId = ref<number | null>(null);
@@ -40,6 +47,8 @@ const form = reactive({
 });
 
 let timer: ReturnType<typeof setInterval> | undefined;
+/** Rafraîchissements ratés d'affilée : on n'alerte qu'à partir du second. */
+let misses = 0;
 
 async function load() {
   try {
@@ -49,8 +58,11 @@ async function load() {
     ]);
     configs.value = c.configs;
     runs.value = r.runs;
+    misses = 0;
+    offline.value = '';
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    misses += 1;
+    if (misses >= 2) offline.value = e instanceof Error ? e.message : 'Erreur';
   } finally {
     loading.value = false;
   }
@@ -195,6 +207,11 @@ onUnmounted(() => clearInterval(timer));
       ils ne filtrent pas le résultat, parce qu'une page déjà lue est déjà payée.
     </p>
     <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="offline" class="error">
+      Le site ne répond plus ({{ offline }}). Le tableau ci-dessous date de la
+      dernière réponse ; la recherche en cours, elle, tourne sur le serveur et
+      n'est pas affectée. Nouvelle tentative dans quelques secondes.
+    </p>
 
     <!-- Formulaire -->
     <div v-if="editingId !== null" class="card form-card">
