@@ -16,7 +16,7 @@ from sortiesbot.api import ApiError
 from sortiesbot.config import Config
 from sortiesbot.harvest import FetchError, Link
 from sortiesbot.journal import RunLog
-from sortiesbot.models import Agenda, ExtractedEvent, Usage
+from sortiesbot.models import ExtractedEvent, FoundPage, Usage
 from sortiesbot.payload import Rejected
 from sortiesbot.pipeline import resolve_category, run
 from sortiesbot.store import SeenStore
@@ -30,8 +30,15 @@ EVENT_URL = "https://agenda.fr/jeune-public/vanves/le-chaperon.html"
 AGENDA_HTML = f"""
 <html><body>
   <nav><a href="/">Accueil</a></nav>
-  <article><a href="{EVENT_URL}">Le Petit Chaperon rouge</a>
-    <span>jusqu'au 30 septembre — Théâtre de Vanves</span></article>
+  <main>
+    <h1>Spectacles jeune public dans les Hauts-de-Seine</h1>
+    <p>Retrouvez toute la programmation jeune public du département : théâtre,
+    contes, marionnettes et spectacles musicaux, salle par salle et mois par
+    mois. Les dates sont mises à jour chaque semaine par les salles
+    partenaires.</p>
+    <article><a href="{EVENT_URL}">Le Petit Chaperon rouge</a>
+      <span>jusqu'au 30 septembre — Théâtre de Vanves</span></article>
+  </main>
 </body></html>
 """
 
@@ -148,7 +155,7 @@ def config(**overrides) -> Config:
 
 def standard(select_all=True):
     provider = FakeProvider(
-        [Agenda(url=AGENDA_URL, title="Agenda 92")],
+        [FoundPage(url=AGENDA_URL, title="Agenda 92")],
         {EVENT_URL: sortie()},
         select_all=select_all,
     )
@@ -198,13 +205,20 @@ def test_agenda_refuse_par_robots(log):
     assert result.summary.pages == 0
 
 
-def test_aucun_lien_retenu(log):
+def test_agenda_dont_aucun_lien_nest_retenu_est_relu_comme_une_sortie(log):
+    """Aucun lien retenu sur une vraie page d'agenda : plutôt que de repartir
+    les mains vides, on lit la page — elle est déjà téléchargée. Elle sera
+    écartée comme « pas une sortie » si c'en est bien une, pour 0,004 $."""
     provider, fetcher = standard(select_all=False)
+    provider.extractions[AGENDA_URL] = ExtractedEvent(
+        relevant=False, skip_reason="page de liste"
+    )
     with SeenStore() as store:
         result = run(config(), provider, store, FakeApi(), log, submit=True, fetcher=fetcher)
 
-    assert result.summary.candidates == 0
-    assert provider.extracted == []  # rien à extraire, donc rien à payer
+    assert provider.extracted == [AGENDA_URL]
+    assert result.summary.skipped_irrelevant == 1
+    assert result.summary.submitted == 0
 
 
 def test_url_deja_vue_nest_pas_relue(log):
@@ -291,7 +305,7 @@ def test_meme_sortie_sur_deux_agendas_nest_traitee_qu_une_fois(log):
     et chacun a été lu, extrait et retenu deux fois."""
     autre = "https://agenda.fr/spectacles/"
     provider = FakeProvider(
-        [Agenda(url=AGENDA_URL), Agenda(url=autre)],
+        [FoundPage(url=AGENDA_URL), FoundPage(url=autre)],
         {EVENT_URL: sortie()},
     )
     fetcher = FakeFetcher(
@@ -403,6 +417,56 @@ def test_page_qui_nest_pas_une_sortie_reste_ecartee(log):
 
     assert result.summary.skipped_irrelevant == 1
     assert api.created == []
+
+
+def test_sortie_trouvee_directement_par_la_recherche(log):
+    """Une recherche ne remonte pas que des agendas : elle tombe aussi sur la
+    page d'une sortie. Elle était téléchargée, dépouillée de ses liens de
+    navigation, puis perdue — jamais lue comme une sortie."""
+    provider = FakeProvider(
+        [FoundPage(url=EVENT_URL, title="Le Petit Chaperon rouge", kind="sortie")],
+        {EVENT_URL: sortie()},
+    )
+    fetcher = FakeFetcher({EVENT_URL: EVENT_HTML})
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
+
+    assert provider.selected == []  # pas de tri de liens : ce n'est pas un agenda
+    assert provider.extracted == [EVENT_URL]
+    assert result.summary.submitted == 1
+
+
+def test_agenda_sans_lien_retenu_est_relu_comme_une_sortie(log):
+    """Filet de sécurité : si le modèle classe une sortie en « agenda », on ne
+    doit pas la perdre. La page est déjà téléchargée."""
+    provider = FakeProvider(
+        [FoundPage(url=EVENT_URL, title="mal classée", kind="agenda")],
+        {EVENT_URL: sortie()},
+        select_all=False,
+    )
+    fetcher = FakeFetcher({EVENT_URL: EVENT_HTML})
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
+
+    assert provider.extracted == [EVENT_URL]
+    assert result.summary.submitted == 1
+
+
+def test_sortie_directe_deja_listee_par_un_agenda_nest_pas_doublee(log):
+    provider = FakeProvider(
+        [FoundPage(url=EVENT_URL, kind="sortie"), FoundPage(url=AGENDA_URL, kind="agenda")],
+        {EVENT_URL: sortie()},
+    )
+    fetcher = FakeFetcher({AGENDA_URL: AGENDA_HTML, EVENT_URL: EVENT_HTML})
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
+
+    assert result.summary.duplicates == 1
+    assert provider.extracted == [EVENT_URL]
+    assert result.summary.submitted == 1
 
 
 def test_categorie_inconnue_bascule_sur_le_defaut():

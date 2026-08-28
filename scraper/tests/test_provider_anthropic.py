@@ -44,7 +44,8 @@ def text_block(payload: dict) -> dict:
     return {"type": "text", "text": json.dumps(payload)}
 
 
-AGENDAS = {"agendas": [{"url": "https://agenda.fr/jeune-public/", "title": "Agenda 92", "reason": "liste des spectacles"}]}
+AGENDAS = {"pages": [{"url": "https://agenda.fr/jeune-public/", "title": "Agenda 92",
+                      "kind": "agenda", "reason": "liste des spectacles"}]}
 
 
 def search_for(*urls: str, tool_use_id: str = "s1") -> list[dict]:
@@ -159,6 +160,7 @@ def test_la_recherche_ne_recoit_que_web_search(log):
         server.close()
 
     assert [a.url for a in agendas] == ["https://agenda.fr/jeune-public/"]
+    assert agendas[0].is_agenda
     body = server.requests[0]
     # Un seul outil, et la variante de base : on ne fait plus lire de pages au
     # modèle, le filtrage dynamique n'a plus d'objet.
@@ -167,13 +169,28 @@ def test_la_recherche_ne_recoit_que_web_search(log):
     assert body["stream"] is True
 
 
+def test_une_sortie_trouvee_directement_est_classee_comme_telle(log):
+    page = {"pages": [{"url": "https://agenda.fr/jeune-public/", "title": "Un spectacle",
+                       "kind": "sortie", "reason": "page d'événement"}]}
+    server = FakeApiServer(
+        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(page)])]
+    )
+    try:
+        pages = provider_for(server).search(Config(name="t", theme="x"), log)
+    finally:
+        server.close()
+
+    assert pages[0].kind == "sortie"
+    assert not pages[0].is_agenda
+
+
 def test_agenda_invente_est_rejete():
     """Le modèle propose une page qu'aucune recherche n'a remontée."""
     stream = io.StringIO()
     log = RunLog(path=None, verbose=True, stream=stream)
-    invente = {"agendas": [
-        {"url": "https://agenda.fr/jeune-public/", "title": "vu", "reason": ""},
-        {"url": "https://paris.fr/listing/9475", "title": "inventé", "reason": ""},
+    invente = {"pages": [
+        {"url": "https://agenda.fr/jeune-public/", "title": "vu", "kind": "agenda", "reason": ""},
+        {"url": "https://paris.fr/listing/9475", "title": "inventé", "kind": "agenda", "reason": ""},
     ]}
     server = FakeApiServer(
         [message(search_for("https://agenda.fr/jeune-public/") + [text_block(invente)])]

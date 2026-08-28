@@ -76,13 +76,24 @@ liens — et ne coûte rien. Le modèle n'intervient qu'aux trois moments où il
 faut du jugement, et **aucun de ces appels ne boucle** :
 
 ```
-1. recherche        modèle + web_search   → pages d'agenda à ouvrir
-2. téléchargement   Python                → HTML                      gratuit
-3. extraction liens Python (BeautifulSoup)→ (texte, url, contexte)     gratuit
+1. recherche        modèle + web_search   → pages à ouvrir, classées
+                                            « agenda » ou « sortie »
+   ├─ sortie  ─────────────────────────────────────────┐
+   └─ agenda                                           │
+2. téléchargement   Python                → HTML       │           gratuit
+3. extraction liens Python (BeautifulSoup)→ (texte, url, contexte)  gratuit
 4. sélection        modèle, sans outil    → liens menant à une sortie
-5. lecture + fiche  Python puis modèle    → sortie structurée
+                                                       │
+5. lecture + fiche  Python puis modèle ◀───────────────┘
+                                          → sortie structurée
    puis géocodage, validation, photo, soumission — sans modèle
 ```
+
+Une recherche ne remonte pas que des agendas : elle tombe régulièrement sur la
+page d'une sortie précise. Le modèle classe donc chaque page retenue, et une
+sortie trouvée directement court-circuite les étapes 2 à 4. S'il se trompe et
+qu'un « agenda » ne donne aucun lien, la page est relue comme une sortie — elle
+est déjà téléchargée, la lire coûte 0,004 $, l'ignorer coûte la sortie.
 
 C'est ce découpage qui rend le coût prévisible. La version précédente confiait
 toute la procédure à un seul appel agentique : le modèle ouvrait les pages

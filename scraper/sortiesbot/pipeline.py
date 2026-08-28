@@ -1,6 +1,6 @@
 """Enchaînement d'un run.
 
-    1. recherche       (modèle)  → pages d'agenda à ouvrir
+    1. recherche       (modèle)  → pages à ouvrir : agendas et sorties
     2. téléchargement  (Python)  → HTML des agendas               gratuit
     3. extraction liens(Python)  → (texte, url, contexte)          gratuit
     4. sélection       (modèle)  → liens menant à une sortie
@@ -30,7 +30,7 @@ from .api import ApiError, SppApi
 from .config import Config, describe
 from .harvest import FetchError, Fetcher, Link, links_of, page_text
 from .journal import RunLog
-from .models import Candidate, Summary
+from .models import Candidate, FoundPage, Summary
 from .payload import UNKNOWN_PRICE, OutOfPeriod, Rejected, build_payload
 from .photo import PhotoError, download
 from .providers.base import Provider, ProviderError
@@ -113,28 +113,41 @@ def run(
 
     # 1. Recherche.
     try:
-        agendas = provider.search(config, log)
+        found = provider.search(config, log)
     except ProviderError as err:
         log.error("search", str(err))
         summary.errors += 1
         log.event("run_end", summary=summary.as_dict())
         return result
 
-    # 2 à 4. Chaque agenda est téléchargé, dépouillé, puis trié par le modèle.
+    # 2 à 4. Un agenda est téléchargé puis dépouillé ; une page de sortie
+    # trouvée directement par la recherche part telle quelle à l'extraction.
     candidates: list[Candidate] = []
     vues: set[str] = set()
-    for agenda in agendas[: config.max_agendas]:
-        for candidate in _harvest(agenda.url, config, provider, fetcher, log, summary):
-            # Deux agendas listent souvent la même sortie — parfois la même
-            # page sous deux URLs. Sans ce filtre, elle est lue, extraite et
-            # soumise deux fois.
-            key = normalize_url(candidate.url)
-            if key in vues:
-                summary.duplicates += 1
-                log.event("skip", reason="déjà repérée sur un autre agenda", url=candidate.url)
-                continue
-            vues.add(key)
-            candidates.append(candidate)
+    agendas = [p for p in found if p.is_agenda][: config.max_agendas]
+    directes = [p for p in found if not p.is_agenda]
+
+    for page in directes:
+        log.event("direct", url=page.url, title=page.title, why=page.reason)
+
+    trouvees = [
+        Candidate(url=p.url, title=p.title, source="recherche", context=p.reason)
+        for p in directes
+    ]
+    for agenda in agendas:
+        trouvees.extend(_harvest(agenda.url, config, provider, fetcher, log, summary))
+
+    for candidate in trouvees:
+        # Deux agendas listent souvent la même sortie — parfois la même page
+        # sous deux URLs. Sans ce filtre, elle est lue, extraite et soumise
+        # deux fois.
+        key = normalize_url(candidate.url)
+        if key in vues:
+            summary.duplicates += 1
+            log.event("skip", reason="déjà repérée ailleurs", url=candidate.url)
+            continue
+        vues.add(key)
+        candidates.append(candidate)
 
     summary.candidates = len(candidates)
     result.candidates = [
@@ -188,7 +201,10 @@ def _harvest(
     summary.pages += 1
     log.event("harvested", url=url, links=len(links))
     if not links:
-        return []
+        # Pas un seul lien exploitable : ce n'est pas un agenda. La page est
+        # téléchargée, autant la lire comme une sortie.
+        log.event("fallback", url=url)
+        return [Candidate(url=url, title="", source="recherche", context="")]
 
     try:
         kept = provider.select(url, links, config, log)
@@ -198,6 +214,13 @@ def _harvest(
         return []
 
     log.event("selected", url=url, kept=len(kept), among=len(links))
+    if not kept:
+        # Un agenda dont on ne tire aucun lien est peut-être une page de
+        # sortie que la recherche a mal classée. Elle est déjà téléchargée :
+        # la lire coûte une extraction, l'ignorer coûte la sortie.
+        log.event("fallback", url=url)
+        return [Candidate(url=url, title="", source="recherche", context="")]
+
     return [
         Candidate(url=link.url, title=link.text, source=url, context=link.context)
         for link in kept

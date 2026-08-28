@@ -11,12 +11,23 @@ from typing import Any
 
 
 @dataclass(frozen=True)
-class Agenda:
-    """Une page qui liste des événements, à ouvrir pour en tirer des liens."""
+class FoundPage:
+    """Une page retenue par la recherche.
+
+    Une recherche ne remonte pas que des agendas : elle tombe aussi
+    directement sur la page d'une sortie. Les deux se traitent différemment —
+    l'agenda est dépouillé de ses liens, la sortie est lue telle quelle — d'où
+    ce `kind`.
+    """
 
     url: str
     title: str = ""
+    kind: str = "agenda"
     reason: str = ""
+
+    @property
+    def is_agenda(self) -> bool:
+        return self.kind != "sortie"
 
 
 @dataclass(frozen=True)

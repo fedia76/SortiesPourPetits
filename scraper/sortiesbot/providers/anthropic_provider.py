@@ -21,7 +21,7 @@ from typing import Any
 from ..config import Config
 from ..harvest import Link
 from ..journal import RunLog
-from ..models import Agenda, ExtractedEvent, Usage
+from ..models import ExtractedEvent, FoundPage, Usage
 from ..store import normalize_url
 from .base import ProviderError
 
@@ -68,21 +68,22 @@ PRICES = {
 SEARCH_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "agendas": {
+        "pages": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "url": {"type": "string"},
                     "title": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["agenda", "sortie"]},
                     "reason": {"type": "string"},
                 },
-                "required": ["url", "title", "reason"],
+                "required": ["url", "title", "kind", "reason"],
                 "additionalProperties": False,
             },
         }
     },
-    "required": ["agendas"],
+    "required": ["pages"],
     "additionalProperties": False,
 }
 
@@ -154,7 +155,7 @@ class AnthropicProvider:
 
     # -------------------------------------------------------------- 1. chercher
 
-    def search(self, config: Config, log: RunLog) -> list[Agenda]:
+    def search(self, config: Config, log: RunLog) -> list[FoundPage]:
         seen: set[str] = set()
         data = self._ask(
             model=config.search_model,
@@ -179,8 +180,8 @@ class AnthropicProvider:
             log.error("search", "aucune recherche lancée : réponse écartée")
             return []
 
-        agendas: list[Agenda] = []
-        for raw in data.get("agendas") or []:
+        pages: list[FoundPage] = []
+        for raw in data.get("pages") or []:
             if not isinstance(raw, dict):
                 continue
             url = str(raw.get("url", "")).strip()
@@ -189,14 +190,15 @@ class AnthropicProvider:
             if normalize_url(url) not in seen:
                 log.error("search", "URL absente des résultats de recherche", url=url)
                 continue
-            agendas.append(
-                Agenda(
+            pages.append(
+                FoundPage(
                     url=url,
                     title=str(raw.get("title", "")).strip(),
+                    kind=str(raw.get("kind", "agenda")).strip().lower(),
                     reason=str(raw.get("reason", "")).strip(),
                 )
             )
-        return agendas
+        return pages
 
     # --------------------------------------------------------------- 2. choisir
 

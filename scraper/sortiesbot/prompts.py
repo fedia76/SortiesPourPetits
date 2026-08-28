@@ -26,18 +26,22 @@ Lance $max_searches recherches web variées, en changeant les formulations et
 en couvrant les différents départements de la zone. Une seule requête ne
 ramène qu'une seule bulle de résultats.
 
-Puis désigne, parmi les résultats obtenus, les pages à ouvrir : celles qui
-**listent des événements** avec leurs dates — agendas départementaux,
-« que faire ce week-end », programmations de saison. Ce sont elles qui
-contiennent les liens vers les sorties elles-mêmes.
+Puis désigne, parmi les résultats obtenus, les pages à ouvrir, en indiquant
+pour chacune ce qu'elle est :
+
+- `agenda` : une page qui **liste des événements** — agenda départemental,
+  « que faire ce week-end », programmation de saison. On en tirera les liens
+  vers les sorties.
+- `sortie` : la page d'**une seule sortie précise**, avec son titre, ses
+  dates et son lieu. Une recherche en remonte régulièrement, et elles
+  comptent autant que les agendas.
 
 Écarte les billetteries généralistes, les annuaires de prestataires pour
 fêtes privées, les articles de blog sans dates, et tout ce qui est hors zone.
 
-Ne cherche pas à identifier les sorties maintenant : leur contenu sera lu
-séparément. Ton seul travail ici est de choisir les bonnes pages d'agenda.
-N'écris aucune URL de mémoire — uniquement celles que les recherches ont
-remontées.
+Ne cherche pas à décrire les sorties maintenant : leur contenu sera lu
+séparément. N'écris aucune URL de mémoire — uniquement celles que les
+recherches ont remontées.
 """
 
 SELECT = """\
