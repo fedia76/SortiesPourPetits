@@ -50,6 +50,11 @@ BORING_PATH = re.compile(
 MIN_TEXT = 15
 #: Contexte gardé autour du lien : c'est là que sont la date et le lieu.
 CONTEXT_CHARS = 200
+#: Un conteneur qui n'ajoute pas au moins ça au texte du lien n'apporte rien :
+#: sur la plupart des agendas, le parent immédiat n'enveloppe que le titre.
+CONTEXT_MIN_GAIN = 20
+#: Au-delà, on a dépassé la carte de l'événement et attrapé toute la liste.
+CONTEXT_MAX = 600
 
 
 class FetchError(RuntimeError):
@@ -188,15 +193,32 @@ def links_of(html: str, page_url: str, limit: int = 200) -> list[Link]:
         if _is_boring(url, text) or url in found:
             continue
 
-        # Le bloc parent porte en général la date et le lieu.
-        holder = anchor.find_parent(["article", "li", "div", "section"]) or anchor
-        context = " ".join(holder.get_text(" ", strip=True).split())[:CONTEXT_CHARS]
-        found[url] = Link(text=text[:150], url=url, context=context)
+        found[url] = Link(text=text[:150], url=url, context=_context_of(anchor, text))
 
         if len(found) >= limit:
             break
 
     return list(found.values())
+
+
+def _context_of(anchor, text: str) -> str:
+    """Texte qui entoure le lien — date, lieu, tarif.
+
+    On remonte les ancêtres jusqu'à la carte de l'événement. Le parent
+    immédiat n'enveloppe souvent que le titre, et s'y arrêter fait perdre
+    précisément ce qui permet de trier sans ouvrir la page.
+    """
+    node = anchor
+    for _ in range(4):
+        node = node.parent
+        if node is None or node.name in ("body", "html", "[document]"):
+            break
+        around = " ".join(node.get_text(" ", strip=True).split())
+        if len(around) > CONTEXT_MAX:
+            break  # on a dépassé la carte : la liste entière n'apprend rien
+        if len(around) >= len(text) + CONTEXT_MIN_GAIN:
+            return around[:CONTEXT_CHARS]
+    return text[:CONTEXT_CHARS]
 
 
 def page_text(html: str, limit: int = 8000) -> str:

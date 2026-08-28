@@ -243,7 +243,8 @@ def _process(
 
     try:
         category_id = resolve_category(extracted.category, categories, config.default_category)
-        payload = build_payload(extracted, geo.location, category_id, url)
+        payload = build_payload(extracted, geo.location, category_id, url,
+                                until=config.date_to)
     except Rejected as err:
         summary.skipped_invalid += 1
         log.event("skip", reason=str(err), url=url)
