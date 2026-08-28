@@ -68,7 +68,33 @@ def test_sept_jours_sur_sept_reste_une_plage():
     assert resolve("2026-07-01", "2026-07-31", weekdays=tous).source == SOURCE_RANGE
 
 
-def test_le_json_ld_prime_sur_la_recurrence():
+def test_un_json_ld_de_periode_nest_pas_une_seance():
+    """Un `Event` dont la fin tombe un autre jour décrit l'affiche, pas une
+    représentation : sa `startDate` n'est que le premier jour."""
+    html = bloc('{"@type": "Event", "startDate": "2026-08-26", "endDate": "2026-08-31"}')
+    assert json_ld_dates(html) == []
+
+
+def test_une_date_isolee_ne_fait_pas_un_calendrier():
+    """Le cas le plus fréquent en production : le site ne publie qu'une entrée
+    pour toute l'affiche. La récurrence, elle, est exacte — elle doit gagner."""
+    schedule = resolve(
+        "2026-08-01", "2026-08-31",
+        weekdays=["mercredi", "samedi"],
+        json_ld=["2026-08-26"],
+    )
+    assert schedule.source == SOURCE_WEEKDAYS
+    assert "2026-08-26" in schedule.dates  # un mercredi, retrouvé autrement
+    assert len(schedule.dates) == 9
+
+
+def test_une_date_isolee_suffit_pour_une_sortie_dun_jour():
+    schedule = resolve("2026-08-30", "2026-08-30", json_ld=["2026-08-30"])
+    assert schedule.source == SOURCE_JSON_LD
+    assert schedule.dates == ("2026-08-30",)
+
+
+def test_le_json_ld_prime_quand_il_liste_les_seances():
     schedule = resolve(
         "2026-07-01", "2026-08-31",
         weekdays=["dimanche"],
@@ -90,9 +116,9 @@ def test_dates_hors_plage_sont_ecartees():
     """Une page de spectacle liste souvent d'autres salles ou d'autres saisons."""
     schedule = resolve(
         "2026-07-01", "2026-07-31",
-        json_ld=["2026-07-05", "2027-01-10", "2026-06-30", "pas une date"],
+        json_ld=["2026-07-05", "2026-07-19", "2027-01-10", "2026-06-30", "pas une date"],
     )
-    assert schedule.dates == ("2026-07-05",)
+    assert schedule.dates == ("2026-07-05", "2026-07-19")
 
 
 def test_sans_rien_on_garde_le_comportement_actuel():

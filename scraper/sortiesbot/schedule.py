@@ -7,8 +7,11 @@ proposé un jeudi. C'est faux, pas approximatif.
 Trois sources, de la plus sûre à la plus faible :
 
 1. le **JSON-LD** `schema.org/Event` que beaucoup de sites publient pour
-   Google — chaque représentation y a sa date exacte. Gratuit, déterministe,
-   aucun JavaScript à exécuter : c'est dans le HTML qu'on a déjà téléchargé ;
+   Google — quand il porte une entrée par représentation, ce sont les dates
+   exactes, gratuitement, sans exécuter de JavaScript. Mais beaucoup de sites
+   n'en publient qu'une seule pour toute l'affiche : une date isolée en face
+   d'une plage de deux mois n'est pas un calendrier, c'est le premier jour, et
+   la prendre pour argent comptant est pire que de ne rien savoir ;
 2. les **dates annoncées** en clair sur la page (« les 3, 7 et 12 août »),
    que le modèle relève à l'extraction ;
 3. la **récurrence** lue dans la prose (« tous les dimanches à 15h »), que le
@@ -143,10 +146,18 @@ def resolve(
     end = parse_date(date_end) or start
     days = normalize_weekdays(weekdays)
 
-    for values, source in ((json_ld, SOURCE_JSON_LD), (announced, SOURCE_ANNOUNCED)):
-        dates = _clean(values, start, end)
-        if dates:
-            return Schedule(dates=tuple(dates), weekdays=days, source=source)
+    single_day = bool(start) and start == end
+
+    # Une seule date en face d'une plage de deux mois n'est pas un calendrier :
+    # c'est le premier jour de l'affiche. Mesuré sur un vrai run, c'est le cas
+    # le plus fréquent — et il écrasait une récurrence, elle, exacte.
+    dates = _clean(json_ld, start, end)
+    if len(dates) > 1 or (dates and single_day):
+        return Schedule(dates=tuple(dates), weekdays=days, source=SOURCE_JSON_LD)
+
+    dates = _clean(announced, start, end)
+    if dates:
+        return Schedule(dates=tuple(dates), weekdays=days, source=SOURCE_ANNOUNCED)
 
     # Sept jours sur sept, c'est la plage elle-même : autant le dire ainsi.
     if days and len(days) < 7 and start and end:

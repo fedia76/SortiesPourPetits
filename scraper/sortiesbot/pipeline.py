@@ -388,7 +388,16 @@ def _process(
     )
     if schedule.precise:
         summary.scheduled += 1
-    log.event("schedule", url=url, title=payload["title"], **schedule.as_dict())
+    # La plage est journalisée avec le calendrier : sans elle, impossible de
+    # rejuger après coup si une date isolée était une séance ou un premier jour.
+    log.event(
+        "schedule",
+        url=url,
+        title=payload["title"],
+        start=payload["dateStart"],
+        end=payload["dateEnd"],
+        **schedule.as_dict(),
+    )
 
     if payload["price"] == UNKNOWN_PRICE:
         summary.unpriced += 1

@@ -178,10 +178,18 @@ sources, de la plus sûre à la plus faible :
 
 | Source | D'où elle vient | Coût |
 |---|---|---|
-| `json-ld` | le `schema.org/Event` que le site publie pour Google, souvent une entrée par représentation | nul — c'est dans le HTML déjà téléchargé |
+| `json-ld` | le `schema.org/Event` que le site publie pour Google, **quand il porte une entrée par représentation** | nul — c'est dans le HTML déjà téléchargé |
 | `dates annoncées` | « les 3, 7 et 12 août », relevé par le modèle à l'extraction | quelques jetons de sortie |
 | `récurrence` | « tous les dimanches à 15h », rendu en jours de la semaine puis déroulé en Python | idem |
 | `plage` | rien trouvé : la plage vaut pour tous ses jours, comme aujourd'hui | — |
+
+Le JSON-LD demande de la prudence, et le premier run l'a montré : dix-huit
+sorties sur vingt en annonçaient un, **toutes avec une seule date**. Ce
+n'étaient pas dix-huit calendriers, mais dix-huit premiers jours d'affiche —
+et cette date unique écrasait une récurrence, elle, exacte. Deux garde-fous
+depuis : un `Event` dont la `endDate` tombe un autre jour décrit une période
+et non une séance, il est ignoré ; et une date isolée ne fait un calendrier
+que si la sortie tient sur un seul jour.
 
 Aucun navigateur sans tête, aucun clic dans un widget de réservation : la
 page dit presque toujours en toutes lettres ce que le calendrier de
