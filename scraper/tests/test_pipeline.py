@@ -307,10 +307,19 @@ def test_meme_sortie_sur_deux_agendas_nest_traitee_qu_une_fois(log):
     assert result.summary.submitted == 1
 
 
-def test_sortie_hors_zone_est_ecartee(log):
-    """Un spectacle à Chantilly (Oise, 60500) est remonté dans un run
-    Île-de-France : il partait en (0, 0) « adresse à compléter » au lieu
-    d'être écarté."""
+def test_sortie_hors_zone_est_gardee(log, monkeypatch):
+    """Un spectacle à Chantilly (Oise) sort d'un run Île-de-France. Sa page a
+    été lue et payée : la jeter reviendrait à payer pour rien, alors que le
+    site filtre par distance et qu'un modérateur relit. Et le géocodeur ne
+    doit plus refuser une position hors des départements visés."""
+    from sortiesbot import geocode as geocoding
+
+    monkeypatch.setattr(
+        geocoding, "_search",
+        lambda q: [{"properties": {"city": "Chantilly", "postcode": "60500",
+                                   "countrycode": "FR"},
+                    "geometry": {"coordinates": [2.4699, 49.1939]}}],
+    )
     provider, fetcher = standard()
     provider.extractions[EVENT_URL] = sortie(
         venue_city="Chantilly", venue_postal_code="60500"
@@ -319,21 +328,81 @@ def test_sortie_hors_zone_est_ecartee(log):
     with SeenStore() as store:
         result = run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
 
-    assert result.summary.skipped_out_of_area == 1
+    assert result.summary.out_of_area == 1
+    assert result.summary.submitted == 1
+    assert api.created[0]["venue"]["postalCode"] == "60500"
+    assert api.created[0]["venue"]["lat"] != 0  # géolocalisée, pas « à compléter »
+
+
+def test_sortie_hors_zone_ecartee_si_le_run_est_strict(log):
+    provider, fetcher = standard()
+    provider.extractions[EVENT_URL] = sortie(
+        venue_city="Chantilly", venue_postal_code="60500"
+    )
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(keep_out_of_scope=False), provider, store, api, log,
+                     submit=True, fetcher=fetcher)
+
+    assert result.summary.out_of_area == 1
     assert api.created == []
 
 
-def test_code_postal_inconnu_ne_fait_pas_ecarter(log):
-    """Sans code postal, on ne peut pas juger : la sortie part en (0, 0) et
-    c'est le modérateur qui tranche."""
+def test_sortie_hors_periode_est_gardee(log):
+    """Même raisonnement : un spectacle de décembre trouvé par un run « ce
+    week-end » est déjà payé, et le site sait filtrer par date."""
     provider, fetcher = standard()
-    provider.extractions[EVENT_URL] = sortie(venue_postal_code="")
+    loin = (date.today() + timedelta(days=120)).isoformat()
+    provider.extractions[EVENT_URL] = sortie(date_start=loin, date_end=loin)
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(horizon_days=7), provider, store, api, log,
+                     submit=True, fetcher=fetcher)
+
+    assert result.summary.out_of_period == 1
+    assert result.summary.submitted == 1
+    assert api.created[0]["dateStart"] == loin
+
+
+def test_sortie_hors_periode_ecartee_si_le_run_est_strict(log):
+    provider, fetcher = standard()
+    loin = (date.today() + timedelta(days=120)).isoformat()
+    provider.extractions[EVENT_URL] = sortie(date_start=loin, date_end=loin)
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(horizon_days=7, keep_out_of_scope=False), provider, store,
+                     api, log, submit=True, fetcher=fetcher)
+
+    assert result.summary.out_of_period == 1
+    assert api.created == []
+
+
+def test_sortie_deja_terminee_reste_ecartee(log):
+    """La souplesse s'arrête là : une sortie passée n'intéresse personne."""
+    provider, fetcher = standard()
+    passe = (date.today() - timedelta(days=10)).isoformat()
+    provider.extractions[EVENT_URL] = sortie(date_start=passe, date_end=passe)
     api = FakeApi()
     with SeenStore() as store:
         result = run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
 
-    assert result.summary.skipped_out_of_area == 0
-    assert result.summary.submitted == 1
+    assert result.summary.skipped_invalid == 1
+    assert api.created == []
+
+
+def test_page_qui_nest_pas_une_sortie_reste_ecartee(log):
+    """Et une page de liste ou de billetterie non plus : « hors fenêtre » et
+    « pas une sortie » sont deux choses différentes."""
+    provider, fetcher = standard()
+    provider.extractions[EVENT_URL] = ExtractedEvent(
+        relevant=False, skip_reason="page de billetterie"
+    )
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
+
+    assert result.summary.skipped_irrelevant == 1
+    assert api.created == []
 
 
 def test_categorie_inconnue_bascule_sur_le_defaut():

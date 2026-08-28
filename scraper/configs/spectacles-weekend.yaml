@@ -27,6 +27,13 @@ max_cost_usd: 1.00
 # Catégorie utilisée quand aucune catégorie du site ne correspond.
 default_category: Non classé
 
+# Le thème, la période et la zone orientent les recherches et le tri des liens.
+# Ils ne filtrent PAS le résultat : une page déjà lue est déjà payée, et une
+# sortie qui déborde de la fenêtre reste une bonne sortie — le site filtre par
+# date et par distance, et un modérateur relit tout. Passer à false pour un run
+# strictement cantonné à sa fenêtre.
+keep_out_of_scope: true
+
 # Un géocodage hors de ces départements est traité comme un échec.
 postal_prefixes: ["75", "77", "78", "91", "92", "93", "94", "95"]
 

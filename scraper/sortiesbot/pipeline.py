@@ -7,6 +7,13 @@
     5. lecture + fiche (Python + modèle) → sortie structurée
     puis géocodage, validation, photo, soumission — inchangés.
 
+Thème, période et zone sont une **stratégie de recherche**, pas un filtre de
+sortie : ils orientent les requêtes et le tri des liens, là où ils font gagner
+du temps et de l'argent. Une fois la page lue, elle est payée — l'écarter
+parce qu'elle déborde de la fenêtre reviendrait à payer pour rien, alors que
+le site sait filtrer par date et par distance, et qu'un modérateur relit tout.
+Seul ce qui est inexploitable est écarté.
+
 Le partage est toujours le même : Python fait ce qui est mécanique, le modèle
 fait ce qui demande du jugement, et aucun appel ne boucle. Le filtre des URLs
 déjà vues intervient avant l'étape 5, la seule qui coûte par sortie.
@@ -24,7 +31,7 @@ from .config import Config, describe
 from .harvest import FetchError, Fetcher, Link, links_of, page_text
 from .journal import RunLog
 from .models import Candidate, Summary
-from .payload import UNKNOWN_PRICE, Rejected, build_payload
+from .payload import UNKNOWN_PRICE, OutOfPeriod, Rejected, build_payload
 from .photo import PhotoError, download
 from .providers.base import Provider, ProviderError
 from .store import SeenStore, normalize_url
@@ -256,16 +263,18 @@ def _process(
     )
 
     if _out_of_area(extracted.venue_postal_code, config.postal_prefixes):
-        summary.skipped_out_of_area += 1
-        log.event(
-            "skip",
-            reason=f"code postal {extracted.venue_postal_code} hors de la zone demandée",
-            url=url,
-        )
-        store.remember(url, "out_of_area", title=extracted.title)
-        return
+        summary.out_of_area += 1
+        if not config.keep_out_of_scope:
+            log.event(
+                "skip",
+                reason=f"code postal {extracted.venue_postal_code} hors zone",
+                url=url,
+            )
+            store.remember(url, "out_of_area", title=extracted.title)
+            return
+        log.event("out_of_scope", field="zone", url=url, detail=extracted.venue_postal_code)
 
-    geo = geocoding.geocode(extracted, config.postal_prefixes)
+    geo = geocoding.geocode(extracted)
     log.event(
         "geocode", url=url, query=geo.query, located=geo.located,
         lat=geo.location.lat, lng=geo.location.lng, reason=geo.reason,
@@ -275,13 +284,27 @@ def _process(
 
     try:
         category_id = resolve_category(extracted.category, categories, config.default_category)
-        payload = build_payload(extracted, geo.location, category_id, url,
-                                until=config.date_to)
+        payload = build_payload(
+            extracted,
+            geo.location,
+            category_id,
+            url,
+            until=None if config.keep_out_of_scope else config.date_to,
+        )
+    except OutOfPeriod as err:
+        summary.out_of_period += 1
+        log.event("skip", reason=str(err), url=url)
+        store.remember(url, "out_of_period", title=extracted.title)
+        return
     except Rejected as err:
         summary.skipped_invalid += 1
         log.event("skip", reason=str(err), url=url)
         store.remember(url, "invalid", title=extracted.title or candidate.title)
         return
+
+    if payload["dateStart"] and payload["dateStart"] > config.date_to.isoformat():
+        summary.out_of_period += 1
+        log.event("out_of_scope", field="période", url=url, detail=payload["dateStart"])
 
     if payload["price"] == UNKNOWN_PRICE:
         summary.unpriced += 1

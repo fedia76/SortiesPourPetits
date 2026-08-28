@@ -139,6 +139,28 @@ avec une valeur convenue que le site reconnaît
 Dans les deux cas, **l'approbation est refusée** tant qu'un modérateur n'a pas
 corrigé le champ, et le bandeau pointe vers le formulaire d'édition.
 
+## La configuration oriente, elle ne filtre pas
+
+Thème, période et zone servent aux deux premières étapes : formuler les
+recherches, trier les liens. C'est là qu'ils font gagner du temps et de
+l'argent, en évitant d'ouvrir des pages sans intérêt.
+
+Passé l'extraction, ils ne servent plus à rien — parce que la page est
+**déjà lue et déjà payée**. L'écarter parce qu'elle déborde de la fenêtre,
+c'est payer pour ne rien garder, alors que le site sait filtrer par date et
+par distance, et qu'un modérateur relit chaque proposition.
+
+Une recherche « spectacles de ce week-end » qui croise un atelier de musée
+programmé dans trois mois le rapporte donc quand même. Plusieurs
+configurations spécialisées (musée, spectacle, fête foraine…) se complètent
+ainsi : chacune ratisse son thème et ramasse au passage ce que les autres
+auraient manqué. `keep_out_of_scope: false` rétablit la rigueur d'une fenêtre
+stricte si une configuration en a besoin.
+
+Le géocodeur suit la même logique : il vérifie que la position trouvée est en
+France — une homonymie, il y a un Montreuil au Québec — mais plus qu'elle est
+dans les départements visés.
+
 ## Configuration
 
 Une configuration = un fichier YAML dans `configs/` (voir

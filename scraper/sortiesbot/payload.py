@@ -49,6 +49,14 @@ class Rejected(Exception):
     """La sortie ne peut pas être proposée sans inventer une information."""
 
 
+class OutOfPeriod(Rejected):
+    """La sortie est bonne, mais commence après la fenêtre demandée.
+
+    Distincte de `Rejected` : elle n'a rien d'inexploitable, et une
+    configuration qui ne se veut pas stricte la garde.
+    """
+
+
 def _truncate(text: str, limit: int) -> str:
     text = text.strip()
     if len(text) <= limit:
@@ -114,7 +122,7 @@ def _clean_dates(
     # La période de la configuration est une contrainte : une sortie qui
     # commence après n'a rien à faire dans ce run, même si elle est bonne.
     if until is not None and start > until:
-        raise Rejected(f"commence le {start.isoformat()}, après la période demandée")
+        raise OutOfPeriod(f"commence le {start.isoformat()}, après la période demandée")
     return False, start.isoformat(), end.isoformat()
 
 

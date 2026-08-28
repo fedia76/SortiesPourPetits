@@ -37,6 +37,9 @@ _CONSOLE = {
         if f.get("located")
         else f"  📍 non géolocalisé ({f.get('reason')}) : {f.get('query')}"
     ),
+    "out_of_scope": lambda f: (
+        f"  ± hors {f.get('field')} ({f.get('detail')}) mais gardée : {f.get('url')}"
+    ),
     "incomplete": lambda f: f"  ⚑ {f.get('field')} à compléter par la modération : {f.get('title')}",
     "paused": lambda f: (
         f"  ⏸ tour en pause (limite serveur), reprise — {f.get('cost_usd')} $ déjà engagés"

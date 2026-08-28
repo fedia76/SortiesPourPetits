@@ -170,8 +170,10 @@ class Summary:
     skipped_irrelevant: int = 0
     #: Sorties listées par deux agendas différents.
     duplicates: int = 0
-    #: Sorties dont le code postal tombe hors de la zone demandée.
-    skipped_out_of_area: int = 0
+    #: Sorties gardées bien qu'en dehors de la fenêtre visée : la
+    #: configuration oriente la recherche, elle ne filtre pas le résultat.
+    out_of_period: int = 0
+    out_of_area: int = 0
     skipped_invalid: int = 0
     ungeocoded: int = 0
     unpriced: int = 0
@@ -190,7 +192,8 @@ class Summary:
             "skipped_blocked": self.skipped_blocked,
             "skipped_irrelevant": self.skipped_irrelevant,
             "duplicates": self.duplicates,
-            "skipped_out_of_area": self.skipped_out_of_area,
+            "out_of_period": self.out_of_period,
+            "out_of_area": self.out_of_area,
             "skipped_invalid": self.skipped_invalid,
             "ungeocoded": self.ungeocoded,
             "unpriced": self.unpriced,

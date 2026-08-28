@@ -57,6 +57,13 @@ class Config:
     #: Plafond de coût du run, en dollars. Vérifié avant chaque appel payant.
     max_cost_usd: float = 1.00
     default_category: str = "Non classé"
+    #: Le thème, la période et la zone orientent les recherches et le tri des
+    #: liens — c'est là qu'ils servent. Une fois la page lue, elle est payée :
+    #: la garder ne coûte plus rien, et le site sait filtrer par date et par
+    #: distance. Passer à false pour un run strictement cantonné à sa fenêtre.
+    keep_out_of_scope: bool = True
+    #: Départements visés par la recherche. Sert au tri, et au filtre strict
+    #: si `keep_out_of_scope` est désactivé.
     postal_prefixes: list[str] = field(default_factory=lambda: list(IDF_POSTAL_PREFIXES))
     blocked_domains: list[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS))
     provider: str = "anthropic"
