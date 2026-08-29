@@ -9,6 +9,7 @@ import {
   hasCoordinates,
   hasPrice,
   priceLabel,
+  shortAgeLabel,
 } from '../types';
 
 /** Résultat de la recherche de doublons pour une sortie de la file. */
@@ -144,7 +145,7 @@ onMounted(load);
     <div v-for="e in events" :key="e.id" class="card" style="padding: 1.2rem; margin-bottom: 1rem">
       <div class="badges" style="margin-bottom: 0.4rem">
         <span class="badge price">{{ priceLabel(e) }}</span>
-        <span v-if="e.ageMin !== null && e.ageMax !== null" class="badge">{{ e.ageMin }}–{{ e.ageMax }} ans</span>
+        <span v-if="shortAgeLabel(e)" class="badge">{{ shortAgeLabel(e) }}</span>
         <span v-if="e.setting" class="badge">{{ SETTING_LABELS[e.setting] }}</span>
       </div>
       <h3>

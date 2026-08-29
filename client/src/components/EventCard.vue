@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { EventItem } from '../types';
-import { SETTING_LABELS, nextDate, priceLabel } from '../types';
+import { SETTING_LABELS, nextDate, priceLabel, shortAgeLabel } from '../types';
 
 const props = defineProps<{ event: EventItem }>();
 
@@ -33,9 +33,7 @@ const dateLabel = computed(() => {
     <div class="body">
       <div class="badges">
         <span class="badge price">{{ price }}</span>
-        <span v-if="event.ageMin !== null && event.ageMax !== null" class="badge">
-          {{ event.ageMin }}–{{ event.ageMax }} ans
-        </span>
+        <span v-if="shortAgeLabel(event)" class="badge">{{ shortAgeLabel(event) }}</span>
         <span v-if="event.setting" class="badge">{{ SETTING_LABELS[event.setting] }}</span>
         <span class="badge">{{ event.category.name }}</span>
         <span v-if="event.distanceKm !== undefined" class="badge">📍 {{ event.distanceKm }} km</span>

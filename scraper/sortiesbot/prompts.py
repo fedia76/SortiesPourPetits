@@ -116,8 +116,10 @@ Règles :
     récurrence — dans ce cas `weekdays` suffit.
   N'extrapole ni l'une ni l'autre : ne remplis que ce que la page affirme.
 - `category` doit être choisie parmi : $categories
-- `photo_url` : l'URL absolue d'une photo représentative si la page en donne
-  une, sinon vide.
+
+Ne cherche pas d'illustration : tu ne reçois que le texte de la page, et son
+image est relevée séparément dans le HTML (`harvest.main_image`). Laisse
+`photo_url` vide plutôt que de deviner une URL.
 
 Ne renseigne que ce que la page dit réellement : un champ inconnu reste vide.
 """

@@ -11,6 +11,11 @@ rendre, pas une page à lire.
 Puisqu'on télécharge nous-mêmes, on assume ce qu'Anthropic assumait pour
 nous : `robots.txt` est lu et respecté, on s'annonce, et on ne martèle pas
 un serveur.
+
+Le HTML sert aussi à ce que le texte seul ne dit pas : les dates JSON-LD
+(`json_ld_dates`) et l'illustration de la page (`main_image`). Le modèle ne
+reçoit que du texte — il ne peut donc pas connaître l'URL d'une image, et
+lui en demander une revenait à lui demander de l'inventer.
 """
 
 from __future__ import annotations
@@ -300,6 +305,128 @@ def json_ld_dates(html: str) -> list[str]:
                 continue
             dates.append(start.strip())
     return dates
+
+
+#: Fragments d'URL ou d'attribut qui trahissent une image d'habillage plutôt
+#: qu'une illustration : logo du site, icône, pixel de suivi, bouton de partage.
+_DECORATIVE = re.compile(
+    r"logo|icon|favicon|sprite|avatar|placeholder|pixel|spacer|banni?ere|"
+    r"header|footer|social|partage|share|facebook|twitter|instagram",
+    re.I,
+)
+
+#: Extensions qu'un `<img>` peut porter sans être une photo exploitable.
+_BAD_IMAGE_SUFFIX = (".svg", ".gif", ".ico")
+
+#: En dessous, l'attribut `width`/`height` annonce une vignette ou une icône.
+_MIN_IMAGE_SIDE = 200
+
+
+def _image_candidates(soup: BeautifulSoup) -> list[str]:
+    """URLs d'images déclarées par la page, de la plus fiable à la moins sûre.
+
+    L'ordre n'est pas arbitraire : `og:image` est l'image que le site lui-même
+    montre quand on partage la page — c'est exactement l'illustration
+    cherchée. Les `<img>` du corps ne viennent qu'après, faute de mieux.
+    """
+    found: list[str] = []
+
+    for prop in ("og:image:secure_url", "og:image:url", "og:image", "twitter:image"):
+        for tag in soup.find_all("meta", attrs={"property": prop}):
+            found.append((tag.get("content") or "").strip())
+        for tag in soup.find_all("meta", attrs={"name": prop}):
+            found.append((tag.get("content") or "").strip())
+
+    for tag in soup.find_all("link", attrs={"rel": "image_src"}):
+        found.append((tag.get("href") or "").strip())
+
+    return [url for url in found if url]
+
+
+def _ld_images(html: str) -> list[str]:
+    """Images déclarées en JSON-LD : `image` d'un Event, sous ses trois formes.
+
+    Un site écrit `"image": "https://…"`, une liste d'URLs, ou un `ImageObject`
+    avec son `url`. Les trois se rencontrent, aucune n'est plus correcte.
+    """
+    found: list[str] = []
+    for block in _ld_blocks(html):
+        for node in _walk(block):
+            if not _is_event(node):
+                continue
+            value = node.get("image")
+            for item in value if isinstance(value, list) else [value]:
+                if isinstance(item, str) and item.strip():
+                    found.append(item.strip())
+                elif isinstance(item, dict):
+                    url = item.get("url") or item.get("contentUrl")
+                    if isinstance(url, str) and url.strip():
+                        found.append(url.strip())
+    return found
+
+
+def _body_images(soup: BeautifulSoup) -> list[str]:
+    """`<img>` du corps de la page, l'habillage évident écarté."""
+    found: list[str] = []
+    for tag in soup.find_all("img"):
+        # Le lazy-loading laisse `src` vide et met la vraie URL ailleurs.
+        raw = ""
+        for attr in ("src", "data-src", "data-lazy-src", "data-original"):
+            raw = (tag.get(attr) or "").strip()
+            if raw:
+                break
+        if not raw:
+            srcset = (tag.get("srcset") or tag.get("data-srcset") or "").strip()
+            raw = srcset.split(",")[0].strip().split(" ")[0] if srcset else ""
+        if not raw or raw.startswith("data:"):
+            continue
+        haystack = " ".join(
+            filter(None, [raw, tag.get("alt") or "", " ".join(tag.get("class") or [])])
+        )
+        if _DECORATIVE.search(haystack):
+            continue
+        if _too_small(tag):
+            continue
+        found.append(raw)
+    return found
+
+
+def _too_small(tag) -> bool:
+    """Une image dont la page annonce elle-même la petite taille est une icône."""
+    for attr in ("width", "height"):
+        value = (tag.get(attr) or "").strip().rstrip("px")
+        if value.isdigit() and int(value) < _MIN_IMAGE_SIDE:
+            return True
+    return False
+
+
+def _usable_image(url: str, page_url: str) -> str:
+    """URL absolue et exploitable, ou chaîne vide."""
+    if not url or url.startswith("data:"):
+        return ""
+    absolute = urljoin(page_url, url).split("#")[0]
+    if not absolute.startswith(("http://", "https://")):
+        return ""
+    path = urlsplit(absolute).path.lower()
+    if path.endswith(_BAD_IMAGE_SUFFIX):
+        return ""
+    return absolute
+
+
+def main_image(html: str, page_url: str) -> str:
+    """URL absolue de l'illustration de la page, ou chaîne vide.
+
+    C'est le pendant de `json_ld_dates` pour la photo : ce que le HTML dit
+    lui-même, gratuitement et sans risque d'invention. Le modèle, qui ne voit
+    que le texte de la page, ne pouvait pas répondre à cette question — d'où
+    des sorties importées systématiquement sans image.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for url in _image_candidates(soup) + _ld_images(html) + _body_images(soup):
+        usable = _usable_image(url, page_url)
+        if usable:
+            return usable
+    return ""
 
 
 def page_text(html: str, limit: int = 8000) -> str:

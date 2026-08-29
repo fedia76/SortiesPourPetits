@@ -25,7 +25,9 @@ communauté et validées par une équipe de modération.
   jour et cadre intérieur/extérieur/les deux (facultatifs), lieu géolocalisé.
 - **Modération** : toute proposition passe en attente ; seules les sorties
   approuvées sont publiques. Une modification par l'auteur repasse en
-  modération. Motif de refus visible par l'auteur.
+  modération. Motif de refus visible par l'auteur. Un modérateur tranche
+  depuis la file d'attente ou directement depuis la fiche de la sortie —
+  c'est là qu'elle se lit en entier.
 - **Détection de doublons** : pour chaque sortie de la file, les sorties
   ressemblantes sont cherchées automatiquement et notées sur 100 (même lieu ou
   lieu proche, titre et description, chevauchement des dates, catégorie,
@@ -34,6 +36,10 @@ communauté et validées par une équipe de modération.
 - **Recherche** : texte, gratuit / prix max, âge de l'enfant, période, cadre,
   et **distance** (rayon en km autour d'une adresse ou de la position du
   navigateur — formule de Haversine en SQL).
+- **Statistiques du scraping** : par recherche ou toutes confondues, la part
+  de chaque domaine source — avec ce qu'il a réellement donné, et pas
+  seulement ce qu'il a coûté à lire — et la part de chaque catégorie, qui dit
+  ce qu'aucune recherche ne couvre.
 - **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
   sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
   une clé d'API. Ce qu'un import n'a pas su déterminer part avec une valeur
@@ -82,6 +88,9 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | GET | `/api/moderation/pending` | modérateur | File d'attente |
 | GET | `/api/moderation/:id/similar` | modérateur | Doublons potentiels (`radiusKm`, `minScore`, `limit`) |
 | POST | `/api/moderation/:id` | modérateur | `{action: "approve"\|"reject", reason?}` |
+| GET | `/api/categories` | public | Liste des catégories |
+| POST / PATCH / DELETE | `/api/categories[/:id]` | admin | Gérer les catégories |
+| GET | `/api/scraper/stats` | modérateur | Statistiques du scraping (`configId`, `days`) |
 | GET | `/api/admin/users` | admin | Liste des utilisateurs |
 | PATCH | `/api/admin/users/:id/role` | admin | Changer un rôle |
 

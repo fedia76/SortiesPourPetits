@@ -62,6 +62,9 @@ class FakeFetcher:
         self.pages = pages
         self.failing = failing or set()
         self.asked: list[str] = []
+        # Le téléchargement de la photo réutilise la session du fetcher : sans
+        # notre User-Agent, beaucoup de serveurs refusent l'image.
+        self.session = object()
 
     def get_html(self, url: str) -> str:
         self.asked.append(url)
@@ -581,3 +584,45 @@ def test_une_sortie_sans_jours_connus_nenvoie_aucune_date(log):
         run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
 
     assert api.created[0]["dates"] == []
+
+
+# ------------------------------------------------------------------ la photo
+#
+# Le modèle ne voit que le texte de la page : il ne pouvait donc jamais donner
+# l'URL d'une image, et toutes les sorties importées arrivaient sans photo.
+
+PAGE_ILLUSTREE = EVENT_HTML.replace(
+    "<html><body>",
+    '<html><head><meta property="og:image" content="/media/chaperon.jpg"></head><body>',
+)
+
+
+def test_l_image_de_la_page_est_relevee_et_telechargee(log, monkeypatch):
+    telecharge = {}
+
+    def faux_download(url, session=None):
+        telecharge["url"] = url
+        telecharge["session"] = session
+        return ("chaperon.jpg", b"\xff\xd8\xff-des-octets", "image/jpeg")
+
+    monkeypatch.setattr("sortiesbot.pipeline.download", faux_download)
+
+    provider = FakeProvider([FoundPage(url=AGENDA_URL, title="Agenda 92")], {EVENT_URL: sortie()})
+    fetcher = FakeFetcher({AGENDA_URL: AGENDA_HTML, EVENT_URL: PAGE_ILLUSTREE})
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
+
+    assert telecharge["url"] == "https://agenda.fr/media/chaperon.jpg"
+    assert telecharge["session"] is fetcher.session
+    assert result.events[0]["photo_url"] == "https://agenda.fr/media/chaperon.jpg"
+
+
+def test_une_page_sans_image_se_soumet_quand_meme(log):
+    provider, fetcher = standard()
+    api = FakeApi()
+    with SeenStore() as store:
+        result = run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
+
+    assert result.summary.submitted == 1
+    assert result.events[0]["photo_url"] == ""

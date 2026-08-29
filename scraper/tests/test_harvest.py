@@ -205,3 +205,63 @@ def test_geocodeur_bascule_sur_la_ban_quand_photon_refuse(monkeypatch):
 
     assert appels["photon"] == 1  # une rebuffade suffit, on n'insiste pas
     assert appels["ban"] == 3
+
+
+# ------------------------------------------------------------------ la photo
+#
+# Le modèle ne reçoit que le texte de la page : il ne pouvait pas connaître
+# l'URL d'une image, et les sorties importées arrivaient toutes sans photo.
+# C'est donc le HTML qu'on interroge.
+
+from sortiesbot.harvest import main_image
+
+FICHE = """
+<html><head>
+  <meta property="og:image" content="/media/spectacle-2026.jpg">
+</head><body>
+  <img src="/static/logo.png" alt="Logo du théâtre">
+  <img src="/media/salle.jpg" alt="La salle">
+</body></html>
+"""
+
+
+def test_l_image_de_partage_gagne_et_devient_absolue():
+    assert main_image(FICHE, PAGE) == "https://92.agendaculturel.fr/media/spectacle-2026.jpg"
+
+
+def test_a_defaut_le_json_ld_de_l_evenement():
+    html = """
+    <html><head><script type="application/ld+json">
+      {"@type": "TheaterEvent", "startDate": "2026-08-30",
+       "image": {"@type": "ImageObject", "url": "https://cdn.fr/affiche.webp"}}
+    </script></head><body></body></html>
+    """
+    assert main_image(html, PAGE) == "https://cdn.fr/affiche.webp"
+
+
+def test_a_defaut_une_image_du_corps_mais_jamais_l_habillage():
+    html = """
+    <html><body>
+      <img src="/img/logo-site.png" alt="Logo">
+      <img src="/img/icon-partage.png" width="24" height="24">
+      <img src="/img/affiche-du-spectacle.jpg" alt="Affiche">
+    </body></html>
+    """
+    assert main_image(html, PAGE).endswith("/img/affiche-du-spectacle.jpg")
+
+
+def test_le_lazy_loading_cache_la_vraie_url():
+    html = '<html><body><img src="" data-src="/img/photo.jpg" alt="Le spectacle"></body></html>'
+    assert main_image(html, PAGE).endswith("/img/photo.jpg")
+
+
+def test_ni_svg_ni_data_uri():
+    html = """
+    <html><head><meta property="og:image" content="data:image/png;base64,AAAA"></head>
+    <body><img src="/img/pictogramme.svg" alt="Un pictogramme"></body></html>
+    """
+    assert main_image(html, PAGE) == ""
+
+
+def test_une_page_sans_image_ne_ment_pas():
+    assert main_image("<html><body><p>Rien à voir</p></body></html>", PAGE) == ""

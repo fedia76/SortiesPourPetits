@@ -20,7 +20,7 @@ async function create() {
   error.value = '';
   creating.value = true;
   try {
-    await api.post('/api/admin/categories', { name: newName.value.trim() });
+    await api.post('/api/categories', { name: newName.value.trim() });
     newName.value = '';
     await load();
   } catch (e) {
@@ -44,7 +44,7 @@ async function rename(category: Category) {
   if (!editingName.value.trim()) return;
   error.value = '';
   try {
-    await api.patch(`/api/admin/categories/${category.id}`, { name: editingName.value.trim() });
+    await api.patch(`/api/categories/${category.id}`, { name: editingName.value.trim() });
     cancelEdit();
     await load();
   } catch (e) {
@@ -56,7 +56,7 @@ async function remove(category: Category) {
   if (!confirm(`Supprimer la catégorie « ${category.name} » ?`)) return;
   error.value = '';
   try {
-    await api.delete(`/api/admin/categories/${category.id}`);
+    await api.delete(`/api/categories/${category.id}`);
     await load();
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erreur';

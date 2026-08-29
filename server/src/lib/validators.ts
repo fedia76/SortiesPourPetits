@@ -213,6 +213,19 @@ export const scraperFinishSchema = z.object({
   costUsd: z.number().min(0).optional(),
 });
 
+/**
+ * Périmètre demandé au tableau de bord du scraping.
+ *
+ * `configId` absent veut dire « toutes les recherches confondues » : c'est la
+ * vue qui dit d'où vient réellement le catalogue, toutes configurations
+ * mélangées.
+ */
+export const scraperStatsSchema = z.object({
+  configId: z.coerce.number().int().positive().optional(),
+  /** Fenêtre d'observation, en jours. Absent : tout l'historique. */
+  days: z.coerce.number().int().min(1).max(3650).optional(),
+});
+
 /** Interrogation de la mémoire des pages déjà analysées. */
 export const scraperSeenSchema = z.object({
   urls: z.array(scraperUrl).min(1).max(500),

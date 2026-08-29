@@ -48,6 +48,30 @@ export function priceLabel(event: { isFree: boolean; price: number | null }): st
 }
 
 /**
+ * Tranche d'âge en clair, y compris quand une seule borne est connue.
+ *
+ * Les deux bornes sont facultatives et indépendantes : n'afficher la tranche
+ * que lorsque les deux sont renseignées faisait disparaître le « à partir de
+ * 3 ans » de sorties qui ne se donnent pas d'âge maximum.
+ */
+export function ageLabel(event: Pick<EventItem, 'ageMin' | 'ageMax'>): string | null {
+  const { ageMin, ageMax } = event;
+  if (ageMin !== null && ageMax !== null) return `De ${ageMin} à ${ageMax} ans`;
+  if (ageMin !== null) return `À partir de ${ageMin} ans`;
+  if (ageMax !== null) return `Jusqu'à ${ageMax} ans`;
+  return null;
+}
+
+/** Même tranche d'âge, en version courte pour un badge de vignette. */
+export function shortAgeLabel(event: Pick<EventItem, 'ageMin' | 'ageMax'>): string | null {
+  const { ageMin, ageMax } = event;
+  if (ageMin !== null && ageMax !== null) return `${ageMin}–${ageMax} ans`;
+  if (ageMin !== null) return `dès ${ageMin} ans`;
+  if (ageMax !== null) return `jusqu'à ${ageMax} ans`;
+  return null;
+}
+
+/**
  * Prochain jour où la sortie a lieu, à partir d'aujourd'hui.
  *
  * `null` quand elle n'énumère pas ses jours — le cas courant : sa période
@@ -224,3 +248,39 @@ export const DECISION_LABELS: Record<string, string> = {
   blocked: 'Domaine bloqué',
   error: 'Erreur',
 };
+
+/**
+ * Tableau de bord du scraping (`GET /api/scraper/stats`).
+ *
+ * Les parts se calculent côté vue : le serveur renvoie des comptes, ce qui
+ * évite d'avoir à s'entendre sur un arrondi.
+ */
+export interface ScraperStats {
+  scope: { configId: number | null; configName: string | null; days: number | null };
+  totals: {
+    runs: number;
+    candidates: number;
+    pages: number;
+    retained: number;
+    submitted: number;
+    costUsd: number;
+    inputTokens: number;
+    outputTokens: number;
+    webSearches: number;
+  };
+  /** Un domaine source, `www.` retiré : les pages qu'il a coûtées et ce qu'il a donné. */
+  domains: { domain: string; pages: number; submitted: number; approved: number }[];
+  categories: { id: number; name: string; events: number; approved: number }[];
+  decisions: { decision: string; count: number }[];
+  /** Statuts des sorties importées, indexés par `EventStatus`. */
+  statuses: Partial<Record<EventStatus, number>>;
+  configs: {
+    id: number;
+    name: string;
+    runs: number;
+    pages: number;
+    retained: number;
+    submitted: number;
+    costUsd: number;
+  }[];
+}
