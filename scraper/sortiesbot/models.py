@@ -32,12 +32,15 @@ class FoundPage:
 
 @dataclass(frozen=True)
 class Candidate:
-    """Une page de sortie repérée dans un agenda, pas encore lue en détail."""
+    """Une page à lire, repérée dans un agenda ou donnée en point de départ."""
 
     url: str
     title: str
     source: str = ""
     context: str = ""
+    #: Page de programme : elle porte plusieurs sorties, à relever d'un coup.
+    #: Seul le mode « site » en produit ; ailleurs une page vaut une sortie.
+    multiple: bool = False
 
 
 @dataclass(frozen=True)

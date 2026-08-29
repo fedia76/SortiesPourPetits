@@ -1,11 +1,24 @@
 """Enchaînement d'un run.
 
-    1. recherche       (modèle)  → pages à ouvrir : agendas et sorties
-    2. téléchargement  (Python)  → HTML des agendas               gratuit
-    3. extraction liens(Python)  → (texte, url, contexte)          gratuit
-    4. sélection       (modèle)  → liens menant à une sortie
-    5. lecture + fiche (Python + modèle) → sortie structurée
-    puis géocodage, validation, photo, soumission — inchangés.
+    1. découverte      (discovery)         → pages à lire
+    2. lecture         (Python)            → texte, JSON-LD, image     gratuit
+    3. fiche(s)        (modèle)            → une sortie, ou plusieurs
+    puis géocodage, validation, photo, soumission — une fois par sortie.
+
+La découverte est le seul étage qui connaisse le mode de la configuration
+(`recherche` ou `site`) ; elle vit dans `discovery.py` et rend dans les deux
+cas une liste de `Candidate`. Tout ce qui suit ici est commun : c'est ce qui
+évite d'avoir deux scrapers à corriger au lieu d'un.
+
+Une page vaut une sortie, sauf quand la découverte la marque `multiple` — la
+page de programme d'un festival, qui en porte vingt. L'extraction rend donc
+toujours une liste, à un élément le plus souvent, et la publication boucle
+dessus. Le reste — géocodage, dates réelles, photo, mémoire, soumission — ne
+sait pas d'où la fiche vient.
+
+Le partage est toujours le même : Python fait ce qui est mécanique, le modèle
+fait ce qui demande du jugement, et aucun appel ne boucle. Le filtre des URLs
+déjà vues intervient avant l'extraction, la seule étape qui coûte par page.
 
 Thème, période et zone sont une **stratégie de recherche**, pas un filtre de
 sortie : ils orientent les requêtes et le tri des liens, là où ils font gagner
@@ -13,10 +26,6 @@ du temps et de l'argent. Une fois la page lue, elle est payée — l'écarter
 parce qu'elle déborde de la fenêtre reviendrait à payer pour rien, alors que
 le site sait filtrer par date et par distance, et qu'un modérateur relit tout.
 Seul ce qui est inexploitable est écarté.
-
-Le partage est toujours le même : Python fait ce qui est mécanique, le modèle
-fait ce qui demande du jugement, et aucun appel ne boucle. Le filtre des URLs
-déjà vues intervient avant l'étape 5, la seule qui coûte par sortie.
 
 Chaque page traitée est rendue à la mémoire (`store.report`) avec ce qu'on en
 a fait. Une décision définitive y est mémorisée — la page ne sera plus jamais
@@ -31,16 +40,17 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
+from . import discovery
 from .api import ApiError, SppApi
 from .config import Config, describe
-from .harvest import FetchError, Fetcher, Link, json_ld_dates, links_of, main_image, page_text
+from .harvest import FetchError, Fetcher, json_ld_dates, main_image, page_text
 from .journal import RunLog
-from .models import Candidate, FoundPage, Summary
+from .models import Candidate, ExtractedEvent, Summary
 from .payload import UNKNOWN_PRICE, OutOfPeriod, Rejected, build_payload
 from .photo import PhotoError, download
 from .providers.base import Provider, ProviderError
 from .schedule import Schedule, resolve as resolve_schedule
-from .store import Memory, normalize_url
+from .store import Memory, event_key, normalize_url
 from . import geocode as geocoding
 
 
@@ -56,6 +66,33 @@ class RunResult:
     candidates: list[dict[str, Any]] = field(default_factory=list)
     #: Sorties retenues : payload prêt pour l'API, plus de quoi les relire.
     events: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class _Stage:
+    """Ce dont la lecture d'une page a besoin, d'un bout à l'autre.
+
+    Ces dix objets voyageaient en paramètres de fonction en fonction ; les
+    réunir garde les signatures lisibles maintenant qu'une page peut donner
+    plusieurs sorties, donc une étape de plus.
+    """
+
+    config: Config
+    provider: Provider
+    store: Memory
+    api: SppApi
+    fetcher: Fetcher
+    log: RunLog
+    submit: bool
+    categories: dict[str, int]
+    result: RunResult
+    #: Clés des sorties déjà publiées par ce run. Deux programmes d'un même
+    #: festival annoncent souvent les mêmes séances.
+    keys: set[str] = field(default_factory=set)
+
+    @property
+    def summary(self) -> Summary:
+        return self.result.summary
 
 
 def _fold(text: str) -> str:
@@ -127,32 +164,17 @@ def run(
             log.event("run_end", summary=summary.as_dict())
             return result
 
-    # 1. Recherche.
+    # 1. Découverte — recherche web, ou URLs données. Seul étage qui diffère.
     try:
-        found = provider.search(config, log)
+        trouvees = discovery.candidates(config, provider, fetcher, log, summary)
     except ProviderError as err:
         log.error("search", str(err))
         summary.errors += 1
         log.event("run_end", summary=summary.as_dict())
         return result
 
-    # 2 à 4. Un agenda est téléchargé puis dépouillé ; une page de sortie
-    # trouvée directement par la recherche part telle quelle à l'extraction.
     candidates: list[Candidate] = []
     vues: set[str] = set()
-    agendas = [p for p in found if p.is_agenda][: config.max_agendas]
-    directes = [p for p in found if not p.is_agenda]
-
-    for page in directes:
-        log.event("direct", url=page.url, title=page.title, why=page.reason)
-
-    trouvees = [
-        Candidate(url=p.url, title=p.title, source="recherche", context=p.reason)
-        for p in directes
-    ]
-    for agenda in agendas:
-        trouvees.extend(_harvest(agenda.url, config, provider, fetcher, log, summary))
-
     for candidate in trouvees:
         # Deux agendas listent souvent la même sortie — parfois la même page
         # sous deux URLs. Sans ce filtre, elle est lue, extraite et soumise
@@ -176,7 +198,13 @@ def run(
 
     summary.candidates = len(candidates)
     result.candidates = [
-        {"url": c.url, "title": c.title, "source": c.source, "context": c.context}
+        {
+            "url": c.url,
+            "title": c.title,
+            "source": c.source,
+            "context": c.context,
+            "multiple": c.multiple,
+        }
         for c in candidates
     ]
     for candidate in candidates:
@@ -186,10 +214,24 @@ def run(
         log.event("nothing_found", searches=provider.usage.web_searches, pages=summary.pages)
 
     # Une seule question à la mémoire pour tout le lot : la suite ne fait plus
-    # que consulter le résultat.
-    store.preload([c.url for c in candidates])
+    # que consulter le résultat. Une page de programme n'en est pas : ce sont
+    # ses sorties qui se mémorisent, une par une, et leurs clés n'existent
+    # qu'une fois la page lue.
+    store.preload([c.url for c in candidates if not c.multiple])
 
-    # 5. Une sortie à la fois.
+    stage = _Stage(
+        config=config,
+        provider=provider,
+        store=store,
+        api=api,
+        fetcher=fetcher,
+        log=log,
+        submit=submit,
+        categories=categories,
+        result=result,
+    )
+
+    # 2 et 3. Une page à la fois.
     for candidate in candidates:
         if len(result.events) >= config.max_events:
             break
@@ -202,7 +244,7 @@ def run(
                 candidates=len(candidates),
             )
             break
-        _process(candidate, config, provider, store, api, fetcher, log, submit, categories, result)
+        _process(candidate, stage)
 
     summary.retained = len(result.events)
     summary.usage.add(provider.usage)
@@ -211,65 +253,10 @@ def run(
     return result
 
 
-def _harvest(
-    url: str,
-    config: Config,
-    provider: Provider,
-    fetcher: Fetcher,
-    log: RunLog,
-    summary: Summary,
-) -> list[Candidate]:
-    """Télécharge un agenda, en extrait les liens, et fait trancher le modèle."""
-    log.event("fetching", stage="agenda", url=url)
-    try:
-        html = fetcher.get_html(url)
-    except FetchError as err:
-        log.error("agenda", str(err), url=url)
-        return []
-
-    links = links_of(html, url)
-    summary.pages += 1
-    log.event("harvested", url=url, links=len(links))
-    if not links:
-        # Pas un seul lien exploitable : ce n'est pas un agenda. La page est
-        # téléchargée, autant la lire comme une sortie.
-        log.event("fallback", url=url)
-        return [Candidate(url=url, title="", source="recherche", context="")]
-
-    try:
-        kept = provider.select(url, links, config, log)
-    except ProviderError as err:
-        summary.errors += 1
-        log.error("select", str(err), url=url)
-        return []
-
-    log.event("selected", url=url, kept=len(kept), among=len(links))
-    if not kept:
-        # Un agenda dont on ne tire aucun lien est peut-être une page de
-        # sortie que la recherche a mal classée. Elle est déjà téléchargée :
-        # la lire coûte une extraction, l'ignorer coûte la sortie.
-        log.event("fallback", url=url)
-        return [Candidate(url=url, title="", source="recherche", context="")]
-
-    return [
-        Candidate(url=link.url, title=link.text, source=url, context=link.context)
-        for link in kept
-    ]
-
-
-def _process(
-    candidate: Candidate,
-    config: Config,
-    provider: Provider,
-    store: Memory,
-    api: SppApi,
-    fetcher: Fetcher,
-    log: RunLog,
-    submit: bool,
-    categories: dict[str, int],
-    result: RunResult,
-) -> None:
-    summary = result.summary
+def _process(candidate: Candidate, stage: _Stage) -> None:
+    """Lit une page et publie ce qu'elle porte : une sortie, ou vingt."""
+    config, log, store = stage.config, stage.log, stage.store
+    summary = stage.summary
     url = candidate.url
 
     if _is_blocked(url, config.blocked_domains):
@@ -279,7 +266,10 @@ def _process(
         # jugement sur la page. La retirer de la liste doit suffire à la lire.
         store.report(url, "blocked", title=candidate.title, remember=False)
         return
-    if store.seen(url):
+    # Une page de programme échappe à ce filtre, et c'est le but : le
+    # programme d'un festival s'étoffe, et ce sont ses sorties qui sont
+    # mémorisées une à une, pas lui. Le relire est justement ce qu'on veut.
+    if not candidate.multiple and store.seen(url):
         summary.skipped_seen += 1
         log.event("skip", reason="déjà vue lors d'un run précédent", url=url)
         store.report(url, "seen", title=candidate.title, remember=False)
@@ -289,7 +279,7 @@ def _process(
     # donc sans boucle serveur ni refacturation. Le HTML brut sert une seconde
     # fois, pour le JSON-LD que le nettoyage du texte jetterait.
     try:
-        html = fetcher.get_html(url)
+        html = stage.fetcher.get_html(url)
         content = page_text(html, limit=config.max_page_chars)
         declared = json_ld_dates(html)
         # L'illustration se lit dans le HTML, pas dans le texte : le modèle ne
@@ -309,12 +299,55 @@ def _process(
         return
 
     try:
-        extracted = provider.extract(url, content, config, sorted(categories), log)
+        extracted = stage.provider.extract(
+            url,
+            content,
+            config,
+            sorted(stage.categories),
+            log,
+            multiple=candidate.multiple,
+        )
     except ProviderError as err:
         summary.errors += 1
         log.error("extraction", str(err), url=url)
         store.report(url, "error", title=candidate.title, reason=str(err), remember=False)
         return
+
+    if candidate.multiple:
+        log.event(
+            "programme",
+            url=url,
+            found=len([e for e in extracted if e.relevant]),
+            chars=len(content),
+        )
+
+    for event in extracted:
+        if len(stage.result.events) >= config.max_events:
+            log.event("skip", reason="plafond de sorties atteint", url=url)
+            break
+        _publish(event, candidate, page_image, declared, stage)
+
+
+def _publish(
+    extracted: ExtractedEvent,
+    candidate: Candidate,
+    page_image: str,
+    declared: list[str],
+    stage: _Stage,
+) -> None:
+    """Géocode, date, illustre et propose une sortie déjà lue.
+
+    Appelé une fois par page en mode « recherche », autant de fois qu'il y a
+    de sorties sur une page de programme. Rien ici ne sait laquelle des deux.
+    """
+    config, log, store = stage.config, stage.log, stage.store
+    summary = stage.summary
+    url = candidate.url
+
+    # Sur une page de programme, l'unité mémorisable n'est pas la page mais
+    # chacune de ses sorties : sinon un programme lu une fois ne serait plus
+    # jamais relu, et tout ce qu'il annoncera ensuite serait perdu.
+    key = event_key(url, extracted.title) if candidate.multiple else None
 
     if not extracted.relevant:
         summary.skipped_irrelevant += 1
@@ -322,10 +355,26 @@ def _process(
         store.report(
             url,
             "irrelevant",
+            key=key,
             title=candidate.title,
             reason=extracted.skip_reason or "hors sujet",
         )
         return
+
+    if key is not None:
+        if key in stage.keys or store.seen(url, key):
+            summary.duplicates += 1
+            log.event("skip", reason="sortie déjà connue", url=url, title=extracted.title)
+            store.report(
+                url,
+                "duplicate",
+                key=key,
+                title=extracted.title,
+                reason="déjà relevée sur ce programme",
+                remember=False,
+            )
+            return
+        stage.keys.add(key)
 
     log.event(
         "extract",
@@ -339,7 +388,7 @@ def _process(
         if not config.keep_out_of_scope:
             reason = f"code postal {extracted.venue_postal_code} hors zone"
             log.event("skip", reason=reason, url=url)
-            store.report(url, "out_of_area", title=extracted.title, reason=reason)
+            store.report(url, "out_of_area", key=key, title=extracted.title, reason=reason)
             return
         log.event("out_of_scope", field="zone", url=url, detail=extracted.venue_postal_code)
 
@@ -352,7 +401,7 @@ def _process(
         summary.ungeocoded += 1
 
     try:
-        category_id = resolve_category(extracted.category, categories, config.default_category)
+        category_id = resolve_category(extracted.category, stage.categories, config.default_category)
         payload = build_payload(
             extracted,
             geo.location,
@@ -363,7 +412,7 @@ def _process(
     except OutOfPeriod as err:
         summary.out_of_period += 1
         log.event("skip", reason=str(err), url=url)
-        store.report(url, "out_of_period", title=extracted.title, reason=str(err))
+        store.report(url, "out_of_period", key=key, title=extracted.title, reason=str(err))
         return
     except Rejected as err:
         summary.skipped_invalid += 1
@@ -371,6 +420,7 @@ def _process(
         store.report(
             url,
             "invalid",
+            key=key,
             title=extracted.title or candidate.title,
             reason=str(err),
         )
@@ -380,8 +430,7 @@ def _process(
         summary.out_of_period += 1
         log.event("out_of_scope", field="période", url=url, detail=payload["dateStart"])
 
-    # Dates réelles de la sortie. Rien n'en dépend encore : on mesure ce que
-    # chaque source donne sur de vrais runs avant d'en faire une table.
+    # Dates réelles de la sortie.
     schedule = resolve_schedule(
         payload["dateStart"] or "",
         payload["dateEnd"] or "",
@@ -413,16 +462,19 @@ def _process(
 
     # Ce que la page déclare passe avant ce que le modèle a pu écrire : lui ne
     # voit que du texte, donc une URL de sa part est au mieux une devinette.
+    # Les sorties d'un même programme partagent l'illustration de la page :
+    # c'est la seule que le HTML donne, et une vignette juste vaut mieux que
+    # vingt fiches nues.
     photo_url = page_image or extracted.photo_url
     if not photo_url:
         log.event("photo", status="aucune image sur la page", url=url)
 
     photo = None
-    if submit and photo_url:
+    if stage.submit and photo_url:
         try:
             # Même session que les pages : sans notre User-Agent, beaucoup de
             # serveurs refusent l'image qu'ils viennent pourtant d'annoncer.
-            photo = download(photo_url, fetcher.session)
+            photo = download(photo_url, stage.fetcher.session)
             log.event("photo", status="téléchargée", url=photo_url)
         except PhotoError as err:
             log.event("photo", status=f"ignorée ({err})", url=photo_url)
@@ -436,14 +488,15 @@ def _process(
         "schedule": schedule.as_dict(),
     }
 
-    if not submit:
-        result.events.append(record)
+    if not stage.submit:
+        stage.result.events.append(record)
         log.event("dry_run", title=payload["title"], url=url)
         # Un essai ne mémorise pas : sinon la sortie qu'il vient de repérer ne
         # serait jamais proposée, le run réel la sautant comme « déjà vue ».
         store.report(
             url,
             "dry_run",
+            key=key,
             title=payload["title"],
             reason=describe_schedule(schedule, payload),
             remember=False,
@@ -451,20 +504,23 @@ def _process(
         return
 
     try:
-        event = api.create_event(payload, photo)
+        event = stage.api.create_event(payload, photo)
     except ApiError as err:
         summary.errors += 1
         log.error("submit", str(err), url=url)
-        store.report(url, "error", title=payload["title"], reason=str(err), remember=False)
+        store.report(
+            url, "error", key=key, title=payload["title"], reason=str(err), remember=False
+        )
         return
 
     event_id = event.get("id")
     record["event_id"] = event_id
-    result.events.append(record)
+    stage.result.events.append(record)
     summary.submitted += 1
     store.report(
         url,
         "submitted",
+        key=key,
         title=payload["title"],
         reason=describe_schedule(schedule, payload),
         event_id=event_id,

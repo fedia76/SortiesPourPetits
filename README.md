@@ -49,7 +49,9 @@ communauté et validées par une équipe de modération.
   ce qu'aucune recherche ne couvre.
 - **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
   sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
-  une clé d'API. Ce qu'un import n'a pas su déterminer part avec une valeur
+  une clé d'API. Il sait aussi partir d'une adresse connue — le site d'un
+  festival, la saison d'un théâtre — sans lancer la moindre recherche, et tirer
+  d'une même page de programme toutes les sorties qu'elle annonce. Ce qu'un import n'a pas su déterminer part avec une valeur
   convenue plutôt que de faire perdre la sortie — adresse non géocodée en
   `(0, 0)`, tarif introuvable à `-1` : la modération les signale et refuse
   l'approbation tant qu'ils ne sont pas complétés.

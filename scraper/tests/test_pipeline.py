@@ -95,9 +95,12 @@ class FakeProvider:
         self.selected.append(page)
         return list(links) if self.select_all else []
 
-    def extract(self, url, content, config, categories, log):
+    def extract(self, url, content, config, categories, log, *, multiple=False):
         self.extracted.append(url)
-        return self.extractions[url]
+        # Le fournisseur rend toujours une liste : une fiche pour une page
+        # ordinaire, plusieurs pour une page de programme.
+        found = self.extractions[url]
+        return list(found) if isinstance(found, list) else [found]
 
 
 class FakeApi:

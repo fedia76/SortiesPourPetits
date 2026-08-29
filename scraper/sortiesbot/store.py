@@ -14,6 +14,12 @@ Deux implémentations, une seule interface (`Memory`) :
   C'est elle qui fait foi en production : une page lue par la recherche
   « spectacles » ne sera pas relue par la recherche « musées ».
 
+La clé de mémorisation est normalement l'URL normalisée de la page. Une page
+de programme fait exception : elle porte plusieurs sorties, et sa relecture au
+prochain run est justement ce qu'on veut (le programme s'étoffe). C'est alors
+`event_key()` qui donne la clé — une par sortie, pas une par page — et le
+`url` transmis reste celui de la page, cliquable dans la console.
+
 Les deux distinguent la mémoire (ce qu'on ne relira plus) du journal (ce que
 le run a fait). Une décision provisoire — page déjà connue, doublon, essai,
 erreur réseau — est journalisée mais pas mémorisée : elle ne doit pas
@@ -22,7 +28,9 @@ empêcher un run ultérieur de traiter la page.
 
 from __future__ import annotations
 
+import re
 import sqlite3
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,20 +69,48 @@ def normalize_url(url: str) -> str:
     return urlunsplit(("https", host, path, urlencode(query), ""))
 
 
+#: Longueur maximale d'une clé : la colonne du site est un VARCHAR(500).
+_KEY_MAX = 500
+
+
+def event_key(page_url: str, title: str) -> str:
+    """Clé d'une sortie relevée sur une page qui en porte plusieurs.
+
+    Mémoriser la page entière reviendrait à ne jamais relire le programme d'un
+    festival, donc à manquer tout ce qu'il y ajoutera. Mémoriser chaque sortie
+    laisse au contraire la page se faire relire : seules les sorties déjà
+    proposées sont sautées, et les nouvelles passent.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", _fold(title)).strip("-")
+    key = f"{normalize_url(page_url)}#{slug or 'sans-titre'}"
+    return key[:_KEY_MAX]
+
+
+def _fold(text: str) -> str:
+    """Minuscules sans accents : deux graphies d'un titre donnent une clé."""
+    stripped = unicodedata.normalize("NFKD", text.strip().lower())
+    return "".join(c for c in stripped if not unicodedata.combining(c))
+
+
 class Memory(Protocol):
     """Ce que le pipeline attend d'une mémoire, local ou distant."""
 
     def preload(self, urls: Iterable[str]) -> None:
         """Prépare la réponse à `seen()` pour ces URLs, en un seul aller-retour."""
 
-    def seen(self, url: str) -> bool:
-        """Cette page a-t-elle déjà été analysée lors d'un run précédent ?"""
+    def seen(self, url: str, key: str | None = None) -> bool:
+        """Cette page a-t-elle déjà été analysée lors d'un run précédent ?
+
+        `key` prend la place de l'URL normalisée quand la page n'est pas
+        l'unité pertinente — une sortie parmi les vingt d'un programme.
+        """
 
     def report(
         self,
         url: str,
         decision: str,
         *,
+        key: str | None = None,
         title: str = "",
         reason: str = "",
         event_id: int | None = None,
@@ -112,9 +148,10 @@ class SeenStore:
     def flush(self) -> None:
         """Sans objet : chaque écriture est déjà validée."""
 
-    def seen(self, url: str) -> bool:
-        key = normalize_url(url)
-        row = self._db.execute("SELECT 1 FROM seen_url WHERE url = ?", (key,)).fetchone()
+    def seen(self, url: str, key: str | None = None) -> bool:
+        row = self._db.execute(
+            "SELECT 1 FROM seen_url WHERE url = ?", (key or normalize_url(url),)
+        ).fetchone()
         return row is not None
 
     def report(
@@ -122,6 +159,7 @@ class SeenStore:
         url: str,
         decision: str,
         *,
+        key: str | None = None,
         title: str = "",
         reason: str = "",
         event_id: int | None = None,
@@ -130,7 +168,7 @@ class SeenStore:
         # Le journal détaillé est le fichier JSONL du run ; ici on ne garde que
         # ce qui sert à ne pas relire la page.
         if remember:
-            self.remember(url, decision, title=title, event_id=event_id)
+            self.remember(url, decision, title=title, event_id=event_id, key=key)
 
     def remember(
         self,
@@ -138,11 +176,12 @@ class SeenStore:
         decision: str,
         title: str = "",
         event_id: int | None = None,
+        key: str | None = None,
     ) -> None:
         """Enregistre l'issue d'une URL (`submitted`, `irrelevant`, `invalid`,
         `out_of_area`…). Une URL revue voit sa date de dernière vue
         rafraîchie, mais garde sa première décision utile."""
-        key = normalize_url(url)
+        key = key or normalize_url(url)
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self._db.execute(
             """
@@ -226,10 +265,11 @@ class RemoteStore:
         self._asked.update(todo)
         self._known.update(self.api.known_urls(todo))
 
-    def seen(self, url: str) -> bool:
-        key = normalize_url(url)
+    def seen(self, url: str, key: str | None = None) -> bool:
+        key = key or normalize_url(url)
         # Un candidat apparu après le préchargement vaut une question ciblée :
-        # ça reste moins cher qu'une page relue.
+        # ça reste moins cher qu'une page relue. Les sorties d'un programme y
+        # passent forcément : leur clé n'existe qu'une fois la page lue.
         self._ask([key])
         return key in self._known
 
@@ -238,12 +278,13 @@ class RemoteStore:
         url: str,
         decision: str,
         *,
+        key: str | None = None,
         title: str = "",
         reason: str = "",
         event_id: int | None = None,
         remember: bool = True,
     ) -> None:
-        key = normalize_url(url)
+        key = key or normalize_url(url)
         if remember:
             # Mémorisée côté site à la prochaine vidange ; côté worker, elle
             # compte comme vue dès maintenant.
@@ -269,8 +310,9 @@ class RemoteStore:
         decision: str,
         title: str = "",
         event_id: int | None = None,
+        key: str | None = None,
     ) -> None:
-        self.report(url, decision, title=title, event_id=event_id, remember=True)
+        self.report(url, decision, title=title, event_id=event_id, key=key, remember=True)
 
     def flush(self) -> None:
         if not self._pending:

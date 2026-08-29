@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
 import {
+  checkScraperMode,
   scraperConfigSchema,
   scraperConfigUpdateSchema,
   scraperFinishSchema,
@@ -52,6 +53,14 @@ scraperRouter.post('/configs', async (req, res) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
+  const invalide = checkScraperMode({
+    mode: parsed.data.mode ?? 'recherche',
+    seedUrls: parsed.data.seedUrls ?? '',
+  });
+  if (invalide) {
+    res.status(400).json({ error: invalide });
+    return;
+  }
   try {
     const config = await prisma.scraperConfig.create({ data: parsed.data });
     res.status(201).json({ config: serializeConfig(config) });
@@ -69,6 +78,22 @@ scraperRouter.patch('/configs/:id', async (req, res) => {
   const parsed = scraperConfigUpdateSchema.safeParse(req.body);
   if (!Number.isInteger(id) || !parsed.success) {
     res.status(400).json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
+    return;
+  }
+  // Le mode et les URLs se tiennent l'un l'autre, et une modification
+  // partielle ne porte pas forcément les deux : on juge la ligne telle
+  // qu'elle sera, pas seulement ce que la requête change.
+  const actuelle = await prisma.scraperConfig.findUnique({ where: { id } });
+  if (!actuelle) {
+    res.status(404).json({ error: 'Configuration introuvable' });
+    return;
+  }
+  const invalide = checkScraperMode({
+    mode: parsed.data.mode ?? actuelle.mode,
+    seedUrls: parsed.data.seedUrls ?? actuelle.seedUrls,
+  });
+  if (invalide) {
+    res.status(400).json({ error: invalide });
     return;
   }
   try {

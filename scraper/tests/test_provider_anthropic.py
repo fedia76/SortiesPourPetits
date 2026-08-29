@@ -264,13 +264,15 @@ def test_extraction_recoit_la_page_en_clair(log):
     }
     server = FakeApiServer([message([text_block(fiche)])])
     try:
-        event = provider_for(server).extract(
+        events = provider_for(server).extract(
             "https://exemple.fr/a", "Le contenu réel de la page.",
             Config(name="t", theme="x"), ["Spectacle"], log
         )
     finally:
         server.close()
 
+    assert len(events) == 1
+    event = events[0]
     assert event.relevant and event.age_min == 3 and event.setting == "INDOOR"
     body = server.requests[0]
     assert "tools" not in body
@@ -334,3 +336,77 @@ def test_erreur_de_recherche_est_journalisee():
         server.close()
 
     assert "max_uses_exceeded" in stream.getvalue()
+
+
+# ------------------------------------------- l'extraction d'une page de programme
+
+
+def fiche(titre: str) -> dict:
+    """Une entrée de programme : la fiche d'une page unique, sans le verdict."""
+    return {
+        "title": titre, "description": "Un atelier de dessin pour les enfants.",
+        "free": True, "price": None, "age_min": 6, "age_max": 12,
+        "permanent": False, "date_start": "2026-09-11", "date_end": "2026-09-13",
+        "weekdays": [], "dates": ["2026-09-12"],
+        "open_time": "14:00", "close_time": "16:00", "setting": "INDOOR",
+        "category": "Atelier", "venue_name": "Halle des Blancs Manteaux",
+        "venue_address": "48 rue Vieille du Temple", "venue_city": "Paris",
+        "venue_postal_code": "75004", "photo_url": "",
+    }
+
+
+def test_une_page_de_programme_rend_plusieurs_fiches(log):
+    server = FakeApiServer(
+        [message([text_block({"events": [fiche("Atelier BD"), fiche("Lecture")], "skip_reason": ""})])]
+    )
+    try:
+        events = provider_for(server).extract(
+            "https://formulabula.fr/", "Le programme complet du festival.",
+            Config(name="t", theme="un festival"), ["Atelier"], log, multiple=True,
+        )
+    finally:
+        server.close()
+
+    assert [e.title for e in events] == ["Atelier BD", "Lecture"]
+    # Le schéma de l'extraction multiple ne demande pas de verdict par fiche :
+    # une entrée écartée n'est simplement pas dans la liste.
+    assert all(e.relevant for e in events)
+    assert events[0].dates == ("2026-09-12",)
+    envoye = server.requests[0]
+    assert "tools" not in envoye  # aucune boucle serveur : que du texte
+    assert "programme complet" in envoye["messages"][0]["content"]
+
+
+def test_un_programme_vide_rend_une_fiche_hors_sujet(log):
+    """Le pipeline n'a alors qu'un seul chemin : la page est « hors sujet »,
+    avec la raison du modèle, exactement comme une page unique refusée."""
+    server = FakeApiServer(
+        [message([text_block({"events": [], "skip_reason": "page d'accueil, aucun programme"})])]
+    )
+    try:
+        events = provider_for(server).extract(
+            "https://formulabula.fr/", "Bienvenue sur le site du festival.",
+            Config(name="t", theme="un festival"), ["Atelier"], log, multiple=True,
+        )
+    finally:
+        server.close()
+
+    assert len(events) == 1
+    assert not events[0].relevant
+    assert events[0].skip_reason == "page d'accueil, aucun programme"
+
+
+def test_le_programme_est_plafonne_par_max_events(log):
+    server = FakeApiServer(
+        [message([text_block({"events": [fiche(f"Atelier {i}") for i in range(6)], "skip_reason": ""})])]
+    )
+    try:
+        events = provider_for(server).extract(
+            "https://formulabula.fr/", "Le programme complet du festival.",
+            Config(name="t", theme="un festival", max_events=3), ["Atelier"], log, multiple=True,
+        )
+    finally:
+        server.close()
+
+    assert len(events) == 3
+

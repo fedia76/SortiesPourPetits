@@ -54,6 +54,9 @@ TIMEOUT_SECONDS = 300.0
 SEARCH_MAX_TOKENS = 8_000
 SELECT_MAX_TOKENS = 2_000
 EXTRACTION_MAX_TOKENS = 4_000
+#: Une page de programme rend jusqu'à `max_events` fiches d'un coup ; le
+#: plafond d'une page unique la tronquerait au milieu de la troisième.
+EXTRACTION_MULTI_MAX_TOKENS = 16_000
 
 #: Tarifs jetons en dollars par million. La facturation des recherches web
 #: (0,01 $ pièce) s'y ajoute et est comptée à part dans `Usage`.
@@ -143,6 +146,32 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
         "open_time", "close_time", "setting", "category", "venue_name",
         "venue_address", "venue_city", "venue_postal_code", "photo_url",
     ],
+    "additionalProperties": False,
+}
+
+
+#: La fiche d'une sortie relevée dans un programme est celle d'une page
+#: unique, moins le verdict : une entrée qui ne convient pas n'est simplement
+#: pas dans la liste. Dériver le schéma plutôt que le recopier garantit qu'un
+#: champ ajouté à l'un existe dans l'autre.
+_MULTI_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        k: v for k, v in EXTRACTION_SCHEMA["properties"].items()
+        if k not in ("relevant", "skip_reason")
+    },
+    "required": [k for k in EXTRACTION_SCHEMA["required"] if k not in ("relevant", "skip_reason")],
+    "additionalProperties": False,
+}
+
+EXTRACTION_MULTI_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "events": {"type": "array", "items": _MULTI_ITEM_SCHEMA},
+        #: Renseigné quand la liste est vide : la console dira pourquoi.
+        "skip_reason": {"type": "string"},
+    },
+    "required": ["events", "skip_reason"],
     "additionalProperties": False,
 }
 
@@ -243,17 +272,57 @@ class AnthropicProvider:
     # -------------------------------------------------------------- 3. extraire
 
     def extract(
-        self, url: str, content: str, config: Config, categories: list[str], log: RunLog
-    ) -> ExtractedEvent:
+        self,
+        url: str,
+        content: str,
+        config: Config,
+        categories: list[str],
+        log: RunLog,
+        *,
+        multiple: bool = False,
+    ) -> list[ExtractedEvent]:
+        """Lit une page. Une fiche, ou plusieurs si c'est un programme.
+
+        Le retour est une liste dans les deux cas : c'est ce qui permet à la
+        suite du pipeline — géocodage, dates, photo, soumission — d'être
+        exactement le même code pour les deux modes.
+        """
+        if not multiple:
+            data = self._ask(
+                model=config.extraction_model,
+                prompt=config.render_extraction(url, content, categories),
+                schema=EXTRACTION_SCHEMA,
+                max_tokens=EXTRACTION_MAX_TOKENS,
+                stage="extraction",
+                log=log,
+            )
+            return [ExtractedEvent.from_json(data)]
+
         data = self._ask(
             model=config.extraction_model,
-            prompt=config.render_extraction(url, content, categories),
-            schema=EXTRACTION_SCHEMA,
-            max_tokens=EXTRACTION_MAX_TOKENS,
+            prompt=config.render_extraction_multi(url, content, categories),
+            schema=EXTRACTION_MULTI_SCHEMA,
+            max_tokens=EXTRACTION_MULTI_MAX_TOKENS,
             stage="extraction",
             log=log,
         )
-        return ExtractedEvent.from_json(data)
+        raw = data.get("events")
+        events = [
+            ExtractedEvent.from_json({**item, "relevant": True})
+            for item in (raw if isinstance(raw, list) else [])
+            if isinstance(item, dict)
+        ]
+        if not events:
+            # Une page de programme sans programme : le pipeline la traite
+            # comme une page hors sujet, avec la raison donnée par le modèle.
+            reason = str(data.get("skip_reason") or "").strip()
+            return [
+                ExtractedEvent(
+                    relevant=False,
+                    skip_reason=reason or "aucune sortie relevée sur cette page",
+                )
+            ]
+        return events[: config.max_events]
 
     # ---------------------------------------------------------------- l'appel
 

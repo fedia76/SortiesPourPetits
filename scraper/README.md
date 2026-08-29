@@ -9,6 +9,12 @@ Seule la recherche passe par l'API Claude (outil serveur `web_search`) : le
 téléchargement des pages et l'extraction de leurs liens se font en Python, et
 le modèle n'intervient que pour trancher — trier des liens, remplir une fiche.
 
+Deux modes, choisis par configuration et jamais mélangés : **recherche**, où le
+modèle cherche sur le web, et **site**, où l'on donne l'adresse d'un festival
+ou d'un théâtre et où aucune recherche n'est lancée. Ils ne diffèrent que par
+l'étage découverte ; tout le reste — lecture, dates, photo, géocodage,
+soumission — est le même code (voir « [Les deux modes](#les-deux-modes) »).
+
 ## Installation
 
 Sur le VPS, rien à faire : le déploiement automatique envoie le dossier, crée
@@ -79,6 +85,9 @@ python -m sortiesbot --config configs/spectacles-weekend.yaml
 
 # Soumission réelle, une fois le JSON du dry-run relu.
 python -m sortiesbot --config configs/spectacles-weekend.yaml --submit
+
+# Un site précis, sans aucune recherche web (voir configs/festival-site.yaml).
+python -m sortiesbot --config configs/festival-site.yaml
 ```
 
 **Un run dure plusieurs minutes.** L'étage découverte enchaîne une dizaine de
@@ -114,7 +123,8 @@ faut du jugement, et **aucun de ces appels ne boucle** :
 
 ```
 1. recherche        modèle + web_search   → pages à ouvrir, classées
-                                            « agenda » ou « sortie »
+   (mode « site » :                         « agenda » ou « sortie »
+    les URLs sont données, rien n'est lancé)
    ├─ sortie  ─────────────────────────────────────────┐
    └─ agenda                                           │
 2. téléchargement   Python                → HTML       │           gratuit
@@ -122,7 +132,8 @@ faut du jugement, et **aucun de ces appels ne boucle** :
 4. sélection        modèle, sans outil    → liens menant à une sortie
                                                        │
 5. lecture + fiche  Python puis modèle ◀───────────────┘
-                                          → sortie structurée
+                                          → une sortie structurée,
+                                            ou plusieurs si c'est un programme
    puis géocodage, validation, photo, soumission — sans modèle
 ```
 
@@ -138,6 +149,79 @@ lui-même, et la boucle serveur d'Anthropic refacturait tout le contexte
 accumulé à chacune de ses itérations. Un run mesuré à **2,35 $** pour six
 sorties, dont 2,29 $ de jetons d'entrée — un million de jetons pour six
 recherches et cinq pages.
+
+### Les deux modes
+
+Une recherche web est le bon outil quand on ne sait pas où chercher. Elle est
+le mauvais outil quand on le sait déjà : demander à un moteur de retrouver
+`formulabula.fr` alors qu'on a l'adresse, c'est payer 0,01 $ pour espérer que
+Google la remonte — et accepter qu'il remonte autre chose.
+
+D'où le champ `mode`, qui ne change qu'une seule chose : d'où viennent les
+pages à lire.
+
+| | `recherche` (défaut) | `site` |
+|---|---|---|
+| Origine des pages | ce que le modèle trouve sur le web | `seed_urls`, dans la configuration |
+| Coût de la découverte | 0,01 $ par recherche | **0 $** |
+| Ce que `theme` sert à faire | orienter les requêtes, trier les liens | trier les liens, écarter ce qui n'est pas pour les enfants |
+| Une page = | une sortie | une sortie, ou tout un programme |
+
+Tout le reste est commun, et c'est délibéré : la fin de chaîne — lecture de la
+page, dates réelles, illustration, géocodage, validation, mémoire, soumission —
+est le morceau le plus délicat du projet. La dupliquer pour un second scraper
+aurait voulu dire corriger chaque bug deux fois, et en oublier un sur deux. Le
+point de bascule est donc unique et situé très haut : `discovery.candidates()`
+choisit la stratégie, `pipeline.run()` ne connaît que le résultat.
+
+Une configuration écrite avant l'ajout du mode ne porte pas ce champ ; elle
+prend `recherche` et emprunte exactement le chemin d'avant.
+
+### Le mode « site », en détail
+
+On donne une ou plusieurs adresses, et rien d'autre :
+
+```yaml
+mode: site
+seed_urls:
+  - https://formulabula.fr/
+max_page_chars: 30000
+```
+
+**La forme du site n'a pas à être déclarée : elle se constate.** Chaque adresse
+est téléchargée, ses liens extraits, et c'est le résultat qui tranche —
+
+- la page mène à des fiches (une page par spectacle) : on les suit, exactement
+  comme un agenda trouvé par une recherche, et chaque fiche donne une sortie ;
+- la page ne mène nulle part : c'est le programme lui-même. Un festival tient
+  souvent sur une seule page, où les entrées ne sont reliées que par des ancres
+  (`#atelier-bd`) — que l'extracteur de liens écarte, à raison, puisqu'elles ne
+  mènent à aucune autre page.
+
+Dans le second cas, le modèle reçoit la page entière et rend **une liste de
+fiches** au lieu d'une seule (`extraction_multi_prompt`, schéma
+`EXTRACTION_MULTI_SCHEMA`). C'est le seul appel dont le nombre de sorties n'est
+pas connu d'avance ; il est plafonné par `max_events`.
+
+Deux réglages comptent vraiment ici :
+
+- **`max_page_chars`** doit monter (8 000 → 30 000). Un programme complet est
+  long, et il est lu d'un seul tenant : au plafond d'une page ordinaire, il
+  serait coupé au milieu de la troisième sortie.
+- **`theme`** ne sert plus à chercher, mais il tranche encore : c'est lui qui
+  écarte, dans le programme, la soirée de vernissage et la table ronde
+  professionnelle.
+
+**La mémoire change d'unité, et c'est le point délicat.** Mémoriser la page
+d'un programme reviendrait à ne plus jamais la relire — donc à manquer tout ce
+que le festival y ajoutera d'ici son ouverture. Ce sont donc ses **sorties**
+qui sont mémorisées, une par une, sous une clé `page#titre-normalisé`
+(`store.event_key`). Conséquence : la page est relue à chaque run, ce qui ne
+coûte que son extraction, et seules les nouveautés sont proposées.
+
+L'illustration, elle, est commune : le HTML d'une page de programme n'annonce
+qu'une image (`og:image`), et toutes ses sorties la partagent. Une vignette
+juste vaut mieux que vingt fiches nues.
 
 ### Étape 3, en détail
 
@@ -273,6 +357,12 @@ La clé de mémorisation est l'URL normalisée (schéma, `www.`, barre finale et
 paramètres de suivi retirés) ; le lien exact, lui, reste affiché et cliquable
 dans la console.
 
+**Une page de programme fait exception**, et c'est la seule. Elle porte
+plusieurs sorties, et sa relecture au run suivant est justement ce qu'on veut :
+un festival ajoute des dates jusqu'à son ouverture. La clé y devient
+`page#titre-normalisé`, une par sortie (`store.event_key`) — la page reste donc
+relisable, et seules les sorties déjà proposées sont sautées.
+
 ### Politesse
 
 Puisque le scraper télécharge lui-même, il assume ce qu'Anthropic assumait :
@@ -317,10 +407,12 @@ dans les départements visés.
 
 ## Configuration
 
-Une configuration = un fichier YAML dans `configs/` (voir
-`spectacles-weekend.yaml`, commenté). Seules `name` et `theme` sont
-obligatoires. Les prompts eux-mêmes sont des clés de la configuration
-(`search_prompt`, `select_prompt`, `extraction_prompt`) : on peut les réécrire
+Une configuration = un fichier YAML dans `configs/` : `spectacles-weekend.yaml`
+pour le mode `recherche`, `festival-site.yaml` pour le mode `site`, tous deux
+commentés. Seules `name` et `theme` sont obligatoires — plus `seed_urls` si le
+mode est `site`. Les prompts eux-mêmes sont des clés de la configuration
+(`search_prompt`, `select_prompt`, `extraction_prompt`,
+`extraction_multi_prompt`) : on peut les réécrire
 sans toucher au code — les variables disponibles sont listées en tête de
 `sortiesbot/prompts.py`.
 
@@ -357,10 +449,11 @@ Trois postes seulement, tous bornés :
 
 | Poste | Prix |
 |---|---|
-| Recherches web | 0,01 $ pièce (`max_searches`, 6 par défaut) |
+| Recherches web | 0,01 $ pièce (`max_searches`, 6 par défaut) — **0 $ en mode `site`** |
 | Téléchargement et dépouillement des agendas | **0 $** — c'est du Python |
 | Sélection des liens | ~0,005 $ par agenda |
 | Lecture d'une sortie | ~0,006 $ par sortie |
+| Lecture d'un programme entier | ~0,04 $ pour une page de 30 000 caractères, quel que soit le nombre de sorties qu'on en tire |
 
 Soit de l'ordre de **0,20 $ pour un run complet de vingt sorties**. Aucun appel
 n'ayant d'outil hormis la recherche, il n'y a plus de boucle serveur, donc plus

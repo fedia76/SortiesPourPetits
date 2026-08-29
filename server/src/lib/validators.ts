@@ -148,9 +148,42 @@ export const createApiKeySchema = z.object({
 });
 
 /** Réglages d'une recherche du scraper, tels que la console les envoie. */
+/**
+ * Les deux modes de recherche.
+ *
+ * « recherche » est le mode historique — le modèle cherche sur le web. En
+ * « site », les adresses sont données : aucune recherche n'est lancée, et
+ * `seedUrls` devient obligatoire (voir `scraperSeedUrls`).
+ */
+export const SCRAPER_MODES = ['recherche', 'site'] as const;
+export type ScraperMode = (typeof SCRAPER_MODES)[number];
+
+/**
+ * Les URLs de départ, saisies une par ligne dans la console.
+ *
+ * Vérifiées ici plutôt que dans le scraper : un run qui part sur une adresse
+ * fautive coûte une exécution et n'échoue qu'au bout de plusieurs minutes.
+ */
+export function parseSeedUrls(raw: string): { urls: string[]; invalid: string | null } {
+  const urls = raw
+    .split(/[\n,]/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const invalid = urls.find((url) => {
+    try {
+      return !['http:', 'https:'].includes(new URL(url).protocol);
+    } catch {
+      return true;
+    }
+  });
+  return { urls, invalid: invalid ?? null };
+}
+
 export const scraperConfigSchema = z.object({
   name: z.string().trim().min(2, 'Nom trop court').max(60, 'Nom trop long'),
   enabled: z.boolean().optional(),
+  mode: z.enum(SCRAPER_MODES).optional(),
+  seedUrls: z.string().trim().max(4000).optional(),
   theme: z.string().trim().min(10, 'Décrivez ce que la recherche doit trouver').max(2000),
   area: z.string().trim().min(2).max(120).optional(),
   period: z.string().trim().min(2).max(120).optional(),
@@ -171,9 +204,27 @@ export const scraperConfigSchema = z.object({
   searchPrompt: z.string().max(20_000).nullable().optional(),
   selectPrompt: z.string().max(20_000).nullable().optional(),
   extractionPrompt: z.string().max(20_000).nullable().optional(),
+  extractionMultiPrompt: z.string().max(20_000).nullable().optional(),
 });
 
 export const scraperConfigUpdateSchema = scraperConfigSchema.partial();
+
+/**
+ * Ce qui lie le mode au reste de la configuration, vérifié sur la ligne
+ * complète — création, ou modification fusionnée avec l'existant. Une
+ * modification partielle ne porte pas forcément les deux champs : changer le
+ * mode seul ne doit pas échapper au contrôle des URLs, ni l'inverse.
+ *
+ * Retourne le message d'erreur, ou `null` si la configuration tient debout.
+ */
+export function checkScraperMode(config: { mode: string; seedUrls: string }): string | null {
+  const { urls, invalid } = parseSeedUrls(config.seedUrls ?? '');
+  if (invalid) return `URL de départ invalide : « ${invalid} »`;
+  if (config.mode === 'site' && urls.length === 0) {
+    return 'Le mode « site » réclame au moins une adresse de départ';
+  }
+  return null;
+}
 
 /** Mise en file d'une exécution depuis la console. */
 export const scraperRunSchema = z.object({

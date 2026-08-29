@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { api } from '../lib/api';
-import type { ScraperConfig, ScraperRun } from '../types';
+import type { ScraperConfig, ScraperMode, ScraperRun } from '../types';
 import { RUN_STATUS_LABELS } from '../types';
 
 const configs = ref<ScraperConfig[]>([]);
@@ -22,29 +22,51 @@ const saving = ref(false);
 /** Réglages avancés repliés : la plupart des recherches n'y touchent jamais. */
 const showAdvanced = ref(false);
 
-const form = reactive({
-  name: '',
-  theme: '',
-  area: 'Île-de-France',
-  period: 'les prochaines semaines',
-  horizonDays: 30,
-  maxEvents: 20,
-  maxSearches: 6,
-  maxAgendas: 6,
-  maxLinksPerAgenda: 8,
-  maxPageChars: 8000,
-  maxCostUsd: 1,
-  keepOutOfScope: true,
-  defaultCategory: 'Non classé',
-  postalPrefixes: '75,77,78,91,92,93,94,95',
-  blockedDomains: '',
-  searchModel: 'claude-haiku-4-5',
-  selectModel: 'claude-haiku-4-5',
-  extractionModel: 'claude-haiku-4-5',
-  searchPrompt: '',
-  selectPrompt: '',
-  extractionPrompt: '',
-});
+/** Valeurs d'une recherche neuve, seule définition des défauts du formulaire. */
+function blank() {
+  return {
+    name: '',
+    mode: 'recherche' as ScraperMode,
+    seedUrls: '',
+    theme: '',
+    area: 'Île-de-France',
+    period: 'les prochaines semaines',
+    horizonDays: 30,
+    maxEvents: 20,
+    maxSearches: 6,
+    maxAgendas: 6,
+    maxLinksPerAgenda: 8,
+    maxPageChars: 8000,
+    maxCostUsd: 1,
+    keepOutOfScope: true,
+    defaultCategory: 'Non classé',
+    postalPrefixes: '75,77,78,91,92,93,94,95',
+    blockedDomains: '',
+    searchModel: 'claude-haiku-4-5',
+    selectModel: 'claude-haiku-4-5',
+    extractionModel: 'claude-haiku-4-5',
+    searchPrompt: '',
+    selectPrompt: '',
+    extractionPrompt: '',
+    extractionMultiPrompt: '',
+  };
+}
+
+const form = reactive(blank());
+
+/** Le mode décide de la moitié du formulaire : ce qui suit s'y adapte. */
+const cibleUnSite = computed(() => form.mode === 'site');
+
+/**
+ * Une page de programme est lue d'un seul tenant : le plafond d'une page
+ * ordinaire la couperait au milieu. On relève donc la valeur en passant en
+ * mode « site », mais seulement si elle est restée au défaut — un réglage
+ * choisi à la main n'a pas à être écrasé.
+ */
+function onModeChange() {
+  if (cibleUnSite.value && form.maxPageChars === 8000) form.maxPageChars = 30000;
+  else if (!cibleUnSite.value && form.maxPageChars === 30000) form.maxPageChars = 8000;
+}
 
 let timer: ReturnType<typeof setInterval> | undefined;
 /** Rafraîchissements ratés d'affilée : on n'alerte qu'à partir du second. */
@@ -69,29 +91,7 @@ async function load() {
 }
 
 function reset() {
-  Object.assign(form, {
-    name: '',
-    theme: '',
-    area: 'Île-de-France',
-    period: 'les prochaines semaines',
-    horizonDays: 30,
-    maxEvents: 20,
-    maxSearches: 6,
-    maxAgendas: 6,
-    maxLinksPerAgenda: 8,
-    maxPageChars: 8000,
-    maxCostUsd: 1,
-    keepOutOfScope: true,
-    defaultCategory: 'Non classé',
-    postalPrefixes: '75,77,78,91,92,93,94,95',
-    blockedDomains: '',
-    searchModel: 'claude-haiku-4-5',
-    selectModel: 'claude-haiku-4-5',
-    extractionModel: 'claude-haiku-4-5',
-    searchPrompt: '',
-    selectPrompt: '',
-    extractionPrompt: '',
-  });
+  Object.assign(form, blank());
 }
 
 function startCreate() {
@@ -124,6 +124,7 @@ async function save() {
     searchPrompt: form.searchPrompt.trim() || null,
     selectPrompt: form.selectPrompt.trim() || null,
     extractionPrompt: form.extractionPrompt.trim() || null,
+    extractionMultiPrompt: form.extractionMultiPrompt.trim() || null,
   };
   try {
     if (editingId.value === 0) {
@@ -185,6 +186,14 @@ async function cancelRun(run: ScraperRun) {
   }
 }
 
+/** Les adresses de départ d'une recherche en mode « site », une par ligne. */
+function seedsOf(config: ScraperConfig): string[] {
+  return (config.seedUrls ?? '')
+    .split(/[\n,]/)
+    .map((url) => url.trim())
+    .filter(Boolean);
+}
+
 function when(value: string | null) {
   return value ? new Date(value).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 }
@@ -211,6 +220,12 @@ onUnmounted(() => clearInterval(timer));
       ce que les autres manquent. Le thème, la période et la zone orientent la recherche —
       ils ne filtrent pas le résultat, parce qu'une page déjà lue est déjà payée.
     </p>
+    <p class="muted">
+      Deux façons de trouver les pages : laisser le modèle <strong>chercher sur le web</strong>,
+      ou lui donner l'adresse d'un <strong>site précis</strong> — celui d'un festival, la saison
+      d'un théâtre. Le second ne lance aucune recherche, donc ne paie pas la découverte, et sait
+      tirer plusieurs sorties d'une même page de programme.
+    </p>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="offline" class="error">
       Le site ne répond plus ({{ offline }}). Le tableau ci-dessous date de la
@@ -229,9 +244,55 @@ onUnmounted(() => clearInterval(timer));
         </div>
 
         <div class="field">
+          <span class="label">Comment trouver les pages *</span>
+          <div class="modes">
+            <label class="mode" :class="{ active: !cibleUnSite }">
+              <input v-model="form.mode" type="radio" value="recherche" @change="onModeChange" />
+              <span>
+                <strong>Recherche web</strong>
+                <span class="hint">
+                  Le modèle lance des recherches, on dépouille les agendas qu'elles remontent.
+                  0,01 $ par recherche.
+                </span>
+              </span>
+            </label>
+            <label class="mode" :class="{ active: cibleUnSite }">
+              <input v-model="form.mode" type="radio" value="site" @change="onModeChange" />
+              <span>
+                <strong>Site précis</strong>
+                <span class="hint">
+                  Vous donnez les adresses. Aucune recherche web : la découverte est gratuite.
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <div v-if="cibleUnSite" class="field">
+          <label for="s-seeds">Adresses de départ *</label>
+          <textarea
+            id="s-seeds"
+            v-model="form.seedUrls"
+            rows="3"
+            required
+            placeholder="https://formulabula.fr/&#10;https://exemple.fr/programme"
+          />
+          <span class="hint">
+            Une par ligne. Ce sont les seules pages que l'exécution ouvrira d'elle-même. Si une
+            adresse mène à des fiches, elles sont suivies ; si tout tient sur une page, elle est
+            lue comme un programme et toutes ses sorties en sont tirées d'un coup.
+          </span>
+        </div>
+
+        <div class="field">
           <label for="s-theme">Ce qu'on cherche *</label>
           <textarea id="s-theme" v-model="form.theme" rows="3" required minlength="10" />
-          <span class="hint">
+          <span v-if="cibleUnSite" class="hint">
+            Il ne sert plus à chercher, mais il tranche encore : c'est lui qui écarte, dans le
+            programme, ce qui ne s'adresse pas aux enfants. « Les rendez-vous jeune public d'un
+            festival de bande dessinée ».
+          </span>
+          <span v-else class="hint">
             En une phrase, comme à un humain : « des spectacles, théâtres et contes pour
             enfants de 0 à 12 ans ».
           </span>
@@ -281,23 +342,34 @@ onUnmounted(() => clearInterval(timer));
 
         <template v-if="showAdvanced">
           <div class="row">
-            <div class="field">
+            <div v-if="!cibleUnSite" class="field">
               <label for="s-searches">Recherches web</label>
               <input id="s-searches" v-model.number="form.maxSearches" type="number" min="1" max="20" />
               <span class="hint">0,01 $ pièce.</span>
             </div>
-            <div class="field">
+            <div v-if="!cibleUnSite" class="field">
               <label for="s-agendas">Agendas ouverts</label>
               <input id="s-agendas" v-model.number="form.maxAgendas" type="number" min="1" max="20" />
               <span class="hint">Gratuit : téléchargés en Python.</span>
             </div>
+            <div v-else class="field">
+              <label for="s-agendas">Pages de départ dépouillées</label>
+              <input id="s-agendas" v-model.number="form.maxAgendas" type="number" min="1" max="20" />
+              <span class="hint">Plafond appliqué à vos adresses.</span>
+            </div>
             <div class="field">
-              <label for="s-links">Liens retenus par agenda</label>
+              <label for="s-links">
+                {{ cibleUnSite ? 'Liens suivis par page' : 'Liens retenus par agenda' }}
+              </label>
               <input id="s-links" v-model.number="form.maxLinksPerAgenda" type="number" min="1" max="50" />
             </div>
             <div class="field">
               <label for="s-chars">Caractères lus par page</label>
               <input id="s-chars" v-model.number="form.maxPageChars" type="number" min="1000" max="40000" step="1000" />
+              <span v-if="cibleUnSite" class="hint">
+                Une page de programme est lue d'un seul tenant : voyez large, sinon elle est
+                coupée au milieu.
+              </span>
             </div>
           </div>
 
@@ -320,7 +392,7 @@ onUnmounted(() => clearInterval(timer));
           </div>
 
           <div class="row">
-            <div class="field">
+            <div v-if="!cibleUnSite" class="field">
               <label for="s-m1">Modèle — recherche</label>
               <input id="s-m1" v-model="form.searchModel" type="text" maxlength="60" />
             </div>
@@ -334,7 +406,7 @@ onUnmounted(() => clearInterval(timer));
             </div>
           </div>
 
-          <div class="field">
+          <div v-if="!cibleUnSite" class="field">
             <label for="s-p1">Prompt — recherche</label>
             <textarea id="s-p1" v-model="form.searchPrompt" rows="4" />
             <span class="hint">Vide : le scraper utilise le sien.</span>
@@ -342,10 +414,18 @@ onUnmounted(() => clearInterval(timer));
           <div class="field">
             <label for="s-p2">Prompt — tri des liens</label>
             <textarea id="s-p2" v-model="form.selectPrompt" rows="4" />
+            <span class="hint">Vide : le scraper utilise le sien.</span>
           </div>
           <div class="field">
             <label for="s-p3">Prompt — lecture d'une page</label>
             <textarea id="s-p3" v-model="form.extractionPrompt" rows="4" />
+          </div>
+          <div v-if="cibleUnSite" class="field">
+            <label for="s-p4">Prompt — lecture d'un programme</label>
+            <textarea id="s-p4" v-model="form.extractionMultiPrompt" rows="4" />
+            <span class="hint">
+              Celui qui tire plusieurs sorties d'une même page. Vide : le scraper utilise le sien.
+            </span>
           </div>
         </template>
 
@@ -370,14 +450,20 @@ onUnmounted(() => clearInterval(timer));
       <div class="config-head">
         <h3>
           {{ c.name }}
+          <span v-if="c.mode === 'site'" class="badge mode-site">site</span>
           <span v-if="!c.enabled" class="badge">désactivée</span>
         </h3>
         <span class="muted">{{ c._count?.runs ?? 0 }} exécution(s)</span>
       </div>
       <p class="theme">{{ c.theme }}</p>
+      <ul v-if="c.mode === 'site'" class="seeds">
+        <li v-for="url in seedsOf(c)" :key="url">
+          <a :href="url" target="_blank" rel="noopener noreferrer">{{ url }}</a>
+        </li>
+      </ul>
       <p class="muted small">
-        {{ c.area }} · {{ c.period }} ({{ c.horizonDays }} j) · {{ c.maxEvents }} sorties max ·
-        plafond {{ c.maxCostUsd }} $
+        {{ c.mode === 'site' ? 'sans recherche web' : c.area }} · {{ c.period }} ({{ c.horizonDays }} j) ·
+        {{ c.maxEvents }} sorties max · plafond {{ c.maxCostUsd }} $
         <template v-if="c.runs?.length">
           · dernière : {{ RUN_STATUS_LABELS[c.runs[0].status] }} le {{ when(c.runs[0].queuedAt) }}
         </template>
@@ -461,6 +547,54 @@ onUnmounted(() => clearInterval(timer));
 
 .theme {
   margin: 0.3rem 0;
+}
+
+/* Choix du mode : deux cartes cliquables, pour que la bascule se voie. */
+.modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  flex: 1 1 15rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.mode.active {
+  border-color: var(--accent-dark);
+  background: var(--accent-soft);
+}
+
+.mode strong {
+  display: block;
+}
+
+.mode .hint {
+  display: block;
+}
+
+.label {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-weight: 600;
+}
+
+.seeds {
+  margin: 0.2rem 0 0.4rem;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+}
+
+.mode-site {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
 }
 
 .small {

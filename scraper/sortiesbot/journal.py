@@ -22,7 +22,16 @@ _CONSOLE = {
     "query": lambda f: f"  🔎 recherche : {f.get('query')}",
     "fetching": lambda f: f"  ↓ ouverture : {f.get('url')}",
     "direct": lambda f: f"  ★ sortie trouvée directement : {f.get('title')} — {f.get('url')}",
-    "fallback": lambda f: f"  ↺ aucun lien retenu, la page est relue comme une sortie : {f.get('url')}",
+    "fallback": lambda f: (
+        f"  ↺ aucun lien retenu, la page est lue comme un programme : {f.get('url')}"
+        if f.get("multiple")
+        else f"  ↺ aucun lien retenu, la page est relue comme une sortie : {f.get('url')}"
+    ),
+    "seed": lambda f: f"  ⌖ point de départ : {f.get('url')}",
+    "programme": lambda f: (
+        f"  ▤ programme dépouillé : {f.get('found')} sortie(s) relevée(s) "
+        f"sur {f.get('chars')} caractères"
+    ),
     "harvested": lambda f: f"  🔗 {f.get('links')} lien(s) extrait(s) : {f.get('url')}",
     "selected": lambda f: f"  ✔ {f.get('kept')} retenu(s) sur {f.get('among')} : {f.get('url')}",
     "visited": lambda f: f"  📄 page lue : {f.get('url')}",

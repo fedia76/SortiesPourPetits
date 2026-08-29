@@ -6,12 +6,16 @@ ajuster la recherche sans toucher au code. Les variables sont substituées par
 `string.Template`, donc elles s'écrivent `$theme` et les accolades JSON du
 texte n'ont pas besoin d'être échappées.
 
-Trois appels, trois tâches bornées — plutôt qu'un seul appel à qui l'on
-demanderait de dérouler toute une procédure :
+Quatre gabarits, mais jamais plus de trois appels par page — plutôt qu'un
+seul appel à qui l'on demanderait de dérouler toute une procédure :
 
-  recherche   $theme $area $period $today $date_from $date_to $max_searches
-  sélection   $theme $area $date_from $date_to $today $page $max_links
-  extraction  $url $today $categories
+  recherche          $theme $area $period $today $date_from $date_to $max_searches
+  sélection          $theme $area $date_from $date_to $today $page $max_links
+  extraction         $url $today $categories
+  extraction (multi) $url $today $categories $theme $max_events
+
+Les deux extractions s'excluent : une page ne porte qu'une sortie (mode
+« recherche ») ou plusieurs (mode « site », page de programme d'un festival).
 
 Le schéma de sortie de l'extraction est défini côté fournisseur
 (`providers/anthropic_provider.py`) : un champ ajouté ici doit l'être là
@@ -120,6 +124,67 @@ Règles :
 Ne cherche pas d'illustration : tu ne reçois que le texte de la page, et son
 image est relevée séparément dans le HTML (`harvest.main_image`). Laisse
 `photo_url` vide plutôt que de deviner une URL.
+
+Ne renseigne que ce que la page dit réellement : un champ inconnu reste vide.
+"""
+
+
+EXTRACTION_MULTI = """\
+Voici le contenu de la page $url, telle qu'elle est aujourd'hui, $today.
+
+--- début de la page ---
+$content
+--- fin de la page ---
+
+Cette page présente le **programme complet** d'un lieu ou d'un festival :
+elle décrit plusieurs sorties à la suite. Relève-les toutes, une fiche par
+sortie, dans l'ordre de la page. Au plus $max_events.
+
+Ce qu'on cherche ici : $theme
+
+Ce qui compte, et qui change tout par rapport à la lecture d'une page unique :
+
+- **Une sortie par entrée réellement distincte du programme** — un spectacle,
+  un atelier, une exposition, une rencontre. Deux séances du même spectacle
+  ne font qu'UNE sortie : réunis-les en une fiche, et mets leurs jours dans
+  `dates`.
+- Ne découpe pas une sortie en morceaux, et n'en fusionne pas deux qui
+  portent des titres différents.
+- Si la page n'est en réalité qu'une seule sortie, renvoie une seule fiche.
+- Si elle ne décrit aucune sortie exploitable (page d'accueil, billetterie,
+  liste de partenaires), renvoie une liste vide et dis pourquoi dans
+  `skip_reason`.
+- Écarte ce qui ne convient pas à un public d'enfants — soirée, concert pour
+  adultes, table ronde professionnelle. Mieux vaut une fiche de moins qu'une
+  fiche fausse.
+
+Pour chaque fiche, les règles sont celles de la lecture d'une page unique :
+
+- `description` : 3 à 6 phrases en français, écrites pour un parent, à partir
+  du contenu réel de la page. N'invente rien.
+- Le programme donne souvent le lieu **une seule fois, en tête ou en pied de
+  page**, et les entrées ne répètent que la salle. Reporte alors ce lieu
+  commun (`venue_name`, `venue_address`, `venue_city`, `venue_postal_code`)
+  dans chaque fiche : une sortie sans adresse n'est pas publiable. Mais ne
+  déduis jamais une adresse que la page ne donne nulle part.
+- `venue_address` : l'adresse postale la plus précise que donne la page, sans
+  le code postal ni la ville.
+- `free` vaut true seulement si l'entrée est gratuite pour tout le monde ;
+  sinon donne le tarif enfant le plus courant dans `price`. Un tarif annoncé
+  pour tout le festival vaut pour chacune de ses sorties.
+- Les dates sont au format AAAA-MM-JJ, les horaires au format HH:MM.
+- `dates` : les jours où CETTE sortie a lieu, un par un, quand le programme
+  les donne — c'est le cas le plus fréquent d'un festival. `date_start` et
+  `date_end` bornent alors la sortie ; `weekdays` ne sert que si la page
+  annonce une récurrence (« tous les mercredis ») plutôt que des dates.
+- Une entrée sans date propre hérite des dates du festival, si la page les
+  annonce clairement. Sinon, laisse les dates vides plutôt que de deviner.
+- `category` doit être choisie parmi : $categories
+- `relevant` vaut true pour chaque fiche que tu renvoies : les entrées
+  écartées ne figurent simplement pas dans la liste.
+
+Ne cherche pas d'illustration : tu ne reçois que le texte de la page, et son
+image est relevée séparément dans le HTML. Laisse `photo_url` vide.
 
 Ne renseigne que ce que la page dit réellement : un champ inconnu reste vide.
 """
