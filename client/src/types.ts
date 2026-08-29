@@ -172,10 +172,27 @@ export const RUN_STATUS_LABELS: Record<ScraperRunStatus, string> = {
  * recherche ; ils ne filtrent pas le résultat quand `keepOutOfScope` est vrai,
  * parce qu'une page déjà lue est déjà payée.
  */
+/**
+ * Les deux modes d'une recherche automatique.
+ *
+ * « recherche » : le modèle cherche sur le web, on dépouille les agendas
+ * qu'il remonte. « site » : les adresses sont connues (le site d'un festival,
+ * la saison d'un théâtre) et aucune recherche n'est lancée.
+ */
+export type ScraperMode = 'recherche' | 'site';
+
+export const SCRAPER_MODE_LABELS: Record<ScraperMode, string> = {
+  recherche: 'Recherche web',
+  site: 'Site précis',
+};
+
 export interface ScraperConfig {
   id: number;
   name: string;
   enabled: boolean;
+  mode: ScraperMode;
+  /** Adresses de départ du mode « site », une par ligne. */
+  seedUrls: string;
   theme: string;
   area: string;
   period: string;
@@ -196,6 +213,7 @@ export interface ScraperConfig {
   searchPrompt: string | null;
   selectPrompt: string | null;
   extractionPrompt: string | null;
+  extractionMultiPrompt: string | null;
   createdAt: string;
   _count?: { runs: number };
   runs?: Pick<ScraperRun, 'id' | 'status' | 'queuedAt' | 'finishedAt' | 'retained'>[];

@@ -157,6 +157,13 @@ model ScraperConfig {
   name    String  @unique
   enabled Boolean @default(true)
 
+  /// « recherche » (le modèle cherche sur le web) ou « site » (on part
+  /// d'adresses connues, sans la moindre recherche). Les configurations
+  /// existantes gardent « recherche » et le chemin qu'elles avaient.
+  mode     String @default("recherche")
+  /// Points de départ du mode « site », une URL par ligne. Vide ailleurs.
+  seedUrls String @default("") @db.Text
+
   theme       String @db.Text
   area        String @default("Île-de-France")
   period      String @default("les prochaines semaines")
@@ -184,6 +191,8 @@ model ScraperConfig {
   searchPrompt     String? @db.Text
   selectPrompt     String? @db.Text
   extractionPrompt String? @db.Text
+  /// Lecture d'une page de programme, qui porte plusieurs sorties (mode « site »).
+  extractionMultiPrompt String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

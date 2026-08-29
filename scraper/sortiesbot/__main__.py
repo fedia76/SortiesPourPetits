@@ -84,11 +84,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.quiet:
         print(f"Journal : {log_path}")
-        print(
-            "La découverte enchaîne recherches et lectures de pages dans un seul\n"
-            "appel : comptez plusieurs minutes. Les lignes ci-dessous arrivent au\n"
-            "fur et à mesure, le temps écoulé est indiqué à gauche.\n"
-        )
+        if config.targets_site:
+            print(
+                f"Mode « site » : aucune recherche web, {len(config.seed_urls)} page(s) de\n"
+                "départ. Les lignes ci-dessous arrivent au fur et à mesure, le temps\n"
+                "écoulé est indiqué à gauche.\n"
+            )
+        else:
+            print(
+                "La découverte enchaîne recherches et lectures de pages dans un seul\n"
+                "appel : comptez plusieurs minutes. Les lignes ci-dessous arrivent au\n"
+                "fur et à mesure, le temps écoulé est indiqué à gauche.\n"
+            )
 
     with RunLog(log_path, verbose=not args.quiet) as log, SeenStore(state_path) as store:
         result = run(config, provider, store, api, log, submit=args.submit)

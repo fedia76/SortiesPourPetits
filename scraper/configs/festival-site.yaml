@@ -1,0 +1,56 @@
+# Exemple de configuration en mode « site » : un festival dont on connaît
+# déjà l'adresse. Aucune recherche web n'est lancée — donc rien à payer pour
+# la découverte — et la page annoncée sert de point de départ.
+#
+#   python -m sortiesbot --config configs/festival-site.yaml
+#
+# La forme du site n'a pas à être déclarée : si la page mène à des fiches, on
+# les suit ; si elle n'a que des ancres, c'est un programme et on en tire
+# toutes les sorties d'un coup.
+
+name: festival-formula-bula
+mode: site
+
+# Une URL par ligne. Ce sont les seules pages que le run ouvrira de lui-même.
+seed_urls:
+  - https://formulabula.fr/
+
+# Le thème ne sert plus à chercher, mais il compte encore deux fois : pour
+# trier les liens d'une page qui en a, et pour écarter les entrées du
+# programme qui ne s'adressent pas aux enfants.
+theme: >-
+  les rendez-vous jeune public d'un festival de bande dessinée — ateliers,
+  lectures dessinées, rencontres et expositions pour les 0 à 12 ans
+
+area: Paris
+period: la durée du festival
+# Un festival annonce son programme des semaines à l'avance : voir large.
+horizon_days: 120
+
+# Un programme complet peut porter plusieurs dizaines d'entrées.
+max_events: 40
+
+# Une page de programme est longue, et elle est lue d'un seul tenant : le
+# plafond d'une page ordinaire (8 000) la couperait au milieu. C'est le seul
+# réglage qu'un mode « site » demande vraiment de revoir.
+max_page_chars: 30000
+
+# Sans objet ici : il n'y a pas de recherche à lancer.
+max_searches: 0
+# Nombre de pages de départ dépouillées, et de liens suivis sur chacune.
+max_agendas: 4
+max_links_per_agenda: 30
+
+max_cost_usd: 1.00
+
+default_category: Non classé
+postal_prefixes: ["75", "77", "78", "91", "92", "93", "94", "95"]
+
+provider: anthropic
+select_model: claude-haiku-4-5
+extraction_model: claude-haiku-4-5
+
+# Pour personnaliser la lecture d'un programme, décommentez :
+#
+# extraction_multi_prompt: |
+#   Voici le contenu de $url ... $content

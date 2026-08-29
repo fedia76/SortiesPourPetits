@@ -1,5 +1,17 @@
 """Configuration d'une recherche.
 
+Deux modes, décidés par le champ `mode` et jamais mélangés :
+
+* `recherche` — le mode historique : le modèle lance des recherches web, on
+  dépouille les agendas qu'elles remontent ;
+* `site` — on connaît déjà l'adresse (le site d'un festival, la saison d'un
+  théâtre) : aucune recherche web n'est lancée, `seed_urls` sert de point de
+  départ. Une page qui ne mène à rien est lue comme un programme, c'est-à-dire
+  qu'on en tire plusieurs sorties d'un coup.
+
+Une configuration écrite avant l'ajout du mode ne porte pas ce champ : elle
+prend le défaut, `recherche`, et emprunte exactement le chemin d'avant.
+
 Deux origines, un seul objet `Config` :
 
 * un fichier YAML (`configs/*.yaml`), pour les runs lancés à la main ;
@@ -26,6 +38,12 @@ from . import prompts
 # comme un échec, mieux vaut pas de position qu'une position fausse.
 IDF_POSTAL_PREFIXES = ["75", "77", "78", "91", "92", "93", "94", "95"]
 
+#: Mode historique : le modèle cherche sur le web, puis on dépouille.
+MODE_SEARCH = "recherche"
+#: Mode ciblé : on part d'URLs connues, sans la moindre recherche web.
+MODE_SITE = "site"
+MODES = (MODE_SEARCH, MODE_SITE)
+
 DEFAULT_BLOCKED_DOMAINS = [
     # Pages non lisibles ou sans contenu exploitable.
     "facebook.com",
@@ -45,6 +63,10 @@ class Config:
 
     name: str
     theme: str
+    #: `recherche` (défaut) ou `site` — voir l'en-tête du module.
+    mode: str = MODE_SEARCH
+    #: Points de départ du mode `site`. Sans objet en mode `recherche`.
+    seed_urls: list[str] = field(default_factory=list)
     area: str = "Île-de-France"
     period: str = "les prochaines semaines"
     horizon_days: int = 30
@@ -78,6 +100,12 @@ class Config:
     search_prompt: str = prompts.SEARCH
     select_prompt: str = prompts.SELECT
     extraction_prompt: str = prompts.EXTRACTION
+    #: Lecture d'une page de programme, qui porte plusieurs sorties.
+    extraction_multi_prompt: str = prompts.EXTRACTION_MULTI
+
+    @property
+    def targets_site(self) -> bool:
+        return self.mode == MODE_SITE
 
     @property
     def date_from(self) -> date:
@@ -120,6 +148,16 @@ class Config:
             categories=", ".join(categories) if categories else self.default_category,
         )
 
+    def render_extraction_multi(self, url: str, content: str, categories: list[str]) -> str:
+        return Template(self.extraction_multi_prompt).safe_substitute(
+            url=url,
+            content=content,
+            today=date.today().isoformat(),
+            categories=", ".join(categories) if categories else self.default_category,
+            theme=self.theme,
+            max_events=self.max_events,
+        )
+
 
 class ConfigError(ValueError):
     pass
@@ -154,7 +192,27 @@ def load_config(path: str | Path) -> Config:
         raise ConfigError("max_events doit valoir au moins 1")
     if config.horizon_days < 1:
         raise ConfigError("horizon_days doit valoir au moins 1")
-    return config
+    return validated(config)
+
+
+def validated(config: Config) -> Config:
+    """Vérifie ce qui lie le mode au reste de la configuration.
+
+    Un mode `site` sans URL de départ ne peut rien faire : il n'a pas de
+    recherche pour en trouver. Autant le dire au chargement plutôt que de
+    laisser un run vide le découvrir.
+    """
+    if config.mode not in MODES:
+        raise ConfigError(
+            f"mode inconnu : « {config.mode} » (connus : {', '.join(MODES)})"
+        )
+    urls = [u.strip() for u in config.seed_urls if u.strip()]
+    for url in urls:
+        if not url.startswith(("http://", "https://")):
+            raise ConfigError(f"URL de départ invalide : « {url} » (http:// ou https:// attendu)")
+    if config.mode == MODE_SITE and not urls:
+        raise ConfigError("le mode « site » réclame au moins une URL de départ (seed_urls)")
+    return replace(config, seed_urls=urls)
 
 
 def _split(value: Any, fallback: list[str]) -> list[str]:
@@ -165,6 +223,19 @@ def _split(value: Any, fallback: list[str]) -> list[str]:
         items = [part.strip() for part in str(value or "").split(",")]
     items = [item for item in items if item]
     return items or fallback
+
+
+def _urls(value: Any) -> list[str]:
+    """Les URLs de départ, saisies dans la console une par ligne.
+
+    La virgule est acceptée aussi : elle sépare déjà les autres listes de la
+    console, et personne ne devrait avoir à se souvenir laquelle prend quoi.
+    """
+    if isinstance(value, list):
+        items = [str(v) for v in value]
+    else:
+        items = str(value or "").replace(",", "\n").splitlines()
+    return [item.strip() for item in items if item.strip()]
 
 
 def config_from_api(raw: dict[str, Any]) -> Config:
@@ -191,27 +262,34 @@ def config_from_api(raw: dict[str, Any]) -> Config:
         return int(number(key, default))
 
     defaults = Config(name=str(raw["name"]), theme=str(raw["theme"]))
-    return replace(
-        defaults,
-        area=str(raw.get("area") or defaults.area),
-        period=str(raw.get("period") or defaults.period),
-        horizon_days=integer("horizonDays", defaults.horizon_days),
-        max_events=integer("maxEvents", defaults.max_events),
-        max_searches=integer("maxSearches", defaults.max_searches),
-        max_agendas=integer("maxAgendas", defaults.max_agendas),
-        max_links_per_agenda=integer("maxLinksPerAgenda", defaults.max_links_per_agenda),
-        max_page_chars=integer("maxPageChars", defaults.max_page_chars),
-        max_cost_usd=number("maxCostUsd", defaults.max_cost_usd),
-        keep_out_of_scope=bool(raw.get("keepOutOfScope", defaults.keep_out_of_scope)),
-        default_category=str(raw.get("defaultCategory") or defaults.default_category),
-        postal_prefixes=_split(raw.get("postalPrefixes"), defaults.postal_prefixes),
-        blocked_domains=_split(raw.get("blockedDomains"), defaults.blocked_domains),
-        search_model=str(raw.get("searchModel") or defaults.search_model),
-        select_model=str(raw.get("selectModel") or defaults.select_model),
-        extraction_model=str(raw.get("extractionModel") or defaults.extraction_model),
-        search_prompt=prompt("searchPrompt", defaults.search_prompt),
-        select_prompt=prompt("selectPrompt", defaults.select_prompt),
-        extraction_prompt=prompt("extractionPrompt", defaults.extraction_prompt),
+    return validated(
+        replace(
+            defaults,
+            mode=str(raw.get("mode") or defaults.mode).strip().lower(),
+            seed_urls=_urls(raw.get("seedUrls")),
+            area=str(raw.get("area") or defaults.area),
+            period=str(raw.get("period") or defaults.period),
+            horizon_days=integer("horizonDays", defaults.horizon_days),
+            max_events=integer("maxEvents", defaults.max_events),
+            max_searches=integer("maxSearches", defaults.max_searches),
+            max_agendas=integer("maxAgendas", defaults.max_agendas),
+            max_links_per_agenda=integer("maxLinksPerAgenda", defaults.max_links_per_agenda),
+            max_page_chars=integer("maxPageChars", defaults.max_page_chars),
+            max_cost_usd=number("maxCostUsd", defaults.max_cost_usd),
+            keep_out_of_scope=bool(raw.get("keepOutOfScope", defaults.keep_out_of_scope)),
+            default_category=str(raw.get("defaultCategory") or defaults.default_category),
+            postal_prefixes=_split(raw.get("postalPrefixes"), defaults.postal_prefixes),
+            blocked_domains=_split(raw.get("blockedDomains"), defaults.blocked_domains),
+            search_model=str(raw.get("searchModel") or defaults.search_model),
+            select_model=str(raw.get("selectModel") or defaults.select_model),
+            extraction_model=str(raw.get("extractionModel") or defaults.extraction_model),
+            search_prompt=prompt("searchPrompt", defaults.search_prompt),
+            select_prompt=prompt("selectPrompt", defaults.select_prompt),
+            extraction_prompt=prompt("extractionPrompt", defaults.extraction_prompt),
+            extraction_multi_prompt=prompt(
+                "extractionMultiPrompt", defaults.extraction_multi_prompt
+            ),
+        )
     )
 
 
@@ -225,6 +303,10 @@ def with_limit(config: Config, limit: int | None) -> Config:
     if limit is None:
         return config
     events = min(config.max_events, max(1, limit))
+    if config.targets_site:
+        # Pas de découverte à réduire : les URLs sont données, et les lire ne
+        # coûte rien. Seul le nombre de sorties retenues est plafonné.
+        return replace(config, max_events=events)
     ratio = events / config.max_events
     return replace(
         config,
@@ -278,6 +360,8 @@ def describe(config: Config) -> dict[str, Any]:
     return {
         "name": config.name,
         "theme": config.theme,
+        "mode": config.mode,
+        "seed_urls": list(config.seed_urls),
         "area": config.area,
         "period": config.period,
         "date_from": config.date_from.isoformat(),

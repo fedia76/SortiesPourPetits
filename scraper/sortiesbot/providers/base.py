@@ -42,9 +42,22 @@ class Provider(Protocol):
         ...
 
     def extract(
-        self, url: str, content: str, config: Config, categories: list[str], log: RunLog
-    ) -> ExtractedEvent:
-        """Remplit la fiche d'une sortie à partir du texte de sa page."""
+        self,
+        url: str,
+        content: str,
+        config: Config,
+        categories: list[str],
+        log: RunLog,
+        *,
+        multiple: bool = False,
+    ) -> list[ExtractedEvent]:
+        """Remplit les fiches que porte le texte d'une page.
+
+        Une page vaut une sortie, sauf en mode « site » où la page de
+        programme d'un festival en porte plusieurs (`multiple`). Le retour est
+        une liste dans les deux cas, pour que la suite du pipeline ne connaisse
+        qu'un seul chemin.
+        """
         ...
 
 
