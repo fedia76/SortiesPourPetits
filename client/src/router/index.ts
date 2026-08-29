@@ -51,6 +51,12 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresModerator: true },
     },
     {
+      path: '/admin/scraper/memoire',
+      name: 'admin-scraper-memory',
+      component: () => import('../views/AdminScraperMemoryView.vue'),
+      meta: { requiresAuth: true, requiresModerator: true },
+    },
+    {
       path: '/admin/scraper/runs/:id(\\d+)',
       name: 'admin-scraper-run',
       component: () => import('../views/AdminScraperRunView.vue'),

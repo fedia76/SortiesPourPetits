@@ -115,6 +115,17 @@ export const searchSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(50).default(12),
 });
 
+/**
+ * Vidage de la file de modération.
+ *
+ * `expected` est le nombre de sorties que le modérateur avait sous les yeux :
+ * si la file a bougé entre l'affichage et le clic, on refuse plutôt que de
+ * supprimer une proposition que personne n'a lue.
+ */
+export const moderationPurgeSchema = z.object({
+  expected: z.coerce.number().int().min(0).optional(),
+});
+
 export const moderateSchema = z.object({
   action: z.enum(['approve', 'reject']),
   reason: z.string().trim().max(1000).optional(),
@@ -224,6 +235,25 @@ export const scraperStatsSchema = z.object({
   configId: z.coerce.number().int().positive().optional(),
   /** Fenêtre d'observation, en jours. Absent : tout l'historique. */
   days: z.coerce.number().int().min(1).max(3650).optional(),
+});
+
+/** Consultation de la mémoire des pages, depuis la console. */
+export const scraperMemorySchema = z.object({
+  q: z.string().trim().max(200).optional(),
+  decision: z.string().trim().min(2).max(40).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+/**
+ * Purge de la mémoire.
+ *
+ * `decision` restreint la purge à un seul verdict — oublier les erreurs de
+ * lecture sans oublier ce qui a déjà été proposé au site. Sans elle, tout
+ * part, et le prochain run relira (donc repaiera) chaque page connue.
+ */
+export const scraperMemoryPurgeSchema = z.object({
+  decision: z.string().trim().min(2).max(40).optional(),
 });
 
 /** Interrogation de la mémoire des pages déjà analysées. */

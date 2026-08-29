@@ -24,6 +24,7 @@ interface DuplicateCheck {
 const events = ref<EventItem[]>([]);
 const loading = ref(true);
 const error = ref('');
+const notice = ref('');
 /** Doublons potentiels, indexés par identifiant de sortie. */
 const duplicates = ref<Record<number, DuplicateCheck>>({});
 
@@ -124,6 +125,49 @@ function incompleteHint(e: EventItem) {
   return missing.length ? `Complétez d’abord ${missing.join(' et ')}` : '';
 }
 
+const purging = ref(false);
+
+/**
+ * Vide la file — supprime, ne refuse pas.
+ *
+ * Refuser garde la sortie et son motif, visible par l'auteur. Après un import
+ * raté, ce n'est pas ce qu'on veut : vingt pages mal lues qu'il serait absurde
+ * de motiver une par une, et qui n'ont rien à laisser derrière elles.
+ *
+ * La mémoire du scraper, elle, n'est pas touchée : les pages restent connues,
+ * donc ne seront pas reproposées. C'est la purge de la mémoire — page
+ * « Recherche auto → Mémoire » — qui les rend à nouveau lisibles.
+ */
+async function purgePending() {
+  const combien = events.value.length;
+  if (!combien) return;
+  const question =
+    `Supprimer définitivement les ${combien} sortie(s) en attente ?\n\n` +
+    'Elles ne seront pas refusées mais effacées : ni motif pour leur auteur, ' +
+    'ni trace au catalogue.\n\n' +
+    'Les pages dont elles venaient restent en mémoire du scraper, qui ne les ' +
+    'reproposera donc pas. Pour qu’il les relise, purgez sa mémoire.\n\n' +
+    'Cette action est irréversible.';
+  if (!confirm(question)) return;
+
+  error.value = '';
+  notice.value = '';
+  purging.value = true;
+  try {
+    // Le nombre part avec la requête : si la file a bougé depuis l'affichage,
+    // le serveur refuse plutôt que de supprimer une sortie que personne n'a lue.
+    const res = await api.delete<{ deleted: number }>(
+      `/api/moderation/pending?expected=${combien}`,
+    );
+    notice.value = `${res.deleted} sortie(s) supprimée(s).`;
+    await load();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erreur';
+  } finally {
+    purging.value = false;
+  }
+}
+
 function scoreLevel(score: number) {
   if (score >= LIKELY_DUPLICATE_SCORE) return 'high';
   return score >= 45 ? 'medium' : 'low';
@@ -135,8 +179,29 @@ onMounted(load);
 <template>
   <div class="container page">
     <h1>Modération</h1>
-    <p class="muted">{{ events.length }} sortie(s) en attente d'approbation.</p>
+    <div class="queue-head">
+      <p class="muted" style="margin: 0">
+        {{ events.length }} sortie(s) en attente d'approbation.
+      </p>
+      <button
+        v-if="events.length"
+        class="btn danger small"
+        type="button"
+        :disabled="purging"
+        title="Efface les propositions sans les refuser : ni motif, ni trace."
+        @click="purgePending"
+      >
+        🗑 Supprimer les {{ events.length }} sortie(s) en attente
+      </button>
+    </div>
+    <p v-if="events.length" class="muted small">
+      Supprimer n'est pas refuser : rien n'est gardé, ni motif pour l'auteur ni
+      trace au catalogue. Les pages importées restent connues du scraper, qui ne
+      les reproposera pas — pour qu'il les relise, purgez sa
+      <RouterLink to="/admin/scraper/memoire">mémoire</RouterLink>.
+    </p>
     <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="notice" class="notice">{{ notice }}</p>
 
     <div v-if="!loading && events.length === 0" class="empty">
       <p>🎉 Rien à modérer, tout est à jour !</p>
@@ -244,6 +309,24 @@ onMounted(load);
 </template>
 
 <style scoped>
+.queue-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.8rem;
+}
+
+.notice {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.small {
+  font-size: 0.85rem;
+}
+
 .days {
   display: flex;
   flex-wrap: wrap;

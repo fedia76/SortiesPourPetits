@@ -2,7 +2,8 @@ import { Prisma, Role } from '@prisma/client';
 import { Router } from 'express';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
-import { moderateSchema, similarSchema } from '../lib/validators';
+import { deletePhoto } from '../lib/upload';
+import { moderateSchema, moderationPurgeSchema, similarSchema } from '../lib/validators';
 import { hasCoordinates, hasPrice } from '../lib/incomplete';
 import { rankSimilar, significantWords, type SimilarityScore } from '../lib/similarity';
 
@@ -41,6 +42,55 @@ moderationRouter.get('/pending', async (_req, res) => {
     orderBy: { createdAt: 'asc' },
   });
   res.json({ events: events.map((e) => serializeEvent(e)) });
+});
+
+/**
+ * Vide la file d'attente — supprime, ne refuse pas.
+ *
+ * Refuser garde la sortie et son motif, que son auteur peut lire. Supprimer
+ * ne garde rien : c'est ce qu'on veut après un import raté, vingt pages mal
+ * lues qu'il serait absurde de motiver une par une.
+ *
+ * La mémoire du scraper n'est pas touchée — `ScrapedUrl.eventId` passe à NULL
+ * (`onDelete: SetNull`) mais la ligne reste, donc la page n'est pas
+ * reproposée. C'est `DELETE /api/scraper/memory` qui la rend à nouveau
+ * lisible, et les deux gestes sont bien distincts.
+ *
+ * Irréversible, d'où le garde-fou : la file doit être celle qu'on avait sous
+ * les yeux.
+ */
+moderationRouter.delete('/pending', async (req, res) => {
+  const parsed = moderationPurgeSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const pending = await prisma.event.findMany({
+    where: { status: 'PENDING' },
+    select: { id: true, photoUrl: true },
+  });
+
+  const { expected } = parsed.data;
+  if (expected !== undefined && expected !== pending.length) {
+    res.status(409).json({
+      error:
+        `La file a changé depuis son affichage : elle compte maintenant ` +
+        `${pending.length} sortie(s) au lieu de ${expected}. Rechargez la page.`,
+    });
+    return;
+  }
+  if (pending.length === 0) {
+    res.json({ ok: true, deleted: 0 });
+    return;
+  }
+
+  await prisma.event.deleteMany({ where: { id: { in: pending.map((e) => e.id) } } });
+  // Les photos ne partent qu'une fois les lignes supprimées : un fichier
+  // orphelin se repère, une fiche sans sa photo ne se répare pas.
+  for (const event of pending) {
+    if (event.photoUrl) await deletePhoto(event.photoUrl);
+  }
+  res.json({ ok: true, deleted: pending.length });
 });
 
 /** Nombre de mots du titre utilisés pour élargir la recherche hors du rayon. */

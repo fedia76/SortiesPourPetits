@@ -235,6 +235,33 @@ export interface ScraperRunItem {
   at: string;
 }
 
+/**
+ * Une page dont le scraper se souvient (`ScrapedUrl`).
+ *
+ * L'URL est la clé normalisée — schéma, `www.`, paramètres de suivi et barre
+ * finale retirés — pas forcément le lien exact rencontré : deux adresses
+ * équivalentes ne doivent pas faire relire deux fois la même page.
+ */
+export interface ScrapedUrlEntry {
+  id: number;
+  url: string;
+  title: string | null;
+  decision: string;
+  firstSeen: string;
+  lastSeen: string;
+  eventId: number | null;
+  event?: { id: number; title: string; status: EventStatus } | null;
+}
+
+export interface ScraperMemory {
+  entries: ScrapedUrlEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  /** Poids de chaque verdict sur toute la mémoire, filtre courant ignoré. */
+  decisions: { decision: string; count: number }[];
+}
+
 /** Ce que le scraper a décidé d'une page, en clair. */
 export const DECISION_LABELS: Record<string, string> = {
   submitted: 'Proposée au site',

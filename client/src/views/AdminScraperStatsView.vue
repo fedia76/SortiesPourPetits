@@ -100,6 +100,7 @@ function decisionLabel(decision: string) {
     <nav class="row" style="gap: 1rem; margin-bottom: 1rem">
       <RouterLink to="/admin/scraper">Recherches et exécutions</RouterLink>
       <RouterLink to="/admin/scraper/stats">Statistiques</RouterLink>
+      <RouterLink to="/admin/scraper/memoire">Mémoire</RouterLink>
     </nav>
 
     <p class="muted">
@@ -108,7 +109,7 @@ function decisionLabel(decision: string) {
       revue ; une catégorie absente dit ce qu'aucune recherche ne couvre.
     </p>
 
-    <div class="row filters">
+    <div class="row stats-filters">
       <div class="field">
         <label for="st-config">Recherche</label>
         <select id="st-config" v-model.number="configId">
@@ -318,13 +319,13 @@ function decisionLabel(decision: string) {
 </template>
 
 <style scoped>
-.filters {
+.stats-filters {
   gap: 1rem;
   margin-bottom: 1.2rem;
 }
 
 /* Deux listes déroulantes n'ont pas à occuper toute la largeur de la page. */
-.filters .field {
+.stats-filters .field {
   flex: 0 1 260px;
 }
 

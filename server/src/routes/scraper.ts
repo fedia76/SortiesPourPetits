@@ -7,6 +7,8 @@ import {
   scraperConfigUpdateSchema,
   scraperFinishSchema,
   scraperItemsSchema,
+  scraperMemoryPurgeSchema,
+  scraperMemorySchema,
   scraperRunSchema,
   scraperSeenSchema,
   scraperStatsSchema,
@@ -189,6 +191,76 @@ scraperRouter.post('/runs/:id/cancel', async (req, res) => {
     data: { status: 'FAILED', error: 'Annulée depuis la console', finishedAt: new Date() },
   });
   res.json({ run: serializeRun(updated) });
+});
+
+// --------------------------------------------------------------- mémoire
+
+/**
+ * La mémoire des pages déjà analysées, telle quelle.
+ *
+ * C'est elle qui empêche de relire — donc de repayer — une page connue, et
+ * qui évite de reproposer une sortie déjà refusée. Elle est commune à toutes
+ * les configurations, d'où l'intérêt de pouvoir la regarder : une page qu'on
+ * croit oubliée y est peut-être retenue par un verdict d'un autre run.
+ */
+scraperRouter.get('/memory', async (req, res) => {
+  const parsed = scraperMemorySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const { q, decision, page, pageSize } = parsed.data;
+  const where: Prisma.ScrapedUrlWhereInput = {
+    ...(decision ? { decision } : {}),
+    ...(q ? { OR: [{ url: { contains: q } }, { title: { contains: q } }] } : {}),
+  };
+
+  const [total, entries, byDecision] = await Promise.all([
+    prisma.scrapedUrl.count({ where }),
+    prisma.scrapedUrl.findMany({
+      where,
+      orderBy: { lastSeen: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      include: { event: { select: { id: true, title: true, status: true } } },
+    }),
+    // Les verdicts et leur poids, sur toute la mémoire et non sur le filtre
+    // courant : c'est ce qui permet de purger le bon lot plutôt que tout.
+    prisma.scrapedUrl.groupBy({
+      by: ['decision'],
+      _count: { _all: true },
+      orderBy: { _count: { decision: 'desc' } },
+    }),
+  ]);
+
+  res.json({
+    entries,
+    total,
+    page,
+    pageSize,
+    decisions: byDecision.map((d) => ({ decision: d.decision, count: d._count._all })),
+  });
+});
+
+/**
+ * Oublie des pages.
+ *
+ * Sans `decision`, toute la mémoire part : le prochain run relira chaque page
+ * connue, la repaiera, et reproposera ce qui avait déjà été proposé. Avec,
+ * on n'oublie qu'un verdict — les erreurs de lecture d'un site alors en
+ * panne, par exemple, sans toucher à ce qui est déjà au catalogue.
+ */
+scraperRouter.delete('/memory', async (req, res) => {
+  const parsed = scraperMemoryPurgeSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const { decision } = parsed.data;
+  const { count } = await prisma.scrapedUrl.deleteMany({
+    where: decision ? { decision } : {},
+  });
+  res.json({ ok: true, deleted: count });
 });
 
 // ------------------------------------------------------------ statistiques
