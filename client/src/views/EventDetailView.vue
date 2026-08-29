@@ -4,7 +4,16 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
 import { useAuthStore } from '../stores/auth';
 import type { EventItem } from '../types';
-import { SETTING_LABELS, STATUS_LABELS, dayLabel, nextDate, priceLabel } from '../types';
+import {
+  SETTING_LABELS,
+  STATUS_LABELS,
+  ageLabel,
+  dayLabel,
+  hasCoordinates,
+  hasPrice,
+  nextDate,
+  priceLabel,
+} from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -22,6 +31,50 @@ const canEdit = computed(
     auth.isLoggedIn &&
     (auth.user!.id === event.value.author.id || auth.isModerator),
 );
+
+/**
+ * La fiche est le seul endroit où la sortie se lit en entier : c'est là qu'un
+ * modérateur se décide, et il n'avait aucun moyen de trancher sans repasser
+ * par la file d'attente.
+ */
+const canModerate = computed(
+  () => !!event.value && auth.isModerator && event.value.status === 'PENDING',
+);
+
+/** Ce qu'il reste à compléter avant de pouvoir approuver (voir lib/incomplete.ts). */
+const incompleteHint = computed(() => {
+  if (!event.value) return '';
+  const missing = [
+    !hasCoordinates(event.value.venue) ? 'l’adresse du lieu' : '',
+    !hasPrice(event.value) ? 'le tarif' : '',
+  ].filter(Boolean);
+  return missing.length ? `Complétez d’abord ${missing.join(' et ')}.` : '';
+});
+
+const moderating = ref(false);
+const moderationError = ref('');
+
+async function moderate(action: 'approve' | 'reject') {
+  if (!event.value) return;
+  let reason: string | undefined;
+  if (action === 'reject') {
+    reason = prompt('Motif du refus (visible par l’auteur) :') ?? undefined;
+    if (reason === undefined) return;
+  }
+  moderationError.value = '';
+  moderating.value = true;
+  try {
+    await api.post(`/api/moderation/${event.value.id}`, { action, reason });
+    // On relit la fiche plutôt que de deviner : le serveur décide du statut,
+    // et il peut refuser l'approbation d'une sortie encore incomplète.
+    const data = await api.get<{ event: EventItem }>(`/api/events/${event.value.id}`);
+    event.value = data.event;
+  } catch (e) {
+    moderationError.value = e instanceof Error ? e.message : 'Erreur';
+  } finally {
+    moderating.value = false;
+  }
+}
 
 const mapsUrl = computed(() => {
   if (!event.value) return '';
@@ -73,6 +126,38 @@ onMounted(async () => {
         Motif du refus : {{ event.rejectionReason }}
       </p>
 
+      <!-- Modération sur place : la fiche montre tout, autant y trancher. -->
+      <div v-if="canModerate" class="card moderation">
+        <p class="muted" style="margin: 0">
+          Cette sortie attend votre décision.
+          <RouterLink to="/moderation">Voir toute la file</RouterLink>
+        </p>
+        <p v-if="incompleteHint" class="incomplete">
+          {{ incompleteHint }}
+          <RouterLink :to="`/sorties/${event.id}/modifier`">Compléter la fiche</RouterLink>
+        </p>
+        <p v-if="moderationError" class="error">{{ moderationError }}</p>
+        <div class="row" style="gap: 0.5rem">
+          <button
+            class="btn"
+            type="button"
+            :disabled="moderating || !!incompleteHint"
+            :title="incompleteHint"
+            @click="moderate('approve')"
+          >
+            ✓ Approuver
+          </button>
+          <button
+            class="btn ghost"
+            type="button"
+            :disabled="moderating"
+            @click="moderate('reject')"
+          >
+            ✕ Refuser
+          </button>
+        </div>
+      </div>
+
       <img v-if="event.photoUrl" :src="event.photoUrl" :alt="event.title" class="hero" />
 
       <div class="detail-grid">
@@ -86,9 +171,9 @@ onMounted(async () => {
             <dt>Prix</dt>
             <dd>{{ priceLabel(event) }}</dd>
           </div>
-          <div v-if="event.ageMin !== null && event.ageMax !== null">
+          <div v-if="ageLabel(event)">
             <dt>Âges</dt>
-            <dd>De {{ event.ageMin }} à {{ event.ageMax }} ans</dd>
+            <dd>{{ ageLabel(event) }}</dd>
           </div>
           <div>
             <dt>Dates</dt>
@@ -137,3 +222,18 @@ onMounted(async () => {
     </template>
   </div>
 </template>
+
+<style scoped>
+.moderation {
+  padding: 1rem 1.2rem;
+  margin-bottom: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.moderation .incomplete {
+  margin: 0;
+  color: var(--danger);
+}
+</style>

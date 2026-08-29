@@ -201,6 +201,10 @@ onUnmounted(() => clearInterval(timer));
 <template>
   <div class="container page">
     <h1>Recherche automatique</h1>
+    <nav class="row" style="gap: 1rem; margin-bottom: 1rem">
+      <RouterLink to="/admin/scraper">Recherches et exécutions</RouterLink>
+      <RouterLink to="/admin/scraper/stats">Statistiques</RouterLink>
+    </nav>
     <p class="muted">
       Chaque recherche est un angle d'attaque : elle ratisse son thème et ramasse au passage
       ce que les autres manquent. Le thème, la période et la zone orientent la recherche —

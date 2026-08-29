@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 
 from .api import ApiError, SppApi
 from .config import Config, describe
-from .harvest import FetchError, Fetcher, Link, json_ld_dates, links_of, page_text
+from .harvest import FetchError, Fetcher, Link, json_ld_dates, links_of, main_image, page_text
 from .journal import RunLog
 from .models import Candidate, FoundPage, Summary
 from .payload import UNKNOWN_PRICE, OutOfPeriod, Rejected, build_payload
@@ -292,6 +292,9 @@ def _process(
         html = fetcher.get_html(url)
         content = page_text(html, limit=config.max_page_chars)
         declared = json_ld_dates(html)
+        # L'illustration se lit dans le HTML, pas dans le texte : le modèle ne
+        # voit que le second et ne pouvait donc jamais donner d'URL d'image.
+        page_image = main_image(html, url)
     except FetchError as err:
         summary.errors += 1
         log.error("extraction", str(err), url=url)
@@ -408,19 +411,27 @@ def _process(
     if not geo.located:
         log.event("incomplete", field="adresse", url=url, title=payload["title"])
 
+    # Ce que la page déclare passe avant ce que le modèle a pu écrire : lui ne
+    # voit que du texte, donc une URL de sa part est au mieux une devinette.
+    photo_url = page_image or extracted.photo_url
+    if not photo_url:
+        log.event("photo", status="aucune image sur la page", url=url)
+
     photo = None
-    if submit and extracted.photo_url:
+    if submit and photo_url:
         try:
-            photo = download(extracted.photo_url)
-            log.event("photo", status="téléchargée", url=extracted.photo_url)
+            # Même session que les pages : sans notre User-Agent, beaucoup de
+            # serveurs refusent l'image qu'ils viennent pourtant d'annoncer.
+            photo = download(photo_url, fetcher.session)
+            log.event("photo", status="téléchargée", url=photo_url)
         except PhotoError as err:
-            log.event("photo", status=f"ignorée ({err})", url=extracted.photo_url)
+            log.event("photo", status=f"ignorée ({err})", url=photo_url)
 
     record = {
         "payload": payload,
         "source_url": url,
         "found_on": candidate.source,
-        "photo_url": extracted.photo_url,
+        "photo_url": photo_url,
         "located": geo.located,
         "schedule": schedule.as_dict(),
     }

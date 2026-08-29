@@ -207,6 +207,35 @@ dont il découle ; le compteur `scheduled` du résumé dit combien de sorties du
 run ont des dates réelles plutôt qu'une plage. Sur le run qui a servi de
 mesure : huit sur huit.
 
+### L'illustration de la sortie
+
+Aucune sortie importée n'arrivait avec sa photo, et la cause tenait au partage
+des rôles : le modèle ne reçoit que le **texte** de la page — `page_text`
+détruit les balises — alors que le prompt lui demandait l'URL d'une image.
+Une information qui n'est pas dans ce qu'on lui donne ne peut être que
+devinée, et une URL devinée ne se télécharge pas.
+
+L'image se lit donc en Python, dans le HTML, comme les dates JSON-LD et pour
+la même raison — c'est gratuit, et il n'y a rien à juger (`harvest.main_image`) :
+
+1. `og:image` (puis `twitter:image`, `link rel=image_src`) — c'est l'image que
+   le site montre lui-même quand on partage la page, donc exactement celle
+   qu'on cherche ;
+2. le champ `image` du `schema.org/Event`, sous ses trois formes (URL, liste,
+   `ImageObject`) ;
+3. à défaut, les `<img>` du corps, logos, icônes, boutons de partage et
+   vignettes écartés — le `data-src` du lazy-loading est lu comme un `src`.
+
+Les SVG et les `data:` URI sont refusés, l'URL est rendue absolue, et le
+téléchargement réutilise la session du `Fetcher` : sans notre User-Agent,
+beaucoup de serveurs refusent l'image qu'ils viennent d'annoncer. Un type MIME
+absent ou fantaisiste (`image/jpg`, `application/octet-stream`) ne condamne
+plus la photo — les premiers octets tranchent.
+
+Le prompt d'extraction ne demande plus d'image ; le champ `photo_url` reste
+dans le schéma et sert de recours aux configurations qui ont leur propre
+prompt.
+
 ### La mémoire des pages analysées
 
 Une page lue est une page payée : la relire, c'est repayer. Toute page dont le
