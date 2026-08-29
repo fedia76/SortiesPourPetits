@@ -13,14 +13,30 @@ identifiable, et la Base Adresse Nationale prend le relais si Photon se
 dérobe. Elle ne connaît que les adresses, mais elle est gratuite, publique et
 sans quota.
 
-Le contrôle porte sur le pays : une position hors de France est traitée comme
-un échec, parce que c'est le signe d'une homonymie — il y a un Montreuil au
-Québec. Le département, lui, n'est plus une condition : une sortie voisine de
-la zone visée reste une bonne sortie.
+Le contrôle porte sur deux choses, et sur rien d'autre :
+
+* **le pays** — une position hors de France est une homonymie (il y a un
+  Montreuil au Québec) ;
+* **la concordance avec la page** — si la page annonce « 76600 Le Havre », un
+  résultat parisien est une homonymie lui aussi, et il est refusé.
+
+Le second remplace un ancien contrôle par zone de la configuration, retiré à
+raison : une sortie voisine de la zone visée reste une bonne sortie. Mais son
+retrait avait laissé passer n'importe quel homonyme français. La bonne clé
+n'était pas la zone cherchée, c'est **ce que la page elle-même affirme** :
+elle vaut pour toutes les zones, et elle n'écarte que ce qui se contredit.
+
+Aucun biais géographique n'est envoyé au géocodeur. Il y en avait un, figé sur
+le centre de Paris, pour départager les homonymes quand le projet était
+francilien ; il faisait atterrir en Seine-Maritime — et ailleurs — des sorties
+que la page situait pourtant sans ambiguïté. Un biais est une préférence
+inventée ; la concordance ci-dessus est une vérification, et elle s'appuie sur
+une information qu'on a vraiment.
 """
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Any, Callable, Iterable
 
 import requests
@@ -30,9 +46,6 @@ from .models import UNLOCATED, ExtractedEvent, Location
 
 PHOTON_URL = "https://photon.komoot.io/api/"
 BAN_URL = "https://api-adresse.data.gouv.fr/search/"
-
-#: Biais de recherche : centre de Paris, pour que « Le Zèbre » sorte en IDF.
-_BIAS = {"lat": 48.8566, "lon": 2.3522}
 
 _TIMEOUT = 10
 
@@ -75,7 +88,7 @@ _photon_available = True
 def _photon_search(query: str) -> list[dict[str, Any]]:
     response = requests.get(
         PHOTON_URL,
-        params={"q": query, "limit": 5, "lang": "fr", **_BIAS},
+        params={"q": query, "limit": 5, "lang": "fr"},
         headers={"User-Agent": USER_AGENT},
         timeout=_TIMEOUT,
     )
@@ -109,6 +122,46 @@ def _search(query: str) -> list[dict[str, Any]]:
         except requests.RequestException:
             _photon_available = False
     return _ban_search(query)
+
+
+def _fold(text: str) -> str:
+    """Compare deux noms de ville sans se soucier de la casse ni des accents."""
+    stripped = unicodedata.normalize("NFKD", text.strip().lower())
+    return "".join(c for c in stripped if not unicodedata.combining(c))
+
+
+def _departement(postal_code: str) -> str:
+    """« 76600 » → « 76 ». Les codes d'outre-mer tiennent sur trois chiffres."""
+    digits = "".join(c for c in postal_code if c.isdigit())[:5]
+    if len(digits) < 2:
+        return ""
+    return digits[:3] if digits.startswith(("97", "98")) else digits[:2]
+
+
+def agrees_with_page(location: Location, event: ExtractedEvent) -> bool:
+    """Le résultat dit-il la même chose que la page ?
+
+    On ne compare qu'à ce que la page affirme, et dans cet ordre : son code
+    postal s'il en donne un, sa ville sinon. Une page muette sur les deux ne
+    permet aucune vérification — le résultat est alors accepté tel quel, et
+    c'est le seul cas où une homonymie française passe encore.
+
+    La comparaison porte sur le département, pas sur le code postal entier :
+    une salle donnée « 76000 Rouen » que le géocodeur situe « 76100 » est la
+    même salle, dans la même ville.
+    """
+    attendu = _departement(event.venue_postal_code)
+    trouve = _departement(location.postal_code)
+    if attendu and trouve:
+        return attendu == trouve
+
+    ville = _fold(event.venue_city)
+    if ville and location.city:
+        # « Paris » et « Paris 11e Arrondissement » désignent le même endroit ;
+        # « Paris » et « Le Havre » non.
+        obtenue = _fold(location.city)
+        return ville in obtenue or obtenue in ville
+    return True
 
 
 def _in_france(props: dict[str, Any]) -> bool:
@@ -149,6 +202,7 @@ def geocode(
     """
     search = search or _search
     last_query = event.venue_name or event.venue_city or "(lieu inconnu)"
+    contredit = False
 
     for query in _queries(event):
         last_query = query
@@ -165,6 +219,16 @@ def geocode(
                 # Sans code postal, la réponse est trop vague : on tente la
                 # requête suivante, plus précise.
                 continue
+            if not agrees_with_page(location, event):
+                # Homonyme : la page situe la sortie ailleurs. Mieux vaut
+                # rendre la sortie sans position — la modération le voit et
+                # complète — que de l'envoyer avec certitude au mauvais bout
+                # de la France, où la recherche par distance la proposera.
+                contredit = True
+                continue
             return GeocodeResult(location, query)
 
-    return GeocodeResult(UNLOCATED, last_query, "aucun résultat")
+    reason = (
+        "aucun résultat cohérent avec la page (homonymie)" if contredit else "aucun résultat"
+    )
+    return GeocodeResult(UNLOCATED, last_query, reason)

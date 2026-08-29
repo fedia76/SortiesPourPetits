@@ -500,6 +500,7 @@ onUnmounted(() => clearInterval(timer));
           <td>
             <RouterLink :to="`/admin/scraper/runs/${r.id}`">{{ r.config?.name }}</RouterLink>
             <span v-if="!r.submit" class="badge">essai</span>
+            <span v-if="r.purgedAt" class="badge" title="Sorties et mémoire supprimées">vidée</span>
           </td>
           <td>
             <span class="badge" :class="`run-${r.status}`">{{ RUN_STATUS_LABELS[r.status] }}</span>

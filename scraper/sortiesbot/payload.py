@@ -161,8 +161,13 @@ def build_payload(
     if not venue_name:
         raise Rejected("lieu absent")
     address = _truncate(event.venue_address or venue_name, ADDRESS_MAX)
-    city = _truncate(location.city or event.venue_city or CITY_PLACEHOLDER, CITY_MAX)
-    postal_code = _clean_postal_code(location.postal_code or event.venue_postal_code)
+    # Ce que la page annonce passe avant ce que le géocodeur a trouvé : la
+    # page est la source, le géocodeur une interprétation. L'inverse laissait
+    # un homonyme parisien réécrire « Le Havre, 76600 » en « Paris, 75011 » —
+    # le bon renseignement écrasé par le mauvais. Le géocodeur ne complète
+    # donc plus que ce que la page a laissé vide.
+    city = _truncate(event.venue_city or location.city or CITY_PLACEHOLDER, CITY_MAX)
+    postal_code = _clean_postal_code(event.venue_postal_code or location.postal_code)
 
     return {
         "title": title,

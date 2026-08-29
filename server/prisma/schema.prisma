@@ -226,6 +226,11 @@ model ScraperRun {
   webSearches  Int     @default(0)
   costUsd      Decimal @default(0) @db.Decimal(8, 4)
 
+  /// Date à laquelle les données produites par l'exécution — ses sorties et
+  /// ce qu'elle avait mémorisé — ont été supprimées. Le journal, lui, reste :
+  /// il dit ce que l'exécution a fait, et ça vaut d'être gardé.
+  purgedAt DateTime?
+
   config   ScraperConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
   configId Int
 
@@ -243,6 +248,11 @@ model ScraperRun {
 model ScraperRunItem {
   id       Int      @id @default(autoincrement())
   url      String   @db.VarChar(500)
+  /// Clé sous laquelle la page a été mémorisée dans `ScrapedUrl`, quand elle
+  /// l'a été. Conservée pour pouvoir défaire ce qu'une exécution a mémorisé —
+  /// l'URL affichée, elle, reste le lien exact et ne suffit pas à retrouver
+  /// la ligne. Nulle pour les exécutions antérieures à ce champ.
+  key      String?  @db.VarChar(500)
   title    String?
   /// submitted, dry_run, irrelevant, invalid, duplicate, out_of_period…
   decision String

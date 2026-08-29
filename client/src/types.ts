@@ -122,6 +122,11 @@ export interface EventItem {
   venue: Venue;
   category: Category;
   author: { id: number; displayName: string; email?: string };
+  /**
+   * La recherche automatique qui a proposé cette sortie, `null` si elle vient
+   * d'un visiteur. Renseigné par la file de modération.
+   */
+  origin?: { configId: number; configName: string } | null;
   distanceKm?: number;
   /** Renseigné par la recherche de doublons de la modération. */
   similarity?: Similarity;
@@ -168,11 +173,6 @@ export const RUN_STATUS_LABELS: Record<ScraperRunStatus, string> = {
 };
 
 /**
- * Une recherche paramétrée du scraper. Thème, période et zone orientent la
- * recherche ; ils ne filtrent pas le résultat quand `keepOutOfScope` est vrai,
- * parce qu'une page déjà lue est déjà payée.
- */
-/**
  * Les deux modes d'une recherche automatique.
  *
  * « recherche » : le modèle cherche sur le web, on dépouille les agendas
@@ -186,6 +186,11 @@ export const SCRAPER_MODE_LABELS: Record<ScraperMode, string> = {
   site: 'Site précis',
 };
 
+/**
+ * Une recherche paramétrée du scraper. Thème, période et zone orientent la
+ * recherche ; ils ne filtrent pas le résultat quand `keepOutOfScope` est vrai,
+ * parce qu'une page déjà lue est déjà payée.
+ */
 export interface ScraperConfig {
   id: number;
   name: string;
@@ -226,6 +231,8 @@ export interface ScraperRun {
   queuedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  /** Date à laquelle les sorties et la mémoire de l'exécution ont été supprimées. */
+  purgedAt: string | null;
   error: string | null;
   candidates: number;
   pages: number;
@@ -246,6 +253,8 @@ export interface ScraperRun {
 export interface ScraperRunItem {
   id: number;
   url: string;
+  /** Clé de mémorisation, quand la page a été mémorisée. */
+  key: string | null;
   title: string | null;
   decision: string;
   reason: string | null;
