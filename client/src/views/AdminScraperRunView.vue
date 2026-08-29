@@ -65,8 +65,32 @@ function label(decision: string) {
 
 const purging = ref(false);
 
-/** Pages que cette exécution a mémorisées : ce que la purge fera oublier. */
-const memorised = computed(() => items.value.filter((i) => i.key).length);
+/** Décisions que le scraper mémorise (voir `store.report(remember=True)`). */
+const MEMORISED_DECISIONS = new Set([
+  'submitted',
+  'irrelevant',
+  'invalid',
+  'out_of_period',
+  'out_of_area',
+]);
+
+/**
+ * Pages que la purge peut faire oublier.
+ *
+ * Deux façons de les retrouver, comme côté serveur : la clé de mémorisation,
+ * et — pour les exécutions antérieures à ce champ, qui n'en ont pas — la
+ * sortie que la page a produite.
+ */
+const memorised = computed(() => items.value.filter((i) => i.key || i.eventId).length);
+
+/**
+ * Une exécution d'avant le suivi des clés a mémorisé des pages qu'on ne sait
+ * plus retrouver : celles qui n'ont donné aucune sortie. Le dire plutôt que
+ * de laisser croire que la purge est complète.
+ */
+const partial = computed(() =>
+  items.value.some((i) => !i.key && !i.eventId && MEMORISED_DECISIONS.has(i.decision)),
+);
 
 /**
  * Supprime tout ce que l'exécution a produit — ses sorties et ce qu'elle a
@@ -84,6 +108,11 @@ async function purge() {
     `Supprimer définitivement les données de cette exécution ?\n\n` +
     `· ${sorties} sortie(s) créée(s), y compris celles déjà publiées sur le site\n` +
     `· ${memorised.value} page(s) oubliée(s) de la mémoire du scraper\n\n` +
+    (partial.value
+      ? `Cette exécution est antérieure au suivi des clés de mémorisation : les pages ` +
+        `qu'elle a écartées sans produire de sortie resteront en mémoire. Pour les ` +
+        `oublier, passez par « Recherche auto → Mémoire ».\n\n`
+      : '') +
     `Le journal ci-dessous est conservé. Les pages oubliées pourront être relues, ` +
     `donc repayées, par une prochaine exécution.`;
   if (!confirm(question)) return;

@@ -387,7 +387,12 @@ en panne ne touche pas aux `submitted`.
 
 **Défaire une exécution entière** se fait depuis sa page, dans la console :
 « Supprimer les données de cette exécution » retire ses sorties — publiées
-comprises — *et* oublie les pages qu'elle avait mémorisées. Les deux vont
+comprises — *et* oublie les pages qu'elle avait mémorisées. Les lignes de
+mémoire se retrouvent de deux façons complémentaires : par la sortie qu'elles
+ont produite (`ScrapedUrl.eventId`, exact et rétroactif) et par la clé que
+l'exécution a employée (`ScraperRunItem.key`, seule à couvrir les pages
+mémorisées sans avoir donné de sortie). La mémoire part avant les sorties :
+la supprimer après aurait perdu le lien, `eventId` passant à NULL avec elles. Les deux vont
 ensemble, et c'est tout l'intérêt du bouton : ne supprimer que les sorties
 laisserait leurs pages mémorisées, donc jamais reproposées, et une recherche
 mal réglée resterait punie longtemps après sa correction. Le journal de

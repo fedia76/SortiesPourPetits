@@ -604,6 +604,33 @@ scraperRouter.delete('/runs/:id/data', async (req, res) => {
     ? await prisma.event.findMany({ where: { id: { in: eventIds } }, select: { id: true, photoUrl: true } })
     : [];
 
+  // La mémoire d'abord, les sorties ensuite — l'ordre n'est pas indifférent.
+  // `ScrapedUrl.eventId` est en `onDelete: SetNull` : supprimer les sorties
+  // en premier effacerait le lien qui sert justement à retrouver les lignes
+  // de mémoire qu'elles ont produites.
+  //
+  // Deux façons de les retrouver, complémentaires :
+  //
+  // * par `eventId` — exact, et surtout rétroactif : il vaut pour les
+  //   exécutions antérieures au champ `key`, qui n'ont rien d'autre ;
+  // * par `key` — la clé réellement employée, seule à couvrir les pages
+  //   mémorisées **sans** avoir donné de sortie (hors sujet, inexploitable).
+  //
+  // L'URL brute de la ligne de journal ne sert à rien ici : la mémoire est
+  // indexée par URL normalisée (schéma, `www.`, barre finale, paramètres de
+  // suivi retirés), et le journal garde le lien exact. Les deux ne coïncident
+  // que par chance — et quand elles coïncident, ce serait pour supprimer une
+  // ligne que cette exécution n'a peut-être pas écrite, puisqu'une décision
+  // provisoire ne mémorise rien.
+  const keys = [...new Set(run.items.map((i) => i.key).filter((v): v is string => !!v))];
+  const retrouvables = [
+    ...(eventIds.length ? [{ eventId: { in: eventIds } }] : []),
+    ...(keys.length ? [{ url: { in: keys } }] : []),
+  ];
+  const { count: memory } = retrouvables.length
+    ? await prisma.scrapedUrl.deleteMany({ where: { OR: retrouvables } })
+    : { count: 0 };
+
   if (events.length) {
     await prisma.event.deleteMany({ where: { id: { in: events.map((e) => e.id) } } });
     // Les photos ne partent qu'une fois les lignes supprimées : un fichier
@@ -612,13 +639,6 @@ scraperRouter.delete('/runs/:id/data', async (req, res) => {
       if (event.photoUrl) await deletePhoto(event.photoUrl);
     }
   }
-
-  // Une exécution antérieure au champ `key` n'a que son URL : on la présente
-  // aussi, ce qui couvre les pages dont le lien était déjà normalisé.
-  const keys = [...new Set(run.items.flatMap((i) => (i.key ? [i.key] : [i.url])))];
-  const { count: memory } = keys.length
-    ? await prisma.scrapedUrl.deleteMany({ where: { url: { in: keys } } })
-    : { count: 0 };
 
   await prisma.scraperRun.update({ where: { id }, data: { purgedAt: new Date() } });
   res.json({ ok: true, events: events.length, memory });
