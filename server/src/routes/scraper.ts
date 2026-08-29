@@ -1,6 +1,7 @@
 import { Prisma, Role } from '@prisma/client';
 import { Router } from 'express';
 import { prisma } from '../db';
+import { deletePhoto } from '../lib/upload';
 import { requireRole } from '../middleware/auth';
 import {
   checkScraperMode,
@@ -524,6 +525,10 @@ scraperRouter.post('/runs/:id/items', async (req, res) => {
     data: parsed.data.items.map((item) => ({
       runId,
       url: item.url,
+      // La clé n'est gardée que si la page a bien été mémorisée : c'est elle
+      // qui permettra, plus tard, de défaire exactement ce que ce run a mis
+      // en mémoire (voir DELETE /runs/:id/data).
+      key: item.remember ? (item.key ?? item.url) : null,
       title: item.title ?? null,
       decision: item.decision,
       reason: item.reason ?? null,
@@ -554,6 +559,69 @@ scraperRouter.post('/runs/:id/items', async (req, res) => {
   }
 
   res.json({ ok: true, recorded: parsed.data.items.length });
+});
+
+/**
+ * Supprime tout ce qu'une exécution a produit : ses sorties, et ce qu'elle
+ * avait mis dans la mémoire des pages.
+ *
+ * Les deux vont ensemble et c'est tout l'intérêt du bouton. Supprimer les
+ * sorties seules laisserait leurs pages mémorisées, donc jamais reproposées :
+ * une recherche mal réglée resterait punie longtemps après sa correction.
+ * Oublier la mémoire seule laisserait les sorties en place, donc reproposées
+ * en double au prochain passage.
+ *
+ * Le journal de l'exécution, lui, survit : il dit ce qu'elle a fait, et c'est
+ * précisément ce qu'on veut relire après coup. Seul `purgedAt` est posé, pour
+ * que la console cesse de présenter ses compteurs comme s'ils décrivaient
+ * quelque chose de vivant.
+ */
+scraperRouter.delete('/runs/:id/data', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const run = await prisma.scraperRun.findUnique({
+    where: { id },
+    include: { items: { select: { url: true, key: true, eventId: true } } },
+  });
+  if (!run) {
+    res.status(404).json({ error: 'Exécution introuvable' });
+    return;
+  }
+  if (run.status === 'QUEUED' || run.status === 'RUNNING') {
+    // Le worker écrit encore : ce qu'on supprimerait maintenant reviendrait
+    // par la ligne suivante du même run.
+    res.status(409).json({
+      error: "L'exécution est en cours. Annulez-la ou attendez sa fin avant de la vider.",
+    });
+    return;
+  }
+
+  const eventIds = [...new Set(run.items.map((i) => i.eventId).filter((v): v is number => !!v))];
+  const events = eventIds.length
+    ? await prisma.event.findMany({ where: { id: { in: eventIds } }, select: { id: true, photoUrl: true } })
+    : [];
+
+  if (events.length) {
+    await prisma.event.deleteMany({ where: { id: { in: events.map((e) => e.id) } } });
+    // Les photos ne partent qu'une fois les lignes supprimées : un fichier
+    // orphelin se repère, une fiche sans sa photo ne se répare pas.
+    for (const event of events) {
+      if (event.photoUrl) await deletePhoto(event.photoUrl);
+    }
+  }
+
+  // Une exécution antérieure au champ `key` n'a que son URL : on la présente
+  // aussi, ce qui couvre les pages dont le lien était déjà normalisé.
+  const keys = [...new Set(run.items.flatMap((i) => (i.key ? [i.key] : [i.url])))];
+  const { count: memory } = keys.length
+    ? await prisma.scrapedUrl.deleteMany({ where: { url: { in: keys } } })
+    : { count: 0 };
+
+  await prisma.scraperRun.update({ where: { id }, data: { purgedAt: new Date() } });
+  res.json({ ok: true, events: events.length, memory });
 });
 
 /** Clôt une exécution avec ses compteurs. */

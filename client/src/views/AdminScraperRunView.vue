@@ -8,6 +8,8 @@ import { DECISION_LABELS, RUN_STATUS_LABELS } from '../types';
 const route = useRoute();
 const run = ref<ScraperRun | null>(null);
 const error = ref('');
+/** Compte rendu de la dernière suppression, distinct d'une erreur. */
+const notice = ref('');
 /** Panne de rafraîchissement — voir AdminScraperView : on continue d'essayer. */
 const offline = ref('');
 const loading = ref(true);
@@ -61,6 +63,47 @@ function label(decision: string) {
   return DECISION_LABELS[decision] ?? decision;
 }
 
+const purging = ref(false);
+
+/** Pages que cette exécution a mémorisées : ce que la purge fera oublier. */
+const memorised = computed(() => items.value.filter((i) => i.key).length);
+
+/**
+ * Supprime tout ce que l'exécution a produit — ses sorties et ce qu'elle a
+ * mémorisé — et garde son journal.
+ *
+ * Les deux vont ensemble : ne supprimer que les sorties laisserait leurs pages
+ * mémorisées, donc jamais reproposées, et une recherche mal réglée resterait
+ * punie longtemps après sa correction.
+ */
+async function purge() {
+  const r = run.value;
+  if (!r) return;
+  const sorties = items.value.filter((i) => i.eventId).length;
+  const question =
+    `Supprimer définitivement les données de cette exécution ?\n\n` +
+    `· ${sorties} sortie(s) créée(s), y compris celles déjà publiées sur le site\n` +
+    `· ${memorised.value} page(s) oubliée(s) de la mémoire du scraper\n\n` +
+    `Le journal ci-dessous est conservé. Les pages oubliées pourront être relues, ` +
+    `donc repayées, par une prochaine exécution.`;
+  if (!confirm(question)) return;
+
+  error.value = '';
+  purging.value = true;
+  try {
+    const res = await api.delete<{ events: number; memory: number }>(
+      `/api/scraper/runs/${r.id}/data`,
+    );
+    notice.value =
+      `${res.events} sortie(s) supprimée(s) et ${res.memory} page(s) oubliée(s).`;
+    await load();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erreur';
+  } finally {
+    purging.value = false;
+  }
+}
+
 /** Les décisions qui ont coûté une lecture de page, par opposition aux écarts. */
 function isKept(decision: string) {
   return decision === 'submitted' || decision === 'dry_run';
@@ -89,6 +132,7 @@ onUnmounted(() => clearInterval(timer));
   <div class="container page">
     <RouterLink to="/admin/scraper" class="back">← Recherche automatique</RouterLink>
     <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="notice" class="notice">{{ notice }}</p>
     <p v-if="offline" class="error">
       Le site ne répond plus ({{ offline }}). Cette page date de la dernière
       réponse ; l'exécution, elle, tourne sur le serveur. Nouvelle tentative
@@ -129,6 +173,22 @@ onUnmounted(() => clearInterval(timer));
         {{ run.outputTokens.toLocaleString('fr-FR') }} en sortie ·
         {{ run.webSearches }} recherche(s) web
       </p>
+
+      <div v-if="run.purgedAt" class="purged">
+        <b>Données supprimées le {{ when(run.purgedAt) }}.</b>
+        Les sorties issues de cette exécution et les pages qu'elle avait mémorisées n'existent
+        plus ; les compteurs ci-dessus décrivent ce qu'elle avait fait, pas ce qui reste. Le
+        journal, lui, est conservé.
+      </div>
+      <div v-else-if="run.status === 'DONE' || run.status === 'FAILED'" class="row purge-row">
+        <button class="btn small danger" :disabled="purging" @click="purge">
+          {{ purging ? 'Suppression…' : 'Supprimer les données de cette exécution' }}
+        </button>
+        <span class="muted small">
+          Ses sorties — publiées comprises — et les {{ memorised }} page(s) qu'elle a
+          mémorisées. Le journal reste.
+        </span>
+      </div>
 
       <template v-if="tally.length">
         <h2>Bilan</h2>
@@ -186,6 +246,28 @@ onUnmounted(() => clearInterval(timer));
 </template>
 
 <style scoped>
+.notice {
+  padding: 0.6rem 0.8rem;
+  border-radius: 10px;
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.purged {
+  padding: 0.7rem 0.9rem;
+  margin: 0.8rem 0;
+  border-radius: 10px;
+  background: var(--photo-bg);
+  font-size: 0.9rem;
+}
+
+.purge-row {
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0.8rem 0;
+  flex-wrap: wrap;
+}
+
 .back {
   display: inline-block;
   margin-bottom: 0.8rem;

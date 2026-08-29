@@ -226,6 +226,8 @@ export interface ScraperRun {
   queuedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  /** Date à laquelle les sorties et la mémoire de l'exécution ont été supprimées. */
+  purgedAt: string | null;
   error: string | null;
   candidates: number;
   pages: number;
@@ -246,6 +248,8 @@ export interface ScraperRun {
 export interface ScraperRunItem {
   id: number;
   url: string;
+  /** Clé de mémorisation, quand la page a été mémorisée. */
+  key: string | null;
   title: string | null;
   decision: string;
   reason: string | null;

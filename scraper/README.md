@@ -291,6 +291,44 @@ dont il découle ; le compteur `scheduled` du résumé dit combien de sorties du
 run ont des dates réelles plutôt qu'une plage. Sur le run qui a servi de
 mesure : huit sur huit.
 
+### Où se trouve la sortie
+
+Le géocodeur (Photon, puis la Base Adresse Nationale) répond souvent plusieurs
+lieux pour une même requête, et il y a un « Espace culturel » dans la moitié
+des communes de France. Deux réglages décidaient jusqu'ici lequel gagnait, et
+tous deux étaient hérités du temps où le site ne couvrait que l'Île-de-France :
+
+- un **biais de recherche figé sur le centre de Paris**, envoyé à Photon, qui
+  reclassait les résultats par proximité ;
+- **aucun contrôle de concordance**, le filtre par zone ayant été retiré à
+  raison — une sortie voisine de la zone visée reste une bonne sortie.
+
+Le résultat, sur un run « Seine-Maritime » : des sorties correctement trouvées,
+correctement lues — la page disait « 76600 Le Havre » — et publiées à Paris,
+parce que `build_payload` laissait la réponse du géocodeur **écraser** ce que
+la page annonçait.
+
+Trois corrections, dans cet ordre d'importance :
+
+1. **Un résultat qui contredit la page est refusé** (`geocode.agrees_with_page`).
+   La comparaison porte sur le département quand la page donne un code postal,
+   sur la ville sinon, et sur rien du tout quand la page est muette — c'est le
+   seul cas où une homonymie française passe encore. La bonne clé n'était pas
+   la zone cherchée mais **ce que la page elle-même affirme** : elle vaut pour
+   toutes les zones, et n'écarte que ce qui se contredit.
+2. **Le biais parisien est supprimé.** Un biais est une préférence inventée ;
+   la concordance ci-dessus est une vérification, et elle s'appuie sur une
+   information qu'on a vraiment.
+3. **La page passe avant le géocodeur** dans le payload : ville et code postal
+   viennent de ce qui est écrit sur la page, le géocodeur ne complétant que ce
+   qu'elle a laissé vide.
+
+Conséquence assumée : une sortie dont le lieu ne se géocode pas de façon
+cohérente part désormais en `(0, 0)` — « adresse à compléter », que la
+modération signale — au lieu de partir avec certitude au mauvais bout de la
+France, où la recherche par distance la proposerait. Le compteur `ungeocoded`
+monte donc, et c'est le but.
+
 ### L'illustration de la sortie
 
 Aucune sortie importée n'arrivait avec sa photo, et la cause tenait au partage
@@ -346,6 +384,15 @@ Mémoire ». Purger n'est pas anodin : les pages oubliées seront relues, donc
 repayées, et celles qui avaient déjà donné une sortie pourront la proposer une
 seconde fois. D'où la purge par verdict : oublier les `error` d'un site alors
 en panne ne touche pas aux `submitted`.
+
+**Défaire une exécution entière** se fait depuis sa page, dans la console :
+« Supprimer les données de cette exécution » retire ses sorties — publiées
+comprises — *et* oublie les pages qu'elle avait mémorisées. Les deux vont
+ensemble, et c'est tout l'intérêt du bouton : ne supprimer que les sorties
+laisserait leurs pages mémorisées, donc jamais reproposées, et une recherche
+mal réglée resterait punie longtemps après sa correction. Le journal de
+l'exécution, lui, est conservé — il dit ce qu'elle a fait, et c'est justement
+ce qu'on relit après coup.
 
 Supprimer une sortie de la file de modération ne l'efface pas de cette
 mémoire — la page reste connue, donc ne sera pas reproposée. Les deux gestes

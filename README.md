@@ -51,10 +51,12 @@ communauté et validées par une équipe de modération.
   sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
   une clé d'API. Il sait aussi partir d'une adresse connue — le site d'un
   festival, la saison d'un théâtre — sans lancer la moindre recherche, et tirer
-  d'une même page de programme toutes les sorties qu'elle annonce. Ce qu'un import n'a pas su déterminer part avec une valeur
-  convenue plutôt que de faire perdre la sortie — adresse non géocodée en
-  `(0, 0)`, tarif introuvable à `-1` : la modération les signale et refuse
-  l'approbation tant qu'ils ne sont pas complétés.
+  d'une même page de programme toutes les sorties qu'elle annonce. Ce qu'un
+  import n'a pas su déterminer part avec une valeur convenue plutôt que de
+  faire perdre la sortie — adresse non géocodée en `(0, 0)`, tarif introuvable
+  à `-1` : la modération les signale et refuse l'approbation tant qu'ils ne
+  sont pas complétés. Tout ce qu'une exécution a produit — ses sorties et ce
+  qu'elle a mémorisé — se supprime d'un bouton depuis sa page.
 
 ## Démarrage
 
@@ -103,6 +105,7 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | GET | `/api/scraper/stats` | modérateur | Statistiques du scraping (`configId`, `days`) |
 | GET | `/api/scraper/memory` | modérateur | Mémoire des pages analysées (`q`, `decision`, `page`) |
 | DELETE | `/api/scraper/memory` | modérateur | Oublier des pages (`decision` pour n'en purger qu'un lot) |
+| DELETE | `/api/scraper/runs/:id/data` | modérateur | Supprimer ce qu'une exécution a produit : ses sorties et ce qu'elle a mémorisé (le journal reste) |
 | GET | `/api/admin/users` | admin | Liste des utilisateurs |
 | PATCH | `/api/admin/users/:id/role` | admin | Changer un rôle |
 
