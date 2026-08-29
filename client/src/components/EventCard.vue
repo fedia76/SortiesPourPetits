@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { EventItem } from '../types';
-import { SETTING_LABELS, priceLabel } from '../types';
+import { SETTING_LABELS, nextDate, priceLabel } from '../types';
 
 const props = defineProps<{ event: EventItem }>();
 
@@ -10,6 +10,16 @@ const price = computed(() => priceLabel(props.event));
 const dateLabel = computed(() => {
   if (props.event.isPermanent || !props.event.dateStart || !props.event.dateEnd) return 'Toute l’année';
   const fmt = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  // Quand la sortie énumère ses jours, sa prochaine séance dit bien plus que
+  // sa période : « dim. 20 sept. » plutôt que « 1 juil. → 31 août ».
+  const prochaine = nextDate(props.event);
+  if (prochaine) {
+    return new Date(`${prochaine}T12:00:00`).toLocaleDateString('fr-FR', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    });
+  }
   return props.event.dateStart === props.event.dateEnd
     ? fmt(props.event.dateStart)
     : `${fmt(props.event.dateStart)} → ${fmt(props.event.dateEnd)}`;

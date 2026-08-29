@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
 import { useAuthStore } from '../stores/auth';
 import type { EventItem } from '../types';
-import { SETTING_LABELS, STATUS_LABELS, priceLabel } from '../types';
+import { SETTING_LABELS, STATUS_LABELS, dayLabel, nextDate, priceLabel } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -12,6 +12,9 @@ const auth = useAuthStore();
 
 const event = ref<EventItem | null>(null);
 const error = ref('');
+
+const aujourdhui = new Date().toISOString().slice(0, 10);
+const prochaine = computed(() => (event.value ? nextDate(event.value) : undefined));
 
 const canEdit = computed(
   () =>
@@ -91,6 +94,18 @@ onMounted(async () => {
             <dt>Dates</dt>
             <dd v-if="event.isPermanent || !event.dateStart || !event.dateEnd">Toute l'année</dd>
             <dd v-else>Du {{ formatDate(event.dateStart!) }} au {{ formatDate(event.dateEnd!) }}</dd>
+          </div>
+          <div v-if="event.dates.length">
+            <dt>Jours de représentation</dt>
+            <dd>
+              <p v-if="prochaine" class="next">Prochaine : {{ dayLabel(prochaine) }}</p>
+              <p v-else class="next">Toutes les dates sont passées.</p>
+              <ul class="days">
+                <li v-for="day in event.dates" :key="day" :class="{ passe: day < aujourdhui }">
+                  {{ dayLabel(day) }}
+                </li>
+              </ul>
+            </dd>
           </div>
           <div v-if="event.setting">
             <dt>Cadre</dt>

@@ -57,6 +57,17 @@ export const eventInputSchema = z
     openTime: z.preprocess(emptyToNull, z.string().regex(timeRegex, 'Heure invalide (HH:MM)').nullable().optional()),
     closeTime: z.preprocess(emptyToNull, z.string().regex(timeRegex, 'Heure invalide (HH:MM)').nullable().optional()),
     setting: z.enum(['INDOOR', 'OUTDOOR', 'BOTH']).nullable().optional(),
+    /**
+     * Jours où la sortie a effectivement lieu, dans sa période. Une liste vide
+     * — le cas courant — veut dire « tous les jours », ce qui était le seul
+     * modèle possible avant. Un spectacle du dimanche, lui, énumère ses dates,
+     * sinon il ressortirait un jeudi.
+     */
+    dates: z
+      .array(z.string().regex(dateOnlyRegex, 'Date invalide (AAAA-MM-JJ)'))
+      .max(400, 'Trop de dates : décrivez plutôt une période continue')
+      .optional()
+      .default([]),
     categoryId: z.number().int().positive('Catégorie requise'),
     venue: venueSchema,
   })
@@ -77,7 +88,16 @@ export const eventInputSchema = z
   })
   .refine((e) => !e.openTime || !e.closeTime || e.openTime < e.closeTime, {
     message: "L'heure d'ouverture doit précéder l'heure de fermeture",
-  });
+  })
+  .refine((e) => !e.isPermanent || e.dates.length === 0, {
+    message: 'Une sortie permanente n\'a pas de dates de représentation',
+  })
+  // Des dates hors de la période décriraient une sortie que ni la recherche ni
+  // l'affichage ne sauraient présenter de façon cohérente.
+  .refine(
+    (e) => e.dates.every((d) => (!e.dateStart || d >= e.dateStart) && (!e.dateEnd || d <= e.dateEnd)),
+    { message: 'Une date de représentation sort de la période de la sortie' },
+  );
 
 export const searchSchema = z.object({
   q: z.string().trim().max(200).optional(),

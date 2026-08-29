@@ -175,6 +175,10 @@ def build_payload(
         "isPermanent": permanent,
         "dateStart": date_start,
         "dateEnd": date_end,
+        # Jours de représentation, remplis juste après par le pipeline : ils se
+        # déduisent des dates ci-dessus, une fois celles-ci nettoyées. Vide =
+        # tous les jours de la période, ce que le site sait interpréter.
+        "dates": [],
         "openTime": open_time,
         "closeTime": close_time,
         "setting": event.setting if event.setting in SETTINGS else None,

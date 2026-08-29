@@ -2,7 +2,14 @@
 import { onMounted, ref } from 'vue';
 import { api } from '../lib/api';
 import type { EventItem } from '../types';
-import { SETTING_LABELS, STATUS_LABELS, hasCoordinates, hasPrice, priceLabel } from '../types';
+import {
+  SETTING_LABELS,
+  STATUS_LABELS,
+  dayLabel,
+  hasCoordinates,
+  hasPrice,
+  priceLabel,
+} from '../types';
 
 /** Résultat de la recherche de doublons pour une sortie de la file. */
 interface DuplicateCheck {
@@ -102,7 +109,9 @@ async function rejectAsDuplicate(id: number, original: EventItem) {
 
 function periodLabel(e: EventItem) {
   if (e.isPermanent || !e.dateStart || !e.dateEnd) return "toute l'année";
-  return `du ${e.dateStart} au ${e.dateEnd}`;
+  const periode = `du ${e.dateStart} au ${e.dateEnd}`;
+  if (!e.dates.length) return periode;
+  return `${periode}, ${e.dates.length} jour(s) de représentation`;
 }
 
 /** Ce qu'il reste à compléter avant de pouvoir approuver. */
@@ -160,6 +169,11 @@ onMounted(load);
         🏷 Tarif indéterminé — la page source ne l'indiquait pas clairement.
         Renseignez-le (ou cochez « gratuit ») avant d'approuver.
         <RouterLink :to="`/sorties/${e.id}/modifier`">Compléter le tarif</RouterLink>
+      </p>
+      <!-- Jours de représentation déduits par l'import : à vérifier, c'est ce
+           qui décide des jours où la sortie ressortira dans les recherches. -->
+      <p v-if="e.dates.length" class="days">
+        <span v-for="day in e.dates" :key="day" class="badge">{{ dayLabel(day) }}</span>
       </p>
       <p style="white-space: pre-line">{{ e.description }}</p>
       <img
@@ -229,6 +243,13 @@ onMounted(load);
 </template>
 
 <style scoped>
+.days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0.4rem 0;
+}
+
 .incomplete {
   margin: 0.6rem 0 0;
   padding: 0.6rem 0.8rem;
