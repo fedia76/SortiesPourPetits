@@ -37,18 +37,63 @@ const form = reactive({
   lng: null as number | null,
 });
 
-/** Date en cours de saisie dans le sélecteur d'ajout. */
-const newDate = ref('');
-
-function addDate() {
-  const day = newDate.value;
-  if (!day || form.dates.includes(day)) return;
-  form.dates = [...form.dates, day].sort();
-  newDate.value = '';
+/**
+ * Le calendrier travaille en objets `Date`, la sortie en `AAAA-MM-JJ`.
+ *
+ * La conversion se fait sur les composantes locales, jamais par
+ * `toISOString()` : depuis Paris, minuit local est 22 h UTC la veille, et le
+ * 3 septembre sélectionné repartirait en `2026-09-02`. Toutes les dates de
+ * représentation seraient décalées d'un jour, sans le moindre message.
+ */
+function dateToDay(value: Date): string {
+  const deuxChiffres = (n: number) => String(n).padStart(2, '0');
+  return `${value.getFullYear()}-${deuxChiffres(value.getMonth() + 1)}-${deuxChiffres(value.getDate())}`;
 }
+
+/** Midi plutôt que minuit : aucun changement d'heure ne peut faire basculer le jour. */
+function dayToDate(day: string): Date {
+  return new Date(`${day}T12:00:00`);
+}
+
+/**
+ * Les dates telles que `<v-date-picker multiple>` les veut.
+ *
+ * Il rend un tableau d'objets `Date` ; on le filtre plutôt que de le croire,
+ * son type déclaré étant `unknown[]`.
+ */
+const selectedDates = computed<unknown[]>({
+  get: () => form.dates.map(dayToDate),
+  set: (value) => {
+    form.dates = value
+      .filter((v): v is Date => v instanceof Date)
+      .map(dateToDay)
+      .sort();
+  },
+});
+
+/** Bornes du calendrier : le serveur refuse une date hors de la période. */
+const periodStart = computed(() => (form.dateStart ? dayToDate(form.dateStart) : undefined));
+const periodEnd = computed(() => (form.dateEnd ? dayToDate(form.dateEnd) : undefined));
+
+/**
+ * Dates devenues hors période — la période a été resserrée après coup.
+ *
+ * Le calendrier ne peut plus les montrer, et le serveur refusera la sortie
+ * entière : mieux vaut les nommer ici que de laisser tomber un message
+ * d'erreur à l'enregistrement.
+ */
+const outOfPeriod = computed(() =>
+  form.dates.filter(
+    (d) => (form.dateStart && d < form.dateStart) || (form.dateEnd && d > form.dateEnd),
+  ),
+);
 
 function removeDate(day: string) {
   form.dates = form.dates.filter((d) => d !== day);
+}
+
+function dropOutOfPeriod() {
+  form.dates = form.dates.filter((d) => !outOfPeriod.value.includes(d));
 }
 
 const photo = ref<File | null>(null);
@@ -265,30 +310,59 @@ onMounted(async () => {
       <span class="hint">Cette plage horaire s'applique tous les jours de l'évènement.</span>
 
       <div v-if="!form.isPermanent" class="field">
-        <label for="new-date">Jours de représentation</label>
+        <label>Jours de représentation</label>
         <span class="hint">
           Laissez vide si la sortie a lieu tous les jours de la période — c'est le cas d'une
           exposition ou d'une fête foraine. Pour un spectacle qui ne se joue que certains jours,
           énumérez-les : sans ça il ressortira dans les recherches un jour où il ne se joue pas.
         </span>
-        <ul v-if="form.dates.length" class="dates">
-          <li v-for="day in form.dates" :key="day">
-            {{ dayLabel(day) }}
-            <button type="button" title="Retirer cette date" @click="removeDate(day)">×</button>
-          </li>
-        </ul>
-        <div class="add-date">
-          <input
-            id="new-date"
-            v-model="newDate"
-            type="date"
-            :min="form.dateStart || undefined"
-            :max="form.dateEnd || undefined"
+
+        <div class="dates-picker">
+          <!-- Un clic ajoute le jour, un second le retire : quinze
+               représentations se pointent d'affilée, sans validation à chaque
+               date. Le calendrier est borné par la période de la sortie, que
+               le serveur fait respecter de toute façon. -->
+          <v-date-picker
+            v-model="selectedDates"
+            multiple
+            hide-header
+            show-adjacent-months
+            color="primary"
+            :min="periodStart"
+            :max="periodEnd"
           />
-          <button class="btn small ghost" type="button" :disabled="!newDate" @click="addDate">
-            Ajouter cette date
-          </button>
+
+          <div class="dates-side">
+            <p v-if="!form.dates.length" class="muted">
+              Aucune date sélectionnée : la sortie a lieu <strong>tous les jours</strong> de sa
+              période.
+            </p>
+            <template v-else>
+              <p class="muted">
+                {{ form.dates.length }} date(s) — recliquez un jour pour le retirer.
+                <button class="linklike" type="button" @click="form.dates = []">
+                  Tout effacer
+                </button>
+              </p>
+              <ul class="dates">
+                <li v-for="day in form.dates" :key="day">
+                  {{ dayLabel(day) }}
+                  <button type="button" title="Retirer cette date" @click="removeDate(day)">
+                    ×
+                  </button>
+                </li>
+              </ul>
+            </template>
+          </div>
         </div>
+
+        <!-- La période a été resserrée après coup : ces dates ne sont plus
+             atteignables au calendrier, et le serveur refuserait la sortie. -->
+        <p v-if="outOfPeriod.length" class="out-of-period">
+          {{ outOfPeriod.length }} date(s) sortent de la période
+          ({{ outOfPeriod.map(dayLabel).join(', ') }}) : l'enregistrement sera refusé.
+          <button class="linklike" type="button" @click="dropOutOfPeriod">Les retirer</button>
+        </p>
       </div>
 
       <div class="field">
@@ -354,6 +428,42 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.dates-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1.2rem;
+  margin-top: 0.4rem;
+}
+
+.dates-side {
+  flex: 1 1 260px;
+  min-width: 240px;
+}
+
+.dates-side p {
+  margin: 0 0 0.5rem;
+}
+
+.out-of-period {
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: 12px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.9rem;
+}
+
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-dark);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .dates {
   list-style: none;
   padding: 0;
@@ -383,10 +493,4 @@ onMounted(async () => {
   color: var(--ink-soft);
 }
 
-.add-date {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  flex-wrap: wrap;
-}
 </style>

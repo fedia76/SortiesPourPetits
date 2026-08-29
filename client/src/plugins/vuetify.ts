@@ -1,8 +1,15 @@
 import 'vuetify/styles';
 import '@mdi/font/css/materialdesignicons.css';
 import { createVuetify } from 'vuetify';
+import { fr } from 'vuetify/locale';
 
 export default createVuetify({
+  // Sans ça, le calendrier de sélection des dates s'affiche en anglais et
+  // démarre ses semaines le dimanche. `messages` porte les libellés de
+  // l'interface, `date` les noms de mois et de jours — et c'est la locale
+  // `fr-FR` qui met le lundi en tête, rien d'autre à régler.
+  locale: { locale: 'fr', messages: { fr } },
+  date: { locale: { fr: 'fr-FR' } },
   theme: {
     defaultTheme: 'sortiesPourPetits',
     themes: {

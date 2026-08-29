@@ -213,8 +213,11 @@ onMounted(load);
         <span v-if="shortAgeLabel(e)" class="badge">{{ shortAgeLabel(e) }}</span>
         <span v-if="e.setting" class="badge">{{ SETTING_LABELS[e.setting] }}</span>
       </div>
+      <!-- Vers la modification, pas vers la fiche : en modération il y a
+           presque toujours un détail à corriger, et l'enregistrement ramène
+           sur la fiche, d'où l'on approuve. -->
       <h3>
-        <RouterLink :to="`/sorties/${e.id}`">{{ e.title }}</RouterLink>
+        <RouterLink :to="`/sorties/${e.id}/modifier`">{{ e.title }}</RouterLink>
       </h3>
       <p class="muted">
         {{ e.venue.name }} · {{ e.venue.city }} ·
