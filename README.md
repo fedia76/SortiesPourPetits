@@ -23,6 +23,8 @@ communauté et validées par une équipe de modération.
   source de l'événement (facultatif), tranche d'âge (facultative), dates de
   début/fin ou événement permanent (facultatives), horaires d'ouverture par
   jour et cadre intérieur/extérieur/les deux (facultatifs), lieu géolocalisé.
+  Les jours de représentation se prennent au calendrier, plusieurs d'affilée :
+  un spectacle qui se joue quinze fois se saisit en quinze clics.
 - **Modération** : toute proposition passe en attente ; seules les sorties
   approuvées sont publiques. Une modification par l'auteur repasse en
   modération. Motif de refus visible par l'auteur. Un modérateur tranche
