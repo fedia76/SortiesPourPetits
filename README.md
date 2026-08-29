@@ -29,9 +29,13 @@ communauté et validées par une équipe de modération.
   approuvées sont publiques. Une modification par l'auteur repasse en
   modération. Motif de refus visible par l'auteur. Un modérateur tranche
   depuis la file d'attente ou directement depuis la fiche de la sortie —
-  c'est là qu'elle se lit en entier. La file entière peut aussi être
-  **supprimée** d'un coup, ce qui n'est pas la refuser : rien n'est gardé, et
-  c'est ce qu'on veut après un import raté.
+  c'est là qu'elle se lit en entier. La file se **filtre par origine** —
+  propositions des visiteurs, ou d'une recherche automatique précise : comme
+  une recherche couvre un territoire, c'est la façon de modérer une région à
+  la fois. La file peut aussi être **supprimée** d'un coup, ce qui n'est pas
+  la refuser : rien n'est gardé, et c'est ce qu'on veut après un import raté.
+  Le filtre s'applique alors aussi à la suppression — une file restreinte ne
+  laisse pas partir ce qu'elle masquait.
 - **Détection de doublons** : pour chaque sortie de la file, les sorties
   ressemblantes sont cherchées automatiquement et notées sur 100 (même lieu ou
   lieu proche, titre et description, chevauchement des dates, catégorie,
@@ -96,8 +100,8 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | POST | `/api/events` | connecté | Proposer (multipart : `data` JSON + `photo`) |
 | PUT | `/api/events/:id` | auteur/modérateur | Modifier |
 | DELETE | `/api/events/:id` | auteur/modérateur | Supprimer |
-| GET | `/api/moderation/pending` | modérateur | File d'attente |
-| DELETE | `/api/moderation/pending` | modérateur | Vider la file — supprime, ne refuse pas (`expected`) |
+| GET | `/api/moderation/pending` | modérateur | File d'attente (`configId`, `origin=scraper\|visitors`) |
+| DELETE | `/api/moderation/pending` | modérateur | Vider la file — supprime, ne refuse pas (`expected`, mêmes filtres) |
 | GET | `/api/moderation/:id/similar` | modérateur | Doublons potentiels (`radiusKm`, `minScore`, `limit`) |
 | POST | `/api/moderation/:id` | modérateur | `{action: "approve"\|"reject", reason?}` |
 | GET | `/api/categories` | public | Liste des catégories |

@@ -3,7 +3,13 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
 import { deletePhoto } from '../lib/upload';
-import { moderateSchema, moderationPurgeSchema, similarSchema } from '../lib/validators';
+import {
+  moderateSchema,
+  moderationPurgeSchema,
+  moderationQueueSchema,
+  similarSchema,
+  type ModerationFilter,
+} from '../lib/validators';
 import { hasCoordinates, hasPrice } from '../lib/incomplete';
 import { rankSimilar, significantWords, type SimilarityScore } from '../lib/similarity';
 
@@ -18,14 +24,26 @@ const MODERATION_INCLUDE = {
   // Le modérateur doit voir les jours de représentation : c'est ce que le
   // scraper a déduit d'une page, et c'est là qu'on le corrige.
   dates: { select: { day: true }, orderBy: { day: 'asc' } },
+  // D'où vient la proposition. Une seule ligne suffit : les suivantes
+  // désigneraient la même page revue par une autre exécution.
+  scraperItems: {
+    select: { run: { select: { configId: true, config: { select: { name: true } } } } },
+    orderBy: { id: 'asc' },
+    take: 1,
+  },
 } as const satisfies Prisma.EventInclude;
 
 type ModeratedEvent = Prisma.EventGetPayload<{ include: typeof MODERATION_INCLUDE }>;
 
 /** Convertit les Decimal Prisma et les dates en valeurs JSON. */
 function serializeEvent(event: ModeratedEvent, similarity?: SimilarityScore) {
+  const { scraperItems, ...rest } = event;
+  const from = scraperItems[0]?.run;
   return {
-    ...event,
+    ...rest,
+    // `null` pour une sortie proposée par un visiteur : c'est ce que la
+    // console affiche, et ce sur quoi le filtre « visiteurs » s'appuie.
+    origin: from ? { configId: from.configId, configName: from.config.name } : null,
     price: event.price === null ? null : Number(event.price),
     dateStart: event.dateStart ? event.dateStart.toISOString().slice(0, 10) : null,
     dateEnd: event.dateEnd ? event.dateEnd.toISOString().slice(0, 10) : null,
@@ -35,9 +53,34 @@ function serializeEvent(event: ModeratedEvent, similarity?: SimilarityScore) {
   };
 }
 
-moderationRouter.get('/pending', async (_req, res) => {
+/**
+ * La file, éventuellement restreinte à une origine.
+ *
+ * Une recherche automatique couvre un territoire — « Seine-Maritime » ne
+ * propose que de la Seine-Maritime — donc filtrer par recherche revient à
+ * modérer une région à la fois, ce qui demande un tout autre regard que de
+ * relire vingt propositions venues de partout.
+ */
+function pendingWhere(filter: ModerationFilter): Prisma.EventWhereInput {
+  const where: Prisma.EventWhereInput = { status: 'PENDING' };
+  if (filter.configId) {
+    where.scraperItems = { some: { run: { configId: filter.configId } } };
+  } else if (filter.origin === 'scraper') {
+    where.scraperItems = { some: {} };
+  } else if (filter.origin === 'visitors') {
+    where.scraperItems = { none: {} };
+  }
+  return where;
+}
+
+moderationRouter.get('/pending', async (req, res) => {
+  const parsed = moderationQueueSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
   const events = await prisma.event.findMany({
-    where: { status: 'PENDING' },
+    where: pendingWhere(parsed.data),
     include: MODERATION_INCLUDE,
     orderBy: { createdAt: 'asc' },
   });
@@ -57,7 +100,8 @@ moderationRouter.get('/pending', async (_req, res) => {
  * lisible, et les deux gestes sont bien distincts.
  *
  * Irréversible, d'où le garde-fou : la file doit être celle qu'on avait sous
- * les yeux.
+ * les yeux — au nombre près, et au filtre près. Vider une file restreinte à
+ * une recherche ne supprime que les propositions de cette recherche.
  */
 moderationRouter.delete('/pending', async (req, res) => {
   const parsed = moderationPurgeSchema.safeParse(req.query);
@@ -65,12 +109,14 @@ moderationRouter.delete('/pending', async (req, res) => {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
+  const { expected, ...filter } = parsed.data;
+  // Le même filtre que l'affichage : une file restreinte à une recherche ne
+  // doit pas emporter les propositions qu'elle masquait.
   const pending = await prisma.event.findMany({
-    where: { status: 'PENDING' },
+    where: pendingWhere(filter),
     select: { id: true, photoUrl: true },
   });
 
-  const { expected } = parsed.data;
   if (expected !== undefined && expected !== pending.length) {
     res.status(409).json({
       error:

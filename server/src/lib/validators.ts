@@ -116,6 +116,26 @@ export const searchSchema = z.object({
 });
 
 /**
+ * D'où viennent les propositions qu'on veut voir.
+ *
+ * `origin` distingue l'humain de la machine ; `configId` désigne une recherche
+ * précise, ce qui revient le plus souvent à un territoire — une recherche
+ * « Seine-Maritime » ne propose que de la Seine-Maritime.
+ *
+ * Partagé par l'affichage de la file et par son vidage, et ce n'est pas un
+ * détail : une file filtrée qu'on vide ne doit emporter que ce qui était
+ * affiché.
+ */
+const moderationFilterShape = {
+  configId: z.coerce.number().int().positive().optional(),
+  origin: z.enum(['scraper', 'visitors']).optional(),
+};
+
+export const moderationQueueSchema = z.object(moderationFilterShape);
+
+export type ModerationFilter = z.infer<typeof moderationQueueSchema>;
+
+/**
  * Vidage de la file de modération.
  *
  * `expected` est le nombre de sorties que le modérateur avait sous les yeux :
@@ -124,6 +144,7 @@ export const searchSchema = z.object({
  */
 export const moderationPurgeSchema = z.object({
   expected: z.coerce.number().int().min(0).optional(),
+  ...moderationFilterShape,
 });
 
 export const moderateSchema = z.object({

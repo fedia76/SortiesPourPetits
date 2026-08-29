@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
-import type { EventItem } from '../types';
+import type { EventItem, ScraperConfig } from '../types';
 import {
   SETTING_LABELS,
   STATUS_LABELS,
@@ -27,6 +27,31 @@ const error = ref('');
 const notice = ref('');
 /** Doublons potentiels, indexés par identifiant de sortie. */
 const duplicates = ref<Record<number, DuplicateCheck>>({});
+
+/**
+ * D'où viennent les propositions affichées.
+ *
+ * `''` pour tout, `visitors` / `scraper` pour l'humain ou la machine, et
+ * l'identifiant d'une recherche pour ne voir qu'elle. Une recherche couvre un
+ * territoire — « Seine-Maritime » ne propose que de la Seine-Maritime — donc
+ * c'est aussi la façon de modérer une région à la fois.
+ */
+const source = ref<string>('');
+const configs = ref<ScraperConfig[]>([]);
+
+/** Ce que le filtre courant ajoute à l'URL de la file. */
+const query = computed(() => {
+  if (source.value === 'visitors' || source.value === 'scraper') return `origin=${source.value}`;
+  return source.value ? `configId=${source.value}` : '';
+});
+
+/** Le filtre en toutes lettres, pour les phrases qui doivent le rappeler. */
+const sourceLabel = computed(() => {
+  if (source.value === 'visitors') return 'proposées par un visiteur';
+  if (source.value === 'scraper') return 'issues des recherches automatiques';
+  const found = configs.value.find((c) => String(c.id) === source.value);
+  return found ? `issues de la recherche « ${found.name} »` : '';
+});
 
 /** Au-delà, on considère le doublon probable plutôt que simplement possible. */
 const LIKELY_DUPLICATE_SCORE = 60;
@@ -64,8 +89,12 @@ async function checkAllDuplicates(queue: EventItem[]) {
 
 async function load() {
   loading.value = true;
+  error.value = '';
   try {
-    const data = await api.get<{ events: EventItem[] }>('/api/moderation/pending');
+    const url = query.value
+      ? `/api/moderation/pending?${query.value}`
+      : '/api/moderation/pending';
+    const data = await api.get<{ events: EventItem[] }>(url);
     events.value = data.events;
     duplicates.value = Object.fromEntries(
       data.events.map((e) => [e.id, { loading: false, error: '', similar: null, open: false }]),
@@ -141,8 +170,11 @@ const purging = ref(false);
 async function purgePending() {
   const combien = events.value.length;
   if (!combien) return;
+  const quoi = sourceLabel.value
+    ? `les ${combien} sortie(s) en attente ${sourceLabel.value}`
+    : `les ${combien} sortie(s) en attente`;
   const question =
-    `Supprimer définitivement les ${combien} sortie(s) en attente ?\n\n` +
+    `Supprimer définitivement ${quoi} ?\n\n` +
     'Elles ne seront pas refusées mais effacées : ni motif pour leur auteur, ' +
     'ni trace au catalogue.\n\n' +
     'Les pages dont elles venaient restent en mémoire du scraper, qui ne les ' +
@@ -156,8 +188,12 @@ async function purgePending() {
   try {
     // Le nombre part avec la requête : si la file a bougé depuis l'affichage,
     // le serveur refuse plutôt que de supprimer une sortie que personne n'a lue.
+    // Le filtre part avec la requête : le serveur ne supprime que ce qui
+    // était affiché. Le nombre, lui, reste le garde-fou — si la file a bougé
+    // depuis l'affichage, il refuse.
+    const suffixe = query.value ? `&${query.value}` : '';
     const res = await api.delete<{ deleted: number }>(
-      `/api/moderation/pending?expected=${combien}`,
+      `/api/moderation/pending?expected=${combien}${suffixe}`,
     );
     notice.value = `${res.deleted} sortie(s) supprimée(s).`;
     await load();
@@ -173,7 +209,23 @@ function scoreLevel(score: number) {
   return score >= 45 ? 'medium' : 'low';
 }
 
-onMounted(load);
+/**
+ * Les recherches automatiques, pour le filtre. Leur absence n'est pas une
+ * erreur à afficher : la file reste modérable sans elles.
+ */
+async function loadConfigs() {
+  try {
+    const data = await api.get<{ configs: ScraperConfig[] }>('/api/scraper/configs');
+    configs.value = data.configs;
+  } catch {
+    configs.value = [];
+  }
+}
+
+onMounted(() => {
+  void loadConfigs();
+  void load();
+});
 </script>
 
 <template>
@@ -181,8 +233,20 @@ onMounted(load);
     <h1>Modération</h1>
     <div class="queue-head">
       <p class="muted" style="margin: 0">
-        {{ events.length }} sortie(s) en attente d'approbation.
+        {{ events.length }} sortie(s) en attente d'approbation<template v-if="sourceLabel">
+          {{ sourceLabel }}</template>.
       </p>
+      <label class="filtre">
+        <span class="muted small">Origine</span>
+        <select v-model="source" @change="load">
+          <option value="">Toutes les propositions</option>
+          <option value="visitors">Proposées par un visiteur</option>
+          <option value="scraper">Toutes les recherches automatiques</option>
+          <option v-for="c in configs" :key="c.id" :value="String(c.id)">
+            Recherche « {{ c.name }} »
+          </option>
+        </select>
+      </label>
       <button
         v-if="events.length"
         class="btn danger small"
@@ -191,7 +255,7 @@ onMounted(load);
         title="Efface les propositions sans les refuser : ni motif, ni trace."
         @click="purgePending"
       >
-        🗑 Supprimer les {{ events.length }} sortie(s) en attente
+        🗑 Supprimer {{ sourceLabel ? 'ces' : 'les' }} {{ events.length }} sortie(s)
       </button>
     </div>
     <p v-if="events.length" class="muted small">
@@ -204,11 +268,20 @@ onMounted(load);
     <p v-if="notice" class="notice">{{ notice }}</p>
 
     <div v-if="!loading && events.length === 0" class="empty">
-      <p>🎉 Rien à modérer, tout est à jour !</p>
+      <p v-if="sourceLabel">
+        Rien à modérer parmi les propositions {{ sourceLabel }}.
+        <button class="linklike" type="button" @click="source = ''; load()">
+          Voir toute la file
+        </button>
+      </p>
+      <p v-else>🎉 Rien à modérer, tout est à jour !</p>
     </div>
 
     <div v-for="e in events" :key="e.id" class="card" style="padding: 1.2rem; margin-bottom: 1rem">
       <div class="badges" style="margin-bottom: 0.4rem">
+        <span v-if="e.origin" class="badge origin" :title="`Proposée par la recherche automatique « ${e.origin.configName} »`">
+          🤖 {{ e.origin.configName }}
+        </span>
         <span class="badge price">{{ priceLabel(e) }}</span>
         <span v-if="shortAgeLabel(e)" class="badge">{{ shortAgeLabel(e) }}</span>
         <span v-if="e.setting" class="badge">{{ SETTING_LABELS[e.setting] }}</span>
@@ -324,6 +397,28 @@ onMounted(load);
 .notice {
   color: var(--ok);
   font-weight: 600;
+}
+
+/* Le filtre s'intercale entre le décompte et le bouton de vidage : c'est
+   l'ordre dans lequel on les lit — combien, parmi quoi, et quoi en faire. */
+.filtre {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-right: auto;
+}
+
+.filtre select {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  font: inherit;
+}
+
+.badge.origin {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
 }
 
 .small {
