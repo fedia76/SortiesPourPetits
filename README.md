@@ -27,7 +27,9 @@ communauté et validées par une équipe de modération.
   approuvées sont publiques. Une modification par l'auteur repasse en
   modération. Motif de refus visible par l'auteur. Un modérateur tranche
   depuis la file d'attente ou directement depuis la fiche de la sortie —
-  c'est là qu'elle se lit en entier.
+  c'est là qu'elle se lit en entier. La file entière peut aussi être
+  **supprimée** d'un coup, ce qui n'est pas la refuser : rien n'est gardé, et
+  c'est ce qu'on veut après un import raté.
 - **Détection de doublons** : pour chaque sortie de la file, les sorties
   ressemblantes sont cherchées automatiquement et notées sur 100 (même lieu ou
   lieu proche, titre et description, chevauchement des dates, catégorie,
@@ -36,6 +38,9 @@ communauté et validées par une équipe de modération.
 - **Recherche** : texte, gratuit / prix max, âge de l'enfant, période, cadre,
   et **distance** (rayon en km autour d'une adresse ou de la position du
   navigateur — formule de Haversine en SQL).
+- **Mémoire du scraper** : les pages déjà analysées sont consultables et
+  filtrables par verdict. Les oublier les rend à nouveau lisibles — utile pour
+  relire un site qui était en panne, sans réexposer ce qui est déjà proposé.
 - **Statistiques du scraping** : par recherche ou toutes confondues, la part
   de chaque domaine source — avec ce qu'il a réellement donné, et pas
   seulement ce qu'il a coûté à lire — et la part de chaque catégorie, qui dit
@@ -86,11 +91,14 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | PUT | `/api/events/:id` | auteur/modérateur | Modifier |
 | DELETE | `/api/events/:id` | auteur/modérateur | Supprimer |
 | GET | `/api/moderation/pending` | modérateur | File d'attente |
+| DELETE | `/api/moderation/pending` | modérateur | Vider la file — supprime, ne refuse pas (`expected`) |
 | GET | `/api/moderation/:id/similar` | modérateur | Doublons potentiels (`radiusKm`, `minScore`, `limit`) |
 | POST | `/api/moderation/:id` | modérateur | `{action: "approve"\|"reject", reason?}` |
 | GET | `/api/categories` | public | Liste des catégories |
 | POST / PATCH / DELETE | `/api/categories[/:id]` | admin | Gérer les catégories |
 | GET | `/api/scraper/stats` | modérateur | Statistiques du scraping (`configId`, `days`) |
+| GET | `/api/scraper/memory` | modérateur | Mémoire des pages analysées (`q`, `decision`, `page`) |
+| DELETE | `/api/scraper/memory` | modérateur | Oublier des pages (`decision` pour n'en purger qu'un lot) |
 | GET | `/api/admin/users` | admin | Liste des utilisateurs |
 | PATCH | `/api/admin/users/:id/role` | admin | Changer un rôle |
 

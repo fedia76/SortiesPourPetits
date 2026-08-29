@@ -257,6 +257,18 @@ doivent pas empêcher un run ultérieur de traiter la page :
 | `blocked` — domaine bloqué | non | un réglage, pas un jugement |
 | `error` — site ou API injoignable | non | demain ça remarchera peut-être |
 
+La mémoire se regarde et se purge depuis la console — « Recherche auto →
+Mémoire ». Purger n'est pas anodin : les pages oubliées seront relues, donc
+repayées, et celles qui avaient déjà donné une sortie pourront la proposer une
+seconde fois. D'où la purge par verdict : oublier les `error` d'un site alors
+en panne ne touche pas aux `submitted`.
+
+Supprimer une sortie de la file de modération ne l'efface pas de cette
+mémoire — la page reste connue, donc ne sera pas reproposée. Les deux gestes
+sont distincts, et c'est voulu : on jette un import raté sans rouvrir la porte
+aux mêmes pages.
+
+
 La clé de mémorisation est l'URL normalisée (schéma, `www.`, barre finale et
 paramètres de suivi retirés) ; le lien exact, lui, reste affiché et cliquable
 dans la console.
