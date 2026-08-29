@@ -5,7 +5,7 @@ import AddressPicker from '../components/AddressPicker.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
 import type { Category, EventInput, EventItem, Setting } from '../types';
-import { hasCoordinates, hasPrice } from '../types';
+import { dayLabel, hasCoordinates, hasPrice } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -23,6 +23,8 @@ const form = reactive({
   isPermanent: false,
   dateStart: '',
   dateEnd: '',
+  /** Jours de représentation. Vide = tous les jours de la période. */
+  dates: [] as string[],
   openTime: '',
   closeTime: '',
   setting: '' as Setting | '',
@@ -34,6 +36,20 @@ const form = reactive({
   lat: null as number | null,
   lng: null as number | null,
 });
+
+/** Date en cours de saisie dans le sélecteur d'ajout. */
+const newDate = ref('');
+
+function addDate() {
+  const day = newDate.value;
+  if (!day || form.dates.includes(day)) return;
+  form.dates = [...form.dates, day].sort();
+  newDate.value = '';
+}
+
+function removeDate(day: string) {
+  form.dates = form.dates.filter((d) => d !== day);
+}
 
 const photo = ref<File | null>(null);
 const photoPreview = ref('');
@@ -77,6 +93,7 @@ async function submit() {
     isPermanent: form.isPermanent,
     dateStart: form.isPermanent || form.dateStart === '' ? null : form.dateStart,
     dateEnd: form.isPermanent || form.dateEnd === '' ? null : form.dateEnd,
+    dates: form.isPermanent ? [] : [...form.dates].sort(),
     openTime: form.openTime === '' ? null : form.openTime,
     closeTime: form.closeTime === '' ? null : form.closeTime,
     setting: form.setting === '' ? null : form.setting,
@@ -121,6 +138,7 @@ onMounted(async () => {
   form.isPermanent = event.isPermanent;
   form.dateStart = event.dateStart ?? '';
   form.dateEnd = event.dateEnd ?? '';
+  form.dates = [...event.dates];
   form.openTime = event.openTime ?? '';
   form.closeTime = event.closeTime ?? '';
   form.setting = event.setting ?? '';
@@ -246,6 +264,33 @@ onMounted(async () => {
       </div>
       <span class="hint">Cette plage horaire s'applique tous les jours de l'évènement.</span>
 
+      <div v-if="!form.isPermanent" class="field">
+        <label for="new-date">Jours de représentation</label>
+        <span class="hint">
+          Laissez vide si la sortie a lieu tous les jours de la période — c'est le cas d'une
+          exposition ou d'une fête foraine. Pour un spectacle qui ne se joue que certains jours,
+          énumérez-les : sans ça il ressortira dans les recherches un jour où il ne se joue pas.
+        </span>
+        <ul v-if="form.dates.length" class="dates">
+          <li v-for="day in form.dates" :key="day">
+            {{ dayLabel(day) }}
+            <button type="button" title="Retirer cette date" @click="removeDate(day)">×</button>
+          </li>
+        </ul>
+        <div class="add-date">
+          <input
+            id="new-date"
+            v-model="newDate"
+            type="date"
+            :min="form.dateStart || undefined"
+            :max="form.dateEnd || undefined"
+          />
+          <button class="btn small ghost" type="button" :disabled="!newDate" @click="addDate">
+            Ajouter cette date
+          </button>
+        </div>
+      </div>
+
       <div class="field">
         <label for="source-url">Lien vers l'événement (source)</label>
         <input
@@ -307,3 +352,41 @@ onMounted(async () => {
     </form>
   </div>
 </template>
+
+<style scoped>
+.dates {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.dates li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem 0.2rem 0.7rem;
+  font-size: 0.85rem;
+}
+
+.dates button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+  color: var(--ink-soft);
+}
+
+.add-date {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+</style>

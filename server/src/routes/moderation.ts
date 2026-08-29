@@ -14,7 +14,10 @@ const MODERATION_INCLUDE = {
   venue: true,
   category: true,
   author: { select: { id: true, displayName: true, email: true } },
-} as const;
+  // Le modérateur doit voir les jours de représentation : c'est ce que le
+  // scraper a déduit d'une page, et c'est là qu'on le corrige.
+  dates: { select: { day: true }, orderBy: { day: 'asc' } },
+} as const satisfies Prisma.EventInclude;
 
 type ModeratedEvent = Prisma.EventGetPayload<{ include: typeof MODERATION_INCLUDE }>;
 
@@ -25,6 +28,7 @@ function serializeEvent(event: ModeratedEvent, similarity?: SimilarityScore) {
     price: event.price === null ? null : Number(event.price),
     dateStart: event.dateStart ? event.dateStart.toISOString().slice(0, 10) : null,
     dateEnd: event.dateEnd ? event.dateEnd.toISOString().slice(0, 10) : null,
+    dates: event.dates.map((d) => d.day.toISOString().slice(0, 10)),
     venue: { ...event.venue, lat: Number(event.venue.lat), lng: Number(event.venue.lng) },
     similarity,
   };

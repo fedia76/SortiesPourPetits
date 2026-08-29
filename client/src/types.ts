@@ -47,6 +47,26 @@ export function priceLabel(event: { isFree: boolean; price: number | null }): st
   return `${event.price} €`;
 }
 
+/**
+ * Prochain jour où la sortie a lieu, à partir d'aujourd'hui.
+ *
+ * `null` quand elle n'énumère pas ses jours — le cas courant : sa période
+ * suffit alors à la décrire. `undefined` quand elle est passée.
+ */
+export function nextDate(event: Pick<EventItem, 'dates'>, today = new Date()): string | undefined {
+  const iso = today.toISOString().slice(0, 10);
+  return event.dates.find((d) => d >= iso);
+}
+
+/** « dimanche 20 septembre » — un jour de représentation, en clair. */
+export function dayLabel(day: string): string {
+  return new Date(`${day}T12:00:00`).toLocaleDateString('fr-FR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+}
+
 /** Pourquoi et à quel point une sortie ressemble à celle en cours de modération. */
 export interface Similarity {
   /** Note de 0 à 100 : plus c'est haut, plus le doublon est probable. */
@@ -68,6 +88,8 @@ export interface EventItem {
   isPermanent: boolean;
   dateStart: string | null;
   dateEnd: string | null;
+  /** Jours de représentation. Vide = tous les jours de la période. */
+  dates: string[];
   openTime: string | null;
   closeTime: string | null;
   setting: Setting | null;
@@ -92,6 +114,7 @@ export interface EventInput {
   isPermanent: boolean;
   dateStart: string | null;
   dateEnd: string | null;
+  dates: string[];
   openTime: string | null;
   closeTime: string | null;
   setting: Setting | null;

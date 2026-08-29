@@ -386,6 +386,9 @@ def _process(
         announced=extracted.dates,
         json_ld=declared,
     )
+    # Le site ne reçoit des jours que s'ils apprennent quelque chose : sinon
+    # la liste reste vide, et sa période vaut pour tous ses jours.
+    payload["dates"] = list(schedule.dates)
     if schedule.precise:
         summary.scheduled += 1
     # La plage est journalisée avec le calendrier : sans elle, impossible de

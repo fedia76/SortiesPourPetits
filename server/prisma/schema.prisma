@@ -116,6 +116,10 @@ model Event {
   moderator     User? @relation("EventModerator", fields: [moderatedById], references: [id])
   moderatedById Int?
 
+  /// Jours où la sortie a effectivement lieu. Vide = tous les jours de la
+  /// période, ce qui reste le cas le plus courant.
+  dates EventDate[]
+
   scraperItems ScraperRunItem[]
   scrapedUrls  ScrapedUrl[]
 
@@ -128,6 +132,26 @@ model Event {
 /// orientent la recherche ; ils ne filtrent pas le résultat (voir
 /// `keepOutOfScope`). Plusieurs configurations spécialisées se complètent :
 /// chacune ratisse son angle et ramasse au passage ce que les autres ratent.
+/// Un jour de représentation.
+///
+/// `dateStart`/`dateEnd` bornent la sortie et servent à l'affichage ; ces
+/// lignes disent quels jours de cette période elle a réellement lieu. Un
+/// spectacle joué tous les dimanches de juillet et août en a neuf — sans quoi
+/// il ressortirait un jeudi.
+///
+/// Aucune ligne veut dire « tous les jours de la période » : c'est le cas
+/// d'une exposition ou d'une fête foraine, et c'était le seul modèle possible
+/// avant cette table.
+model EventDate {
+  id      Int      @id @default(autoincrement())
+  day     DateTime @db.Date
+  event   Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId Int
+
+  @@unique([eventId, day])
+  @@index([day])
+}
+
 model ScraperConfig {
   id      Int     @id @default(autoincrement())
   name    String  @unique

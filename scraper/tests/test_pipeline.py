@@ -553,3 +553,31 @@ def test_le_calendrier_est_journalise():
     trace = journal.stream.getvalue()
     assert "🗓" in trace
     assert "mercredi, samedi" in trace
+
+
+def test_les_jours_de_representation_partent_au_site(log):
+    """Ce que le site reçoit, et sur quoi sa recherche s'appuiera."""
+    provider = FakeProvider(
+        [FoundPage(url=AGENDA_URL, title="Agenda 92")],
+        {EVENT_URL: joue_le_dimanche(weekdays=("dimanche",))},
+    )
+    fetcher = FakeFetcher({AGENDA_URL: AGENDA_HTML, EVENT_URL: EVENT_HTML})
+    api = FakeApi()
+    with SeenStore() as store:
+        run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
+
+    envoye = api.created[0]
+    assert envoye["dateStart"] == DIMANCHE
+    assert envoye["dateEnd"] == DERNIER_DIMANCHE
+    assert envoye["dates"][0] == DIMANCHE
+    assert "2026-08-13" not in envoye["dates"]  # un jeudi
+
+
+def test_une_sortie_sans_jours_connus_nenvoie_aucune_date(log):
+    """Liste vide = tous les jours de la période, comme avant cette table."""
+    provider, fetcher = standard()
+    api = FakeApi()
+    with SeenStore() as store:
+        run(config(), provider, store, api, log, submit=True, fetcher=fetcher)
+
+    assert api.created[0]["dates"] == []

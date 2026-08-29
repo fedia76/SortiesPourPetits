@@ -13,6 +13,7 @@ type EventWithRelations = Prisma.EventGetPayload<{
     venue: true;
     category: true;
     author: { select: { id: true; displayName: true } };
+    dates: { select: { day: true } };
   };
 }>;
 
@@ -20,15 +21,22 @@ const EVENT_INCLUDE = {
   venue: true,
   category: true,
   author: { select: { id: true, displayName: true } },
-} as const;
+  dates: { select: { day: true }, orderBy: { day: 'asc' } },
+} as const satisfies Prisma.EventInclude;
+
+/** `2026-09-20`, sans décalage de fuseau : ces colonnes sont des DATE. */
+function isoDay(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
 
 /** Convertit les Decimal Prisma en nombres pour le JSON. */
 function serializeEvent(event: EventWithRelations, distanceKm?: number) {
   return {
     ...event,
     price: event.price === null ? null : Number(event.price),
-    dateStart: event.dateStart ? event.dateStart.toISOString().slice(0, 10) : null,
-    dateEnd: event.dateEnd ? event.dateEnd.toISOString().slice(0, 10) : null,
+    dateStart: event.dateStart ? isoDay(event.dateStart) : null,
+    dateEnd: event.dateEnd ? isoDay(event.dateEnd) : null,
+    dates: event.dates.map((d) => isoDay(d.day)),
     venue: {
       ...event.venue,
       lat: Number(event.venue.lat),
@@ -39,10 +47,47 @@ function serializeEvent(event: EventWithRelations, distanceKm?: number) {
 }
 
 /**
+ * Une sortie tombe-t-elle dans la fenêtre demandée ?
+ *
+ * Trois cas, et c'est le deuxième qui a motivé la table `EventDate` : un
+ * spectacle joué tous les dimanches de juillet et août ressortait un jeudi,
+ * parce que seule sa période était connue.
+ *
+ * 1. permanente : toujours ;
+ * 2. jours de représentation connus : il en faut un dans la fenêtre ;
+ * 3. aucun jour enregistré : la période vaut pour tous ses jours, comme avant.
+ */
+function dateFilter(from: string, to?: string): Prisma.EventWhereInput {
+  const day = { gte: new Date(from), ...(to ? { lte: new Date(to) } : {}) };
+  const overlapsRange: Prisma.EventWhereInput = {
+    AND: [
+      { dateEnd: { gte: new Date(from) } },
+      ...(to ? [{ dateStart: { lte: new Date(to) } }] : []),
+    ],
+  };
+  return {
+    OR: [
+      { isPermanent: true },
+      { dates: { some: { day } } },
+      { AND: [{ dates: { none: {} } }, overlapsRange] },
+    ],
+  };
+}
+
+/**
  * Recherche publique avec tous les filtres, y compris la distance.
  * Le filtre géographique passe par ST_Distance_Sphere de MySQL sur la
  * table Venue, puis on restreint la requête Prisma aux lieux trouvés.
  */
+/**
+ * Lignes `EventDate` à écrire. Dédoublonnées : la contrainte d'unicité
+ * ferait échouer la création entière pour un doublon dans le formulaire.
+ */
+function eventDates(input: { isPermanent: boolean; dates: string[] }) {
+  if (input.isPermanent) return [];
+  return [...new Set(input.dates)].sort().map((day) => ({ day: new Date(day) }));
+}
+
 eventsRouter.get('/', async (req, res) => {
   const parsed = searchSchema.safeParse(req.query);
   if (!parsed.success) {
@@ -71,10 +116,7 @@ eventsRouter.get('/', async (req, res) => {
   // à un moment de l'intervalle demandé. Par défaut : pas encore terminé.
   // Un événement permanent (sans date de fin) est toujours considéré en cours.
   const from = f.from ?? new Date().toISOString().slice(0, 10);
-  and.push({ OR: [{ isPermanent: true }, { dateEnd: { gte: new Date(from) } }] });
-  if (f.to) {
-    and.push({ OR: [{ isPermanent: true }, { dateStart: { lte: new Date(f.to) } }] });
-  }
+  and.push(dateFilter(from, f.to));
   if (f.setting) {
     // Un lieu « les deux » satisfait une recherche intérieur OU extérieur.
     // Un cadre non renseigné satisfait n'importe quelle recherche de cadre.
@@ -223,6 +265,7 @@ eventsRouter.post('/', requireAuth, photoUpload.single('photo'), async (req, res
       venueId: venue.id,
       categoryId: input.categoryId,
       createdById: req.user!.id,
+      dates: { create: eventDates(input) },
     },
     include: EVENT_INCLUDE,
   });
@@ -280,6 +323,9 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
       setting: input.setting ?? null,
       venueId: venue.id,
       categoryId: input.categoryId,
+      // Remplacement en bloc : les dates n'ont pas d'existence propre, elles
+      // décrivent la sortie telle qu'elle vient d'être décrite.
+      dates: { deleteMany: {}, create: eventDates(input) },
       // Une modification par l'auteur repasse en modération.
       status: isModerator ? existing.status : 'PENDING',
       rejectionReason: isModerator ? existing.rejectionReason : null,
