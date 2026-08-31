@@ -149,7 +149,25 @@ def _harvest(
     lien : la relire comme une sortie unique (mode recherche, où c'est un
     agenda mal classé) ou comme un programme (mode site, où c'est le cas
     normal d'un festival tenant sur une page).
+
+    Tout ce qui se journalise ici descend de cet agenda : c'est ce qui permet
+    à la console de répondre à « quels liens venaient de quelle page ? ».
     """
+    with log.trail(agenda=url):
+        return _harvest_one(url, config, provider, fetcher, log, summary, source, fallback_multiple)
+
+
+def _harvest_one(
+    url: str,
+    config: Config,
+    provider: Provider,
+    fetcher: Fetcher,
+    log: RunLog,
+    summary: Summary,
+    source: str,
+    fallback_multiple: bool,
+) -> list[Candidate]:
+    """Le dépouillement lui-même, une fois la piste ouverte."""
     # Étage 2 — Python télécharge l'agenda et en extrait les liens. Gratuit.
     with log.stage(Stage.HARVEST, url=url) as st:
         log.event("fetching", url=url)

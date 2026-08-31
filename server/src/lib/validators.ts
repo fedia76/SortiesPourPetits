@@ -313,6 +313,9 @@ export const scraperLogQuerySchema = z.object({
   kind: z.string().trim().max(40).optional(),
   level: z.enum(['info', 'warn', 'error']).optional(),
   url: z.string().trim().max(500).optional(),
+  /** Filiation : ne garder que ce qui descend de cet agenda, ou de cette page. */
+  agenda: z.string().trim().max(500).optional(),
+  page: z.string().trim().max(500).optional(),
   q: z.string().trim().max(120).optional(),
   /** Curseur : dernier `seq` déjà reçu. La console charge la suite. */
   after: z.coerce.number().int().min(0).optional(),

@@ -216,7 +216,13 @@ def run(
         for c in candidates
     ]
     for candidate in candidates:
-        log.event("candidate", url=candidate.url, title=candidate.title, why=candidate.context)
+        log.event(
+            "candidate",
+            url=candidate.url,
+            title=candidate.title,
+            why=candidate.context,
+            agenda=candidate.source,
+        )
 
     if not candidates:
         log.event("nothing_found", searches=provider.usage.web_searches, pages=summary.pages)
@@ -262,7 +268,17 @@ def run(
 
 
 def _process(candidate: Candidate, ctx: _Context) -> None:
-    """Lit une page et publie ce qu'elle porte : une sortie, ou vingt."""
+    """Lit une page et publie ce qu'elle porte : une sortie, ou vingt.
+
+    Tout ce qui suit descend de cette page, et de l'agenda qui l'a donnée :
+    la console peut ainsi remonter d'une sortie proposée jusqu'à la requête
+    qui l'a fait apparaître.
+    """
+    with ctx.log.trail(page=candidate.url, agenda=candidate.source):
+        _process_one(candidate, ctx)
+
+
+def _process_one(candidate: Candidate, ctx: _Context) -> None:
     config, log, store = ctx.config, ctx.log, ctx.store
     summary = ctx.summary
     url = candidate.url
@@ -452,7 +468,7 @@ def _publish_one(
 
     geo = geocoding.geocode(extracted)
     log.event(
-        "geocode", url=url, query=geo.query, located=geo.located,
+        "geocode", url=url, address=geo.query, located=geo.located,
         lat=geo.location.lat, lng=geo.location.lng, reason=geo.reason,
     )
     if not geo.located:

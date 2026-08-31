@@ -15,7 +15,14 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ApiError, api } from '../lib/api';
-import type { ScraperRun, ScraperRunLog, ScraperStageNode } from '../types';
+import type {
+  ScraperRun,
+  ScraperRunLog,
+  ScraperStageNode,
+  ScraperTree,
+  ScraperTreeAgenda,
+  ScraperTreePage,
+} from '../types';
 import { LOG_KIND_LABELS, RUN_STATUS_LABELS } from '../types';
 
 const route = useRoute();
@@ -25,6 +32,9 @@ const run = ref<ScraperRun | null>(null);
 const stages = ref<ScraperStageNode[]>([]);
 const outside = ref(0);
 const logs = ref<ScraperRunLog[]>([]);
+const tree = ref<ScraperTree | null>(null);
+/** « arbre » répond à « d'où vient-ce ? », « journal » à « que s'est-il passé ? ». */
+const view = ref<'arbre' | 'journal'>('arbre');
 const total = ref(0);
 const hasMore = ref(false);
 const loading = ref(true);
@@ -32,11 +42,13 @@ const loadingMore = ref(false);
 const error = ref('');
 
 /** Filtres composables. Chacun se retire seul depuis le fil de sélection. */
-const filters = ref<{ stage: string; kind: string; level: string; url: string; q: string }>({
+const filters = ref({
   stage: '',
   kind: '',
   level: '',
   url: '',
+  agenda: '',
+  page: '',
   q: '',
 });
 
@@ -51,6 +63,8 @@ function query(after?: number) {
   if (filters.value.kind) p.set('kind', filters.value.kind);
   if (filters.value.level) p.set('level', filters.value.level);
   if (filters.value.url) p.set('url', filters.value.url);
+  if (filters.value.agenda) p.set('agenda', filters.value.agenda);
+  if (filters.value.page) p.set('page', filters.value.page);
   if (filters.value.q) p.set('q', filters.value.q);
   if (after !== undefined) p.set('after', String(after));
   p.set('limit', String(PAGE));
@@ -60,6 +74,10 @@ function query(after?: number) {
 async function loadRun() {
   const res = await api.get<{ run: ScraperRun }>(`/api/scraper/runs/${runId.value}`);
   run.value = res.run;
+}
+
+async function loadTree() {
+  tree.value = await api.get<ScraperTree>(`/api/scraper/runs/${runId.value}/tree`);
 }
 
 async function loadGraph() {
@@ -98,7 +116,7 @@ async function loadMore() {
 
 async function loadAll() {
   try {
-    await Promise.all([loadRun(), loadGraph(), loadLogs()]);
+    await Promise.all([loadRun(), loadGraph(), loadTree(), loadLogs()]);
     error.value = '';
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) {
@@ -154,6 +172,63 @@ function follow(url: string) {
   filters.value.stage = '';
 }
 
+/**
+ * Bascule vers le journal, filtré sur une branche de l'arbre.
+ *
+ * C'est la jonction entre les deux vues : on repère une anomalie dans
+ * l'arbre, on ouvre le journal exactement là où elle est, sans avoir à
+ * reconstruire le filtre à la main.
+ */
+function inspect(part: { agenda?: string; page?: string; kind?: string }) {
+  reset();
+  if (part.agenda) filters.value.agenda = part.agenda;
+  if (part.page) filters.value.page = part.page;
+  if (part.kind) filters.value.kind = part.kind;
+  view.value = 'journal';
+}
+
+/** Les liens d'un agenda, chargés seulement quand on les demande. */
+const branchLinks = ref<Record<string, ScraperRunLog[]>>({});
+const branchLoading = ref('');
+
+async function toggleLinks(agenda: ScraperTreeAgenda, kind: 'link' | 'link_kept') {
+  const key = `${kind}:${agenda.url}`;
+  if (branchLinks.value[key]) {
+    const next = { ...branchLinks.value };
+    delete next[key];
+    branchLinks.value = next;
+    return;
+  }
+  branchLoading.value = key;
+  try {
+    const p = new URLSearchParams({ kind, agenda: agenda.url, limit: '500' });
+    const res = await api.get<{ logs: ScraperRunLog[] }>(
+      `/api/scraper/runs/${runId.value}/logs?${p}`,
+    );
+    branchLinks.value = { ...branchLinks.value, [key]: res.logs };
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erreur';
+  } finally {
+    branchLoading.value = '';
+  }
+}
+
+/** Nœuds d'arbre repliés. Tout est ouvert par défaut : on vient pour voir. */
+const collapsed = ref<Set<string>>(new Set());
+function fold(key: string) {
+  const next = new Set(collapsed.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  collapsed.value = next;
+}
+
+function outcomeClass(page: ScraperTreePage) {
+  if (page.decision === 'submitted') return 'ok';
+  if (page.decision === 'skip') return 'off';
+  if (page.errors) return 'ko';
+  return '';
+}
+
 function applySearch() {
   filters.value.q = search.value.trim();
 }
@@ -165,7 +240,7 @@ function clearFilter(key: keyof typeof filters.value) {
 
 function reset() {
   search.value = '';
-  filters.value = { stage: '', kind: '', level: '', url: '', q: '' };
+  filters.value = { stage: '', kind: '', level: '', url: '', agenda: '', page: '', q: '' };
 }
 
 /**
@@ -202,7 +277,9 @@ const active = computed(() => {
   if (f.stage) out.push({ key: 'stage', label: `Étage : ${stageLabel(f.stage)}` });
   if (f.kind) out.push({ key: 'kind', label: `Type : ${kindLabel(f.kind)}` });
   if (f.level) out.push({ key: 'level', label: `Gravité : ${f.level}` });
-  if (f.url) out.push({ key: 'url', label: `Page : ${host(f.url)}` });
+  if (f.url) out.push({ key: 'url', label: `Page : ${short(f.url)}` });
+  if (f.agenda) out.push({ key: 'agenda', label: `Venant de : ${short(f.agenda)}` });
+  if (f.page) out.push({ key: 'page', label: `Piste : ${short(f.page)}` });
   if (f.q) out.push({ key: 'q', label: `Texte : « ${f.q} »` });
   return out;
 });
@@ -236,6 +313,22 @@ function host(url: string) {
     return new URL(url).host.replace(/^www\./, '');
   } catch {
     return url;
+  }
+}
+
+/** Hôte + chemin abrégé : deux pages d'un même site doivent se distinguer. */
+function short(url: string, max = 34) {
+  const label = host(url) + pathOf(url);
+  return label.length > max ? `${label.slice(0, max - 1)}…` : label;
+}
+
+/** Le chemin d'une URL, sans son hôte : le titre est déjà à côté. */
+function pathOf(url: string) {
+  try {
+    const u = new URL(url);
+    return (u.pathname + u.search).replace(/\/$/, '') || '/';
+  } catch {
+    return '';
   }
 }
 
@@ -456,7 +549,169 @@ function clip(text: string, max = 22) {
         enregistré. La prochaine exécution l'aura.
       </p>
 
+      <!-- -------------------------------------------------------- onglets -->
+      <div class="tabs" role="tablist">
+        <button
+          class="tab" :class="{ on: view === 'arbre' }" role="tab"
+          :aria-selected="view === 'arbre'" @click="view = 'arbre'"
+        >
+          Arbre — d'où vient chaque sortie
+        </button>
+        <button
+          class="tab" :class="{ on: view === 'journal' }" role="tab"
+          :aria-selected="view === 'journal'" @click="view = 'journal'"
+        >
+          Journal — {{ total.toLocaleString('fr-FR') }} événements
+        </button>
+      </div>
+
+      <!-- ---------------------------------------------------------- arbre -->
+      <template v-if="view === 'arbre'">
+        <p v-if="!tree" class="muted">Chargement…</p>
+        <template v-else>
+          <p v-if="tree.truncated" class="error">
+            Journal trop long : l'arbre ne montre que son début. Le journal reste complet.
+          </p>
+
+          <!-- 1. les recherches, et ce que chacune a remonté -->
+          <template v-if="tree.searches.length">
+            <h2>Recherches lancées</h2>
+            <ul class="tree">
+              <li v-for="s of tree.searches" :key="s.query">
+                <div class="node q">
+                  <button class="fold" @click="fold(`q:${s.query}`)">
+                    {{ collapsed.has(`q:${s.query}`) ? '▸' : '▾' }}
+                  </button>
+                  <span class="ico" aria-hidden="true">🔎</span>
+                  <b>{{ s.query }}</b>
+                  <span class="muted small">{{ s.results.length }} résultat(s)</span>
+                </div>
+                <ul v-if="!collapsed.has(`q:${s.query}`)" class="tree sub">
+                  <li v-for="r of s.results" :key="r.url" class="leaf">
+                    <a :href="r.url" target="_blank" rel="noopener noreferrer">
+                      {{ r.title || host(r.url) }}
+                    </a>
+                    <span class="muted small">{{ host(r.url) }}</span>
+                  </li>
+                </ul>
+              </li>
+            </ul>
+          </template>
+
+          <!-- 2. les agendas, leurs liens et les sorties qu'ils ont données -->
+          <h2>Agendas dépouillés</h2>
+          <p v-if="!tree.agendas.length" class="muted">Aucun agenda dépouillé.</p>
+          <ul class="tree">
+            <li v-for="a of tree.agendas" :key="a.url">
+              <div class="node ag" :class="{ ko: a.errors > 0 }">
+                <button class="fold" @click="fold(`a:${a.url}`)">
+                  {{ collapsed.has(`a:${a.url}`) ? '▸' : '▾' }}
+                </button>
+                <span class="ico" aria-hidden="true">📋</span>
+                <a :href="a.url" target="_blank" rel="noopener noreferrer"><b>{{ host(a.url) }}</b></a>
+                <span class="muted small path">{{ pathOf(a.url) }}</span>
+                <span v-if="a.errors" class="badge err">{{ a.errors }} erreur(s)</span>
+              </div>
+
+              <template v-if="!collapsed.has(`a:${a.url}`)">
+                <p class="from">
+                  <template v-if="a.fromQuery">
+                    remonté par la recherche <b>« {{ a.fromQuery }} »</b>
+                  </template>
+                  <template v-else>origine inconnue (page de départ, ou requête non journalisée)</template>
+                </p>
+
+                <ul class="tree sub">
+                  <li>
+                    <div class="node small-node">
+                      <button class="fold" @click="toggleLinks(a, 'link')">
+                        {{ branchLinks[`link:${a.url}`] ? '▾' : '▸' }}
+                      </button>
+                      <span>{{ a.links }} lien(s) extrait(s)</span>
+                      <button class="btn tiny ghost" @click="inspect({ agenda: a.url, kind: 'link' })">
+                        au journal
+                      </button>
+                      <span v-if="branchLoading === `link:${a.url}`" class="muted small">chargement…</span>
+                    </div>
+                    <ul v-if="branchLinks[`link:${a.url}`]" class="tree sub scroller">
+                      <li v-for="l of branchLinks[`link:${a.url}`]" :key="l.id" class="leaf">
+                        <span class="idx">{{ (l.data as any)?.index }}</span>
+                        <a :href="l.url ?? '#'" target="_blank" rel="noopener noreferrer">
+                          {{ (l.data as any)?.text || l.url }}
+                        </a>
+                        <span class="muted small ctx">{{ (l.data as any)?.context }}</span>
+                      </li>
+                    </ul>
+                  </li>
+
+                  <li>
+                    <div class="node small-node">
+                      <button class="fold" @click="toggleLinks(a, 'link_kept')">
+                        {{ branchLinks[`link_kept:${a.url}`] ? '▾' : '▸' }}
+                      </button>
+                      <span><b>{{ a.kept }}</b> lien(s) retenu(s) par le modèle</span>
+                      <button class="btn tiny ghost" @click="inspect({ agenda: a.url, kind: 'link_kept' })">
+                        au journal
+                      </button>
+                    </div>
+                    <ul v-if="branchLinks[`link_kept:${a.url}`]" class="tree sub">
+                      <li v-for="l of branchLinks[`link_kept:${a.url}`]" :key="l.id" class="leaf">
+                        <a :href="l.url ?? '#'" target="_blank" rel="noopener noreferrer">
+                          {{ (l.data as any)?.text || l.url }}
+                        </a>
+                      </li>
+                    </ul>
+                  </li>
+
+                  <li>
+                    <div class="node small-node">
+                      <span class="fold-spacer" aria-hidden="true"></span>
+                      <span><b>{{ a.pages.length }}</b> page(s) lue(s) et leur verdict</span>
+                    </div>
+                    <ul class="tree sub">
+                      <li v-for="p of a.pages" :key="p.url" class="leaf page">
+                        <span class="dot" :class="outcomeClass(p)" aria-hidden="true"></span>
+                        <a :href="p.url" target="_blank" rel="noopener noreferrer">
+                          {{ p.title || host(p.url) }}
+                        </a>
+                        <span class="muted small">{{ p.outcome }}</span>
+                        <RouterLink v-if="p.eventId" :to="`/sorties/${p.eventId}`" class="small">
+                          voir la sortie
+                        </RouterLink>
+                        <button class="btn tiny ghost" @click="inspect({ page: p.url })">
+                          sa piste
+                        </button>
+                      </li>
+                    </ul>
+                  </li>
+                </ul>
+              </template>
+            </li>
+          </ul>
+
+          <!-- 3. ce qui n'est venu d'aucun agenda -->
+          <template v-if="tree.direct.length">
+            <h2>Trouvées sans agenda</h2>
+            <p class="muted small">
+              Une recherche remonte parfois la page d'une sortie précise : elle
+              saute les étages 2 et 3. En mode « site », ce sont les adresses de départ.
+            </p>
+            <ul class="tree">
+              <li v-for="p of tree.direct" :key="p.url" class="leaf page">
+                <span class="dot" :class="outcomeClass(p)" aria-hidden="true"></span>
+                <a :href="p.url" target="_blank" rel="noopener noreferrer">
+                  {{ p.title || host(p.url) }}
+                </a>
+                <span class="muted small">{{ p.outcome }}</span>
+                <button class="btn tiny ghost" @click="inspect({ page: p.url })">sa piste</button>
+              </li>
+            </ul>
+          </template>
+        </template>
+      </template>
+
       <!-- ------------------------------------------------------- filtres -->
+      <template v-else>
       <div class="logfilters">
         <select v-model="filters.kind" aria-label="Type d'événement">
           <option value="">Tous les types</option>
@@ -549,6 +804,7 @@ function clip(text: string, max = 22) {
           lignes par exécution. Les compteurs et le sort de chaque page restent.
         </span>
       </p>
+      </template>
     </template>
   </div>
 </template>
@@ -764,6 +1020,155 @@ h1 .badge {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* ----------------------------------------------------------------- arbre */
+
+.tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin: 1.2rem 0 1rem;
+  border-bottom: 2px solid var(--line);
+}
+
+.tab {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+}
+
+.tab.on {
+  color: var(--accent-dark);
+  border-bottom-color: var(--accent-dark);
+}
+
+ul.tree {
+  list-style: none;
+  margin: 0.3rem 0;
+  padding: 0;
+}
+
+ul.tree.sub {
+  margin-left: 1.1rem;
+  padding-left: 0.9rem;
+  border-left: 2px solid var(--line);
+}
+
+/* Une liste de deux cents liens ne doit pas noyer le reste de l'arbre. */
+ul.tree.scroller {
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.node {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.5rem;
+  border-radius: 9px;
+}
+
+.node.q,
+.node.ag {
+  background: var(--card);
+  border: 1px solid var(--line);
+  margin-top: 0.4rem;
+}
+
+.node.ag.ko {
+  border-color: var(--danger);
+}
+
+.node.small-node {
+  font-size: 0.9rem;
+  padding: 0.25rem 0.3rem;
+}
+
+.fold,
+.fold-spacer {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink-soft);
+  padding: 0;
+  width: 1rem;
+  flex: none;
+  text-align: left;
+}
+
+.fold-spacer {
+  cursor: default;
+}
+
+.node .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 22rem;
+}
+
+.from {
+  margin: 0.2rem 0 0.3rem 1.6rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+li.leaf {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.18rem 0.2rem;
+  font-size: 0.88rem;
+}
+
+li.leaf .idx {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  min-width: 1.8rem;
+}
+
+li.leaf .ctx {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 26rem;
+}
+
+/* La pastille dit le verdict d'un coup d'œil, sans lire la phrase. */
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--line);
+  flex: none;
+}
+
+.dot.ok {
+  background: var(--ok);
+}
+
+.dot.off {
+  background: var(--ink-soft);
+}
+
+.dot.ko {
+  background: var(--danger);
+}
+
+.badge.err {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 /* --------------------------------------------------------------- journal */

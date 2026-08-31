@@ -275,6 +275,47 @@ export interface ScraperStageNode {
   produced: string[];
 }
 
+/**
+ * L'arbre d'une exécution : la filiation, pas la chronologie.
+ *
+ * Le journal dit ce qui s'est passé ; l'arbre dit d'où chaque sortie vient —
+ * quelle requête a remonté quel agenda, quel agenda a donné quel lien, quel
+ * lien a donné quelle fiche. Assemblé côté serveur (`lib/scraperTree.ts`).
+ */
+export interface ScraperTreePage {
+  url: string;
+  title: string;
+  agenda: string;
+  /** Le contexte du lien sur l'agenda — pourquoi il a été retenu. */
+  why: string;
+  chars: number;
+  outcome: string;
+  /** submitted, dry_run, skip, ou vide si la page n'a pas été tranchée. */
+  decision: string;
+  eventId: number | null;
+  errors: number;
+  seq: number;
+}
+
+export interface ScraperTreeAgenda {
+  url: string;
+  links: number;
+  kept: number;
+  seconds: number;
+  errors: number;
+  /** La requête web qui a remonté cet agenda, quand on la connaît. */
+  fromQuery: string;
+  pages: ScraperTreePage[];
+}
+
+export interface ScraperTree {
+  searches: { query: string; results: { url: string; title: string }[] }[];
+  agendas: ScraperTreeAgenda[];
+  /** Ce qui n'est venu d'aucun agenda : sortie remontée telle quelle, ou seed. */
+  direct: ScraperTreePage[];
+  truncated: boolean;
+}
+
 export type ScraperLogLevel = 'info' | 'warn' | 'error';
 
 /** Une ligne du journal détaillé d'une exécution. */
