@@ -203,6 +203,17 @@ onUnmounted(() => clearInterval(timer));
         {{ run.webSearches }} recherche(s) web
       </p>
 
+      <p class="debug-link">
+        <RouterLink :to="`/admin/scraper/runs/${run.id}/debug`" class="btn small">
+          Journal détaillé et graphe des étages
+        </RouterLink>
+        <span class="muted small">
+          Le déroulé complet, étage par étage : requêtes lancées, liens extraits
+          puis retenus, prompts envoyés, jetons consommés. Le tableau ci-dessous
+          ne dit que le verdict de chaque page.
+        </span>
+      </p>
+
       <div v-if="run.purgedAt" class="purged">
         <b>Données supprimées le {{ when(run.purgedAt) }}.</b>
         Les sorties issues de cette exécution et les pages qu'elle avait mémorisées n'existent
@@ -288,6 +299,14 @@ onUnmounted(() => clearInterval(timer));
   border-radius: 10px;
   background: var(--photo-bg);
   font-size: 0.9rem;
+}
+
+.debug-link {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin: 0.8rem 0;
 }
 
 .purge-row {

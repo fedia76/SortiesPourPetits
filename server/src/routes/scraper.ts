@@ -9,6 +9,8 @@ import {
   scraperConfigUpdateSchema,
   scraperFinishSchema,
   scraperItemsSchema,
+  scraperLogQuerySchema,
+  scraperLogsSchema,
   scraperMemoryPurgeSchema,
   scraperMemorySchema,
   scraperRunSchema,
@@ -559,6 +561,230 @@ scraperRouter.post('/runs/:id/items', async (req, res) => {
   }
 
   res.json({ ok: true, recorded: parsed.data.items.length });
+});
+
+// ------------------------------------------------------- journal détaillé
+
+/**
+ * Le journal détaillé d'une exécution, envoyé par le worker au fil du run.
+ *
+ * Distinct de `/items` et c'est délibéré : `/items` décide du sort d'une page
+ * et alimente la mémoire commune, cette route ne fait que raconter. Un bug
+ * dans le journal ne peut donc pas mémoriser une page par accident.
+ *
+ * Les doublons sont possibles — un worker qui réessaie un paquet — d'où le
+ * `skipDuplicates` sur la clé (runId, seq).
+ */
+scraperRouter.post('/runs/:id/logs', async (req, res) => {
+  const runId = Number(req.params.id);
+  const parsed = scraperLogsSchema.safeParse(req.body);
+  if (!Number.isInteger(runId) || !parsed.success) {
+    res
+      .status(400)
+      .json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
+    return;
+  }
+  const run = await prisma.scraperRun.findUnique({ where: { id: runId }, select: { id: true } });
+  if (!run) {
+    res.status(404).json({ error: 'Exécution introuvable' });
+    return;
+  }
+
+  await prisma.scraperRunLog.createMany({
+    data: parsed.data.entries.map((entry) => ({
+      runId,
+      seq: entry.seq,
+      // L'horodatage vient du scraper : c'est lui qui a vu l'événement, et le
+      // paquet peut arriver plusieurs secondes plus tard.
+      at: entry.at ? new Date(entry.at) : new Date(),
+      stage: entry.stage ?? null,
+      kind: entry.kind,
+      level: entry.level,
+      url: entry.url ?? null,
+      message: entry.message ?? null,
+      data: entry.data ? JSON.stringify(entry.data) : null,
+    })),
+  });
+
+  res.json({ ok: true, recorded: parsed.data.entries.length });
+});
+
+/** Un événement du journal, prêt pour la console. */
+function serializeLog(row: {
+  id: number;
+  seq: number;
+  at: Date;
+  stage: string | null;
+  kind: string;
+  level: string;
+  url: string | null;
+  message: string | null;
+  data: string | null;
+}) {
+  let data: unknown = null;
+  if (row.data) {
+    // Un JSON illisible ne doit pas faire échouer toute la page : on rend la
+    // chaîne brute, la console l'affichera telle quelle.
+    try {
+      data = JSON.parse(row.data);
+    } catch {
+      data = { brut: row.data };
+    }
+  }
+  return { ...row, data };
+}
+
+/**
+ * Le journal, filtré. C'est ce que lit la page de débogage.
+ *
+ * `after` est un curseur sur `seq`, pas un décalage : la console charge la
+ * suite sans risquer de sauter ou de répéter une ligne quand le run écrit
+ * pendant qu'on lit.
+ */
+scraperRouter.get('/runs/:id/logs', async (req, res) => {
+  const runId = Number(req.params.id);
+  const parsed = scraperLogQuerySchema.safeParse(req.query);
+  if (!Number.isInteger(runId) || !parsed.success) {
+    res
+      .status(400)
+      .json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
+    return;
+  }
+  const { stage, kind, level, url, q, after, limit } = parsed.data;
+
+  const where: Prisma.ScraperRunLogWhereInput = { runId };
+  if (stage) where.stage = stage;
+  if (kind) where.kind = kind;
+  if (level) where.level = level;
+  if (url) where.url = url;
+  if (after !== undefined) where.seq = { gt: after };
+  if (q) {
+    // La recherche libre porte sur ce qu'un humain lit : l'adresse, le
+    // message, et le reste des champs sérialisés.
+    where.OR = [{ url: { contains: q } }, { message: { contains: q } }, { data: { contains: q } }];
+  }
+
+  const rows = await prisma.scraperRunLog.findMany({
+    where,
+    orderBy: { seq: 'asc' },
+    take: limit + 1,
+  });
+  const hasMore = rows.length > limit;
+
+  res.json({
+    logs: rows.slice(0, limit).map(serializeLog),
+    hasMore,
+    total: await prisma.scraperRunLog.count({ where: { runId } }),
+  });
+});
+
+/**
+ * Le graphe des six étages, avec ce que chacun a produit.
+ *
+ * Les libellés ne sont pas écrits ici : ils viennent de l'événement
+ * `run_start`, que le scraper remplit depuis `stages.py`. Une brique renommée
+ * côté scraper l'est donc partout, sans redéploiement du serveur.
+ */
+scraperRouter.get('/runs/:id/graph', async (req, res) => {
+  const runId = Number(req.params.id);
+  if (!Number.isInteger(runId)) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+
+  const [start, ends, byStage, errorsByStage] = await Promise.all([
+    prisma.scraperRunLog.findFirst({ where: { runId, kind: 'run_start' }, orderBy: { seq: 'asc' } }),
+    prisma.scraperRunLog.findMany({ where: { runId, kind: 'stage_end' }, orderBy: { seq: 'asc' } }),
+    prisma.scraperRunLog.groupBy({ by: ['stage'], where: { runId }, _count: { _all: true } }),
+    prisma.scraperRunLog.groupBy({
+      by: ['stage'],
+      where: { runId, level: 'error' },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const events = new Map(byStage.map((g) => [g.stage ?? '', g._count._all]));
+  const errors = new Map(errorsByStage.map((g) => [g.stage ?? '', g._count._all]));
+
+  // Un étage est traversé plusieurs fois par run — une fois par agenda, une
+  // fois par page. On additionne les passages plutôt que de n'en montrer qu'un.
+  const passes = new Map<string, { runs: number; seconds: number; produced: string[] }>();
+  for (const row of ends) {
+    if (!row.stage) continue;
+    const parsedData = (() => {
+      try {
+        return row.data ? (JSON.parse(row.data) as Record<string, unknown>) : {};
+      } catch {
+        return {};
+      }
+    })();
+    const entry = passes.get(row.stage) ?? { runs: 0, seconds: 0, produced: [] };
+    entry.runs += 1;
+    entry.seconds += Number(parsedData.seconds ?? 0);
+    const produced = parsedData.produced;
+    if (typeof produced === 'string' && produced !== '—') entry.produced.push(produced);
+    passes.set(row.stage, entry);
+  }
+
+  const described = (() => {
+    try {
+      const data = start?.data ? (JSON.parse(start.data) as Record<string, unknown>) : {};
+      return Array.isArray(data.stages) ? (data.stages as Record<string, unknown>[]) : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  res.json({
+    stages: described.map((s) => {
+      const key = String(s.stage);
+      const pass = passes.get(key);
+      return {
+        ...s,
+        events: events.get(key) ?? 0,
+        errors: errors.get(key) ?? 0,
+        passes: pass?.runs ?? 0,
+        seconds: pass ? Math.round(pass.seconds * 10) / 10 : 0,
+        produced: pass?.produced ?? [],
+      };
+    }),
+    // Ce qui n'appartient à aucun étage : démarrage, clôture, erreurs hors run.
+    outside: events.get('') ?? 0,
+  });
+});
+
+/**
+ * Oublie le journal détaillé d'une exécution, et lui seul.
+ *
+ * Ce journal est verbeux par construction : il garde chaque lien soumis au
+ * tri, ce qui fait un millier de lignes par exécution. C'est exactement ce
+ * qu'on veut pour déboguer, et exactement ce qu'on ne veut pas garder pour
+ * cent exécutions passées.
+ *
+ * Distinct de `DELETE /runs/:id/data`, qui supprime les sorties et la mémoire
+ * en laissant les journaux : ici c'est l'inverse. Les compteurs de
+ * l'exécution et le sort de chaque page (`ScraperRunItem`) ne bougent pas.
+ */
+scraperRouter.delete('/runs/:id/logs', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const run = await prisma.scraperRun.findUnique({ where: { id }, select: { status: true } });
+  if (!run) {
+    res.status(404).json({ error: 'Exécution introuvable' });
+    return;
+  }
+  if (run.status === 'QUEUED' || run.status === 'RUNNING') {
+    // Le worker écrit encore : ce qu'on supprimerait reviendrait aussitôt.
+    res.status(409).json({
+      error: "L'exécution est en cours. Attendez sa fin avant de vider son journal.",
+    });
+    return;
+  }
+  const { count } = await prisma.scraperRunLog.deleteMany({ where: { runId: id } });
+  res.json({ ok: true, deleted: count });
 });
 
 /**

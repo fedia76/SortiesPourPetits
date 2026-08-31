@@ -280,6 +280,45 @@ export const scraperItemsSchema = z.object({
 });
 
 /** Clôture d'une exécution : compteurs finaux. */
+/**
+ * Un paquet du journal détaillé, envoyé par le worker au fil du run.
+ *
+ * Volontairement permissif sur `kind` et `stage` : le scraper est la source de
+ * vérité de ses propres étiquettes, et un nouveau type d'événement ne doit pas
+ * faire échouer un run parce que le serveur ne le connaît pas encore. La
+ * console affiche ce qu'elle ne sait pas nommer plutôt que de le perdre.
+ */
+export const scraperLogsSchema = z.object({
+  entries: z
+    .array(
+      z.object({
+        seq: z.number().int().min(0),
+        at: z.string().trim().max(40).optional(),
+        stage: z.string().trim().max(24).nullable().optional(),
+        kind: z.string().trim().min(1).max(40),
+        level: z.enum(['info', 'warn', 'error']).optional().default('info'),
+        url: z.string().trim().max(500).optional(),
+        message: z.string().trim().max(4000).optional(),
+        /** Le reste des champs de l'événement. Sérialisé tel quel. */
+        data: z.record(z.string(), z.unknown()).optional(),
+      }),
+    )
+    .min(1)
+    .max(200),
+});
+
+/** Lecture du journal : filtres de la page de débogage. */
+export const scraperLogQuerySchema = z.object({
+  stage: z.string().trim().max(24).optional(),
+  kind: z.string().trim().max(40).optional(),
+  level: z.enum(['info', 'warn', 'error']).optional(),
+  url: z.string().trim().max(500).optional(),
+  q: z.string().trim().max(120).optional(),
+  /** Curseur : dernier `seq` déjà reçu. La console charge la suite. */
+  after: z.coerce.number().int().min(0).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional().default(200),
+});
+
 export const scraperFinishSchema = z.object({
   status: z.enum(['DONE', 'FAILED']),
   error: z.string().trim().max(2000).optional(),

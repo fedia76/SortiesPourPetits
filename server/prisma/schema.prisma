@@ -238,9 +238,46 @@ model ScraperRun {
   requestedById Int?
 
   items ScraperRunItem[]
+  logs  ScraperRunLog[]
 
   @@index([status, queuedAt])
   @@index([configId])
+}
+
+/// Le journal détaillé d'une exécution, étage par étage.
+///
+/// `ScraperRunItem` dit le **sort** de chaque page — c'est le verdict, et
+/// c'est lui qui alimente la mémoire. Cette table dit le **déroulé** : les
+/// requêtes lancées, les liens extraits puis retenus, les prompts envoyés, les
+/// jetons consommés. Les deux sont volontairement séparées, pour qu'un bug du
+/// journal ne puisse jamais mémoriser quoi que ce soit.
+model ScraperRunLog {
+  id  Int      @id @default(autoincrement())
+  /// Numéro d'ordre émis par le scraper : il pagine sans rien perdre ni rien
+  /// répéter, là où l'horodatage a des ex æquo à la seconde près.
+  seq Int
+  at  DateTime @default(now())
+
+  /// L'un des six étages du pipeline (scraper/sortiesbot/stages.py), ou nul
+  /// pour ce qui se passe hors étage — démarrage et clôture du run.
+  stage String? @db.VarChar(24)
+  /// run_start, stage_start, query, link, page, extract, submit, error…
+  kind  String  @db.VarChar(40)
+  /// info, warn, error — le filtre de gravité de la console de débogage.
+  level String  @default("info") @db.VarChar(8)
+
+  /// La page concernée, quand il y en a une : c'est la clé qui permet de
+  /// suivre le parcours d'une même page à travers les six étages.
+  url     String? @db.VarChar(500)
+  message String? @db.Text
+  /// Le reste des champs de l'événement, en JSON.
+  data    String? @db.Text
+
+  run   ScraperRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId Int
+
+  @@index([runId, seq])
+  @@index([runId, stage])
 }
 
 /// Ce qu'un run a fait de chaque page : c'est le journal, consultable depuis

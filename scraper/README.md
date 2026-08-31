@@ -115,6 +115,52 @@ Chaque run écrit deux fichiers dans `runs/` :
 
 ## Comment ça marche
 
+### Les six étages, et où ils sont dans le code
+
+Le pipeline a toujours eu six étages, mais ils ne vivaient que dans cette
+documentation : le code les enchaînait sans les nommer. Ils sont désormais
+déclarés une fois pour toutes dans [`sortiesbot/stages.py`](sortiesbot/stages.py),
+et chaque étage s'ouvre explicitement avec `log.stage(...)` :
+
+| # | Étage | Qui travaille | Reçoit | Rend | Où |
+|---|---|---|---|---|---|
+| 1 | Découverte | modèle | thème, zone, période | URL classées agenda ou sortie | `discovery._by_search` / `_by_seeds` |
+| 2 | Dépouillement | Python | URL d'agenda | liens et leur contexte | `discovery._harvest` |
+| 3 | Sélection | modèle | liens numérotés | numéros retenus | `discovery._harvest` |
+| 4 | Lecture | Python | URL de page | texte, dates JSON-LD, image | `pipeline._process` |
+| 5 | Extraction | modèle | texte de la page | fiche(s) JSON | `pipeline._process` |
+| 6 | Publication | Python | fiche JSON | sortie en attente de modération | `pipeline._publish` |
+
+L'étage n'est pas passé en paramètre à chaque appel : `RunLog.stage()` est un
+gestionnaire de contexte, et tout ce qui est journalisé à l'intérieur lui est
+rattaché. C'est ce qui permet à la console de reconstituer le graphe sans que
+le code ait à se répéter — et à `stages.describe()` d'être la seule source des
+libellés, y compris pour l'interface du site.
+
+### Le journal, et où il va
+
+Un même événement part vers trois destinations :
+
+* le **fichier JSONL** de `runs/` — et il est désormais toujours écrit : si le
+  dossier est illisible (typiquement créé par root, alors que le service tourne
+  en `deploy`), le worker se replie sur un dossier temporaire au lieu de
+  renoncer ;
+* la **console**, pour un run lancé à la main ;
+* le **site**, par `POST /api/scraper/runs/:id/logs`, qui alimente la page de
+  débogage — c'est ce qui manquait : le worker tourne en service systemd, et
+  tout ce que le journal racontait mourait sur la sortie standard.
+
+La page de débogage se trouve depuis le détail d'une exécution, bouton
+« Journal détaillé et graphe des étages ». Elle dessine les six briques avec
+leurs compteurs, et le journal filtrable en dessous : par étage (en cliquant
+une brique), par type d'événement, par gravité, par page suivie, ou par texte
+libre. Les filtres se composent et se retirent un par un.
+
+Le journal est verbeux : chaque lien soumis au tri y figure, soit près d'un
+millier de lignes par exécution. C'est ce qui le rend utile, et c'est pourquoi
+un bouton permet d'oublier celui d'une exécution donnée sans toucher à ses
+compteurs ni au sort de ses pages.
+
 ### Le partage des rôles
 
 Python fait tout ce qui est mécanique — télécharger, parser, extraire des

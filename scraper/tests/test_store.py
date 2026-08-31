@@ -3,7 +3,8 @@
 import json
 from pathlib import Path
 
-from sortiesbot.journal import RunLog, run_log_path
+from sortiesbot.journal import RemoteJournal, RunLog, run_log_path
+from sortiesbot.stages import Stage
 from sortiesbot.store import SeenStore, normalize_url
 
 
@@ -45,7 +46,12 @@ def test_journal_jsonl(tmp_path: Path):
     lignes = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
     assert [l["kind"] for l in lignes] == ["query", "error"]
     assert lignes[0]["query"] == "spectacle enfant Paris"
-    assert lignes[1]["stage"] == "extraction"
+    # `op` nomme l'opération technique ; `stage` est réservé à l'étage du
+    # pipeline, et vaut None hors de tout `log.stage(...)`.
+    assert lignes[1]["op"] == "extraction"
+    assert lignes[1]["level"] == "error"
+    assert lignes[0]["stage"] is None
+    assert [l["seq"] for l in lignes] == [1, 2]
     assert "at" in lignes[0]
 
 
@@ -53,3 +59,42 @@ def test_nom_du_journal(tmp_path: Path):
     path = run_log_path(tmp_path, "Spectacles Week-end")
     assert path.suffix == ".jsonl"
     assert path.name.endswith("_spectacles-week-end.jsonl")
+
+
+def test_le_journal_marque_l_etage_courant(tmp_path: Path):
+    """Un événement journalisé dans un étage lui est rattaché, sans le dire.
+
+    C'est ce qui permet à la console de reconstituer le graphe : le code
+    n'écrit jamais `stage=` à la main, il ouvre un étage et journalise dedans.
+    """
+    path = tmp_path / "runs" / "run.jsonl"
+    with RunLog(path, verbose=False) as log:
+        with log.stage(Stage.SELECT, url="https://exemple.fr/agenda") as st:
+            log.event("link", index=1, url="https://exemple.fr/a")
+            st.produced("1 lien retenu sur 12", kept=1, among=12)
+        log.event("run_end")
+
+    lignes = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
+    assert [l["kind"] for l in lignes] == ["stage_start", "link", "stage_end", "run_end"]
+    assert [l["stage"] for l in lignes] == ["select", "select", "select", None]
+    fin = lignes[2]
+    assert fin["produced"] == "1 lien retenu sur 12"
+    assert fin["kept"] == 1 and fin["among"] == 12
+
+
+def test_le_journal_distant_renonce_apres_trois_echecs():
+    """Un site injoignable ne doit jamais faire échouer un run."""
+
+    class ApiCassee:
+        appels = 0
+
+        def report_logs(self, run_id, entries):
+            ApiCassee.appels += 1
+            raise RuntimeError("site injoignable")
+
+    journal = RemoteJournal(ApiCassee(), run_id=1, batch=1)
+    for i in range(10):
+        journal.add({"seq": i, "kind": "skip"})
+
+    assert journal.given_up is True
+    assert ApiCassee.appels == RemoteJournal.MAX_FAILURES
