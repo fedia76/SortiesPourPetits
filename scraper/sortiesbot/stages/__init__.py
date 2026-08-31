@@ -4,7 +4,9 @@ Ce fichier est le **vocabulaire** — l'identité de chaque brique, son numéro,
 son libellé, qui la fait travailler et ce qu'elle prend et rend. Chaque module
 voisin en implémente une, et une seule : `discovery.py`, `harvest.py`,
 `selection.py`, `reading.py`, `extraction.py`, `publication.py`. Le socle
-commun est dans `base.py`, l'enchaînement dans `sortiesbot/orchestrator.py`.
+commun est dans `base.py`, l'enchaînement dans `sortiesbot/orchestrator.py`,
+méthode `Run.chain()` — les six appels s'y suivent, numérotés, à leur
+profondeur d'imbrication.
 
 Séparer les deux n'est pas une coquetterie : le vocabulaire voyage jusqu'au
 site (l'événement `run_start` le transporte, et la console dessine le graphe

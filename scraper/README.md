@@ -141,9 +141,26 @@ par brique**, leur vocabulaire commun dans
 
 Aucune brique ne sait ce qui vient avant ou après elle : l'ordre n'existe qu'à
 un seul endroit, [`sortiesbot/orchestrator.py`](sortiesbot/orchestrator.py),
-où la classe `Run` les enchaîne. C'est là qu'on lit d'un coup d'œil combien de
-fois chacune tourne — la découverte une fois par run, le dépouillement une fois
-par agenda, la lecture une fois par page, la publication une fois par fiche.
+et plus précisément dans une seule méthode, `Run.chain()`. Les six appels s'y
+suivent de haut en bas, chacun annoncé par son numéro, et leur **indentation
+dit la cardinalité** — ce qui est plus à droite tourne plus souvent :
+
+```
+1  découverte                              1 fois par run
+     2  dépouillement                      1 fois par agenda
+     3  sélection                          1 fois par agenda
+   puis, pour chaque page retenue :
+     4  lecture                            1 fois par page
+     5  extraction                         1 fois par page → n fiches
+          6  publication                   1 fois par fiche
+```
+
+`chain()` ne contient rien d'autre que ces six appels et les branchements qui
+décident de la suite. Ce qui tranche *si* une page est lue — doublons du run,
+plafond de sorties, budget — est en amont, dans `_to_read()` ; l'intendance du
+run — catégories du site, comptes finaux, ouverture et clôture du journal —
+est groupée à part, dans `go()`. Sans ce partage, la chaîne se lisait coupée
+en trois par des décisions qui ne la concernaient pas.
 
 Elles n'ont **pas** de signature commune, et c'est délibéré : ces cardinalités
 diffèrent, et une interface uniforme aurait fait croire à une chaîne de six
@@ -193,8 +210,8 @@ dedans en hérite, et le code n'a pas à répéter `agenda=…` sur quarante app
 | Clé | Posée par | Ce qu'elle relie |
 |---|---|---|
 | `query` | le fournisseur, à chaque `search_result` | la requête web → les URL qu'elle a remontées |
-| `agenda` | `Run._collect`, autour des étages 2 et 3 | l'agenda → ses liens, ses liens retenus, ses pages |
-| `page` | `Run._read_and_publish` | la page → sa lecture, son extraction, son verdict |
+| `agenda` | `Run.chain`, autour des étages 2 et 3 | l'agenda → ses liens, ses liens retenus, ses pages |
+| `page` | `Run.chain`, autour des étages 4 à 6 | la page → sa lecture, son extraction, son verdict |
 
 La console reconstitue l'arbre à partir de ces trois clés
 (`server/src/lib/scraperTree.ts`), et la page de débogage l'affiche en regard
