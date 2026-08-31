@@ -51,6 +51,7 @@ MAX_CONTINUATIONS = 2
 
 TIMEOUT_SECONDS = 300.0
 
+CLASSIFY_MAX_TOKENS = 300
 SEARCH_MAX_TOKENS = 8_000
 SELECT_MAX_TOKENS = 2_000
 EXTRACTION_MAX_TOKENS = 4_000
@@ -66,6 +67,18 @@ PRICES = {
     "claude-sonnet-5": (2.0, 10.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5": (1.0, 5.0),
+}
+
+#: Une étiquette et une phrase. Le modèle n'écrit jamais d'URL ici : il ne
+#: peut donc pas en inventer, comme à la sélection.
+CLASSIFY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "nature": {"type": "string", "enum": ["agenda", "sortie", "inconnu"]},
+        "pourquoi": {"type": "string"},
+    },
+    "required": ["nature", "pourquoi"],
+    "additionalProperties": False,
 }
 
 SEARCH_SCHEMA: dict[str, Any] = {
@@ -263,7 +276,26 @@ class AnthropicProvider:
             )
         return pages
 
-    # --------------------------------------------------------------- 2. choisir
+    # ------------------------------------------------------------ 2. reconnaître
+
+    def classify(self, digest: str, config: Config, log: RunLog) -> tuple[str, str]:
+        """Le plus petit des quatre appels : un condensé, une étiquette."""
+        data = self._ask(
+            model=config.classify_model,
+            prompt=config.render_classify(digest),
+            schema=CLASSIFY_SCHEMA,
+            max_tokens=CLASSIFY_MAX_TOKENS,
+            op="classify",
+            log=log,
+        )
+        nature = str(data.get("nature", "")).strip().lower()
+        if nature not in ("agenda", "sortie", "inconnu"):
+            # Le schéma l'interdit, mais une réponse tronquée peut passer au
+            # travers : on ne devine pas à sa place.
+            return "inconnu", f"réponse inattendue ({nature or 'vide'})"
+        return nature, str(data.get("pourquoi", "")).strip()
+
+    # --------------------------------------------------------------- 3. choisir
 
     def select(
         self, page: str, links: list[Link], config: Config, log: RunLog
@@ -305,7 +337,7 @@ class AnthropicProvider:
             log.event("link_kept", url=link.url, text=link.text, why=why, agenda=page)
         return [link for link, _ in kept]
 
-    # -------------------------------------------------------------- 3. extraire
+    # -------------------------------------------------------------- 4. extraire
 
     def extract(
         self,

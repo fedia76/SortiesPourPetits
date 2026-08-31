@@ -252,17 +252,35 @@ Or la même question se répond sur le HTML, gratuitement, une fois la page
 téléchargée. C'est ce que fait [`sortiesbot/classify.py`](sortiesbot/classify.py),
 en cascade, du plus certain au plus flou :
 
-| Signal | Ce qu'il dit | Confiance |
-|---|---|---|
-| **JSON-LD** | un seul spectacle nommé → sortie ; trois titres distincts ou un `ItemList` → agenda | certain |
-| **OpenGraph** | `og:type: event` → sortie | probable |
-| — | rien de déclaré : **inconnu** | — |
+| # | Signal | Ce qu'il dit | Confiance | Coût |
+|---|---|---|---|---|
+| 1 | **URL** | `?page=2`, `?search=`, `?filter[]=` → agenda | certain | nul |
+| 2 | **JSON-LD** | un seul spectacle nommé → sortie ; trois titres distincts ou un `ItemList` → agenda | certain | nul |
+| 3 | **OpenGraph** | `og:type: event` → sortie | probable | nul |
+| 4 | **Le modèle**, sur le condensé | agenda, sortie, ou inconnu | probable | ~0,001 $ |
+
+Les trois premiers sont du Python : ils ne coûtent rien et couvrent, sur le
+premier échantillon, environ la moitié des pages. Le quatrième n'est appelé que
+lorsqu'ils se taisent tous — `classify_model: ""` en configuration le
+désactive, et la page reste « inconnue ».
+
+Le **condensé** (`classify.digest`) est la carte d'identité d'une page : URL,
+titre, `h1`, trois cents caractères d'amorce, et les textes des vingt premiers
+liens avec **combien d'entre eux voisinent une date**. Quelques centaines de
+jetons, jamais la page entière — celle-là, l'extraction la paie déjà. Il est
+borné par construction, que la page fasse 2 Ko ou 2 Mo.
+
+Cette densité de dates est le candidat sérieux au signal structurel qui
+manque : *un agenda mène à des choses datées*. Elle est relevée et archivée
+dès maintenant, sans voix au chapitre — c'est la leçon du comptage de liens.
 
 Le piège est documenté dans `json_ld_dates` : beaucoup de sites publient « un
 `schema.org/Event` par représentation ». Compter les objets classerait en
 agenda toute pièce jouée douze fois — on compte donc les **titres distincts**.
 
-Il y a eu un troisième signal, le **nombre de liens exploitables**, et
+### Deux mesures qui ne classent rien
+
+Il y a eu un signal de plus, le **nombre de liens exploitables**, et
 vingt-sept pages réelles l'ont enterré. Les deux populations se recouvrent de
 bout en bout :
 
@@ -279,8 +297,35 @@ gabarit du site qu'on mesurait, pas la nature de la page. Sur
 servira si l'on cherche un jour un vrai signal structurel, des blocs répétés
 portant chacun un lien *et* une date — mais il ne décide plus rien.
 
+Le **chemin** d'une URL ne dit rien non plus, pour la même raison. Sur les
+mêmes vingt-sept pages, deux domaines sur sept servent agendas et fiches sous
+le même segment :
+
+```
+iledefrance.kidiklik.fr/articles/   → un agenda ET des fiches
+parismomes.fr/ecouter-voir/         → un agenda ET des fiches
+```
+
+Une règle sur `/agenda/` ou `/que-faire/` reviendrait à réapprendre le gabarit
+de chaque site, et à ne rien savoir de celui qu'on n'a jamais vu — c'est-à-dire
+du cas d'usage. Seuls les **paramètres de requête** sont retenus : eux ne
+décrivent pas un site, ils décrivent une opération.
+
 Sur ce premier échantillon, le JSON-LD couvrait **47 % des pages lues**, sans
 une erreur apparente. C'est peu de données (27 pages, 7 domaines) : à confirmer.
+
+### Le corpus, pour plus tard
+
+Chaque page constatée part au registre **avec son condensé** et avec le nom du
+modèle qui a tranché, s'il a été appelé. C'est ce qui permettra un jour
+d'entraîner un classifieur local et de se passer du quatrième signal.
+
+Une mise en garde, alors : entraîner sur les réponses du modèle ne donne au
+mieux qu'une **imitation** de ce modèle. Pour un classifieur qui soit *juste*,
+les étiquettes doivent venir du sort final de la page — le verdict de
+l'extraction, qui dit « page de liste » ou rend une fiche valide. Le condensé
+est le corpus, la réponse du modèle est la référence à battre, et l'issue du
+run sera la vérité.
 
 `inconnu` est une réponse, pas une panne : l'orchestrateur sait déjà quoi
 faire d'une page dont il ignore la nature. Il la traite en agenda, et son

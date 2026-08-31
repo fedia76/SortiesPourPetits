@@ -109,9 +109,18 @@ class SiteProvider:
         self.select_all = select_all
         self.usage = Usage(input_tokens=100, output_tokens=20)
         self.extracted: list[tuple[str, bool]] = []
+        self.classified: list[str] = []
+        self.verdicts: list[tuple[str, str]] = []
 
     def search(self, config, log):
         raise AssertionError("le mode « site » ne doit lancer aucune recherche web")
+
+
+    def classify(self, digest, config, log):
+        """La reconnaissance sur condensé. Muette par défaut : les tests qui ne
+        s'y intéressent pas ne doivent pas voir leur comportement changer."""
+        self.classified.append(digest)
+        return self.verdicts.pop(0) if self.verdicts else ("inconnu", "condensé muet")
 
     def select(self, page, links, config, log):
         return list(links) if self.select_all else []

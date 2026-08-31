@@ -10,6 +10,7 @@ Quatre gabarits, mais jamais plus de trois appels par page — plutôt qu'un
 seul appel à qui l'on demanderait de dérouler toute une procédure :
 
   recherche          $theme $area $period $today $date_from $date_to $max_searches
+  classement         $digest
   sélection          $theme $area $date_from $date_to $today $page $max_links
   extraction         $url $today $categories
   extraction (multi) $url $today $categories $theme $max_events
@@ -50,6 +51,29 @@ fêtes privées, les articles de blog sans dates, et tout ce qui est hors zone.
 Ne cherche pas à décrire les sorties maintenant : leur contenu sera lu
 séparément. N'écris aucune URL de mémoire — uniquement celles que les
 recherches ont remontées.
+"""
+
+CLASSIFY = """\
+Voici la carte d'identité d'une page web trouvée en cherchant des sorties.
+
+$digest
+
+Cette page est-elle **une sortie** — la fiche d'un événement précis, avec son
+titre, ses dates et son lieu — ou **un agenda**, c'est-à-dire une page qui en
+liste plusieurs et renvoie vers leurs fiches ?
+
+Deux repères utiles :
+
+- un agenda mène à beaucoup de choses **datées** : c'est ce que dit la ligne
+  « dont N voisinent une date » ;
+- une fiche a pour titre principal le nom de l'événement lui-même, et ses
+  liens mènent à de la navigation ou à des suggestions, rarement datées.
+
+Réponds `inconnu` si le condensé ne permet pas de trancher. C'est une réponse
+utile : la page sera traitée comme un agenda, et relue comme une sortie si on
+n'en tire rien. Une hésitation coûte donc bien moins qu'une erreur.
+
+En une courte phrase, dis ce qui t'a décidé.
 """
 
 SELECT = """\

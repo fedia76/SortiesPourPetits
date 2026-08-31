@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import json
 
-from sortiesbot.classify import AGENDA, INCONNU, SORTIE, classify
+from sortiesbot.classify import AGENDA, INCONNU, SORTIE, classify, digest
+from sortiesbot.harvest import links_of
 
 URL = "https://exemple.fr/page"
 
@@ -150,3 +151,94 @@ def test_un_verdict_inconnu_ne_contredit_personne():
     verdict = classify(page(liens(6)), URL)
     assert verdict.kind == INCONNU
     assert verdict.agrees_with("agenda") is None
+
+
+# ═══════════════════════════════════════════════════ ce que l'URL seule dit
+
+
+def test_une_page_paginee_est_une_liste():
+    """Pas une heuristique de gabarit : la sémantique d'un paramètre."""
+    verdict = classify(page(liens(1)), "https://x.fr/agenda?page=2")
+    assert (verdict.kind, verdict.signal, verdict.confidence) == (AGENDA, "url", "certain")
+
+
+def test_un_chemin_pagine_aussi():
+    assert classify(page(""), "https://x.fr/sorties/page/3").kind == AGENDA
+
+
+def test_une_recherche_ou_un_filtre_aussi():
+    for query in ("search=cirque", "filter[]=jeune-public", "tag=famille", "s=noel"):
+        assert classify(page(""), f"https://x.fr/a?{query}").kind == AGENDA, query
+
+
+def test_un_parametre_de_suivi_ne_dit_rien():
+    """`utm_source` n'est pas une pagination : une fiche partagée en porte."""
+    assert classify(page(""), "https://x.fr/spectacle?utm_source=newsletter").kind == INCONNU
+
+
+def test_le_chemin_seul_ne_decide_jamais():
+    """Deux domaines sur sept servent agendas et fiches sous le même segment.
+
+    `/agenda/`, `/sorties/`, `/que-faire/` reviendraient à apprendre le gabarit
+    de chaque site — et à ne rien savoir de celui qu'on n'a jamais vu.
+    """
+    for url in ("https://x.fr/agenda/le-petit-prince", "https://x.fr/que-faire/ce-week-end"):
+        assert classify(page(""), url).kind == INCONNU, url
+
+
+# ══════════════════════════════════════════════════════════════ le condensé
+
+
+def agenda_html() -> str:
+    cartes = "".join(
+        f'<article><a href="/e/{i}">Un spectacle jeune public numéro {i}</a>'
+        f"<p>Samedi {i + 1} septembre 2026 — Théâtre de la Ville</p></article>"
+        for i in range(12)
+    )
+    return f"<html><head><title>Que faire ce week-end</title></head><body>" \
+           f"<h1>Que faire en famille</h1><p>Notre sélection du mois.</p>{cartes}</body></html>"
+
+
+def test_le_condense_compte_les_liens_qui_voisinent_une_date():
+    """Le trait le plus prometteur : un agenda mène à des choses datées."""
+    url = "https://x.fr/agenda/"
+    card = digest(agenda_html(), url, links_of(agenda_html(), url))
+    assert card.links == 12 and card.dated == 12
+    assert card.heading == "Que faire en famille"
+    assert card.title == "Que faire ce week-end"
+
+
+def test_une_fiche_ne_voisine_aucune_date():
+    html = page(
+        '<h1>Le Petit Prince</h1><p>Un spectacle tendre.</p>'
+        '<a href="/autre-spectacle">Vous aimerez aussi : Pierre et le Loup</a>'
+    )
+    card = digest(html, "https://x.fr/le-petit-prince")
+    assert (card.links, card.dated) == (1, 0)
+
+
+def test_le_condense_ne_traine_ni_le_titre_ni_le_bandeau_de_cookies():
+    """Trois cents caractères : quarante de « nous utilisons des cookies » sont
+    quarante de perdus, et le titre répété n'apprend rien de plus."""
+    html = (
+        "<html><head><title>Mon Théâtre</title></head><body>"
+        '<div class="cookie-banner">Nous utilisons des cookies. J\'accepte</div>'
+        "<h1>Le Petit Prince</h1><p>Un spectacle tendre et musical.</p></body></html>"
+    )
+    card = digest(html, "https://x.fr/a")
+    assert card.opening.startswith("Le Petit Prince")
+    assert "cookies" not in card.opening
+    assert card.title == "Mon Théâtre"
+
+
+def test_le_condense_est_borne_quelle_que_soit_la_page():
+    """Sa raison d'être : un coût plafonné, que la page fasse 2 Ko ou 2 Mo.
+
+    Le plafond se calcule — URL, titre, h1, trois cents caractères d'amorce et
+    vingt textes de liens de quatre-vingts — et c'est lui qui garantit que
+    l'appel restera à quelques centaines de jetons.
+    """
+    html = agenda_html() + "<p>" + "du remplissage. " * 5000 + "</p>"
+    card = digest(html, "https://x.fr/agenda/", links_of(html, "https://x.fr/agenda/"))
+    assert len(card.as_prompt()) < 2600
+    assert "dont 12 voisinent une date" in card.as_prompt()

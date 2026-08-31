@@ -148,3 +148,90 @@ def test_un_registre_impossible_ne_casse_pas_le_run(tmp_path, capsys):
     ledger.close()
 
     assert "Registre indisponible" in capsys.readouterr().err
+
+
+# ═══════════════════════ l'escalade vers le modèle, quand le HTML se tait
+
+
+AGENDA_URL = "https://agenda.exemple-departement.fr/agenda/"
+AGENDA_HTML = (PAGES / "agenda-departemental.html").read_text(encoding="utf-8")
+
+
+def lance(provider, log, ledger=None, **conf):
+    """Un run sur la page d'agenda, qui ne déclare rien en JSON-LD."""
+    fetcher = FakeFetcher({AGENDA_URL: AGENDA_HTML})
+    with SeenStore() as store:
+        return run(config(**conf), provider, store, FakeApi(), log,
+                   fetcher=fetcher, ledger=ledger)
+
+
+def agenda_provider(verdicts=None):
+    provider = FakeProvider(
+        [FoundPage(url=AGENDA_URL, title="Agenda", kind="agenda")],
+        {AGENDA_URL: sortie(relevant=False, skip_reason="page de liste")},
+        select_all=False,
+    )
+    provider.verdicts = list(verdicts or [])
+    return provider
+
+
+def test_le_modele_est_appele_quand_les_signaux_certains_se_taisent(journal):
+    """Cette page n'a ni paramètre d'URL, ni JSON-LD, ni og:type : on demande."""
+    log, events = journal
+    provider = agenda_provider([("agenda", "douze liens datés, c'est une liste")])
+    lance(provider, log)
+
+    assert provider.classified, "le condensé aurait dû partir au modèle"
+    envoye = provider.classified[0]
+    assert "dont 12 voisinent une date" in envoye
+    assert "Que faire en famille" in envoye
+    assert "<html" not in envoye, "on envoie un condensé, jamais du HTML"
+
+    constat = kinds(events, "classified")[0]
+    assert (constat["verdict"], constat["signal"]) == ("agenda", "modele")
+    assert constat["detail"] == "douze liens datés, c'est une liste"
+
+
+def test_sans_modele_configure_personne_nest_appele(journal):
+    """Le coupe-circuit : `classify_model` vide, et la page reste « inconnue »."""
+    log, events = journal
+    provider = agenda_provider([("sortie", "jamais demandé")])
+    lance(provider, log, classify_model="")
+
+    assert provider.classified == []
+    assert kinds(events, "classified")[0]["verdict"] == "inconnu"
+
+
+def test_un_echec_du_modele_laisse_la_page_inconnue(journal):
+    """Un second appel pour une observation qui ne décide de rien : non."""
+    log, events = journal
+
+    class Cassé(FakeProvider):
+        def classify(self, digest, config, log):
+            from sortiesbot.providers.base import ProviderError
+            raise ProviderError("quota dépassé")
+
+    provider = Cassé(
+        [FoundPage(url=AGENDA_URL, title="Agenda", kind="agenda")],
+        {AGENDA_URL: sortie(relevant=False, skip_reason="page de liste")},
+        select_all=False,
+    )
+    result = lance(provider, log)
+
+    assert kinds(events, "classified")[0]["verdict"] == "inconnu"
+    assert result.summary.errors == 0, "une observation ratée n'est pas une erreur de run"
+
+
+def test_le_condense_est_archive_avec_le_verdict(journal, tmp_path):
+    """C'est le corpus : sans lui, rien à quoi entraîner un classifieur local."""
+    log, _ = journal
+    ledger_path = tmp_path / "classifier.jsonl"
+    with Ledger(ledger_path, run="essai") as ledger:
+        lance(agenda_provider([("agenda", "liste datée")]), log, ledger=ledger)
+
+    ligne = json.loads(ledger_path.read_text().splitlines()[0])
+    assert ligne["asked"] == "claude-haiku-4-5", "on note qui a tranché"
+    assert ligne["digest"]["dated"] == 12
+    assert ligne["digest"]["links"] == 12
+    assert ligne["digest"]["heading"] == "Que faire en famille ce mois-ci ?"
+    assert len(ligne["digest"]["texts"]) == 12

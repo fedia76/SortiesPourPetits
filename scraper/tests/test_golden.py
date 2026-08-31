@@ -224,9 +224,18 @@ class ProviderScripte:
         self.fiches = fiches
         self.usage = Usage(input_tokens=100, output_tokens=20)
         self.extracted: list[str] = []
+        self.classified: list[str] = []
+        self.verdicts: list[tuple[str, str]] = []
 
     def search(self, config, log):
         return list(self.trouvees)
+
+
+    def classify(self, digest, config, log):
+        """La reconnaissance sur condensé. Muette par défaut : les tests qui ne
+        s'y intéressent pas ne doivent pas voir leur comportement changer."""
+        self.classified.append(digest)
+        return self.verdicts.pop(0) if self.verdicts else ("inconnu", "condensé muet")
 
     def select(self, page, links, config, log):
         return list(links)
