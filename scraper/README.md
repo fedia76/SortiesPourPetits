@@ -161,6 +161,31 @@ millier de lignes par exécution. C'est ce qui le rend utile, et c'est pourquoi
 un bouton permet d'oublier celui d'une exécution donnée sans toucher à ses
 compteurs ni au sort de ses pages.
 
+### La filiation, et l'arbre du run
+
+Un journal plat répond à « qu'est-ce qui s'est passé ? ». Il ne répond pas à
+« **d'où vient cette sortie ?** », qui est la question qu'on se pose devant une
+proposition douteuse — et les deux ne se déduisent pas l'une de l'autre.
+
+Chaque événement porte donc sa filiation, posée par `RunLog.trail()` sur le
+même principe que `stage()` : on ouvre une piste, tout ce qui est journalisé
+dedans en hérite, et le code n'a pas à répéter `agenda=…` sur quarante appels.
+
+| Clé | Posée par | Ce qu'elle relie |
+|---|---|---|
+| `query` | le fournisseur, à chaque `search_result` | la requête web → les URL qu'elle a remontées |
+| `agenda` | `discovery._harvest` | l'agenda → ses liens, ses liens retenus, ses pages |
+| `page` | `pipeline._process` | la page → sa lecture, son extraction, son verdict |
+
+La console reconstitue l'arbre à partir de ces trois clés
+(`server/src/lib/scraperTree.ts`), et la page de débogage l'affiche en regard
+du journal : les recherches et ce que chacune a remonté, puis chaque agenda
+avec la requête qui l'a fait apparaître, ses liens extraits, ceux que le
+modèle a retenus, et les sorties qui en sont sorties avec leur verdict.
+
+Un nœud de l'arbre ouvre le journal filtré sur sa branche : c'est la jonction
+entre « d'où vient-ce ? » et « que s'est-il passé exactement ? ».
+
 ### Le partage des rôles
 
 Python fait tout ce qui est mécanique — télécharger, parser, extraire des

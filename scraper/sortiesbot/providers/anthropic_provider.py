@@ -181,6 +181,8 @@ class AnthropicProvider:
 
     def __init__(self, api_key: str | None = None, client: Any = None):
         self.usage = Usage()
+        #: Dernière requête web lancée, pour rattacher ses résultats.
+        self._last_query = ""
         if client is not None:
             self._client = client
             return
@@ -254,7 +256,7 @@ class AnthropicProvider:
             f"{i}. {link.text} | {link.context}" for i, link in enumerate(links, start=1)
         )
         for i, link in enumerate(links, start=1):
-            log.event("link", index=i, url=link.url, text=link.text, context=link.context)
+            log.event("link", index=i, url=link.url, text=link.text, context=link.context, agenda=page)
         data = self._ask(
             model=config.select_model,
             prompt=config.render_select(page, listing),
@@ -271,7 +273,7 @@ class AnthropicProvider:
                 kept.append(links[number - 1])
         kept = kept[: config.max_links_per_agenda]
         for link in kept:
-            log.event("link_kept", url=link.url, text=link.text, page=page)
+            log.event("link_kept", url=link.url, text=link.text, agenda=page)
         return kept
 
     # -------------------------------------------------------------- 3. extraire
@@ -412,7 +414,12 @@ class AnthropicProvider:
 
         if kind == "server_tool_use" and getattr(block, "name", "") == "web_search":
             step.web_searches += 1
-            log.event("query", op=op, query=(getattr(block, "input", {}) or {}).get("query", ""))
+            query = str((getattr(block, "input", {}) or {}).get("query", ""))
+            # Les résultats arrivent dans le bloc suivant : on retient la
+            # requête pour les lui rattacher. Sans ça, impossible de savoir
+            # quelle formulation a remonté quel site.
+            self._last_query = query
+            log.event("query", op=op, query=query)
 
         elif kind == "web_search_tool_result":
             content = getattr(block, "content", None)
@@ -424,6 +431,7 @@ class AnthropicProvider:
                     log.event(
                         "search_result", op=op, url=url,
                         title=getattr(result, "title", ""),
+                        query=getattr(self, "_last_query", ""),
                     )
             else:
                 code = getattr(content, "error_code", "") if content is not None else ""

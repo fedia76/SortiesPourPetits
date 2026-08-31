@@ -56,6 +56,9 @@ communauté et validées par une équipe de modération.
   consommé. Un journal fait facilement mille lignes, alors on ne le lit pas
   d'un bloc : cliquer une brique ne garde que son étage, cliquer une ligne
   suit une page d'un bout à l'autre du pipeline, et les filtres se composent.
+  Une seconde vue, en **arbre**, répond à l'autre question — d'où vient cette
+  sortie : quelle requête a remonté quel agenda, quels liens il portait, lesquels
+  le modèle a retenus, et ce que chaque page est devenue.
 - **Statistiques du scraping** : par recherche ou toutes confondues, la part
   de chaque domaine source — avec ce qu'il a réellement donné, et pas
   seulement ce qu'il a coûté à lire — et la part de chaque catégorie, qui dit
@@ -118,6 +121,7 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | GET | `/api/scraper/stats` | modérateur | Statistiques du scraping (`configId`, `days`) |
 | GET | `/api/scraper/runs/:id/logs` | modérateur | Journal détaillé d'une exécution (`stage`, `kind`, `level`, `url`, `q`, `after`, `limit`) |
 | GET | `/api/scraper/runs/:id/graph` | modérateur | Les six étages du pipeline, avec ce que chacun a produit |
+| GET | `/api/scraper/runs/:id/tree` | modérateur | L'arbre du run : requête → agenda → liens → sorties |
 | DELETE | `/api/scraper/runs/:id/logs` | modérateur | Oublier le journal détaillé (les compteurs restent) |
 | GET | `/api/scraper/memory` | modérateur | Mémoire des pages analysées (`q`, `decision`, `page`) |
 | DELETE | `/api/scraper/memory` | modérateur | Oublier des pages (`decision` pour n'en purger qu'un lot) |

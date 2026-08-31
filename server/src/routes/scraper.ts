@@ -2,6 +2,7 @@ import { Prisma, Role } from '@prisma/client';
 import { Router } from 'express';
 import { prisma } from '../db';
 import { deletePhoto } from '../lib/upload';
+import { TREE_MAX_ROWS, buildTree } from '../lib/scraperTree';
 import { requireRole } from '../middleware/auth';
 import {
   checkScraperMode,
@@ -678,7 +679,7 @@ scraperRouter.get('/runs/:id/logs', async (req, res) => {
       .json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
     return;
   }
-  const { stage, kind, level, url, q, after, limit } = parsed.data;
+  const { stage, kind, level, url, agenda, page, q, after, limit } = parsed.data;
 
   const where: Prisma.ScraperRunLogWhereInput = { runId };
   if (stage) where.stage = stage;
@@ -686,6 +687,12 @@ scraperRouter.get('/runs/:id/logs', async (req, res) => {
   if (level) where.level = level;
   if (url) where.url = url;
   if (after !== undefined) where.seq = { gt: after };
+  // La filiation vit dans la colonne JSON : on cherche le fragment exact
+  // plutôt que l'URL seule, sinon un agenda attraperait aussi ses pages.
+  const descendsFrom: Prisma.ScraperRunLogWhereInput[] = [];
+  if (agenda) descendsFrom.push({ data: { contains: `"agenda":${JSON.stringify(agenda)}` } });
+  if (page) descendsFrom.push({ data: { contains: `"page":${JSON.stringify(page)}` } });
+  if (descendsFrom.length) where.AND = descendsFrom;
   if (q) {
     // La recherche libre porte sur ce qu'un humain lit : l'adresse, le
     // message, et le reste des champs sérialisés.
@@ -790,6 +797,35 @@ scraperRouter.get('/runs/:id/graph', async (req, res) => {
     // Ce qui n'appartient à aucun étage : démarrage, clôture, erreurs hors run.
     outside: events.get('') ?? 0,
   });
+});
+
+/**
+ * L'arbre d'une exécution : d'où vient chaque sortie.
+ *
+ * Le journal plat répond à « qu'est-ce qui s'est passé ? ». Il ne répond pas à
+ * « d'où vient cette sortie ? », qui est la question qu'on se pose vraiment
+ * devant une proposition douteuse. Les deux ne se déduisent pas l'une de
+ * l'autre : il faut la filiation, que le scraper enregistre désormais sur
+ * chaque événement (`data.query`, `data.agenda`, `data.page`).
+ *
+ * On assemble ici plutôt que côté navigateur : le client n'aurait pas à
+ * télécharger deux mille lignes pour n'en afficher qu'un résumé.
+ */
+scraperRouter.get('/runs/:id/tree', async (req, res) => {
+  const runId = Number(req.params.id);
+  if (!Number.isInteger(runId)) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const rows = await prisma.scraperRunLog.findMany({
+    where: { runId },
+    orderBy: { seq: 'asc' },
+    select: { seq: true, stage: true, kind: true, url: true, data: true },
+    // Un plafond franc : au-delà, l'arbre n'est plus lisible de toute façon,
+    // et le journal plat reste là pour le détail.
+    take: TREE_MAX_ROWS,
+  });
+  res.json({ ...buildTree(rows), truncated: rows.length >= TREE_MAX_ROWS });
 });
 
 /**

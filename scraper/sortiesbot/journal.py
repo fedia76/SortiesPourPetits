@@ -79,9 +79,9 @@ _CONSOLE = {
     "skip": lambda f: f"  ⊘ ignoré ({f.get('reason')}) : {f.get('url')}",
     "extract": lambda f: f"  ✎ extrait : {f.get('title')} — {f.get('venue')}",
     "geocode": lambda f: (
-        f"  📍 {f.get('query')} → {f.get('lat')}, {f.get('lng')}"
+        f"  📍 {f.get('address')} → {f.get('lat')}, {f.get('lng')}"
         if f.get("located")
-        else f"  📍 non géolocalisé ({f.get('reason')}) : {f.get('query')}"
+        else f"  📍 non géolocalisé ({f.get('reason')}) : {f.get('address')}"
     ),
     "out_of_scope": lambda f: (
         f"  ± hors {f.get('field')} ({f.get('detail')}) mais gardée : {f.get('url')}"
@@ -120,7 +120,7 @@ _CONSOLE = {
 
 #: Champs dont la valeur peut être longue : on les tronque avant d'envoyer le
 #: journal au site, qui n'a pas besoin de la page entière pour la déboguer.
-_LONG_FIELDS = ("text", "content", "prompt", "reason", "message", "detail")
+_LONG_FIELDS = ("text", "content", "prompt", "reason", "message", "detail", "context")
 _LONG_MAX = 2000
 
 
@@ -156,6 +156,8 @@ class RunLog:
         #: rien perdre ni rien répéter, là où l'horodatage a des ex æquo.
         self._seq = 0
         self._stage: Stage | None = None
+        #: Filiation courante — voir `trail()`.
+        self._trail: dict[str, Any] = {}
         self._file: TextIO | None = None
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -215,6 +217,30 @@ class RunLog:
             )
             self._stage = previous
 
+    @contextmanager
+    def trail(self, **keys: Any) -> Iterator[None]:
+        """Marque tout ce qui est journalisé dedans comme descendant de `keys`.
+
+        Un journal plat répond à « qu'est-ce qui s'est passé ? » mais pas à
+        « d'où vient cette sortie ? ». Les deux questions n'ont rien à voir :
+        la seconde demande la **filiation** — quelle requête a remonté cet
+        agenda, quel agenda a donné ce lien, quel lien a donné cette fiche.
+
+        Plutôt que de répéter `agenda=…` sur quarante appels, on ouvre une
+        piste : `_harvest` déclare l'agenda qu'il dépouille, `_process`
+        déclare la page et l'agenda dont elle vient, et tout ce qui est
+        journalisé à l'intérieur en hérite. C'est ce qui permet à la console
+        de reconstruire l'arbre du run.
+
+        Les pistes s'imbriquent, et une clé vide n'écrase pas celle du dessus.
+        """
+        previous = self._trail
+        self._trail = {**previous, **{k: v for k, v in keys.items() if v}}
+        try:
+            yield
+        finally:
+            self._trail = previous
+
     # ---------------------------------------------------------- événements
 
     def event(self, kind: str, level: str = INFO, **fields: Any) -> None:
@@ -225,6 +251,9 @@ class RunLog:
             "stage": self._stage.value if self._stage else None,
             "kind": kind,
             "level": level,
+            # La filiation d'abord : un champ explicite de l'appelant la
+            # remplace, jamais l'inverse.
+            **self._trail,
             **_trim(fields),
         }
         if self._file is not None:

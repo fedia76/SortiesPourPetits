@@ -158,3 +158,38 @@ def test_le_graphe_part_avec_le_premier_evenement():
 
     entry = _wire({"seq": 1, "kind": "run_start", "level": "info", "stages": describe()})
     assert [s["number"] for s in entry["data"]["stages"]] == [1, 2, 3, 4, 5, 6]
+
+
+def test_la_filiation_descend_sur_toute_la_piste():
+    """C'est elle qui permet de répondre à « d'où vient cette sortie ? »."""
+    recs: list[dict] = []
+    log = RunLog(path=None, verbose=False)
+    log.sink = recs.append
+
+    with log.trail(agenda="https://agenda.fr/jeune-public"):
+        with log.stage(Stage.SELECT) as st:
+            log.event("link", index=1, url="https://agenda.fr/spectacle")
+            st.produced("1 retenu")
+        with log.trail(page="https://agenda.fr/spectacle"):
+            log.event("submit", event_id=42)
+    log.event("run_end")
+
+    par_type = {r["kind"]: r for r in recs}
+    # Un lien sait sur quel agenda il a été relevé.
+    assert par_type["link"]["agenda"] == "https://agenda.fr/jeune-public"
+    # Une sortie sait de quelle page ET de quel agenda elle descend.
+    assert par_type["submit"]["page"] == "https://agenda.fr/spectacle"
+    assert par_type["submit"]["agenda"] == "https://agenda.fr/jeune-public"
+    # Et la piste se referme : `run_end` n'appartient à personne.
+    assert "agenda" not in par_type["run_end"]
+    assert "page" not in par_type["run_end"]
+
+
+def test_un_champ_explicite_prime_sur_la_piste():
+    """La piste est un défaut, pas une contrainte."""
+    recs: list[dict] = []
+    log = RunLog(path=None, verbose=False)
+    log.sink = recs.append
+    with log.trail(agenda="https://a.fr"):
+        log.event("candidate", agenda="https://b.fr")
+    assert recs[0]["agenda"] == "https://b.fr"
