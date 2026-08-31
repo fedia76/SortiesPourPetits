@@ -18,8 +18,9 @@ from sortiesbot.config import Config
 from sortiesbot.harvest import FetchError, Link
 from sortiesbot.journal import RunLog
 from sortiesbot.models import ExtractedEvent, FoundPage, Usage
+from sortiesbot.orchestrator import run
 from sortiesbot.payload import Rejected
-from sortiesbot.pipeline import resolve_category, run
+from sortiesbot.stages.publication import resolve_category
 from sortiesbot.store import SeenStore
 
 DEMAIN = (date.today() + timedelta(days=1)).isoformat()

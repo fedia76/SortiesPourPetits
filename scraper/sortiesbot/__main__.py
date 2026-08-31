@@ -17,7 +17,7 @@ from pathlib import Path
 from .api import SppApi
 from .config import ConfigError, Environment, load_config, load_dotenv, with_limit
 from .journal import RunLog, run_log_path
-from .pipeline import run
+from .orchestrator import run
 from .providers.base import ProviderError, get_provider
 from .store import SeenStore
 

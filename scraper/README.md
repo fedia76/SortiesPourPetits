@@ -118,18 +118,31 @@ Chaque run écrit deux fichiers dans `runs/` :
 ### Les six étages, et où ils sont dans le code
 
 Le pipeline a toujours eu six étages, mais ils ne vivaient que dans cette
-documentation : le code les enchaînait sans les nommer. Ils sont désormais
-déclarés une fois pour toutes dans [`sortiesbot/stages.py`](sortiesbot/stages.py),
-et chaque étage s'ouvre explicitement avec `log.stage(...)` :
+documentation : le code les enchaînait sans les nommer, dans trois fonctions
+qui en portaient deux chacune. Ils ont désormais **une classe et un fichier
+par brique**, leur vocabulaire commun dans
+[`sortiesbot/stages/__init__.py`](sortiesbot/stages/__init__.py), et chaque
+étage s'ouvre explicitement avec `log.stage(...)` :
 
 | # | Étage | Qui travaille | Reçoit | Rend | Où |
 |---|---|---|---|---|---|
-| 1 | Découverte | modèle | thème, zone, période | URL classées agenda ou sortie | `discovery._by_search` / `_by_seeds` |
-| 2 | Dépouillement | Python | URL d'agenda | liens et leur contexte | `discovery._harvest` |
-| 3 | Sélection | modèle | liens numérotés | numéros retenus | `discovery._harvest` |
-| 4 | Lecture | Python | URL de page | texte, dates JSON-LD, image | `pipeline._process` |
-| 5 | Extraction | modèle | texte de la page | fiche(s) JSON | `pipeline._process` |
-| 6 | Publication | Python | fiche JSON | sortie en attente de modération | `pipeline._publish` |
+| 1 | Découverte | modèle | thème, zone, période | URL classées agenda ou sortie | `stages/discovery.py` — `Discovery` |
+| 2 | Dépouillement | Python | URL d'agenda | liens et leur contexte | `stages/harvest.py` — `Harvest` |
+| 3 | Sélection | modèle | liens numérotés | numéros retenus | `stages/selection.py` — `Selection` |
+| 4 | Lecture | Python | URL de page | texte, dates JSON-LD, image | `stages/reading.py` — `Reading` |
+| 5 | Extraction | modèle | texte de la page | fiche(s) JSON | `stages/extraction.py` — `Extraction` |
+| 6 | Publication | Python | fiche JSON | sortie en attente de modération | `stages/publication.py` — `Publication` |
+
+Aucune brique ne sait ce qui vient avant ou après elle : l'ordre n'existe qu'à
+un seul endroit, [`sortiesbot/orchestrator.py`](sortiesbot/orchestrator.py),
+où la classe `Run` les enchaîne. C'est là qu'on lit d'un coup d'œil combien de
+fois chacune tourne — la découverte une fois par run, le dépouillement une fois
+par agenda, la lecture une fois par page, la publication une fois par fiche.
+
+Elles n'ont **pas** de signature commune, et c'est délibéré : ces cardinalités
+diffèrent, et une interface uniforme aurait fait croire à une chaîne de six
+maillons identiques. Ce qu'elles partagent — le contexte du run, l'ouverture
+de leur étage au journal — est dans `stages/base.py` (`RunContext`, `Brick`).
 
 L'étage n'est pas passé en paramètre à chaque appel : `RunLog.stage()` est un
 gestionnaire de contexte, et tout ce qui est journalisé à l'intérieur lui est
@@ -174,8 +187,8 @@ dedans en hérite, et le code n'a pas à répéter `agenda=…` sur quarante app
 | Clé | Posée par | Ce qu'elle relie |
 |---|---|---|
 | `query` | le fournisseur, à chaque `search_result` | la requête web → les URL qu'elle a remontées |
-| `agenda` | `discovery._harvest` | l'agenda → ses liens, ses liens retenus, ses pages |
-| `page` | `pipeline._process` | la page → sa lecture, son extraction, son verdict |
+| `agenda` | `Run._collect`, autour des étages 2 et 3 | l'agenda → ses liens, ses liens retenus, ses pages |
+| `page` | `Run._read_and_publish` | la page → sa lecture, son extraction, son verdict |
 
 La console reconstitue l'arbre à partir de ces trois clés
 (`server/src/lib/scraperTree.ts`), et la page de débogage l'affiche en regard

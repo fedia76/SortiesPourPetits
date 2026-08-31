@@ -17,9 +17,9 @@ répondre à « qu'est-ce qui entre et qu'est-ce qui sort de chaque brique ? »
 autrement qu'en relisant le code.
 
 Ce module est la référence unique. `journal.RunLog` marque chaque événement
-de l'étage courant, `pipeline` et `discovery` ouvrent chacun le leur avec
-`log.stage(...)`, et la console d'administration lit les mêmes identifiants
-pour dessiner le graphe.
+de l'étage courant, chaque brique ouvre le sien avec `log.stage(...)` — par
+`Brick.opened(...)`, qui s'en charge — et la console d'administration lit les
+mêmes identifiants pour dessiner le graphe.
 
 Trois étages appellent le modèle et sont donc facturés (1, 3, 5) ; les trois
 autres sont du Python pur et ne coûtent rien (2, 4, 6). C'est ce que porte

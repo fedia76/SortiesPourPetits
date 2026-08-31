@@ -29,7 +29,7 @@ from .api import ApiError, SppApi
 from .config import ConfigError, Environment, config_from_api, load_dotenv
 from .journal import RemoteJournal, RunLog, run_log_path
 from .models import Summary
-from .pipeline import run as run_pipeline
+from .orchestrator import run as run_pipeline
 from .providers.base import ProviderError, get_provider
 from .store import RemoteStore
 

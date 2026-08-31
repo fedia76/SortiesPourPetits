@@ -25,7 +25,7 @@ import pytest
 from sortiesbot.config import Config, ConfigError, validated
 from sortiesbot.journal import RunLog
 from sortiesbot.models import ExtractedEvent, Usage
-from sortiesbot.pipeline import run
+from sortiesbot.orchestrator import run
 from sortiesbot.store import SeenStore, event_key
 
 from test_pipeline import FakeApi, FakeFetcher

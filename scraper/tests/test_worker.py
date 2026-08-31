@@ -198,7 +198,7 @@ def run_job(api, monkeypatch, provider, fetcher, runs_dir, payload=None):
         worker,
         "run_pipeline",
         lambda config, prov, store, spp, log, submit=False: __import__(
-            "sortiesbot.pipeline", fromlist=["run"]
+            "sortiesbot.orchestrator", fromlist=["run"]
         ).run(config, prov, store, spp, log, submit=submit, fetcher=fetcher),
     )
     env = type("Env", (), {"anthropic_key": "clé"})()

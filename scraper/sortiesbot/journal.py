@@ -238,9 +238,9 @@ class RunLog:
         agenda, quel agenda a donné ce lien, quel lien a donné cette fiche.
 
         Plutôt que de répéter `agenda=…` sur quarante appels, on ouvre une
-        piste : `_harvest` déclare l'agenda qu'il dépouille, `_process`
-        déclare la page et l'agenda dont elle vient, et tout ce qui est
-        journalisé à l'intérieur en hérite. C'est ce qui permet à la console
+        piste : l'orchestrateur déclare l'agenda qu'il dépouille avant les
+        étages 2 et 3, puis la page et l'agenda dont elle vient avant les
+        étages 4 à 6, et tout ce qui est journalisé à l'intérieur en hérite. C'est ce qui permet à la console
         de reconstruire l'arbre du run.
 
         Les pistes s'imbriquent, et une clé vide n'écrase pas celle du dessus.
