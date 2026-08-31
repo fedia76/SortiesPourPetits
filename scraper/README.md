@@ -186,6 +186,22 @@ modèle a retenus, et les sorties qui en sont sorties avec leur verdict.
 Un nœud de l'arbre ouvre le journal filtré sur sa branche : c'est la jonction
 entre « d'où vient-ce ? » et « que s'est-il passé exactement ? ».
 
+### Pourquoi un site remonté n'a rien donné
+
+Trois chemins faisaient auparavant disparaître un agenda sans laisser de
+trace, et c'est ce qui rendait la console incompréhensible — un site remonté
+par la recherche n'apparaissait nulle part, sans qu'on sache pourquoi :
+
+| Cas | Ce qui est journalisé | Ce que la console affiche |
+|---|---|---|
+| Retenu et dépouillé | `agenda_planned`, `harvested`, `selected` | « dépouillé », ses liens et ses sorties |
+| Retenu mais injoignable (403, `robots.txt`) | `agenda_planned` puis une erreur | « injoignable », avec le code HTTP |
+| Retenu mais au-delà de `max_agendas` | un avertissement portant l'URL | « au-delà du plafond », et le réglage en cause |
+| Remonté mais non désigné par le modèle | rien de plus que `search_result` | « non retenu par le modèle » |
+
+Chaque résultat de recherche porte donc son sort, et un agenda jamais ouvert
+garde son nœud dans l'arbre avec le motif.
+
 ### Le partage des rôles
 
 Python fait tout ce qui est mécanique — télécharger, parser, extraire des

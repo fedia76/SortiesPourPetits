@@ -90,15 +90,32 @@ SEARCH_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+#: Le modèle rend des **numéros de ligne**, jamais des URL : c'est ce qui rend
+#: matériellement impossible d'en inventer une, et ça ne change pas. Ce qui
+#: change, c'est qu'il dit maintenant *pourquoi* — un motif par lien retenu,
+#: et une phrase pour ce qu'il a écarté.
+#:
+#: Un motif par lien écarté coûterait bien trop cher : deux cents liens à
+#: quinze jetons font tripler la sortie de cet étage. Une phrase globale suffit
+#: à comprendre un tri raté, ce qui est le besoin réel.
 SELECT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "kept": {
             "type": "array",
-            "items": {"type": "integer"},
-        }
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "why": {"type": "string"},
+                },
+                "required": ["index", "why"],
+                "additionalProperties": False,
+            },
+        },
+        "dropped_reason": {"type": "string"},
     },
-    "required": ["kept"],
+    "required": ["kept", "dropped_reason"],
     "additionalProperties": False,
 }
 
@@ -268,14 +285,25 @@ class AnthropicProvider:
         )
         # Le modèle rend des numéros : aucune URL ne peut sortir d'ailleurs que
         # de la page réellement lue.
-        kept: list[Link] = []
-        for number in data.get("kept") or []:
+        kept: list[tuple[Link, str]] = []
+        for raw in data.get("kept") or []:
+            number = raw.get("index") if isinstance(raw, dict) else raw
+            why = str(raw.get("why", "")).strip() if isinstance(raw, dict) else ""
             if isinstance(number, int) and 1 <= number <= len(links):
-                kept.append(links[number - 1])
+                kept.append((links[number - 1], why))
         kept = kept[: config.max_links_per_agenda]
-        for link in kept:
-            log.event("link_kept", url=link.url, text=link.text, agenda=page)
-        return kept
+
+        dropped = str(data.get("dropped_reason") or "").strip()
+        log.event(
+            "selected",
+            url=page,
+            kept=len(kept),
+            among=len(links),
+            dropped_reason=dropped,
+        )
+        for link, why in kept:
+            log.event("link_kept", url=link.url, text=link.text, why=why, agenda=page)
+        return [link for link, _ in kept]
 
     # -------------------------------------------------------------- 3. extraire
 

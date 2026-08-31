@@ -23,7 +23,7 @@ import type {
   ScraperTreeAgenda,
   ScraperTreePage,
 } from '../types';
-import { LOG_KIND_LABELS, RUN_STATUS_LABELS } from '../types';
+import { AGENDA_STATUS_LABELS, FATE_LABELS, LOG_KIND_LABELS, RUN_STATUS_LABELS } from '../types';
 
 const route = useRoute();
 const runId = computed(() => Number(route.params.id));
@@ -220,6 +220,54 @@ function fold(key: string) {
   if (next.has(key)) next.delete(key);
   else next.add(key);
   collapsed.value = next;
+}
+
+/**
+ * Ce qu'un étage a produit sur **tout** le run.
+ *
+ * La brique affichait le dernier passage : « 65 lien(s) extrait(s) » était le
+ * compte du sixième agenda, pas celui des six. Les compteurs sont donc
+ * additionnés côté serveur, et chaque étage choisit ici ce qu'il en montre.
+ */
+const STAGE_TOTALS: Record<string, (t: Record<string, number>) => string> = {
+  discovery: (t) =>
+    [
+      t.agendas ? `${t.agendas} agenda(s) à ouvrir` : '',
+      t.direct ? `${t.direct} sortie(s) directe(s)` : '',
+      t.over_cap ? `${t.over_cap} au-delà du plafond` : '',
+    ]
+      .filter(Boolean)
+      .join(' · '),
+  harvest: (t) => `${t.links ?? 0} lien(s) extrait(s) au total`,
+  select: (t) => `${t.kept ?? 0} lien(s) retenu(s) sur ${t.among ?? 0}`,
+  read: (t) => `${(t.chars ?? 0).toLocaleString('fr-FR')} caractères lus au total`,
+  extract: (t) => `${t.fiches ?? 0} fiche(s) extraite(s)`,
+  publish: (t) =>
+    [
+      t.submitted ? `${t.submitted} proposée(s)` : '',
+      t.retained ? `${t.retained} retenue(s)` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ') || 'aucune sortie publiée',
+};
+
+function stageTotal(stage: string): string {
+  const t = tree.value?.totals?.[stage];
+  if (!t) return '';
+  return STAGE_TOTALS[stage]?.(t) ?? '';
+}
+
+/** Ponctue un motif venu du scraper : deux phrases doivent se séparer. */
+function sentence(text: string) {
+  const t = text.trim();
+  return !t || /[.!?]$/.test(t) ? t : `${t}.`;
+}
+
+/** Vert = exploité, gris = écarté sciemment, rouge = raté. */
+function fateClass(fate: string) {
+  if (fate === 'agenda' || fate === 'direct' || fate === 'depouille') return 'ok';
+  if (fate === 'echec') return 'ko';
+  return 'off';
 }
 
 function outcomeClass(page: ScraperTreePage) {
@@ -531,9 +579,9 @@ function clip(text: string, max = 22) {
               ↳ rend : {{ clip(s.gives) }}
               <title>{{ s.gives }}</title>
             </text>
-            <text v-if="s.produced.length" :x="boxX(i)" y="160" class="io done">
-              {{ clip(s.produced[s.produced.length - 1], 30) }}
-              <title>{{ s.produced.join(" · ") }}</title>
+            <text v-if="stageTotal(s.stage)" :x="boxX(i)" y="160" class="io done">
+              {{ clip(stageTotal(s.stage), 30) }}
+              <title>{{ stageTotal(s.stage) }} — cumul des {{ s.passes }} passage(s)</title>
             </text>
           </g>
         </svg>
@@ -588,10 +636,12 @@ function clip(text: string, max = 22) {
                 </div>
                 <ul v-if="!collapsed.has(`q:${s.query}`)" class="tree sub">
                   <li v-for="r of s.results" :key="r.url" class="leaf">
+                    <span class="dot" :class="fateClass(r.fate)" aria-hidden="true"></span>
                     <a :href="r.url" target="_blank" rel="noopener noreferrer">
                       {{ r.title || host(r.url) }}
                     </a>
                     <span class="muted small">{{ host(r.url) }}</span>
+                    <span class="fate" :class="fateClass(r.fate)">{{ FATE_LABELS[r.fate] }}</span>
                   </li>
                 </ul>
               </li>
@@ -610,6 +660,9 @@ function clip(text: string, max = 22) {
                 <span class="ico" aria-hidden="true">📋</span>
                 <a :href="a.url" target="_blank" rel="noopener noreferrer"><b>{{ host(a.url) }}</b></a>
                 <span class="muted small path">{{ pathOf(a.url) }}</span>
+                <span class="fate" :class="fateClass(a.status)">
+                  {{ AGENDA_STATUS_LABELS[a.status] ?? a.status }}
+                </span>
                 <span v-if="a.errors" class="badge err">{{ a.errors }} erreur(s)</span>
               </div>
 
@@ -621,7 +674,15 @@ function clip(text: string, max = 22) {
                   <template v-else>origine inconnue (page de départ, ou requête non journalisée)</template>
                 </p>
 
-                <ul class="tree sub">
+                <!-- Pourquoi un site remonté par la recherche n'a rien donné. -->
+                <p v-if="a.status !== 'depouille'" class="why-not">
+                  <b>Jamais dépouillé.</b> {{ sentence(a.statusReason) || 'Motif non journalisé.' }}
+                  <template v-if="a.status === 'plafond'">
+                    Le plafond se règle par <code>maxAgendas</code>, dans la configuration.
+                  </template>
+                </p>
+
+                <ul v-if="a.status === 'depouille'" class="tree sub">
                   <li>
                     <div class="node small-node">
                       <button class="fold" @click="toggleLinks(a, 'link')">
@@ -654,11 +715,17 @@ function clip(text: string, max = 22) {
                         au journal
                       </button>
                     </div>
+                    <p v-if="a.droppedReason" class="dropped">
+                      Ce que le modèle dit avoir écarté : « {{ a.droppedReason }} »
+                    </p>
                     <ul v-if="branchLinks[`link_kept:${a.url}`]" class="tree sub">
                       <li v-for="l of branchLinks[`link_kept:${a.url}`]" :key="l.id" class="leaf">
                         <a :href="l.url ?? '#'" target="_blank" rel="noopener noreferrer">
                           {{ (l.data as any)?.text || l.url }}
                         </a>
+                        <span v-if="(l.data as any)?.why" class="muted small ctx">
+                          — {{ (l.data as any).why }}
+                        </span>
                       </li>
                     </ul>
                   </li>
@@ -1164,6 +1231,42 @@ li.leaf .ctx {
 
 .dot.ko {
   background: var(--danger);
+}
+
+.fate {
+  font-size: 0.76rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--photo-bg);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.fate.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.fate.ko {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* Le pourquoi d'un agenda jamais ouvert : c'est ce qu'on venait chercher. */
+.why-not {
+  margin: 0.2rem 0 0.5rem 1.6rem;
+  padding: 0.5rem 0.8rem;
+  border-left: 3px solid var(--warn);
+  background: var(--warn-soft);
+  border-radius: 0 8px 8px 0;
+  font-size: 0.86rem;
+}
+
+.dropped {
+  margin: 0.1rem 0 0.4rem 2.6rem;
+  font-size: 0.83rem;
+  color: var(--ink-soft);
+  font-style: italic;
 }
 
 .badge.err {
