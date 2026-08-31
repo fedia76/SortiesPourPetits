@@ -27,9 +27,11 @@ from typing import Any, ClassVar, Iterator
 
 from . import Stage
 from ..api import SppApi
+from ..classify import classify
 from ..config import Config
 from ..harvest import Fetcher
 from ..journal import RunLog
+from ..ledger import Ledger
 from ..models import Summary
 from ..providers.base import Provider
 from ..store import Memory
@@ -75,6 +77,8 @@ class RunContext:
     fetcher: Fetcher
     log: RunLog
     submit: bool
+    #: Registre d'observation, hors journal de run. Muet par défaut.
+    ledger: Ledger = field(default_factory=Ledger)
     #: Catégories du site, par nom. Vide en dry-run si l'API est injoignable.
     categories: dict[str, int] = field(default_factory=dict)
     result: RunResult = field(default_factory=RunResult)
@@ -126,6 +130,35 @@ class Brick:
     @property
     def summary(self) -> Summary:
         return self.ctx.summary
+
+    def observed(
+        self, url: str, html: str, *, announced: str = "", links: int | None = None
+    ) -> None:
+        """Classe la page sur son HTML et consigne le verdict, sans rien décider.
+
+        En observation : le pipeline suit toujours le classement du modèle. On
+        note ce que `classify.py` aurait répondu, et si les deux s'accordent,
+        pour pouvoir mesurer avant de remplacer.
+
+        Le verdict part au journal — d'où il rejoint la console — et au
+        registre, qui lui survit à l'oubli d'un run.
+        """
+        verdict = classify(html, url, links=links)
+        agrees = verdict.agrees_with(announced)
+        fields = verdict.as_dict()
+        self.log.event("classified", url=url, announced=announced, agrees=agrees, **fields)
+        if agrees is False:
+            # Un type d'événement à lui seul : la console filtre par type, et
+            # ce sont ces lignes-là qu'on voudra relire une par une.
+            self.log.event("classify_disagreement", url=url, announced=announced, **fields)
+        self.ctx.ledger.record(
+            "classify",
+            url=url,
+            stage=self.stage.value,
+            announced=announced,
+            agrees=agrees,
+            **fields,
+        )
 
     @contextmanager
     def opened(self, **fields: Any) -> Iterator[Any]:

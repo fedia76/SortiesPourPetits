@@ -73,6 +73,19 @@ _CONSOLE = {
         f"  ✔ {f.get('kept')} retenu(s) sur {f.get('among')} : {f.get('url')}"
         + (f"\n     ↳ écartés : {f.get('dropped_reason')}" if f.get("dropped_reason") else "")
     ),
+    "classified": lambda f: (
+        f"  ⚖ constaté « {f.get('verdict')} » [{f.get('signal')}, {f.get('confidence')}] "
+        f"— {f.get('detail')}"
+        + (
+            ""
+            if f.get("agrees") is None
+            else (" · d'accord avec la découverte" if f.get("agrees") else " · DÉSACCORD")
+        )
+    ),
+    "classify_disagreement": lambda f: (
+        f"  ≠ la découverte disait « {f.get('announced')} », le HTML dit "
+        f"« {f.get('verdict')} » ({f.get('detail')}) : {f.get('url')}"
+    ),
     "visited": lambda f: f"  📄 page lue : {f.get('url')}",
     "page": lambda f: (
         f"  📄 page lue : {f.get('chars')} caractères, {f.get('json_ld')} date(s) JSON-LD, "

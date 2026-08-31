@@ -197,10 +197,15 @@ def run_job(api, monkeypatch, provider, fetcher, runs_dir, payload=None):
     monkeypatch.setattr(
         worker,
         "run_pipeline",
-        lambda config, prov, store, spp, log, submit=False: __import__(
+        lambda config, prov, store, spp, log, submit=False, ledger=None: __import__(
             "sortiesbot.orchestrator", fromlist=["run"]
-        ).run(config, prov, store, spp, log, submit=submit, fetcher=fetcher),
+        ).run(
+            config, prov, store, spp, log, submit=submit, fetcher=fetcher, ledger=ledger
+        ),
     )
+    # Le registre du classifieur s'accumule d'un run à l'autre : un test ne
+    # doit surtout pas écrire dans celui du dépôt.
+    monkeypatch.setattr(worker, "LEDGER_PATH", runs_dir / "classifier.jsonl")
     env = type("Env", (), {"anthropic_key": "clé"})()
     worker.execute(payload or job(), api, env, runs_dir=runs_dir, quiet=True)
 

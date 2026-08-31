@@ -71,6 +71,11 @@ class Reading(Brick):
                 st.produced(f"page inaccessible ({err})", chars=0)
                 return None
 
+            # Les pages venues directement de la découverte ne passent pas par
+            # le dépouillement : c'est ici, et seulement ici, qu'on peut
+            # confronter leur classement à leur HTML.
+            self.observed(url, html, announced=candidate.announced)
+
             if len(text) < MIN_PAGE_CHARS:
                 self.summary.skipped_invalid += 1
                 self.log.event("skip", reason="page vide ou illisible", url=url)

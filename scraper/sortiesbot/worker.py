@@ -28,12 +28,18 @@ from typing import Any, Callable
 from .api import ApiError, SppApi
 from .config import ConfigError, Environment, config_from_api, load_dotenv
 from .journal import RemoteJournal, RunLog, run_log_path
+from .ledger import Ledger
 from .models import Summary
 from .orchestrator import run as run_pipeline
 from .providers.base import ProviderError, get_provider
 from .store import RemoteStore
 
 ROOT = Path(__file__).resolve().parent.parent
+
+#: Registre du classifieur en observation. Volontairement hors de `runs/` :
+#: les journaux d'exécution s'oublient depuis la console du site, cette mesure
+#: doit s'accumuler sur des semaines.
+LEDGER_PATH = ROOT / "state" / "classifier.jsonl"
 
 #: Attente entre deux passages à vide. Une recherche dure des minutes ; une
 #: demi-minute de latence au démarrage ne se voit pas dans la console.
@@ -140,7 +146,13 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
         with open_log(runs_dir, config.name, quiet, sink=journal.add) as log:
             if log.path and not quiet:
                 print(f"  journal : {log.path}", flush=True)
-            result = run_pipeline(config, provider, store, api, log, submit=submit)
+            # Le service tourne des semaines : c'est lui qui alimente
+            # vraiment le registre du classifieur, à côté des journaux de run
+            # que le site peut oublier.
+            with Ledger(LEDGER_PATH, run=str(run_id)) as ledger:
+                result = run_pipeline(
+                    config, provider, store, api, log, submit=submit, ledger=ledger
+                )
         summary = result.summary
         status, error = "DONE", None
     except ProviderError as err:

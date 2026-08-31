@@ -55,6 +55,7 @@ from .api import ApiError, SppApi
 from .config import Config, describe
 from .harvest import Fetcher, Link
 from .journal import RunLog
+from .ledger import Ledger
 from .models import Candidate, FoundPage
 from .providers.base import Provider, ProviderError
 from .stages import ORDER, describe as describe_stages
@@ -76,6 +77,7 @@ def run(
     log: RunLog,
     submit: bool = False,
     fetcher: Fetcher | None = None,
+    ledger: Ledger | None = None,
 ) -> RunResult:
     """Joue un run complet et rend ce qu'il a produit.
 
@@ -90,6 +92,7 @@ def run(
         fetcher=fetcher or Fetcher(),
         log=log,
         submit=submit,
+        ledger=ledger or Ledger(),
     )
     return Run(ctx).go()
 
@@ -186,7 +189,7 @@ class Run:
             # liens venaient de quelle page ? ».
             with self.log.trail(agenda=source.url):
                 # ── ÉTAGE 2/6 · Dépouillement ───── 1 fois par agenda ──────
-                links = self.harvest.run(source.url)
+                links = self.harvest.run(source.url, announced=source.kind)
                 if links is None:
                     continue  # injoignable : rien à en tirer, rien à conclure.
                 if not links:
@@ -239,14 +242,23 @@ class Run:
             title=source.title,
             source=self.discovery.source,
             context=source.reason,
+            announced=source.kind,
         )
 
     def _itself(self, url: str) -> Candidate:
         """La page d'agenda relue pour elle-même, faute d'en tirer des liens."""
         multiple = self.discovery.fallback_multiple
         self.log.event("fallback", url=url, multiple=multiple)
+        # `announced` reste « agenda » : c'est bien ce que la découverte avait
+        # dit de cette page, et c'est ce verdict-là qu'on veut confronter au
+        # HTML — pas la conclusion que le pipeline vient d'en tirer.
         return Candidate(
-            url=url, title="", source=self.discovery.source, context="", multiple=multiple
+            url=url,
+            title="",
+            source=self.discovery.source,
+            context="",
+            multiple=multiple,
+            announced="agenda",
         )
 
     def _listed(self, agenda: str, kept: list[Link]) -> list[Candidate]:
