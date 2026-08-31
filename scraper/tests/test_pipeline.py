@@ -8,6 +8,7 @@ filtrage, le géocodage et la soumission.
 from __future__ import annotations
 
 import io
+from datetime import date as _date, timedelta as _timedelta
 from datetime import date, timedelta
 
 import pytest
@@ -498,14 +499,38 @@ def test_le_prompt_de_recherche_annonce_le_quota_reel():
 # Un spectacle joué tous les dimanches ne doit pas ressortir un jeudi. Rien
 # n'en dépend encore : le pipeline calcule et journalise, on mesure.
 
-DIMANCHE = "2026-07-05"
-DERNIER_DIMANCHE = "2026-08-30"
+# Les dates sont **relatives à aujourd'hui**, et pas écrites en dur : le
+# pipeline écarte une sortie déjà terminée, si bien que des fixtures datées
+# finissent immanquablement par tomber en panne toutes seules — ce qui est
+# arrivé, et laisse croire à une régression le jour où on touche au code.
+
+
+def _prochain(jour: int, apres: _date | None = None) -> _date:
+    """Le prochain `jour` de la semaine (0 = lundi), strictement après `apres`."""
+    depart = apres or _date.today()
+    return depart + _timedelta(days=(jour - depart.weekday()) % 7 or 7)
+
+
+PREMIER_DIMANCHE = _prochain(6)
+#: Huit semaines de représentations : de quoi contenir plusieurs dimanches.
+DERNIER_DIMANCHE_D = PREMIER_DIMANCHE + _timedelta(weeks=8)
+#: Un jeudi de la plage : il ne doit jamais ressortir d'un « tous les dimanches ».
+UN_JEUDI_D = _prochain(3, PREMIER_DIMANCHE)
+#: Un dimanche du milieu de la plage : lui doit y être.
+UN_DIMANCHE_D = PREMIER_DIMANCHE + _timedelta(weeks=2)
+
+DIMANCHE = PREMIER_DIMANCHE.isoformat()
+DERNIER_DIMANCHE = DERNIER_DIMANCHE_D.isoformat()
+UN_JEUDI = UN_JEUDI_D.isoformat()
+UN_DIMANCHE = UN_DIMANCHE_D.isoformat()
+#: La deuxième représentation annoncée par le JSON-LD de la page.
+DIMANCHE_SUIVANT = (PREMIER_DIMANCHE + _timedelta(weeks=1)).isoformat()
 
 EVENT_HTML_JSON_LD = (
     '<html><head><script type="application/ld+json">'
     '{"@type": "TheaterEvent", "name": "Le Petit Chaperon rouge",'
-    ' "startDate": "2026-07-05T15:00:00+02:00",'
-    ' "subEvent": [{"@type": "Event", "startDate": "2026-07-12"}]}'
+    f' "startDate": "{DIMANCHE}T15:00:00+02:00",'
+    f' "subEvent": [{{"@type": "Event", "startDate": "{DIMANCHE_SUIVANT}"}}]}}'
     "</script></head><body>" + EVENT_HTML + "</body></html>"
 )
 
@@ -529,8 +554,8 @@ def test_les_jours_de_representation_donnent_les_vraies_dates(log):
     calendrier = result.events[0]["schedule"]
     assert calendrier["source"] == "récurrence"
     assert calendrier["weekdays"] == ["dimanche"]
-    assert "2026-08-13" not in calendrier["dates"]  # un jeudi d'août
-    assert "2026-08-16" in calendrier["dates"]
+    assert UN_JEUDI not in calendrier["dates"]
+    assert UN_DIMANCHE in calendrier["dates"]
     assert result.summary.scheduled == 1
 
 
@@ -542,7 +567,7 @@ def test_le_json_ld_de_la_page_prime(log):
 
     calendrier = result.events[0]["schedule"]
     assert calendrier["source"] == "json-ld"
-    assert calendrier["dates"] == ["2026-07-05", "2026-07-12"]
+    assert calendrier["dates"] == [DIMANCHE, DIMANCHE_SUIVANT]
 
 
 def test_sans_indication_le_comportement_ne_change_pas(log):
@@ -576,7 +601,7 @@ def test_les_jours_de_representation_partent_au_site(log):
     assert envoye["dateStart"] == DIMANCHE
     assert envoye["dateEnd"] == DERNIER_DIMANCHE
     assert envoye["dates"][0] == DIMANCHE
-    assert "2026-08-13" not in envoye["dates"]  # un jeudi
+    assert UN_JEUDI not in envoye["dates"]
 
 
 def test_une_sortie_sans_jours_connus_nenvoie_aucune_date(log):
