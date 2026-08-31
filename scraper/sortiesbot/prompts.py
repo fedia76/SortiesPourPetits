@@ -75,7 +75,14 @@ correspondant à la recherche, à la zone et à la période. Au plus $max_links.
 Dans le doute sur une date ou un lieu que le contexte n'indique pas, retiens
 le lien : la page sera lue ensuite et pourra encore être écartée.
 
-Réponds uniquement avec les numéros retenus.
+Pour chaque lien retenu, donne son numéro et, en quelques mots, ce qui te l'a
+fait retenir — « spectacle jeune public, date dans la période », « atelier
+enfants au conservatoire ».
+
+Puis, dans `dropped_reason`, une phrase sur ce que tu as écarté et pourquoi —
+« la page ne liste que des catégories et de la pagination », « tout est daté
+de l'an dernier », « uniquement des concerts pour adultes ». C'est cette
+phrase qui permettra de comprendre un tri qui ne retient rien.
 """
 
 EXTRACTION = """\

@@ -64,16 +64,35 @@ def _by_search(
 
         # Une recherche ne remonte pas que des agendas : elle tombe régulièrement
         # sur la page d'une sortie précise, qui part telle quelle à l'extraction.
-        agendas = [p for p in found if p.is_agenda][: config.max_agendas]
+        candidats = [p for p in found if p.is_agenda]
+        agendas = candidats[: config.max_agendas]
+        recales = candidats[config.max_agendas :]
         directes = [p for p in found if not p.is_agenda]
 
         for page in directes:
             log.event("direct", url=page.url, title=page.title, why=page.reason)
 
+        # Le sort de chaque agenda désigné est journalisé avant qu'on l'ouvre :
+        # sans ça, un agenda recalé par le plafond ou injoignable disparaissait
+        # de la console sans laisser de trace, et on cherchait pourquoi un site
+        # remonté par la recherche n'apparaissait nulle part.
+        for page in agendas:
+            log.event("agenda_planned", url=page.url, title=page.title, why=page.reason)
+        for page in recales:
+            log.warn(
+                "discovery",
+                f"plafond de {config.max_agendas} agenda(s) atteint : celui-ci ne sera pas ouvert",
+                url=page.url,
+                title=page.title,
+                why=page.reason,
+            )
+
         st.produced(
-            f"{len(agendas)} agenda(s) à dépouiller, {len(directes)} sortie(s) directe(s)",
+            f"{len(agendas)} agenda(s) à dépouiller, {len(directes)} sortie(s) directe(s)"
+            + (f", {len(recales)} au-delà du plafond" if recales else ""),
             agendas=len(agendas),
             direct=len(directes),
+            over_cap=len(recales),
         )
 
     trouvees = [
@@ -175,7 +194,7 @@ def _harvest_one(
             html = fetcher.get_html(url)
         except FetchError as err:
             log.error("agenda", str(err), url=url)
-            st.produced("page inaccessible", links=0)
+            st.produced(f"non dépouillé : {err}", links=0)
             return []
 
         links = links_of(html, url)
@@ -198,7 +217,6 @@ def _harvest_one(
             st.produced("échec de la sélection", kept=0, among=len(links))
             return []
 
-        log.event("selected", url=url, kept=len(kept), among=len(links))
         st.produced(f"{len(kept)} lien(s) retenu(s) sur {len(links)}", kept=len(kept), among=len(links))
 
     if not kept:

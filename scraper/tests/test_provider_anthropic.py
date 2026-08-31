@@ -410,3 +410,84 @@ def test_le_programme_est_plafonne_par_max_events(log):
 
     assert len(events) == 3
 
+
+
+def test_chaque_resultat_est_rattache_a_sa_propre_requete():
+    """Le modèle lance ses recherches en salve : l'ordre ne relie rien.
+
+    Toutes les requêtes sortent avant le premier résultat. Se fier à « la
+    dernière requête vue » attribuait alors la totalité des résultats à la
+    sixième recherche, et affichait les cinq autres à zéro — ce qu'on a
+    effectivement vu en production. Seul `tool_use_id` relie les deux.
+    """
+    salve = [
+        {"type": "server_tool_use", "id": "s1", "name": "web_search",
+         "input": {"query": "Malakoff animations enfants"}},
+        {"type": "server_tool_use", "id": "s2", "name": "web_search",
+         "input": {"query": "Châtillon ateliers enfants"}},
+        {"type": "web_search_tool_result", "tool_use_id": "s1",
+         "content": [{"type": "web_search_result", "url": "https://malakoff.fr/agenda",
+                      "title": "Malakoff", "encrypted_content": "x", "page_age": None}]},
+        {"type": "web_search_tool_result", "tool_use_id": "s2",
+         "content": [{"type": "web_search_result", "url": "https://agenda.fr/jeune-public/",
+                      "title": "Châtillon", "encrypted_content": "x", "page_age": None}]},
+        text_block(AGENDAS),
+    ]
+
+    recus: list[dict] = []
+    log = RunLog(path=None, verbose=False)
+    log.sink = recus.append
+
+    server = FakeApiServer([message(salve)])
+    try:
+        provider_for(server).search(Config(name="t", theme="spectacles"), log)
+    finally:
+        server.close()
+
+    par_url = {
+        r["url"]: r["query"] for r in recus if r["kind"] == "search_result"
+    }
+    assert par_url["https://malakoff.fr/agenda"] == "Malakoff animations enfants"
+    assert par_url["https://agenda.fr/jeune-public/"] == "Châtillon ateliers enfants"
+    # Et aucune requête ne se retrouve orpheline ni bonne à tout attribuer.
+    assert not [r for r in recus if r["kind"] == "error" and "non rattachés" in r["message"]]
+
+
+def test_la_selection_rend_ses_motifs_sans_jamais_rendre_d_url():
+    """Le modèle dit pourquoi il retient — mais toujours par numéro de ligne.
+
+    C'est le compromis : on gagne le motif d'un tri, sans perdre la garantie
+    qu'aucune URL ne peut sortir d'ailleurs que de la page réellement lue.
+    """
+    liens = [
+        Link(text="Atelier BD", url="https://agenda.fr/atelier", context="mercredi 14h"),
+        Link(text="Toutes les catégories", url="https://agenda.fr/categories", context=""),
+    ]
+    reponse = {
+        "kept": [{"index": 1, "why": "atelier enfants, date dans la période"}],
+        "dropped_reason": "le reste n'est que de la navigation et de la pagination",
+    }
+
+    recus: list[dict] = []
+    log = RunLog(path=None, verbose=False)
+    log.sink = recus.append
+
+    server = FakeApiServer([message([text_block(reponse)])])
+    try:
+        kept = provider_for(server).select(
+            "https://agenda.fr/", liens, Config(name="t", theme="x"), log
+        )
+    finally:
+        server.close()
+
+    assert [l.url for l in kept] == ["https://agenda.fr/atelier"]
+
+    selected = next(r for r in recus if r["kind"] == "selected")
+    assert selected["dropped_reason"] == "le reste n'est que de la navigation et de la pagination"
+    retenu = next(r for r in recus if r["kind"] == "link_kept")
+    assert retenu["why"] == "atelier enfants, date dans la période"
+
+    # Le corps envoyé au modèle impose bien des numéros, pas des adresses.
+    schema = server.requests[0]["output_config"]["format"]["schema"]
+    assert schema["properties"]["kept"]["items"]["properties"]["index"]["type"] == "integer"
+    assert "url" not in schema["properties"]["kept"]["items"]["properties"]

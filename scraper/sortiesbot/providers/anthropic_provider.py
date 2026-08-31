@@ -90,15 +90,32 @@ SEARCH_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+#: Le modèle rend des **numéros de ligne**, jamais des URL : c'est ce qui rend
+#: matériellement impossible d'en inventer une, et ça ne change pas. Ce qui
+#: change, c'est qu'il dit maintenant *pourquoi* — un motif par lien retenu,
+#: et une phrase pour ce qu'il a écarté.
+#:
+#: Un motif par lien écarté coûterait bien trop cher : deux cents liens à
+#: quinze jetons font tripler la sortie de cet étage. Une phrase globale suffit
+#: à comprendre un tri raté, ce qui est le besoin réel.
 SELECT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "kept": {
             "type": "array",
-            "items": {"type": "integer"},
-        }
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "why": {"type": "string"},
+                },
+                "required": ["index", "why"],
+                "additionalProperties": False,
+            },
+        },
+        "dropped_reason": {"type": "string"},
     },
-    "required": ["kept"],
+    "required": ["kept", "dropped_reason"],
     "additionalProperties": False,
 }
 
@@ -181,8 +198,9 @@ class AnthropicProvider:
 
     def __init__(self, api_key: str | None = None, client: Any = None):
         self.usage = Usage()
-        #: Dernière requête web lancée, pour rattacher ses résultats.
-        self._last_query = ""
+        #: Requête de chaque `server_tool_use`, par identifiant de bloc.
+        #: C'est ce qui relie un résultat à la recherche qui l'a remonté.
+        self._queries: dict[str, str] = {}
         if client is not None:
             self._client = client
             return
@@ -267,14 +285,25 @@ class AnthropicProvider:
         )
         # Le modèle rend des numéros : aucune URL ne peut sortir d'ailleurs que
         # de la page réellement lue.
-        kept: list[Link] = []
-        for number in data.get("kept") or []:
+        kept: list[tuple[Link, str]] = []
+        for raw in data.get("kept") or []:
+            number = raw.get("index") if isinstance(raw, dict) else raw
+            why = str(raw.get("why", "")).strip() if isinstance(raw, dict) else ""
             if isinstance(number, int) and 1 <= number <= len(links):
-                kept.append(links[number - 1])
+                kept.append((links[number - 1], why))
         kept = kept[: config.max_links_per_agenda]
-        for link in kept:
-            log.event("link_kept", url=link.url, text=link.text, agenda=page)
-        return kept
+
+        dropped = str(data.get("dropped_reason") or "").strip()
+        log.event(
+            "selected",
+            url=page,
+            kept=len(kept),
+            among=len(links),
+            dropped_reason=dropped,
+        )
+        for link, why in kept:
+            log.event("link_kept", url=link.url, text=link.text, why=why, agenda=page)
+        return [link for link, _ in kept]
 
     # -------------------------------------------------------------- 3. extraire
 
@@ -415,15 +444,25 @@ class AnthropicProvider:
         if kind == "server_tool_use" and getattr(block, "name", "") == "web_search":
             step.web_searches += 1
             query = str((getattr(block, "input", {}) or {}).get("query", ""))
-            # Les résultats arrivent dans le bloc suivant : on retient la
-            # requête pour les lui rattacher. Sans ça, impossible de savoir
-            # quelle formulation a remonté quel site.
-            self._last_query = query
-            log.event("query", op=op, query=query)
+            # C'est `id` qui relie une requête à ses résultats, et rien d'autre.
+            # Se fier à l'ordre serait faux : le modèle lance volontiers ses
+            # recherches en salve, auquel cas toutes les requêtes sortent avant
+            # le premier résultat — et tout se retrouverait attribué à la
+            # dernière.
+            tool_use_id = str(getattr(block, "id", "") or "")
+            if tool_use_id:
+                self._queries[tool_use_id] = query
+            log.event("query", op=op, query=query, tool_use_id=tool_use_id)
 
         elif kind == "web_search_tool_result":
+            tool_use_id = str(getattr(block, "tool_use_id", "") or "")
+            query = self._queries.get(tool_use_id, "")
             content = getattr(block, "content", None)
             if isinstance(content, list):
+                if not query:
+                    # Sans rattachement, l'arbre du run ne saurait plus dire
+                    # quelle formulation a remonté quoi : autant le signaler.
+                    log.warn(op, f"résultats non rattachés à une requête ({tool_use_id or '?'})")
                 for result in content:
                     url = str(getattr(result, "url", ""))
                     if seen is not None and url.startswith(("http://", "https://")):
@@ -431,11 +470,12 @@ class AnthropicProvider:
                     log.event(
                         "search_result", op=op, url=url,
                         title=getattr(result, "title", ""),
-                        query=getattr(self, "_last_query", ""),
+                        query=query,
+                        tool_use_id=tool_use_id,
                     )
             else:
                 code = getattr(content, "error_code", "") if content is not None else ""
-                log.error(op, f"recherche web en échec : {code}")
+                log.error(op, f"recherche web en échec : {code}", query=query)
 
 
 # ---------------------------------------------------------------------- outils

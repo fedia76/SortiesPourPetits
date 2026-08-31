@@ -297,8 +297,32 @@ export interface ScraperTreePage {
   seq: number;
 }
 
+export type ScraperResultFate = 'agenda' | 'direct' | 'ignore' | 'echec' | 'plafond' | 'annonce';
+
+/** Ce qu'un résultat de recherche est devenu, dit en clair. */
+export const FATE_LABELS: Record<ScraperResultFate, string> = {
+  agenda: 'dépouillé comme agenda',
+  direct: 'lue directement comme sortie',
+  ignore: 'non retenu par le modèle',
+  echec: 'retenu mais injoignable',
+  plafond: 'retenu mais au-delà du plafond d\'agendas',
+  annonce: 'désigné, jamais ouvert',
+};
+
+export const AGENDA_STATUS_LABELS: Record<string, string> = {
+  depouille: 'dépouillé',
+  echec: 'injoignable',
+  plafond: 'au-delà du plafond',
+  annonce: 'jamais ouvert',
+};
+
 export interface ScraperTreeAgenda {
   url: string;
+  title: string;
+  status: 'depouille' | 'echec' | 'plafond' | 'annonce';
+  statusReason: string;
+  /** Ce que le modèle dit avoir écarté, en une phrase. */
+  droppedReason: string;
   links: number;
   kept: number;
   seconds: number;
@@ -309,10 +333,12 @@ export interface ScraperTreeAgenda {
 }
 
 export interface ScraperTree {
-  searches: { query: string; results: { url: string; title: string }[] }[];
+  searches: { query: string; results: { url: string; title: string; fate: ScraperResultFate }[] }[];
   agendas: ScraperTreeAgenda[];
   /** Ce qui n'est venu d'aucun agenda : sortie remontée telle quelle, ou seed. */
   direct: ScraperTreePage[];
+  /** Compteurs cumulés par étage — des totaux, pas le dernier passage. */
+  totals: Record<string, Record<string, number>>;
   truncated: boolean;
 }
 

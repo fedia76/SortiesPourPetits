@@ -820,7 +820,10 @@ scraperRouter.get('/runs/:id/tree', async (req, res) => {
   const rows = await prisma.scraperRunLog.findMany({
     where: { runId },
     orderBy: { seq: 'asc' },
-    select: { seq: true, stage: true, kind: true, url: true, data: true },
+    select: {
+      seq: true, stage: true, kind: true, level: true,
+      url: true, message: true, data: true,
+    },
     // Un plafond franc : au-delà, l'arbre n'est plus lisible de toute façon,
     // et le journal plat reste là pour le détail.
     take: TREE_MAX_ROWS,

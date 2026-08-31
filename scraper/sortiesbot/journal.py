@@ -57,14 +57,22 @@ _CONSOLE = {
         else f"  ↺ aucun lien retenu, la page est relue comme une sortie : {f.get('url')}"
     ),
     "seed": lambda f: f"  ⌖ point de départ : {f.get('url')}",
+    "agenda_planned": lambda f: f"  ▦ agenda à dépouiller : {f.get('title')} — {f.get('url')}",
     "programme": lambda f: (
         f"  ▤ programme dépouillé : {f.get('found')} sortie(s) relevée(s) "
         f"sur {f.get('chars')} caractères"
     ),
     "harvested": lambda f: f"  🔗 {f.get('links')} lien(s) extrait(s) : {f.get('url')}",
     "link": lambda f: f"     · [{f.get('index')}] {f.get('text')} → {f.get('url')}",
-    "link_kept": lambda f: f"     ✔ retenu : {f.get('text')} → {f.get('url')}",
-    "selected": lambda f: f"  ✔ {f.get('kept')} retenu(s) sur {f.get('among')} : {f.get('url')}",
+    "link_kept": lambda f: (
+        f"     ✔ retenu : {f.get('text')}"
+        + (f" — {f.get('why')}" if f.get("why") else "")
+        + f" → {f.get('url')}"
+    ),
+    "selected": lambda f: (
+        f"  ✔ {f.get('kept')} retenu(s) sur {f.get('among')} : {f.get('url')}"
+        + (f"\n     ↳ écartés : {f.get('dropped_reason')}" if f.get("dropped_reason") else "")
+    ),
     "visited": lambda f: f"  📄 page lue : {f.get('url')}",
     "page": lambda f: (
         f"  📄 page lue : {f.get('chars')} caractères, {f.get('json_ld')} date(s) JSON-LD, "
@@ -120,7 +128,10 @@ _CONSOLE = {
 
 #: Champs dont la valeur peut être longue : on les tronque avant d'envoyer le
 #: journal au site, qui n'a pas besoin de la page entière pour la déboguer.
-_LONG_FIELDS = ("text", "content", "prompt", "reason", "message", "detail", "context")
+_LONG_FIELDS = (
+    "text", "content", "prompt", "reason", "message", "detail", "context",
+    "why", "dropped_reason",
+)
 _LONG_MAX = 2000
 
 
