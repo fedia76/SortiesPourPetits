@@ -273,6 +273,46 @@ def run_log_path(directory: Path, config_name: str) -> Path:
     return directory / f"{stamp}_{slug}.jsonl"
 
 
+#: Les colonnes que le site range à plat dans `ScraperRunLog`. Tout le reste
+#: d'un événement part dans `data`, en JSON.
+_ENVELOPE = ("seq", "at", "stage", "kind", "level", "url", "message")
+
+#: Plafonds des colonnes correspondantes côté site. Les dépasser ferait
+#: refuser le paquet entier — donc perdre quarante événements pour une seule
+#: URL trop longue.
+_URL_MAX = 500
+_MESSAGE_MAX = 4000
+
+
+def _wire(record: dict[str, Any]) -> dict[str, Any]:
+    """Met un événement à la forme attendue par `POST /runs/:id/logs`.
+
+    Le journal manipule des enregistrements **plats** — c'est ce qui rend
+    `log.event("skip", reason=..., url=...)` agréable à écrire. Le site, lui,
+    a des colonnes : il range l'enveloppe à plat et le reste dans une colonne
+    JSON. Sans cette conversion, tout ce qui n'est pas une colonne connue est
+    silencieusement jeté à la validation, et la page de débogage n'affiche que
+    des lignes vides.
+    """
+    entry: dict[str, Any] = {"seq": record.get("seq", 0), "kind": record.get("kind", "?")}
+    if record.get("at"):
+        entry["at"] = record["at"]
+    if record.get("stage"):
+        entry["stage"] = record["stage"]
+    entry["level"] = record.get("level") or INFO
+    url = record.get("url")
+    if isinstance(url, str) and url:
+        entry["url"] = url[:_URL_MAX]
+    message = record.get("message")
+    if isinstance(message, str) and message:
+        entry["message"] = message[:_MESSAGE_MAX]
+
+    data = {k: v for k, v in record.items() if k not in _ENVELOPE}
+    if data:
+        entry["data"] = data
+    return entry
+
+
 class RemoteJournal:
     """Renvoie le journal du run au site, par paquets.
 
@@ -304,7 +344,7 @@ class RemoteJournal:
     def add(self, record: dict[str, Any]) -> None:
         if self.given_up:
             return
-        self._pending.append(record)
+        self._pending.append(_wire(record))
         if len(self._pending) >= self.batch:
             self.flush()
 
