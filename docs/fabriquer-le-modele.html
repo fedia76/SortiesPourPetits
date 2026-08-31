@@ -1,0 +1,1078 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Socle minimal : la page apporte ses propres couleurs et sa typographie.
+     `color-scheme` laisse le navigateur suivre le thème du système, que les
+     variables de la feuille ci-dessous savent honorer dans les deux sens. */
+  :root { color-scheme: light dark; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>Fabriquer le modèle maison</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root {
+  --sans: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+
+  --paper: #F7F8FA;
+  --box: #FFFFFF;
+  --sunk: #EDF0F4;
+  --line: #DCE1E8;
+  --ink: #101725;
+  --ink-2: #38414F;
+  --muted: #626C7B;
+
+  --c1: #2563EB; --c1s: #EAF0FE;
+  --c2: #0E9F6E; --c2s: #E5F6F0;
+  --c3: #7C3AED; --c3s: #F1EBFE;
+  --c4: #C2410C; --c4s: #FCEDE6;
+  --c5: #0891B2; --c5s: #E4F3F8;
+  --c6: #BE185D; --c6s: #FCE9F1;
+
+  --hub: #131A2B;
+  --hub-ink: #F2F5F9;
+  --shadow: 0 1px 3px rgba(16,23,37,.06), 0 18px 44px -30px rgba(16,23,37,.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #101521; --box: #18202D; --sunk: #141B27;
+    --line: #2A3442; --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
+    --c1: #4A82E8; --c1s: #172234;
+    --c2: #12A87B; --c2s: #10261F;
+    --c3: #9068F0; --c3s: #1D1830;
+    --c4: #D2612F; --c4s: #2A1A12;
+    --c5: #189AB4; --c5s: #10262D;
+    --c6: #DB4F84; --c6s: #2A1520;
+    --hub: #0B111C; --hub-ink: #EAF0F7;
+    --shadow: 0 1px 3px rgba(0,0,0,.4), 0 18px 44px -30px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #101521; --box: #18202D; --sunk: #141B27;
+  --line: #2A3442; --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
+  --c1: #4A82E8; --c1s: #172234;
+  --c2: #12A87B; --c2s: #10261F;
+  --c3: #9068F0; --c3s: #1D1830;
+  --c4: #D2612F; --c4s: #2A1A12;
+  --c5: #189AB4; --c5s: #10262D;
+  --c6: #DB4F84; --c6s: #2A1520;
+  --hub: #0B111C; --hub-ink: #EAF0F7;
+  --shadow: 0 1px 3px rgba(0,0,0,.4), 0 18px 44px -30px rgba(0,0,0,.8);
+}
+
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink-2); font-family: var(--sans); font-size: 16px; line-height: 1.62; -webkit-font-smoothing: antialiased; }
+
+.c1 { --a: var(--c1); --as: var(--c1s); }
+.c2 { --a: var(--c2); --as: var(--c2s); }
+.c3 { --a: var(--c3); --as: var(--c3s); }
+.c4 { --a: var(--c4); --as: var(--c4s); }
+.c5 { --a: var(--c5); --as: var(--c5s); }
+.c6 { --a: var(--c6); --as: var(--c6s); }
+
+.page { max-width: 1180px; margin: 0 auto; padding: 0 24px 110px; }
+.col { max-width: 41rem; margin-inline: auto; display: flex; flex-direction: column; gap: 1.1em; }
+section { margin-top: 68px; }
+
+/* en-tête */
+.masthead { max-width: 41rem; margin: 0 auto; padding: 70px 0 0; }
+.kicker { font: 600 11px var(--mono); letter-spacing: .17em; text-transform: uppercase; color: var(--muted); margin: 0 0 16px; }
+h1 { font-size: clamp(2rem, 1.3rem + 2.4vw, 2.9rem); font-weight: 800; letter-spacing: -.022em; line-height: 1.08; color: var(--ink); text-wrap: balance; margin: 0 0 18px; }
+.lede { font-size: 1.1rem; color: var(--ink-2); margin: 0; font-weight: 500; }
+.masthead .rule { height: 2px; background: var(--ink); margin: 40px 0 0; opacity: .9; }
+
+h2 { font-size: 1.6rem; font-weight: 800; letter-spacing: -.018em; line-height: 1.18; color: var(--ink); text-wrap: balance; margin: 0; padding-bottom: 12px; border-bottom: 2px solid var(--ink); }
+h3 { font-size: 1.14rem; font-weight: 700; line-height: 1.3; color: var(--ink); text-wrap: balance; margin: 1em 0 -.35em; }
+p { margin: 0; }
+strong, b { color: var(--ink); font-weight: 700; }
+em { font-style: italic; }
+
+code { font-family: var(--mono); font-size: .86em; background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: .08em .3em; color: var(--ink); overflow-wrap: anywhere; }
+
+ul.plain { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .55em; }
+ul.plain > li { position: relative; padding-left: 1.15em; }
+ul.plain > li::before { content: ""; position: absolute; left: 0; top: .68em; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
+
+/* réponse courte */
+.answer { background: var(--hub); color: var(--hub-ink); border-radius: 14px; padding: 24px 28px; display: flex; flex-direction: column; gap: 1em; }
+.answer h2 { color: var(--hub-ink); border-bottom-color: rgba(255,255,255,.22); font-size: 1.15rem; padding-bottom: 10px; }
+.answer b, .answer strong { color: var(--hub-ink); font-weight: 800; }
+.answer code { background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.16); color: var(--hub-ink); }
+
+/* cartes */
+.card { border: 2px solid var(--a); background: var(--box); border-radius: 14px; padding: 16px 18px; }
+.card > h4 { margin: 0 0 10px; font-size: 1rem; font-weight: 700; color: var(--a); display: flex; align-items: center; gap: 9px; }
+.card .badge { font: 700 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; background: var(--as); color: var(--a); border-radius: 999px; padding: 3px 9px; }
+.card ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.card li { position: relative; padding-left: 13px; font-size: .89rem; line-height: 1.45; }
+.card li::before { content: ""; position: absolute; left: 0; top: .58em; width: 4px; height: 4px; border-radius: 50%; background: var(--a); opacity: .75; }
+.card .foot { margin: 11px 0 0; padding-top: 9px; border-top: 1px dashed var(--line); font-size: .82rem; color: var(--muted); font-style: italic; }
+
+.row3 { display: grid; gap: 14px; grid-template-columns: repeat(3, 1fr); max-width: 1080px; margin: 26px auto; }
+.row2 { display: grid; gap: 14px; grid-template-columns: repeat(2, 1fr); max-width: 1080px; margin: 26px auto; }
+@media (max-width: 860px) { .row3, .row2 { grid-template-columns: 1fr; } }
+
+.note { background: var(--sunk); border-left: 3px solid var(--a, var(--c5)); border-radius: 0 8px 8px 0; padding: 17px 21px; font-size: .95rem; }
+.note .h { display: block; font: 700 10.5px var(--mono); letter-spacing: .13em; text-transform: uppercase; color: var(--muted); margin-bottom: .5em; }
+.note p + p { margin-top: .7em; }
+
+/* code */
+figure.snippet { margin: 22px auto; max-width: 1080px; }
+.snip-head { display: flex; align-items: center; gap: 10px; font: 600 10.5px var(--mono); letter-spacing: .11em; text-transform: uppercase; color: var(--muted); background: var(--sunk); border: 1px solid var(--line); border-bottom: none; border-radius: 10px 10px 0 0; padding: 9px 16px; }
+.snip-head .dotrow { display: flex; gap: 5px; }
+.snip-head i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); display: block; }
+pre { margin: 0; overflow-x: auto; background: var(--box); border: 1px solid var(--line); border-radius: 0 0 10px 10px; padding: 16px 18px; font-family: var(--mono); font-size: 12.6px; line-height: 1.66; color: var(--ink-2); tab-size: 2; }
+pre code { background: none; border: none; padding: 0; font-size: inherit; color: inherit; }
+pre .k { color: var(--c3); font-weight: 600; }
+pre .s { color: var(--c2); }
+pre .n { color: var(--c4); }
+pre .c { color: var(--muted); font-style: italic; }
+pre .f { color: var(--c1); }
+figure.snippet figcaption { font-size: .85rem; color: var(--muted); margin-top: 10px; max-width: 44rem; }
+
+/* figures */
+figure.fig { margin: 30px auto; max-width: 1080px; }
+.figframe { overflow-x: auto; background: var(--box); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; box-shadow: var(--shadow); }
+figure.fig svg { display: block; width: 100%; height: auto; min-width: 620px; }
+figure.fig figcaption { font-size: .87rem; line-height: 1.55; color: var(--muted); margin-top: 12px; max-width: 44rem; }
+figure.fig figcaption b { color: var(--ink-2); font-weight: 700; }
+
+.d-box  { fill: var(--box); stroke: var(--line); stroke-width: 1.5; }
+.d-acc  { fill: var(--as); stroke: var(--a); stroke-width: 1.8; }
+.d-sunk { fill: var(--sunk); stroke: none; }
+.d-t  { fill: var(--ink); font: 700 13px var(--sans); }
+.d-s  { fill: var(--muted); font: 500 11.5px var(--sans); }
+.d-k  { font: 700 10px var(--mono); letter-spacing: .1em; fill: var(--a); }
+.d-kn { font: 700 10px var(--mono); letter-spacing: .1em; fill: var(--muted); }
+.d-lbl { fill: var(--muted); font: 400 11px var(--mono); }
+.d-line { stroke: var(--muted); stroke-width: 1.7; fill: none; }
+.d-line.dash { stroke-dasharray: 5 4; }
+.d-head { fill: var(--muted); }
+
+/* étapes */
+ol.steps { counter-reset: st; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 34px; }
+ol.steps > li { counter-increment: st; }
+ol.steps > li > .sthead { display: flex; align-items: baseline; gap: 12px; margin-bottom: .5em; }
+ol.steps > li > .sthead::before { content: "Étape " counter(st); font: 700 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--box); background: var(--c1); border-radius: 5px; padding: 4px 9px; flex: none; }
+ol.steps > li > .sthead h3 { margin: 0; font-size: 1.16rem; }
+ol.steps > li > .body { display: flex; flex-direction: column; gap: 1em; }
+
+/* tableaux */
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--box); max-width: 1080px; margin: 24px auto; }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: .89rem; }
+th, td { text-align: left; padding: 11px 15px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { font: 700 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); background: var(--sunk); white-space: nowrap; }
+tbody tr:last-child td { border-bottom: none; }
+td.name { color: var(--ink); font-weight: 700; }
+td.num, th.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pill { display: inline-block; font: 700 10px var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.pill.y { color: var(--c2); background: var(--c2s); }
+.pill.n { color: var(--c4); background: var(--c4s); }
+
+.foot { max-width: 41rem; margin: 80px auto 0; padding-top: 22px; border-top: 1px solid var(--line); font-size: .84rem; color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+@media (max-width: 700px) { .page { padding: 0 16px 70px; } .figframe { padding: 14px; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="masthead">
+  <p class="kicker">SortiesPourPetits · suite de l'analyse du scraper</p>
+  <h1>Fabriquer le modèle maison</h1>
+  <p class="lede">
+    Les trois familles de modèles s'entraînent-elles pareil ? Partent-elles de
+    zéro ? Et à quoi ressemble, concrètement, un fine-tune du début à la fin.
+  </p>
+  <div class="rule"></div>
+</header>
+
+<!-- ==================================================== réponse courte -->
+<section>
+  <div class="col">
+    <div class="answer">
+      <h2>La réponse en trois phrases</h2>
+      <p>
+        <b>Le principe d'entraînement est le même pour les trois</b> — montrer des
+        exemples, mesurer l'erreur, corriger les poids d'un cran, recommencer.
+        Ce qui diffère, c'est la <b>famille du modèle de départ</b>, la <b>« tête »</b>
+        qu'on lui ajoute, et la <b>forme de l'étiquette</b> qu'on lui montre.
+      </p>
+      <p>
+        <b>Aucun des trois ne part de zéro</b>, et c'est la seule façon que ça
+        marche avec quelques milliers d'exemples. On part toujours d'un modèle
+        déjà entraîné, téléchargé gratuitement, qui sait déjà le français.
+      </p>
+      <p>
+        <b>Une seule exception, et c'est la plus bête des options</b> : une
+        régression logistique sur des comptages de mots s'entraîne vraiment de
+        zéro, en dix secondes, sans carte graphique. Elle ne comprend rien — mais
+        pour trier des liens, ça peut suffire.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================== socle commun -->
+<section>
+  <div class="col">
+    <h2>Ce que « entraîner » veut dire, une fois pour toutes</h2>
+    <p>
+      Un modèle est une immense formule contenant des millions de nombres
+      réglables — les <strong>poids</strong>. Au départ, sur votre tâche, ils
+      donnent n'importe quoi. L'entraînement est une boucle bête et têtue,
+      identique pour les trois familles :
+    </p>
+  </div>
+
+  <figure class="fig c1">
+    <div class="figframe">
+      <svg viewBox="0 0 1020 250" role="img" aria-label="La boucle d'entraînement : on montre un exemple, le modèle prédit, on mesure l'écart avec l'étiquette attendue, on corrige les poids d'un cran, et on recommence. On s'arrête quand l'erreur sur les exemples mis de côté cesse de baisser.">
+        <defs>
+          <marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="d-head" d="M 0 1 L 10 5 L 0 9 z"></path>
+          </marker>
+        </defs>
+
+        <rect class="d-box" x="10" y="46" width="196" height="82" rx="10"></rect>
+        <text class="d-kn" x="28" y="72">1 · ON MONTRE</text>
+        <text class="d-t" x="28" y="94">Un exemple</text>
+        <text class="d-s" x="28" y="113">le texte d'une page</text>
+
+        <path class="d-line" marker-end="url(#m1)" d="M 210 87 H 240"></path>
+
+        <rect class="d-acc" x="244" y="46" width="196" height="82" rx="10"></rect>
+        <text class="d-k" x="262" y="72">2 · LE MODÈLE RÉPOND</text>
+        <text class="d-t" x="262" y="94">Sa prédiction</text>
+        <text class="d-s" x="262" y="113">au début : n'importe quoi</text>
+
+        <path class="d-line" marker-end="url(#m1)" d="M 444 87 H 474"></path>
+
+        <rect class="d-box" x="478" y="46" width="196" height="82" rx="10"></rect>
+        <text class="d-kn" x="496" y="72">3 · ON COMPARE</text>
+        <text class="d-t" x="496" y="94">L'écart = la perte</text>
+        <text class="d-s" x="496" y="113">un seul nombre</text>
+
+        <path class="d-line" marker-end="url(#m1)" d="M 678 87 H 708"></path>
+
+        <rect class="d-box" x="712" y="46" width="200" height="82" rx="10"></rect>
+        <text class="d-kn" x="730" y="72">4 · ON CORRIGE</text>
+        <text class="d-t" x="730" y="94">Les poids, d'un cran</text>
+        <text class="d-s" x="730" y="113">dans le sens qui réduit</text>
+
+        <path class="d-line dash" marker-end="url(#m1)" d="M 812 128 V 168 H 108 V 132"></path>
+        <text class="d-lbl" x="360" y="163">et on recommence — des milliers de fois</text>
+
+        <rect class="d-sunk" x="712" y="186" width="298" height="52" rx="8"></rect>
+        <text class="d-s" x="730" y="208">On s'arrête quand l'erreur sur les exemples</text>
+        <text class="d-s" x="730" y="226">mis de côté cesse de baisser.</text>
+        <path class="d-line" marker-end="url(#m1)" d="M 912 87 H 962 V 186"></path>
+      </svg>
+    </div>
+    <figcaption>
+      <b>Figure 1 — la boucle, commune aux trois familles.</b> Personne n'écrit
+      de règle : on ne fait que corriger des nombres dans le sens qui réduit
+      l'erreur. Le nom savant de l'étape 4 est <em>descente de gradient par
+      rétropropagation</em>, et c'est tout ce qu'il y a à en savoir ici.
+    </figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Les trois paquets de données, et pourquoi il en faut trois</h3>
+    <p>
+      Vos exemples se coupent en trois, toujours, quelle que soit la famille :
+    </p>
+    <ul class="plain">
+      <li><strong>Entraînement (≈ 80 %)</strong> — ce que le modèle voit et sur quoi ses poids bougent.</li>
+      <li><strong>Validation (≈ 10 %)</strong> — ce qu'il ne voit jamais, mais qu'on lui fait passer régulièrement pendant l'entraînement pour savoir <em>quand s'arrêter</em>.</li>
+      <li><strong>Test (≈ 10 %)</strong> — mis sous scellés, ouvert une seule fois à la toute fin. C'est le seul chiffre honnête.</li>
+    </ul>
+    <p>
+      Sans le paquet de validation, on tombe dans le <strong>sur-apprentissage</strong> :
+      à force de repasser sur les mêmes exemples, le modèle finit par les apprendre
+      par cœur au lieu d'apprendre la règle. Sur ses exemples il devient parfait ;
+      sur une page qu'il n'a jamais vue, il s'effondre. La courbe est
+      caractéristique — l'erreur d'entraînement continue de baisser pendant que
+      celle de validation remonte. C'est là qu'on arrête.
+    </p>
+  </div>
+</section>
+
+<!-- ==================================================== les trois familles -->
+<section>
+  <div class="col">
+    <h2>Les trois familles : même boucle, trois montages</h2>
+    <p>
+      La différence tient à deux choses : <strong>quelle sorte de modèle on prend
+      comme corps</strong>, et <strong>ce qu'on lui visse dessus</strong> pour
+      transformer sa compréhension du texte en la réponse qu'on veut.
+    </p>
+  </div>
+
+  <figure class="fig c3">
+    <div class="figframe">
+      <svg viewBox="0 0 1020 344" role="img" aria-label="Deux corps de modèles différents. À gauche un encodeur, qui lit tout le texte d'un coup, et sur lequel on visse soit une tête de classement soit une tête qui étiquette chaque mot. À droite un décodeur, sur lequel on ne visse rien : il écrit le texte de la réponse mot à mot.">
+        <defs>
+          <marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="d-head" d="M 0 1 L 10 5 L 0 9 z"></path>
+          </marker>
+        </defs>
+
+        <text class="d-kn" x="14" y="20">FAMILLE ENCODEUR — IL LIT, IL NE RÉDIGE PAS</text>
+        <rect class="d-sunk" x="10" y="30" width="588" height="304" rx="12"></rect>
+
+        <rect class="d-box" x="28" y="118" width="164" height="126" rx="10"></rect>
+        <text class="d-t" x="46" y="152">CamemBERT</text>
+        <text class="d-s" x="46" y="172">110 millions</text>
+        <text class="d-s" x="46" y="190">de poids</text>
+        <text class="d-s" x="46" y="216">Lit toute la page</text>
+        <text class="d-s" x="46" y="234">d'un seul coup</text>
+
+        <path class="d-line" marker-end="url(#m2)" d="M 196 152 H 224 V 106 H 252"></path>
+        <path class="d-line" marker-end="url(#m2)" d="M 196 210 H 224 V 256 H 252"></path>
+
+        <g class="c1">
+          <rect class="d-acc" x="256" y="66" width="326" height="80" rx="10"></rect>
+          <text class="d-k" x="274" y="90">TÊTE DE CLASSEMENT</text>
+          <text class="d-t" x="274" y="112">Une seule sortie : 0,93</text>
+          <text class="d-s" x="274" y="132">« ce lien mène à une sortie » — avec sa probabilité</text>
+        </g>
+
+        <g class="c3">
+          <rect class="d-acc" x="256" y="216" width="326" height="80" rx="10"></rect>
+          <text class="d-k" x="274" y="240">TÊTE PAR JETON</text>
+          <text class="d-t" x="274" y="262">Une étiquette sur chaque mot</text>
+          <text class="d-s" x="274" y="282">TITRE · TITRE · O · O · PRIX · O · VILLE …</text>
+        </g>
+
+        <text class="d-kn" x="622" y="20">FAMILLE DÉCODEUR — IL ÉCRIT</text>
+        <rect class="d-sunk" x="618" y="30" width="394" height="304" rx="12"></rect>
+
+        <rect class="d-box" x="636" y="118" width="164" height="126" rx="10"></rect>
+        <text class="d-t" x="654" y="152">Qwen3 1,7 Md</text>
+        <text class="d-s" x="654" y="172">1,7 milliard</text>
+        <text class="d-s" x="654" y="190">de poids</text>
+        <text class="d-s" x="654" y="216">Écrit la suite,</text>
+        <text class="d-s" x="654" y="234">mot après mot</text>
+
+        <path class="d-line" marker-end="url(#m2)" d="M 804 181 H 838"></path>
+
+        <g class="c5">
+          <rect class="d-acc" x="842" y="141" width="156" height="80" rx="10"></rect>
+          <text class="d-k" x="858" y="165">AUCUNE TÊTE</text>
+          <text class="d-t" x="858" y="187">Il sait déjà</text>
+          <text class="d-s" x="858" y="207">écrire du texte</text>
+        </g>
+
+        <text class="d-lbl" x="636" y="286">On ne lui ajoute rien : on lui fait simplement</text>
+        <text class="d-lbl" x="636" y="304">écrire le JSON à la suite du prompt.</text>
+      </svg>
+    </div>
+    <figcaption>
+      <b>Figure 2 — ce qui est vraiment partagé et ce qui ne l'est pas.</b> Le
+      classifieur et l'étiqueteur partagent le même corps : on change seulement la
+      pièce vissée au bout. Le générateur, lui, est une bête différente — et le
+      point contre-intuitif est qu'<b>on ne lui ajoute rien du tout</b> : produire
+      du texte est déjà exactement ce qu'il sait faire, on lui apprend seulement à
+      produire <em>votre</em> texte.
+    </figcaption>
+  </figure>
+
+  <div class="row3">
+    <article class="card c1">
+      <h4>Classifieur <span class="badge">le plus simple</span></h4>
+      <ul>
+        <li><b>Corps</b> : CamemBERT (110 M) — ou rien du tout, voir plus bas</li>
+        <li><b>Tête</b> : une seule couche, quelques milliers de poids</li>
+        <li><b>Étiquette</b> : un nombre par exemple (0 ou 1)</li>
+        <li><b>On ajuste</b> : tout le modèle, il est petit</li>
+        <li><b>Il produit</b> : une classe <em>et une probabilité</em></li>
+        <li><b>Il ne sait pas</b> : extraire, rédiger</li>
+        <li><b>Données</b> : quelques centaines suffisent</li>
+        <li><b>Durée</b> : quelques minutes</li>
+      </ul>
+      <p class="foot">La probabilité est un cadeau : elle donne un seuil réglable, donc un curseur entre « je rate des sorties » et « je lis des pages pour rien ».</p>
+    </article>
+
+    <article class="card c3">
+      <h4>Étiqueteur de spans <span class="badge">intermédiaire</span></h4>
+      <ul>
+        <li><b>Corps</b> : CamemBERT, le même</li>
+        <li><b>Tête</b> : une couche appliquée à <em>chaque</em> mot</li>
+        <li><b>Étiquette</b> : une catégorie par mot du texte</li>
+        <li><b>On ajuste</b> : tout le modèle</li>
+        <li><b>Il produit</b> : des morceaux surlignés dans la page</li>
+        <li><b>Il ne sait pas</b> : rédiger, ni normaliser une date</li>
+        <li><b>Données</b> : 500 à 2 000 pages</li>
+        <li><b>Durée</b> : une heure</li>
+      </ul>
+      <p class="foot">Étiqueter à la main serait interminable. On triche : on cherche où <code>Event.title</code> apparaît dans le texte et on marque ces mots. Approximatif, mais gratuit.</p>
+    </article>
+
+    <article class="card c5">
+      <h4>Générateur fine-tuné <span class="badge">le vrai remplaçant</span></h4>
+      <ul>
+        <li><b>Corps</b> : Qwen3 1,7 Md, Llama 3.2, Mistral</li>
+        <li><b>Tête</b> : aucune</li>
+        <li><b>Étiquette</b> : le texte de la réponse lui-même</li>
+        <li><b>On ajuste</b> : une petite couche ajoutée (LoRA)</li>
+        <li><b>Il produit</b> : n'importe quel texte, donc la fiche entière</li>
+        <li><b>Il ne sait pas</b> : donner une probabilité fiable</li>
+        <li><b>Données</b> : 1 000 à 5 000 paires</li>
+        <li><b>Durée</b> : quelques heures de GPU</li>
+      </ul>
+      <p class="foot">C'est le seul des trois capable d'écrire la description en français. C'est aussi le seul qui peut inventer une date qui n'existe pas.</p>
+    </article>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Question</th>
+          <th>Classifieur</th>
+          <th>Étiqueteur</th>
+          <th>Générateur</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="name">Même boucle d'entraînement ?</td>
+          <td><span class="pill y">oui</span> montrer, mesurer, corriger</td>
+          <td><span class="pill y">oui</span> à l'identique</td>
+          <td><span class="pill y">oui</span> à l'identique</td>
+        </tr>
+        <tr>
+          <td class="name">Part d'un modèle existant ?</td>
+          <td><span class="pill y">oui</span> encodeur français</td>
+          <td><span class="pill y">oui</span> le même</td>
+          <td><span class="pill y">oui</span> décodeur</td>
+        </tr>
+        <tr>
+          <td class="name">Ce qu'on mesure (« la perte »)</td>
+          <td>erreur sur la classe</td>
+          <td>erreur sur chaque mot, moyennée</td>
+          <td>erreur sur chaque jeton écrit</td>
+        </tr>
+        <tr>
+          <td class="name">Poids réellement modifiés</td>
+          <td class="num">110 M (tous)</td>
+          <td class="num">110 M (tous)</td>
+          <td class="num">≈ 20 M sur 1 700 M</td>
+        </tr>
+        <tr>
+          <td class="name">Carte graphique nécessaire ?</td>
+          <td>confortable, pas obligatoire</td>
+          <td>oui, quelques minutes</td>
+          <td>oui, quelques heures</td>
+        </tr>
+        <tr>
+          <td class="name">Où il servirait chez vous</td>
+          <td>étage 3, tri des liens</td>
+          <td>étage 5, champs factuels</td>
+          <td>étage 5, la fiche entière</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ==================================================== de zéro ? -->
+<section>
+  <div class="col">
+    <h2>De zéro, ou à partir d'un modèle existant ?</h2>
+    <p>
+      Réponse nette : <strong>les trois partent d'un modèle existant</strong>, et
+      ce n'est pas une facilité, c'est la condition pour que ça marche du tout.
+      Un modèle qui comprend le français a coûté des semaines de calcul sur des
+      milliers de cartes graphiques et des téraoctets de texte. Avec trois mille
+      exemples, on ne rachète pas ça — on l'emprunte.
+    </p>
+  </div>
+
+  <figure class="fig c2">
+    <div class="figframe">
+      <svg viewBox="0 0 1020 318" role="img" aria-label="Trois étages superposés : le pré-entraînement, fait par de grandes entreprises pour des millions d'euros et publié gratuitement ; le modèle libre téléchargé, qui sait le français mais rien de vos sorties ; et votre spécialisation, qui coûte une dizaine d'euros. À côté, l'exception : une régression logistique entraînée vraiment de zéro en dix secondes.">
+        <rect class="d-sunk" x="10" y="26" width="700" height="82" rx="10"></rect>
+        <rect x="10" y="26" width="6" height="82" rx="3" fill="var(--c4)"></rect>
+        <text class="d-kn" x="32" y="50">ÉTAGE 1 · PRÉ-ENTRAÎNEMENT — VOUS NE LE FEREZ JAMAIS</text>
+        <text class="d-t" x="32" y="74">Des téraoctets de texte, des semaines sur des milliers de GPU</text>
+        <text class="d-s" x="32" y="94">Des millions d'euros. Fait par Alibaba, Meta, Mistral — puis publié gratuitement.</text>
+
+        <path class="d-line" d="M 360 108 V 130" marker-end="url(#m3)"></path>
+        <defs>
+          <marker id="m3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="d-head" d="M 0 1 L 10 5 L 0 9 z"></path>
+          </marker>
+        </defs>
+
+        <rect class="d-sunk" x="10" y="134" width="700" height="82" rx="10"></rect>
+        <rect x="10" y="134" width="6" height="82" rx="3" fill="var(--c1)"></rect>
+        <text class="d-kn" x="32" y="158">ÉTAGE 2 · LE MODÈLE LIBRE — VOUS LE TÉLÉCHARGEZ</text>
+        <text class="d-t" x="32" y="182">Il sait le français. Il ne sait rien de vos sorties.</text>
+        <text class="d-s" x="32" y="202">Qwen3, Llama, Mistral, CamemBERT. Quelques Go, gratuit, licence à vérifier.</text>
+
+        <path class="d-line" d="M 360 216 V 238" marker-end="url(#m3)"></path>
+
+        <g class="c2">
+          <rect class="d-acc" x="10" y="242" width="700" height="66" rx="10"></rect>
+          <text class="d-k" x="32" y="266">ÉTAGE 3 · VOTRE SPÉCIALISATION — C'EST TOUT CE QUE VOUS FAITES</text>
+          <text class="d-t" x="32" y="290">3 000 exemples · 4 h de GPU loué · ≈ 10 € · un fichier de 40 Mo</text>
+        </g>
+
+        <rect class="d-box" x="736" y="26" width="274" height="282" rx="10"></rect>
+        <text class="d-kn" x="756" y="52">L'EXCEPTION</text>
+        <text class="d-t" x="756" y="78">Régression logistique</text>
+        <text class="d-t" x="756" y="96">sur comptages de mots</text>
+        <text class="d-s" x="756" y="124">Vraiment entraînée de zéro.</text>
+        <text class="d-s" x="756" y="144">Pas d'étage 1, pas d'étage 2.</text>
+        <text class="d-s" x="756" y="172">10 secondes · 0 € · pas de GPU</text>
+        <text class="d-s" x="756" y="192">30 lignes de scikit-learn</text>
+        <text class="d-s" x="756" y="220">Elle ne comprend rien : elle</text>
+        <text class="d-s" x="756" y="240">compte des mots et pondère.</text>
+        <text class="d-s" x="756" y="268">Pour trier des liens, ça peut</text>
+        <text class="d-s" x="756" y="288">parfaitement suffire.</text>
+      </svg>
+    </div>
+    <figcaption>
+      <b>Figure 3 — d'où vient un modèle.</b> Vous n'intervenez qu'au troisième
+      étage. Et l'exception de droite mérite d'être prise au sérieux :
+      <b>« de zéro » devient viable exactement quand le modèle est assez bête pour
+      ne rien avoir à savoir d'avance.</b> Pour l'étage 3 du scraper — « ce lien
+      mène-t-il à une sortie ? » — c'est le premier essai à faire, avant tout le
+      reste.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ==================================================== le fine-tune -->
+<section>
+  <div class="col">
+    <h2>Le fine-tune, étape par étape</h2>
+    <p>
+      À partir d'ici, on ne parle plus que du générateur : le remplaçant direct de
+      Haiku à l'étage 5. Voici l'enchaînement réel, dans l'ordre où on le vit.
+    </p>
+
+    <div class="note c4">
+      <span class="h">Sur les bouts de code qui suivent</span>
+      <p>
+        Ils donnent <strong>la forme et les réglages qui comptent</strong>, pas des
+        lignes à copier telles quelles : les bibliothèques d'entraînement changent
+        de signatures plusieurs fois par an. Prenez les noms d'arguments exacts
+        dans la documentation de la version que vous installez ; les valeurs
+        numériques, elles, sont stables.
+      </p>
+    </div>
+  </div>
+
+  <div class="col">
+    <ol class="steps">
+
+      <li>
+        <div class="sthead"><h3>Écrire le fichier d'exemples</h3></div>
+        <div class="body">
+          <p>
+            Tout tient dans un fichier texte, une ligne de JSON par exemple. C'est
+            le seul livrable de toute la phase de préparation, et c'est lui qui
+            décide de la qualité finale — bien plus que le choix du modèle.
+          </p>
+        </div>
+      </li>
+    </ol>
+  </div>
+
+  <figure class="snippet">
+    <div class="snip-head"><span class="dotrow"><i></i><i></i><i></i></span> dataset/extraction.jsonl — une ligne par exemple</div>
+<pre><code>{<span class="s">"messages"</span>: [
+  {<span class="s">"role"</span>: <span class="s">"system"</span>,    <span class="s">"content"</span>: <span class="s">"Tu alimentes un site francophone d'idées de sorties…"</span>},
+  {<span class="s">"role"</span>: <span class="s">"user"</span>,      <span class="s">"content"</span>: <span class="s">"Voici le contenu de la page https://… , telle qu'elle est\naujourd'hui, 2026-03-14.\n\n--- début de la page ---\nFestival Petits Pas…\n--- fin de la page ---\n\nDécris la sortie pour enfants…"</span>},
+  {<span class="s">"role"</span>: <span class="s">"assistant"</span>, <span class="s">"content"</span>: <span class="s">"{\"category\":\"Spectacle\",\"date_end\":\"2026-03-22\",\"date_start\":\"2026-03-14\",\"relevant\":true,\"title\":\"Petits Pas dans les Bois\",…}"</span>}
+]}</code></pre>
+    <figcaption>
+      Le message <code>user</code> est <b>exactement</b> le prompt de
+      <code>prompts.EXTRACTION</code>, variables substituées. Le message
+      <code>assistant</code> est la fiche attendue, sérialisée en JSON.
+    </figcaption>
+  </figure>
+
+  <div class="col">
+    <h4 style="font-size:1rem;font-weight:700;color:var(--ink);margin:0">Trois pièges dans ce seul fichier</h4>
+    <ul class="plain">
+      <li>
+        <strong>Le prompt doit être identique à celui de la production, au
+        caractère près.</strong> Le modèle apprend à répondre <em>à ce texte-là</em>.
+        Si vous entraînez sur un prompt raccourci et servez avec le prompt complet,
+        vous dégradez sans comprendre pourquoi. Et rappelez-vous le piège de
+        <code>$today</code> : c'est la date du run d'origine
+        (<code>ScraperRunItem.at</code>) qu'il faut réinjecter, pas celle
+        d'aujourd'hui.
+      </li>
+      <li>
+        <strong>Sérialisez le JSON de façon déterministe.</strong>
+        <code>json.dumps(fiche, ensure_ascii=False, sort_keys=True, separators=(",", ":"))</code>.
+        Toujours les mêmes clés, toujours dans le même ordre, toujours le même
+        espacement. Sinon le modèle dépense une partie de sa capacité à apprendre
+        du bruit de mise en forme.
+      </li>
+      <li>
+        <strong>Découpez par domaine, pas au hasard.</strong> Si des pages de
+        <code>lavillette.fr</code> se retrouvent à la fois dans l'entraînement et
+        dans le test, vous mesurez sa capacité à mémoriser la mise en page de ce
+        site précis, pas à lire un site qu'il n'a jamais vu. Tous les liens d'un
+        même domaine vont dans le même paquet.
+      </li>
+    </ul>
+  </div>
+
+  <div class="col">
+    <ol class="steps" style="counter-reset: st 1">
+
+      <li>
+        <div class="sthead"><h3>Choisir le modèle de départ</h3></div>
+        <div class="body">
+          <p>
+            <strong>Qwen3 1,7 Md</strong> est le point de départ raisonnable :
+            multilingue avec un français correct, licence Apache 2.0 (donc pas de
+            mauvaise surprise), et une fenêtre de contexte largement suffisante.
+            Ce dernier point n'est pas optionnel — votre prompt fait environ
+            3 400 jetons, il faut un modèle qui en accepte au moins 8 000.
+          </p>
+          <p>
+            Si la carte graphique le permet, la version 4 Md donnera un français
+            nettement meilleur pour la description. C'est le seul arbitrage qui
+            compte à cette étape : plus gros = meilleur et plus lent.
+            <strong>Vérifiez la licence avant de mettre en production</strong> —
+            certaines familles imposent des conditions d'usage.
+          </p>
+        </div>
+      </li>
+
+      <li>
+        <div class="sthead"><h3>Louer une carte graphique à l'heure</h3></div>
+        <div class="body">
+          <p>
+            Vous n'achetez rien. Des plateformes louent des GPU à l'heure — comptez
+            <strong>0,40 à 2 € de l'heure</strong> selon la carte, et 3 à 6 heures
+            de travail. La facture totale de l'entraînement tient largement sous
+            les 15 €.
+          </p>
+          <p>
+            Pour un modèle de 1,7 Md entraîné en LoRA, une carte de 24 Go est
+            confortable. Un carnet Colab gratuit peut même suffire pour un premier
+            essai — la session se coupe au bout de quelques heures, ce qui oblige à
+            sauvegarder souvent, mais c'est une contrainte saine.
+          </p>
+        </div>
+      </li>
+
+      <li>
+        <div class="sthead"><h3>Comprendre LoRA, parce que c'est là que tout se joue</h3></div>
+        <div class="body">
+          <p>
+            Ajuster les 1,7 milliard de poids demanderait de garder en mémoire, en
+            plus des poids eux-mêmes, leurs gradients et l'état de l'optimiseur —
+            plus de 20 Go, et surtout le risque de <em>détruire</em> ce que le
+            modèle savait déjà. LoRA contourne les deux problèmes d'un coup.
+          </p>
+        </div>
+      </li>
+    </ol>
+  </div>
+
+  <figure class="fig c5">
+    <div class="figframe">
+      <svg viewBox="0 0 940 296" role="img" aria-label="Le principe de LoRA : la grande matrice de poids d'origine est gelée et n'est jamais modifiée. À côté, deux petites matrices ajoutées calculent une correction qui s'additionne au résultat. Seules ces deux petites matrices sont entraînées.">
+        <defs>
+          <marker id="m4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="d-head" d="M 0 1 L 10 5 L 0 9 z"></path>
+          </marker>
+        </defs>
+
+        <text class="d-t" x="14" y="140">entrée</text>
+        <path class="d-line" d="M 68 134 H 104"></path>
+        <circle cx="112" cy="134" r="4" fill="var(--muted)"></circle>
+        <path class="d-line" marker-end="url(#m4)" d="M 112 134 V 68 H 168"></path>
+        <path class="d-line" marker-end="url(#m4)" d="M 112 134 V 216 H 168"></path>
+
+        <rect class="d-box" x="172" y="16" width="188" height="104" rx="8"></rect>
+        <text class="d-t" x="192" y="46">W — la matrice d'origine</text>
+        <text class="d-s" x="192" y="68">1,7 milliard de nombres</text>
+        <text class="d-s" x="192" y="88">au total dans le modèle</text>
+        <text class="d-k" x="192" y="110" style="fill:var(--c4)">GELÉE · ON N'Y TOUCHE JAMAIS</text>
+
+        <g class="c5">
+          <rect class="d-acc" x="172" y="176" width="80" height="80" rx="8"></rect>
+          <text class="d-t" x="196" y="212">A</text>
+          <text class="d-s" x="184" y="232">rang 16</text>
+          <rect class="d-acc" x="268" y="176" width="92" height="80" rx="8"></rect>
+          <text class="d-t" x="298" y="212">B</text>
+          <text class="d-s" x="280" y="232">rang 16</text>
+        </g>
+        <path class="d-line" marker-end="url(#m4)" d="M 256 216 H 264"></path>
+        <text class="d-k" x="172" y="272" style="fill:var(--c5)">≈ 20 MILLIONS DE NOMBRES · SEULS CEUX-LÀ CHANGENT</text>
+
+        <path class="d-line" marker-end="url(#m4)" d="M 364 68 H 430 V 128"></path>
+        <path class="d-line" marker-end="url(#m4)" d="M 364 216 H 430 V 148"></path>
+        <circle cx="430" cy="138" r="15" fill="none" stroke="var(--muted)" stroke-width="1.7"></circle>
+        <text class="d-t" x="424" y="144" style="font-size:16px">+</text>
+
+        <path class="d-line" marker-end="url(#m4)" d="M 448 138 H 496"></path>
+        <text class="d-t" x="504" y="132">sortie</text>
+        <text class="d-s" x="504" y="152">forme inchangée</text>
+
+        <rect class="d-sunk" x="628" y="16" width="298" height="240" rx="10"></rect>
+        <text class="d-kn" x="650" y="44">CE QUE ÇA CHANGE</text>
+        <text class="d-s" x="650" y="72">· Mémoire divisée par dix</text>
+        <text class="d-s" x="650" y="98">· Le modèle d'origine reste intact,</text>
+        <text class="d-s" x="650" y="116">  donc rien n'est « oublié »</text>
+        <text class="d-s" x="650" y="142">· Le résultat tient dans un fichier</text>
+        <text class="d-s" x="650" y="160">  de quelques dizaines de Mo</text>
+        <text class="d-s" x="650" y="186">· On peut en garder plusieurs et</text>
+        <text class="d-s" x="650" y="204">  les échanger, ou revenir en arrière</text>
+        <text class="d-s" x="650" y="230">· En 4 bits (QLoRA), la mémoire est</text>
+        <text class="d-s" x="650" y="248">  encore divisée par quatre</text>
+      </svg>
+    </div>
+    <figcaption>
+      <b>Figure 4 — LoRA, en une image.</b> Le calcul devient
+      <code>W·x + (B·A)·x</code>. Le « rang » (16 ou 32 en pratique) fixe
+      l'épaisseur des deux petites matrices : plus il est grand, plus le modèle
+      peut apprendre de choses — et plus il risque d'apprendre par cœur. C'est le
+      seul réglage d'architecture que vous aurez à toucher.
+    </figcaption>
+  </figure>
+
+  <div class="col">
+    <ol class="steps" style="counter-reset: st 4">
+      <li>
+        <div class="sthead"><h3>Lancer l'entraînement</h3></div>
+        <div class="body">
+          <p>
+            Trois outils font le même travail : <strong>Unsloth</strong> (le plus
+            rapide et le plus économe en mémoire, avec des carnets tout prêts),
+            <strong>TRL</strong> de Hugging Face (la référence, un peu plus verbeux),
+            ou <strong>axolotl</strong> (tout se règle dans un fichier YAML, sans
+            écrire de Python). La forme est toujours celle-ci :
+          </p>
+        </div>
+      </li>
+    </ol>
+  </div>
+
+  <figure class="snippet">
+    <div class="snip-head"><span class="dotrow"><i></i><i></i><i></i></span> entrainement.py — la forme, pas le copier-coller</div>
+<pre><code><span class="c"># 1. charger le modèle de base, en 4 bits pour tenir en mémoire</span>
+model, tokenizer = <span class="f">load_model</span>(<span class="s">"Qwen/Qwen3-1.7B"</span>, load_in_4bit=<span class="k">True</span>, max_seq_length=<span class="n">4096</span>)
+
+<span class="c"># 2. y greffer les petites matrices LoRA</span>
+model = <span class="f">add_lora</span>(model,
+    r=<span class="n">16</span>,                <span class="c"># le rang : 16 ou 32</span>
+    lora_alpha=<span class="n">32</span>,       <span class="c"># par convention, 2 x r</span>
+    lora_dropout=<span class="n">0.05</span>,
+    target_modules=[<span class="s">"q_proj"</span>, <span class="s">"k_proj"</span>, <span class="s">"v_proj"</span>, <span class="s">"o_proj"</span>,
+                    <span class="s">"gate_proj"</span>, <span class="s">"up_proj"</span>, <span class="s">"down_proj"</span>])
+
+<span class="c"># 3. entraîner</span>
+<span class="f">train</span>(model, tokenizer,
+    train_dataset=<span class="f">load_jsonl</span>(<span class="s">"dataset/train.jsonl"</span>),
+    eval_dataset=<span class="f">load_jsonl</span>(<span class="s">"dataset/val.jsonl"</span>),
+
+    num_train_epochs=<span class="n">2</span>,               <span class="c"># 2 ou 3, jamais 10</span>
+    learning_rate=<span class="n">2e-4</span>,               <span class="c"># propre à LoRA ; en ajustement</span>
+                                          <span class="c"># complet ce serait 2e-5</span>
+    per_device_train_batch_size=<span class="n">2</span>,     <span class="c"># ce que la carte encaisse</span>
+    gradient_accumulation_steps=<span class="n">8</span>,     <span class="c"># pour un lot effectif de 16</span>
+    warmup_ratio=<span class="n">0.03</span>,
+    lr_scheduler_type=<span class="s">"cosine"</span>,
+
+    eval_strategy=<span class="s">"steps"</span>, eval_steps=<span class="n">50</span>,   <span class="c"># surveiller la validation</span>
+    save_steps=<span class="n">50</span>, load_best_model_at_end=<span class="k">True</span>,
+
+    <span class="c"># CAPITAL : n'apprendre que la réponse, pas le prompt.</span>
+    <span class="c"># Sans ça, le modèle passe l'essentiel de son effort à</span>
+    <span class="c"># mémoriser vos consignes et le texte des pages.</span>
+    train_on_responses_only=<span class="k">True</span>)</code></pre>
+    <figcaption>
+      Le réglage le plus souvent oublié est le dernier. La perte doit être
+      calculée <b>uniquement sur les jetons de la fiche JSON</b> ; ceux du prompt
+      sont masqués. Chaque bibliothèque a son nom pour ça — vérifiez qu'il est
+      bien activé, c'est la différence entre un modèle utile et un perroquet.
+    </figcaption>
+  </figure>
+
+  <div class="col">
+    <ol class="steps" style="counter-reset: st 5">
+
+      <li>
+        <div class="sthead"><h3>Surveiller la bonne courbe</h3></div>
+        <div class="body">
+          <p>
+            Pendant l'entraînement, deux courbes s'affichent. Celle de
+            l'entraînement descend toujours — elle ne prouve rien.
+            <strong>La seule qui compte est celle de validation</strong> : tant
+            qu'elle baisse, le modèle apprend ; le jour où elle remonte alors que
+            l'autre continue de descendre, il a commencé à apprendre par cœur.
+            On garde la version d'avant.
+          </p>
+          <p>
+            Avec 3 000 exemples, cela arrive typiquement au bout de deux ou trois
+            passages sur les données. C'est pourquoi <code>num_train_epochs</code>
+            vaut 2 ou 3 : au-delà, on abîme.
+          </p>
+        </div>
+      </li>
+
+      <li>
+        <div class="sthead"><h3>Passer le juge — la seule mesure qui compte</h3></div>
+        <div class="body">
+          <p>
+            La « perte de validation » ne vous dit rien de ce qui vous intéresse.
+            Elle ne sait pas qu'une date fausse est grave et qu'une description un
+            peu plate ne l'est pas. Il faut sortir le jeu de test resté sous
+            scellés et mesurer, champ par champ :
+          </p>
+          <ul class="plain">
+            <li><strong>Taux de JSON valide</strong> — le premier de tous : un JSON cassé, c'est une sortie perdue.</li>
+            <li><strong>Dates</strong> : correspondance exacte sur <code>date_start</code>, <code>date_end</code>, et recouvrement sur la liste <code>dates</code>.</li>
+            <li><strong>Tarif</strong> : exact, et surtout distinguer « gratuit » de « inconnu ».</li>
+            <li><strong>Adresse et ville</strong> : correspondance approchée, puis le vrai test — est-ce que ça géocode ?</li>
+            <li><strong><code>relevant</code></strong> : précision et rappel séparément. Dire oui à tout est le mode d'échec classique.</li>
+            <li><strong>Description</strong> : longueur, langue, et absence de recopie publicitaire.</li>
+          </ul>
+          <p>
+            Puis faire tourner Haiku sur <em>exactement le même jeu de test</em>.
+            C'est cette comparaison, et rien d'autre, qui autorise ou non le
+            remplacement.
+          </p>
+        </div>
+      </li>
+
+      <li>
+        <div class="sthead"><h3>Rendre le JSON invalide impossible</h3></div>
+        <div class="body">
+          <div class="note c6">
+            <span class="h">Ce que vous perdez en quittant l'API, et qu'il faut reconstruire</span>
+            <p>
+              Aujourd'hui, <code>output_config.format</code> garantit que la
+              réponse respecte votre schéma à 21 champs : l'API refuse
+              matériellement d'en produire une autre. <strong>Ce filet disparaît
+              avec le modèle local</strong>, et un petit modèle produit du JSON
+              malformé bien plus souvent qu'un gros.
+            </p>
+            <p>
+              La parade porte un nom : le <strong>décodage contraint</strong>. À
+              chaque jeton, on interdit au modèle tous ceux qui rendraient le JSON
+              invalide — il ne <em>peut</em> plus écrire une virgule au mauvais
+              endroit ni oublier une accolade. <code>llama.cpp</code> le fait avec
+              une grammaire GBNF, les bibliothèques <code>outlines</code> et
+              <code>xgrammar</code> le font à partir du schéma JSON directement.
+              Ce n'est pas une option de confort : c'est ce qui rend le
+              remplacement envisageable.
+            </p>
+          </div>
+        </div>
+      </li>
+
+      <li>
+        <div class="sthead"><h3>Compresser et servir sur le VPS</h3></div>
+        <div class="body">
+          <p>
+            On fusionne les petites matrices LoRA dans le modèle, on convertit au
+            format <strong>GGUF</strong>, et on <strong>quantifie</strong> :
+            chaque poids, stocké sur 16 bits, est ramené à environ 4. Le fichier
+            passe d'environ 3,4 Go à 1,1 Go, et la perte de qualité est
+            généralement négligeable à cette taille.
+          </p>
+        </div>
+      </li>
+    </ol>
+  </div>
+
+  <figure class="snippet">
+    <div class="snip-head"><span class="dotrow"><i></i><i></i><i></i></span> mise en service — sur le VPS, sans carte graphique</div>
+<pre><code><span class="c"># fusion de l'adaptateur + conversion + quantification en 4 bits</span>
+python convert_hf_to_gguf.py ./modele-fusionne --outfile sortiesbot.gguf
+./llama-quantize sortiesbot.gguf sortiesbot-Q4_K_M.gguf Q4_K_M
+
+<span class="c"># serveur HTTP local, avec la grammaire qui impose la forme du JSON</span>
+./llama-server -m sortiesbot-Q4_K_M.gguf \
+    --grammar-file fiche.gbnf \
+    --ctx-size 8192 --port 8080</code></pre>
+    <figcaption>
+      Sur le processeur du VPS, comptez de trente secondes à deux minutes par
+      page. <b>Ce n'est pas un problème ici</b> : une exécution est déjà mise en
+      file d'attente et dure plusieurs minutes, et personne n'attend devant
+      l'écran.
+    </figcaption>
+  </figure>
+
+  <div class="col">
+    <ol class="steps" style="counter-reset: st 9">
+      <li>
+        <div class="sthead"><h3>Brancher, puis comparer en vrai</h3></div>
+        <div class="body">
+          <p>
+            Un <code>LocalProvider</code> qui implémente le <code>Protocol</code>
+            de <code>providers/base.py</code>, une branche de plus dans
+            <code>get_provider()</code>, et rien d'autre à toucher :
+            <code>pipeline.py</code> ne saura jamais que le modèle a changé.
+          </p>
+          <p>
+            Puis deux <code>ScraperConfig</code> jumelles, ne différant que par
+            <code>extractionModel</code>, lancées sur le même thème. Ce que les
+            modérateurs approuvent et refusent de chaque côté est le verdict final
+            — celui que même un bon jeu de test ne remplace pas.
+          </p>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ==================================================== ce qui va mal -->
+<section>
+  <div class="col">
+    <h2>Ce qui va mal se passer</h2>
+    <p>
+      Autant le savoir avant plutôt que de le découvrir dans la file de
+      modération. Ces quatre-là arrivent presque toujours.
+    </p>
+  </div>
+
+  <div class="row2">
+    <article class="card c4">
+      <h4>Les dates</h4>
+      <ul>
+        <li>C'est le point faible des petits modèles : il faut compter, connaître le calendrier, et raisonner sur du texte flou</li>
+        <li>« du mardi au dimanche », « relâche le lundi », « jusqu'au 23 octobre » : autant d'occasions de se tromper</li>
+        <li><b>Parade</b> : le JSON-LD donne des dates exactes et gratuites quand il est là ; <code>schedule.py</code> les croise déjà</li>
+        <li><b>Parade</b> : sur-représenter les cas de dates difficiles dans le jeu d'entraînement</li>
+      </ul>
+    </article>
+
+    <article class="card c4">
+      <h4>La description</h4>
+      <ul>
+        <li>Un modèle de 1,7 Md écrit un français plus plat et plus répétitif</li>
+        <li>C'est aussi le champ le plus visible pour un parent qui lit la fiche</li>
+        <li><b>Parade</b> : passer à 4 Md, où l'écart se resserre nettement</li>
+        <li><b>Parade</b> : garder Haiku uniquement pour la description, avec un prompt réduit — le local fait tout le reste</li>
+      </ul>
+    </article>
+
+    <article class="card c4">
+      <h4>Le sur-apprentissage par site</h4>
+      <ul>
+        <li>Si l'entraînement vient de vingt sites, le modèle apprend leurs mises en page plutôt que la lecture d'une page</li>
+        <li>Le score est excellent, et il s'effondre sur un site nouveau</li>
+        <li><b>Parade</b> : le découpage par domaine décrit à l'étape 1 — c'est là qu'il montre son utilité</li>
+        <li><b>Parade</b> : viser la diversité des domaines plutôt que le nombre d'exemples</li>
+      </ul>
+    </article>
+
+    <article class="card c4">
+      <h4>La dérive</h4>
+      <ul>
+        <li>Le modèle est figé au jour de son entraînement ; les sites, eux, se refont</li>
+        <li>Un modèle jamais réentraîné se dégrade lentement, sans prévenir</li>
+        <li><b>Parade</b> : faire tourner le juge sur les nouvelles sorties tous les mois</li>
+        <li><b>Parade</b> : réentraîner quand le corpus a bien grossi — les corrections de modération sont le meilleur carburant</li>
+      </ul>
+    </article>
+  </div>
+</section>
+
+<!-- ==================================================== récap -->
+<section>
+  <div class="col">
+    <h2>Les trois options, remises côte à côte</h2>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Option</th>
+          <th>Part de</th>
+          <th class="num">Données</th>
+          <th class="num">Matériel</th>
+          <th class="num">Durée</th>
+          <th>Ce qu'elle vous apporte</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="name">Régression logistique</td>
+          <td><span class="pill n">zéro</span></td>
+          <td class="num">500+</td>
+          <td class="num">un portable</td>
+          <td class="num">10 s</td>
+          <td>Le tri des liens, peut-être suffisant. Le premier essai à faire.</td>
+        </tr>
+        <tr>
+          <td class="name">Classifieur CamemBERT</td>
+          <td><span class="pill y">modèle existant</span></td>
+          <td class="num">1 000+</td>
+          <td class="num">GPU 1 h</td>
+          <td class="num">minutes</td>
+          <td>Le même tri, en mieux, avec un seuil réglable.</td>
+        </tr>
+        <tr>
+          <td class="name">Étiqueteur CamemBERT</td>
+          <td><span class="pill y">modèle existant</span></td>
+          <td class="num">500 – 2 000</td>
+          <td class="num">GPU 1 h</td>
+          <td class="num">1 h</td>
+          <td>Les champs factuels de la fiche. Pas la description.</td>
+        </tr>
+        <tr>
+          <td class="name">Générateur fine-tuné</td>
+          <td><span class="pill y">modèle existant</span></td>
+          <td class="num">1 000 – 5 000</td>
+          <td class="num">GPU 4 h · ≈ 10 €</td>
+          <td class="num">2 – 4 sem.</td>
+          <td>Le remplacement complet de Haiku à l'extraction.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <div class="note c2">
+      <span class="h">L'ordre que je recommande toujours</span>
+      <p>
+        Faites la ligne 1 en premier, même si vous visez la ligne 4. En un
+        après-midi, sans GPU et sans rien installer de lourd, vous aurez fait le
+        cycle complet — données, entraînement, évaluation, mise en production — sur
+        la tâche la plus indulgente du projet. Tout ce que vous apprendrez là
+        resservira, et vous saurez alors si le reste vous amuse assez pour y
+        passer un mois.
+      </p>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <p>
+    Suite de « Anatomie du scraper » et des deux planches sur le pipeline.
+    Les valeurs numériques d'hyperparamètres et les ordres de grandeur de coût
+    sont des repères usuels, à ajuster sur vos propres mesures. Les extraits de
+    code donnent la structure et les réglages qui comptent, pas des signatures
+    à recopier : les bibliothèques d'entraînement évoluent vite, prenez les noms
+    d'arguments exacts dans la documentation de la version que vous installez.
+  </p>
+</footer>
+
+</div>
+</body>
+</html>

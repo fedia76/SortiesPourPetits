@@ -1,0 +1,1486 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Socle minimal : la page apporte ses propres couleurs et sa typographie.
+     `color-scheme` laisse le navigateur suivre le thème du système, que les
+     variables de la feuille ci-dessous savent honorer dans les deux sens. */
+  :root { color-scheme: light dark; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>Anatomie du scraper</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600;7..72,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+:root {
+  --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --serif: "Literata", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --paper: #FBFBFC;
+  --surface: #F0F2F5;
+  --box: #FFFFFF;
+  --line: #DBE0E7;
+  --line-soft: #E8ECF1;
+  --ink: #12161C;
+  --ink-2: #333C48;
+  --muted: #5B6572;
+
+  --free: #0891B2;
+  --free-soft: #E4F3F8;
+  --paid: #B0431F;
+  --paid-soft: #FBEDE7;
+
+  --shadow: 0 1px 2px rgba(18, 22, 28, .05), 0 6px 20px -12px rgba(18, 22, 28, .18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #141821;
+    --surface: #1B212B;
+    --box: #1E2530;
+    --line: #2E3743;
+    --line-soft: #262E39;
+    --ink: #E4E9EF;
+    --ink-2: #C2CBD5;
+    --muted: #95A1AF;
+
+    --free: #1A9DB8;
+    --free-soft: #152A31;
+    --paid: #DB6F45;
+    --paid-soft: #2C1E17;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -14px rgba(0, 0, 0, .7);
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #141821;
+  --surface: #1B212B;
+  --box: #1E2530;
+  --line: #2E3743;
+  --line-soft: #262E39;
+  --ink: #E4E9EF;
+  --ink-2: #C2CBD5;
+  --muted: #95A1AF;
+
+  --free: #1A9DB8;
+  --free-soft: #152A31;
+  --paid: #DB6F45;
+  --paid-soft: #2C1E17;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -14px rgba(0, 0, 0, .7);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--paper);
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 16.5px;
+  line-height: 1.68;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 28px 120px;
+}
+
+/* ---------- rythme vertical ---------- */
+
+.col {
+  max-width: 40rem;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.15em;
+}
+
+section { margin-top: 76px; }
+
+/* ---------- en-tête ---------- */
+
+.masthead {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 76px 0 0;
+}
+
+.eyebrow {
+  font: 600 11px var(--mono);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 20px;
+}
+
+h1 {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: clamp(2.1rem, 1.4rem + 2.6vw, 3.1rem);
+  line-height: 1.1;
+  letter-spacing: -.018em;
+  color: var(--ink);
+  text-wrap: balance;
+  margin: 0 0 22px;
+}
+
+.lede {
+  font-size: 1.14rem;
+  line-height: 1.6;
+  color: var(--ink-2);
+  margin: 0;
+}
+
+.masthead .rule {
+  height: 1px;
+  background: var(--line);
+  margin: 44px 0 0;
+}
+
+/* ---------- titres ---------- */
+
+h2 {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 1.72rem;
+  line-height: 1.22;
+  letter-spacing: -.012em;
+  color: var(--ink);
+  text-wrap: balance;
+  margin: 0;
+  padding-bottom: 14px;
+  border-bottom: 2px solid var(--ink);
+}
+
+h3 {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 1.2rem;
+  line-height: 1.32;
+  color: var(--ink);
+  text-wrap: balance;
+  margin: 1.1em 0 -.35em;
+}
+
+h4 {
+  font: 600 11px var(--mono);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: .8em 0 -.55em;
+}
+
+p { margin: 0; }
+
+a { color: var(--paid); text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--free);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+strong { color: var(--ink); font-weight: 600; }
+
+code {
+  font-family: var(--mono);
+  font-size: .855em;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: .1em .34em;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- listes ---------- */
+
+ul.plain, ol.steps { margin: 0; padding: 0; list-style: none; }
+
+ul.plain > li {
+  position: relative;
+  padding-left: 1.15em;
+  margin-bottom: .6em;
+}
+ul.plain > li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: .72em;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+ul.plain > li:last-child { margin-bottom: 0; }
+
+ol.steps { counter-reset: s; display: flex; flex-direction: column; gap: 26px; }
+ol.steps > li {
+  counter-increment: s;
+  display: grid;
+  grid-template-columns: 2.6rem 1fr;
+  gap: 0 14px;
+  align-items: start;
+}
+ol.steps > li::before {
+  content: counter(s, decimal-leading-zero);
+  font: 600 13px var(--mono);
+  color: var(--paid);
+  padding-top: .18em;
+  letter-spacing: .04em;
+}
+ol.steps h3 { margin: 0 0 .3em; font-size: 1.06rem; }
+ol.steps p { margin-bottom: .5em; }
+ol.steps p:last-child { margin-bottom: 0; }
+
+.effort {
+  display: inline-block;
+  font: 500 11px var(--mono);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 7px;
+  margin-left: .5em;
+  vertical-align: 2px;
+  white-space: nowrap;
+}
+
+/* ---------- encadrés ---------- */
+
+.note {
+  background: var(--surface);
+  border-left: 3px solid var(--free);
+  border-radius: 0 6px 6px 0;
+  padding: 18px 22px;
+  font-size: .95rem;
+}
+.note.warn { border-left-color: var(--paid); }
+.note p + p { margin-top: .7em; }
+.note .h {
+  display: block;
+  font: 600 10.5px var(--mono);
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: .5em;
+}
+
+.verdict {
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--paid);
+  border-radius: 2px 2px 8px 8px;
+  background: var(--box);
+  box-shadow: var(--shadow);
+  padding: 28px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 1em;
+}
+
+/* ---------- figures ---------- */
+
+figure {
+  margin: 34px 0;
+  max-width: 1064px;
+  margin-inline: auto;
+}
+.figframe {
+  overflow-x: auto;
+  background: var(--box);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px 22px;
+  box-shadow: var(--shadow);
+}
+figure svg { display: block; width: 100%; min-width: 640px; height: auto; }
+figcaption {
+  font-size: .88rem;
+  line-height: 1.55;
+  color: var(--muted);
+  margin-top: 12px;
+  max-width: 44rem;
+}
+figcaption b { color: var(--ink-2); font-weight: 600; }
+
+/* ---------- diagrammes (SVG) ---------- */
+
+.d-box   { fill: var(--box);      stroke: var(--line); stroke-width: 1.5; }
+.d-paid  { fill: var(--paid-soft); stroke: var(--paid); stroke-width: 1.5; }
+.d-free  { fill: var(--free-soft); stroke: var(--free); stroke-width: 1.5; }
+.d-band  { fill: var(--surface);  stroke: none; }
+
+.d-t  { fill: var(--ink);   font: 500 13px var(--sans); }
+.d-s  { fill: var(--muted); font: 400 11.5px var(--sans); }
+.d-k  { font: 600 10px var(--mono); letter-spacing: .1em; }
+.d-k.paid { fill: var(--paid); }
+.d-k.free { fill: var(--free); }
+.d-k.neutral { fill: var(--muted); }
+.d-lbl { fill: var(--muted); font: 400 11px var(--mono); }
+.d-num { fill: var(--ink); font: 600 12.5px var(--mono); }
+
+.d-line { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.d-line.dash { stroke-dasharray: 5 4; }
+.d-head { fill: var(--muted); }
+.d-bar  { fill: var(--paid); }
+.d-tick { stroke: var(--line); stroke-width: 1; }
+
+/* ---------- tableaux ---------- */
+
+.tablewrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--box);
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 560px;
+  font-size: .92rem;
+}
+th, td {
+  text-align: left;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
+}
+thead th {
+  font: 600 10.5px var(--mono);
+  letter-spacing: .11em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+tbody tr:last-child td { border-bottom: none; }
+td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.name { color: var(--ink); font-weight: 500; }
+tr.total td { background: var(--surface); font-weight: 600; color: var(--ink); }
+.tag {
+  display: inline-block;
+  font: 600 10px var(--mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.tag.paid { color: var(--paid); background: var(--paid-soft); }
+.tag.free { color: var(--free); background: var(--free-soft); }
+
+/* ---------- détails ---------- */
+
+details {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--box);
+  padding: 0 20px;
+}
+details[open] { padding-bottom: 18px; }
+summary {
+  cursor: pointer;
+  padding: 15px 0;
+  font-weight: 600;
+  color: var(--ink);
+  font-size: .96rem;
+  list-style: none;
+}
+summary::-webkit-details-marker { display: none; }
+summary::before {
+  content: "+";
+  font-family: var(--mono);
+  color: var(--paid);
+  margin-right: .6em;
+  font-weight: 600;
+}
+details[open] summary::before { content: "\2212"; }
+details .body { display: flex; flex-direction: column; gap: .9em; font-size: .95rem; }
+
+/* ---------- pied ---------- */
+
+.foot {
+  max-width: 40rem;
+  margin: 90px auto 0;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+  font-size: .84rem;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+@media (max-width: 700px) {
+  .page { padding: 0 18px 80px; }
+  body { font-size: 16px; }
+  .figframe { padding: 14px; }
+  ol.steps > li { grid-template-columns: 2rem 1fr; gap: 0 10px; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">SortiesPourPetits · scraper/sortiesbot</p>
+    <h1>Anatomie du scraper</h1>
+    <p class="lede">
+      Comment un run parti d'une recherche web devient une sortie en attente de
+      modération — puis ce qu'il faudrait vraiment pour remplacer Haiku par un
+      modèle maison, et pourquoi ce n'est probablement pas l'extraction qu'il
+      faut viser en premier.
+    </p>
+    <div class="rule"></div>
+  </header>
+
+  <!-- ============================================================ 1 -->
+  <section>
+    <div class="col">
+      <h2>Le principe : Python fait le travail, le modèle tranche</h2>
+
+      <p>
+        Le scraper n'est pas « une IA qui va chercher des sorties ». C'est un
+        programme Python classique — télécharger une page, la parser, en extraire
+        des liens, géocoder une adresse — dans lequel on a inséré
+        <strong>trois moments de jugement</strong> confiés à un modèle. Tout le
+        reste est déterministe et ne coûte rien.
+      </p>
+
+      <p>
+        La règle qui structure tout le fichier
+        <code>providers/anthropic_provider.py</code> :
+        <strong>aucun de ces trois appels ne boucle</strong>. Le modèle ne va
+        jamais chercher une page lui-même. On lui donne un texte, il rend un JSON,
+        c'est fini. La version précédente du scraper laissait le modèle ouvrir les
+        pages via l'outil serveur d'Anthropic ; chaque itération refacturait tout
+        le contexte accumulé, et un run mesuré coûtait 2,35 $ pour six sorties.
+        Découper le travail a divisé la facture par cinq ou six.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1060 430" role="img" aria-label="Les six étages d'un run en mode recherche, répartis en deux bandes : les appels au modèle, qui sont payants, et le travail Python, qui est gratuit. Le flux alterne entre les deux bandes.">
+          <defs>
+            <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path class="d-head" d="M 0 1 L 10 5 L 0 9 z"></path>
+            </marker>
+          </defs>
+
+          <rect class="d-band" x="0" y="40" width="1060" height="118" rx="6"></rect>
+          <rect class="d-band" x="0" y="214" width="1060" height="118" rx="6"></rect>
+
+          <text class="d-k paid" x="12" y="28">MODÈLE — CLAUDE HAIKU 4.5 · CHAQUE APPEL EST FACTURÉ</text>
+          <text class="d-k free" x="1048" y="376" text-anchor="end">PYTHON — TÉLÉCHARGEMENT, PARSING, GÉOCODAGE · GRATUIT</text>
+
+          <rect class="d-paid" x="30" y="54" width="148" height="90" rx="6"></rect>
+          <text class="d-k paid" x="44" y="78">1 · RECHERCHE</text>
+          <text class="d-t" x="44" y="100">web_search × 6</text>
+          <text class="d-s" x="44" y="120">classe chaque page :</text>
+          <text class="d-s" x="44" y="137">agenda ou sortie</text>
+
+          <rect class="d-free" x="202" y="228" width="148" height="90" rx="6"></rect>
+          <text class="d-k free" x="216" y="252">2 · DÉPOUILLEMENT</text>
+          <text class="d-t" x="216" y="274">requests + BS4</text>
+          <text class="d-s" x="216" y="294">robots.txt respecté,</text>
+          <text class="d-s" x="216" y="311">1 requête/s par hôte</text>
+
+          <rect class="d-paid" x="374" y="54" width="148" height="90" rx="6"></rect>
+          <text class="d-k paid" x="388" y="78">3 · SÉLECTION</text>
+          <text class="d-t" x="388" y="100">quels liens mènent</text>
+          <text class="d-t" x="388" y="118">à une sortie ?</text>
+          <text class="d-s" x="388" y="137">répond des numéros</text>
+
+          <rect class="d-free" x="546" y="228" width="148" height="90" rx="6"></rect>
+          <text class="d-k free" x="560" y="252">4 · LECTURE</text>
+          <text class="d-t" x="560" y="274">texte de la page</text>
+          <text class="d-s" x="560" y="294">+ dates JSON-LD</text>
+          <text class="d-s" x="560" y="311">+ image og:image</text>
+
+          <rect class="d-paid" x="718" y="54" width="148" height="90" rx="6"></rect>
+          <text class="d-k paid" x="732" y="78">5 · FICHE</text>
+          <text class="d-t" x="732" y="100">titre, dates, prix,</text>
+          <text class="d-t" x="732" y="118">adresse, âge,</text>
+          <text class="d-t" x="732" y="137">description</text>
+
+          <rect class="d-free" x="890" y="228" width="148" height="90" rx="6"></rect>
+          <text class="d-k free" x="904" y="252">6 · PUBLICATION</text>
+          <text class="d-t" x="904" y="274">géocodage Photon,</text>
+          <text class="d-s" x="904" y="294">calendrier, photo,</text>
+          <text class="d-s" x="904" y="311">POST /api/events</text>
+
+          <path class="d-line" marker-end="url(#a1)" d="M 104 144 L 104 186 L 276 186 L 276 228"></path>
+          <text class="d-lbl" x="118" y="180">≈ 40 URL, dont 6 agendas</text>
+
+          <path class="d-line" marker-end="url(#a1)" d="M 276 318 L 276 344 L 448 344 L 448 144"></path>
+          <text class="d-lbl" x="292" y="338">jusqu'à 200 liens</text>
+
+          <path class="d-line" marker-end="url(#a1)" d="M 448 144 L 448 186 L 620 186 L 620 228"></path>
+          <text class="d-lbl" x="462" y="180">≤ 8 liens retenus par agenda</text>
+
+          <path class="d-line" marker-end="url(#a1)" d="M 620 318 L 620 344 L 792 344 L 792 144"></path>
+          <text class="d-lbl" x="636" y="338">8 000 caractères</text>
+
+          <path class="d-line" marker-end="url(#a1)" d="M 792 144 L 792 186 L 964 186 L 964 228"></path>
+          <text class="d-lbl" x="806" y="180">1 fiche JSON validée</text>
+
+          <path class="d-line dash" marker-end="url(#a1)" d="M 60 144 L 60 410 L 570 410 L 570 318"></path>
+          <text class="d-lbl" x="76" y="404">une page classée « sortie » saute les étages 2 et 3</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Figure 1 — le chemin d'un run en mode « recherche ».</b> Le flux
+        alterne entre les deux bandes : à chaque passage dans la bande du haut,
+        la facture augmente ; la bande du bas est gratuite. Les volumes portés
+        sur les flèches sont les plafonds de la configuration par défaut
+        (<code>max_searches</code>, <code>max_agendas</code>,
+        <code>max_links_per_agenda</code>, <code>max_page_chars</code>).
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============================================================ 2 -->
+  <section>
+    <div class="col">
+      <h2>Les six étages, en détail</h2>
+
+      <ol class="steps">
+        <li>
+          <div>
+            <h3>Recherche <span class="tag paid">modèle</span></h3>
+            <p>
+              Un seul appel, avec l'outil serveur <code>web_search</code> autorisé
+              six fois. Le modèle formule lui-même six requêtes variées, lit les
+              résultats, et rend une liste de pages en classant chacune :
+              <code>agenda</code> (une liste d'événements, à dépouiller) ou
+              <code>sortie</code> (la page d'un événement précis, à lire telle
+              quelle).
+            </p>
+            <p>
+              Le garde-fou est important : le code garde en mémoire toutes les URL
+              réellement remontées par les recherches, et
+              <strong>rejette toute URL que le modèle aurait écrite de
+              mémoire</strong>. Un modèle qui invente <code>lavillette.com/agenda</code>
+              se fait jeter silencieusement.
+            </p>
+          </div>
+        </li>
+
+        <li>
+          <div>
+            <h3>Dépouillement des agendas <span class="tag free">Python</span></h3>
+            <p>
+              <code>harvest.py</code> télécharge chaque agenda — en respectant
+              <code>robots.txt</code>, en s'annonçant avec un User-Agent
+              identifiable et en attendant une seconde entre deux requêtes vers le
+              même hôte — puis en extrait les liens avec BeautifulSoup.
+            </p>
+            <p>
+              Chaque lien part avec son <strong>contexte</strong> : jusqu'à 200
+              caractères du texte qui l'entoure sur la page. C'est là que se
+              trouvent la date et le lieu, et c'est ce qui permettra de trier sans
+              ouvrir la page. Un débruitage grossier écarte d'emblée les liens de
+              navigation, les mentions légales, la pagination.
+            </p>
+          </div>
+        </li>
+
+        <li>
+          <div>
+            <h3>Sélection des liens <span class="tag paid">modèle</span></h3>
+            <p>
+              On envoie la liste numérotée des liens — texte du lien, puis
+              contexte — et on demande lesquels mènent à une sortie correspondant
+              au thème, à la zone et à la période.
+            </p>
+            <p>
+              <strong>Le modèle répond par des numéros de ligne, jamais par des
+              URL.</strong> Il lui est matériellement impossible d'en inventer
+              une : le code va rechercher <code>links[numéro - 1]</code>. C'est le
+              même principe de garde-fou qu'à l'étage 1, appliqué autrement.
+            </p>
+          </div>
+        </li>
+
+        <li>
+          <div>
+            <h3>Lecture de la page <span class="tag free">Python</span></h3>
+            <p>
+              Avant de payer quoi que ce soit, trois filtres passent : domaine
+              bloqué, page déjà vue lors d'un run précédent (la table
+              <code>ScrapedUrl</code>, commune à toutes les recherches), page vide
+              ou illisible (moins de 200 caractères — mur de cookies, redirection
+              JavaScript).
+            </p>
+            <p>
+              Ce qui survit est lu trois fois : le texte pour le modèle, le
+              JSON-LD pour les dates de représentation réelles, et le HTML pour
+              l'illustration (<code>og:image</code>). Ces deux dernières lectures
+              sont gratuites et le modèle ne les voit pas — d'où la consigne
+              explicite dans le prompt : « ne cherche pas d'illustration ».
+            </p>
+          </div>
+        </li>
+
+        <li>
+          <div>
+            <h3>Remplissage de la fiche <span class="tag paid">modèle</span></h3>
+            <p>
+              Un appel, sans aucun outil, avec un schéma JSON de 21 champs imposé
+              par l'API (<code>output_config.format</code>). Le modèle ne peut
+              donc pas rendre autre chose qu'un objet conforme.
+            </p>
+            <p>
+              Le champ <code>relevant</code> est son droit de veto : si la page
+              n'est pas une sortie pour enfants, il le dit et laisse tout le reste
+              vide. Les champs les plus délicats sont <code>weekdays</code> et
+              <code>dates</code> — c'est ce qui distingue « un spectacle joué tous
+              les dimanches » d'« une plage continue de trois semaines », et donc
+              ce qui évite de proposer un jeudi un spectacle du dimanche.
+            </p>
+          </div>
+        </li>
+
+        <li>
+          <div>
+            <h3>Publication <span class="tag free">Python</span></h3>
+            <p>
+              Géocodage via Photon, croisement des dates annoncées avec le
+              JSON-LD, téléchargement de la photo, résolution de la catégorie,
+              puis <code>POST /api/events</code> avec une clé d'API. La sortie
+              arrive <strong>en attente de modération</strong>, comme celle d'un
+              visiteur.
+            </p>
+            <p>
+              Ce qui n'a pas pu être déterminé part avec une valeur convenue
+              plutôt que de faire perdre la sortie : adresse non géocodée en
+              <code>(0, 0)</code>, tarif introuvable à <code>-1</code>. La
+              modération les signale et refuse l'approbation tant qu'ils ne sont
+              pas complétés.
+            </p>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ============================================================ 3 -->
+  <section>
+    <div class="col">
+      <h2>Où part l'argent</h2>
+      <p>
+        Question préalable à toute optimisation : si on remplace l'extraction,
+        on économise quelle part ? Voici l'estimation, calculée à partir du code
+        et des tarifs de Haiku 4.5 (1 $ le million de jetons en entrée, 5 $ en
+        sortie), pour un run type de 20 sorties.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 780 250" role="img" aria-label="Barres horizontales comparant le coût estimé des trois étages payants d'un run : recherche environ 15 cents, extraction environ 13 cents, sélection environ 9 cents.">
+          <line class="d-tick" x1="196" y1="34" x2="196" y2="212"></line>
+
+          <text class="d-s" x="188" y="66" text-anchor="end">1 · Recherche</text>
+          <text class="d-lbl" x="188" y="82" text-anchor="end">6 requêtes</text>
+          <path class="d-bar" d="M 196 48 H 668 A 4 4 0 0 1 672 52 V 74 A 4 4 0 0 1 668 78 H 196 Z">
+            <title>Recherche — environ 0,15 $ par run, dont 0,06 $ de frais d'outil web_search</title>
+          </path>
+          <text class="d-num" x="686" y="68">0,15 $</text>
+
+          <text class="d-s" x="188" y="130" text-anchor="end">5 · Extraction</text>
+          <text class="d-lbl" x="188" y="146" text-anchor="end">≈ 26 pages</text>
+          <path class="d-bar" d="M 196 112 H 605 A 4 4 0 0 1 609 116 V 138 A 4 4 0 0 1 605 142 H 196 Z">
+            <title>Extraction — environ 0,13 $ par run, soit à peu près 0,005 $ par page lue</title>
+          </path>
+          <text class="d-num" x="623" y="132">0,13 $</text>
+
+          <text class="d-s" x="188" y="194" text-anchor="end">3 · Sélection</text>
+          <text class="d-lbl" x="188" y="210" text-anchor="end">6 agendas</text>
+          <path class="d-bar" d="M 196 176 H 479 A 4 4 0 0 1 483 180 V 202 A 4 4 0 0 1 479 206 H 196 Z">
+            <title>Sélection — environ 0,09 $ par run, soit à peu près 0,015 $ par agenda dépouillé</title>
+          </path>
+          <text class="d-num" x="497" y="196">0,09 $</text>
+
+          <text class="d-lbl" x="196" y="238">estimation dérivée du code · total ≈ 0,37 $ pour un run de 20 sorties</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Figure 2 — la part de chaque appel payant.</b> Les frais d'outil
+        <code>web_search</code> (0,01 $ par requête) sont inclus dans la barre
+        « Recherche ». <b>Ce sont des ordres de grandeur calculés, pas des
+        mesures</b> — les vrais chiffres sont déjà écrits par le scraper : les
+        lignes <code>usage</code> des fichiers <code>runs/*.jsonl</code>, et les
+        colonnes <code>costUsd</code>, <code>inputTokens</code>,
+        <code>outputTokens</code> de la table <code>ScraperRun</code>. À lire
+        avant toute décision.
+      </figcaption>
+    </figure>
+
+    <div class="col">
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Étage</th>
+              <th class="num">Jetons entrée</th>
+              <th class="num">Jetons sortie</th>
+              <th class="num">Coût / run</th>
+              <th class="num">Part</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="name">Recherche <span class="tag paid">modèle</span></td>
+              <td class="num">≈ 90 000</td>
+              <td class="num">≈ 2 000</td>
+              <td class="num">≈ 0,15 $</td>
+              <td class="num">41 %</td>
+            </tr>
+            <tr>
+              <td class="name">Sélection <span class="tag paid">modèle</span></td>
+              <td class="num">≈ 84 000</td>
+              <td class="num">≈ 600</td>
+              <td class="num">≈ 0,09 $</td>
+              <td class="num">24 %</td>
+            </tr>
+            <tr>
+              <td class="name">Extraction <span class="tag paid">modèle</span></td>
+              <td class="num">≈ 88 000</td>
+              <td class="num">≈ 13 000</td>
+              <td class="num">≈ 0,13 $</td>
+              <td class="num">35 %</td>
+            </tr>
+            <tr>
+              <td class="name">Tout le reste <span class="tag free">Python</span></td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num">0 $</td>
+              <td class="num">0 %</td>
+            </tr>
+            <tr class="total">
+              <td>Total</td>
+              <td class="num">≈ 262 000</td>
+              <td class="num">≈ 15 600</td>
+              <td class="num">≈ 0,37 $</td>
+              <td class="num">100 %</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note warn">
+        <span class="h">Le chiffre qui décide de tout</span>
+        <p>
+          <strong>Remplacer Haiku à l'extraction fait économiser au mieux un tiers
+          du coût d'un run</strong>, soit environ 0,13 $. À raison de trente runs
+          par mois, cela représente <strong>autour de 4 $ par mois</strong>. Le
+          moindre VPS avec une carte graphique coûte entre 50 et 300 $ par mois.
+        </p>
+        <p>
+          Si l'objectif est de dépenser moins d'argent, la réponse est donc non —
+          et la suite explique où sont les vraies économies. Si l'objectif est
+          l'indépendance (ne plus dépendre d'une clé d'API, d'un quota, d'une
+          politique tarifaire) ou tout simplement d'apprendre, la question reste
+          entière et la réponse change.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 4 -->
+  <section>
+    <div class="col">
+      <h2>Les économies gratuites, à faire d'abord</h2>
+      <p>
+        Aucune de ces quatre mesures ne dégrade la qualité, et aucune ne demande
+        d'apprendre l'apprentissage automatique. Ensemble, elles valent
+        probablement plus que le remplacement de Haiku.
+      </p>
+
+      <h3>Exploiter le JSON-LD, qui est déjà là et à moitié ignoré</h3>
+      <p>
+        <code>harvest.json_ld_dates()</code> lit déjà les balises
+        <code>schema.org/Event</code> des pages — mais n'en garde que les dates.
+        Or ces mêmes balises portent, quand elles sont présentes,
+        <code>name</code>, <code>location.address</code> (rue, ville, code
+        postal), <code>offers.price</code>, <code>image</code>,
+        <code>typicalAgeRange</code> et <code>description</code>. Les sites de
+        spectacle les tiennent à jour, parce que c'est ce qui les fait apparaître
+        dans Google Événements.
+      </p>
+      <p>
+        Chaque champ ainsi rempli est un champ que le modèle n'a plus besoin de
+        chercher — donc des instructions en moins dans le prompt et des jetons en
+        moins en sortie. C'est du code Python pur, sans risque, et ça se mesure
+        en une après-midi : compter, sur cent pages déjà lues, combien portent un
+        <code>Event</code> exploitable.
+      </p>
+
+      <h3>Dégraisser l'étage sélection</h3>
+      <p>
+        C'est l'étage le plus gourmand en entrée, et personne ne s'en doute :
+        jusqu'à 200 liens, chacun avec 200 caractères de contexte, soit près de
+        50 000 caractères envoyés pour une réponse qui tient en huit nombres.
+        Descendre à 120 liens et 120 caractères de contexte coupe cet étage à peu
+        près de moitié, et il est peu probable que la qualité du tri en souffre —
+        c'est justement le genre de chose que l'on mesure.
+      </p>
+
+      <h3>Passer par l'API Batch</h3>
+      <p>
+        <strong>50 % de remise sur tous les jetons</strong>, en échange d'un
+        résultat qui arrive sous 24 heures au lieu de tout de suite. Or le
+        scraper est <em>déjà</em> asynchrone : une exécution est mise en file
+        d'attente dans la console, un worker la prend quand il peut. Personne
+        n'attend devant son écran. Le seul prix réel est que le journal ne se
+        remplirait plus en direct, ce qui est un vrai renoncement en confort de
+        mise au point — à réserver aux runs planifiés, pas aux essais.
+      </p>
+
+      <h3>Ne pas espérer le cache de prompt</h3>
+      <p>
+        Réflexe naturel : mettre en cache le bloc d'instructions, identique d'une
+        page à l'autre. Ça ne marchera pas.
+        <strong>Haiku 4.5 exige un préfixe stable d'au moins 4 096 jetons</strong>
+        pour créer une entrée de cache ; le prompt d'extraction fait environ 730
+        jetons d'instructions. En dessous du seuil, l'API n'émet aucune erreur —
+        elle ne met simplement rien en cache. Autant le savoir avant d'y passer
+        deux jours.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================================ 5 -->
+  <section>
+    <div class="col">
+      <h2>Un modèle maison : ce que ça veut dire</h2>
+
+      <p>
+        Trois idées suffisent pour comprendre la suite, et aucune ne demande de
+        bagage technique.
+      </p>
+
+      <h3>Un modèle, c'est une fonction avec des millions de boutons</h3>
+      <p>
+        Un modèle de langage est une grosse formule mathématique qui transforme
+        un texte en un autre texte. Elle contient des millions — ou des milliards
+        — de nombres réglables, appelés « poids ». <em>Entraîner</em> un modèle,
+        c'est ajuster ces nombres jusqu'à ce qu'il produise la bonne réponse sur
+        des exemples qu'on lui montre. On ne lui explique rien : on lui montre.
+      </p>
+
+      <h3>Personne n'entraîne à partir de zéro</h3>
+      <p>
+        Partir de rien coûte des millions d'euros. Ce qu'on fait en pratique,
+        c'est prendre un modèle déjà entraîné et librement téléchargeable — Qwen,
+        Llama, Mistral, CamemBERT pour le français — et le <em>spécialiser</em>
+        sur sa tâche. C'est le « fine-tuning ». Mieux : on ne touche même pas à
+        tous les poids, on ajoute une petite couche par-dessus (technique
+        appelée <strong>LoRA</strong>), qui pèse quelques mégaoctets. Résultat :
+        quelques heures sur une carte graphique louée à l'heure, pour une dizaine
+        d'euros, au lieu de mois de calcul.
+      </p>
+
+      <h3>Un exemple d'entraînement, ici, c'est une paire</h3>
+      <p>
+        Pour l'extraction, un exemple, c'est : <strong>(le texte brut d'une page,
+        la fiche JSON correcte qui en découle)</strong>. On en montre quelques
+        milliers, et le modèle apprend à produire la seconde à partir du premier.
+        C'est tout. Toute la difficulté du projet tient dans la fabrication de
+        ces paires.
+      </p>
+
+      <div class="note">
+        <span class="h">Correction — les questions sont récupérables</span>
+        <p>
+          J'avais écrit ici que les paires étaient perdues. C'est faux, et l'erreur
+          venait d'une confusion d'étage. <strong>L'extraction ne lit pas un
+          agenda : elle lit la page d'un événement précis</strong>, retenue à
+          l'étage 3, et son adresse est conservée dans <code>Event.sourceUrl</code>.
+          Une fiche de spectacle change bien moins qu'un agenda, qui se réécrit
+          chaque semaine — la re-télécharger redonne donc, à peu de chose près,
+          le texte qui avait servi d'entrée.
+        </p>
+        <p>
+          Et la base garde tout ce qu'il faut pour reconstituer le reste :
+          <code>ScraperRunItem</code> porte <code>url</code>,
+          <code>decision</code>, <code>reason</code>, <code>at</code> (la date du
+          run) et <code>eventId</code> ; <code>ScrapedUrl</code> garde la décision
+          prise sur chaque page jamais soumise. <strong>Les exemples négatifs —
+          les pages jugées hors sujet — existent donc aussi</strong>, et ils sont
+          indispensables pour apprendre le champ <code>relevant</code>.
+        </p>
+        <p>
+          L'objection que j'avais formulée reste valable, mais pour l'étage
+          <strong>sélection</strong> : les listes de liens ne sont enregistrées
+          nulle part, et les agendas se renouvellent. Ce corpus-là ne peut être
+          constitué que pour l'avenir.
+        </p>
+      </div>
+
+      <h3>Les trois pièges de la reconstruction</h3>
+      <p>
+        Reconstruire n'est pas gratuit pour autant, et trois choses peuvent
+        fabriquer un jeu de données faux qui aura l'air correct.
+      </p>
+      <ul class="plain">
+        <li>
+          <strong>Les pages disparaissent.</strong> Beaucoup de sites retirent
+          leurs événements passés : 404, redirection vers l'accueil, ou page
+          « événement terminé ». Plus la sortie est ancienne, moins l'adresse
+          répond. C'est le premier chiffre à mesurer, et il se mesure en une
+          après-midi : re-télécharger deux cents <code>sourceUrl</code> et compter
+          les réponses valides. Ce taux décide à lui seul si le corpus rétroactif
+          vaut la peine.
+        </li>
+        <li>
+          <strong>La page a pu bouger.</strong> Dates repoussées, mention
+          « complet », tarif révisé depuis la lecture. Garde-fou simple : ne
+          garder une paire que si le texte re-téléchargé contient toujours le
+          titre stocké, et privilégier les sorties récentes.
+        </li>
+        <li>
+          <strong>La date du jour fait partie de la question.</strong> Le prompt
+          injecte <code>$today</code>, et une règle en dépend directement : « à
+          l'affiche jusqu'au 23 octobre » doit donner <code>date_start</code> = la
+          date du run. Il faut donc réinjecter <code>ScraperRunItem.at</code>, pas
+          la date d'aujourd'hui — sinon les étiquettes de dates deviennent
+          incohérentes entre elles, ce qui est exactement ce qu'un entraînement
+          ne pardonne pas.
+        </li>
+      </ul>
+
+      <p>
+        <strong>Cela ne dispense pas d'enregistrer les paires dès maintenant</strong>,
+        et c'est toujours la première chose à faire : écrire le texte envoyé et le
+        JSON reçu à chaque appel, une dizaine de lignes dans
+        <code>anthropic_provider.extract()</code>. Trois raisons : c'est gratuit et
+        exact, là où le rétroactif est approximatif ; c'est la seule façon de
+        constituer un corpus pour l'étage <strong>sélection</strong> ; et cela
+        conserve la sortie brute du modèle, que <code>build_payload</code> et les
+        modérateurs transforment ensuite.
+      </p>
+
+      <p>
+        Un bonus considérable vient ensuite : lorsqu'un modérateur corrige une
+        fiche avant de l'approuver, sa correction est un
+        <strong>exemple vérifié par un humain</strong> — la donnée la plus chère
+        du monde, ici produite gratuitement par le travail de modération qui a
+        lieu de toute façon. C'est même la fiche corrigée, et non la sortie brute
+        du modèle, qui fait la meilleure étiquette : on apprend du résultat validé,
+        pas de ce qu'un modèle a proposé.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================================ 6 -->
+  <section>
+    <div class="col">
+      <h2>La distillation : comment on fabrique les exemples sans les écrire</h2>
+      <p>
+        Il faut de l'ordre de <strong>1 000 paires pour un premier modèle
+        utilisable, 3 000 à 5 000 pour qu'il tienne la route</strong>. Au rythme
+        de vingt sorties par run, attendre prendrait des mois. Le corpus rétroactif
+        décrit plus haut fournit le premier lot ; quand il ne suffit pas — parce que
+        trop de pages ont disparu — la méthode standard pour compléter s'appelle la
+        distillation, et son principe
+        est simple : <em>un gros modèle fabrique les corrigés, un petit modèle
+        apprend à les imiter</em>.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1000 330" role="img" aria-label="Chaîne de distillation : des pages archivées passent une seule fois par un gros modèle professeur, qui produit un jeu de paires d'entraînement, à partir duquel un petit modèle élève est entraîné puis déployé sur le VPS. Les corrections des modérateurs alimentent aussi le jeu d'entraînement.">
+          <defs>
+            <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path class="d-head" d="M 0 1 L 10 5 L 0 9 z"></path>
+            </marker>
+          </defs>
+
+          <rect class="d-box" x="14" y="60" width="196" height="88" rx="6"></rect>
+          <text class="d-k neutral" x="30" y="84">A · MATIÈRE PREMIÈRE</text>
+          <text class="d-t" x="30" y="106">Pages archivées</text>
+          <text class="d-s" x="30" y="126">texte brut enregistré</text>
+          <text class="d-s" x="30" y="142">à chaque run · 3 000</text>
+
+          <rect class="d-paid" x="272" y="60" width="196" height="88" rx="6"></rect>
+          <text class="d-k paid" x="288" y="84">B · PROFESSEUR</text>
+          <text class="d-t" x="288" y="106">Opus ou Sonnet</text>
+          <text class="d-s" x="288" y="126">le meilleur modèle,</text>
+          <text class="d-s" x="288" y="142">une seule fois</text>
+
+          <rect class="d-box" x="530" y="60" width="196" height="88" rx="6"></rect>
+          <text class="d-k neutral" x="546" y="84">C · JEU D'EXEMPLES</text>
+          <text class="d-t" x="546" y="106">3 000 paires</text>
+          <text class="d-s" x="546" y="126">(texte de la page →</text>
+          <text class="d-s" x="546" y="142">fiche JSON correcte)</text>
+
+          <rect class="d-free" x="788" y="60" width="196" height="88" rx="6"></rect>
+          <text class="d-k free" x="804" y="84">D · ÉLÈVE</text>
+          <text class="d-t" x="804" y="106">Qwen3 1,7 Md</text>
+          <text class="d-s" x="804" y="126">+ LoRA · quelques Mo</text>
+          <text class="d-s" x="804" y="142">tourne sur le VPS</text>
+
+          <path class="d-line" marker-end="url(#a2)" d="M 210 104 H 266"></path>
+          <path class="d-line" marker-end="url(#a2)" d="M 468 104 H 524"></path>
+          <path class="d-line" marker-end="url(#a2)" d="M 726 104 H 782"></path>
+
+          <text class="d-lbl" x="238" y="174" text-anchor="middle">≈ 60 $,</text>
+          <text class="d-lbl" x="238" y="190" text-anchor="middle">une seule fois</text>
+          <text class="d-lbl" x="496" y="174" text-anchor="middle">relu par</text>
+          <text class="d-lbl" x="496" y="190" text-anchor="middle">échantillon</text>
+          <text class="d-lbl" x="754" y="174" text-anchor="middle">≈ 4 h de GPU</text>
+          <text class="d-lbl" x="754" y="190" text-anchor="middle">loué, ≈ 10 $</text>
+
+          <rect class="d-box" x="272" y="228" width="454" height="72" rx="6"></rect>
+          <text class="d-k neutral" x="292" y="252">E · CORRECTIONS DES MODÉRATEURS</text>
+          <text class="d-t" x="292" y="274">Les meilleurs exemples du lot, et ils sont gratuits :</text>
+          <text class="d-s" x="292" y="292">ils viennent d'un humain qui a relu la fiche avant de l'approuver.</text>
+
+          <path class="d-line" marker-end="url(#a2)" d="M 628 228 V 154"></path>
+
+          <text class="d-lbl" x="806" y="252">Coût récurrent après</text>
+          <text class="d-lbl" x="806" y="270">déploiement : 0 $ par page.</text>
+          <text class="d-lbl" x="806" y="288">Reste à payer : l'électricité</text>
+          <text class="d-lbl" x="806" y="306">et le temps de calcul.</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Figure 3 — professeur, élève, et la boucle de correction.</b> Le gros
+        modèle ne tourne qu'une fois, sur un lot fixe. L'élève, lui, tourne à
+        chaque page pour toujours. Point crucial : <b>on ne distille pas Haiku</b>
+        — l'élève plafonne à la qualité de son professeur, donc apprendre de
+        Haiku donnerait forcément moins bien que Haiku. Il faut un professeur
+        meilleur que ce qu'on remplace.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============================================================ 7 -->
+  <section>
+    <div class="col">
+      <h2>Quel « petit modèle », au juste</h2>
+      <p>
+        « Modèle maison » recouvre quatre choses très différentes, du plus léger
+        au plus lourd. Elles ne se remplacent pas : elles se combinent.
+      </p>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Approche</th>
+              <th>Ce que ça sait faire</th>
+              <th>Ce que ça ne sait pas faire</th>
+              <th class="num">Tourne sur</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="name">Aucune IA<br><span class="tag free">règles</span></td>
+              <td>Lire le JSON-LD, reconnaître « Tarif : 8 € », « Gratuit », un code postal, une date française.</td>
+              <td>Rien de flou. Une page mal balisée ne donne rien.</td>
+              <td class="num">le VPS, 5 ms</td>
+            </tr>
+            <tr>
+              <td class="name">Petit classifieur<br><span class="tag free">≈ 110 M</span></td>
+              <td>Répondre oui/non ou choisir une étiquette : « c'est pour des enfants ? », « quelle catégorie ? », « ce lien mène-t-il à une sortie ? »</td>
+              <td>Remplir une fiche. Il classe, il ne rédige pas.</td>
+              <td class="num">le VPS, 30 ms</td>
+            </tr>
+            <tr>
+              <td class="name">Étiqueteur de spans<br><span class="tag free">CamemBERT</span></td>
+              <td>Surligner dans la page « ceci est le titre », « ceci est le prix », « ceci est l'adresse ».</td>
+              <td>Rédiger la description. Recouper deux informations éloignées.</td>
+              <td class="num">le VPS, 80 ms</td>
+            </tr>
+            <tr>
+              <td class="name">Génératif fine-tuné<br><span class="tag paid">1 à 3 Md</span></td>
+              <td>Tout ce que fait Haiku : la fiche complète, description comprise.</td>
+              <td>Rien en théorie — mais il faut l'entraîner, et vérifier qu'il ne dégrade pas.</td>
+              <td class="num">40 s à 2 min</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="h">Une nuance qui change la conclusion</span>
+        <p>
+          « 40 secondes à 2 minutes par page » sur le processeur du VPS
+          disqualifierait n'importe quelle application interactive.
+          <strong>Mais ce pipeline n'a aucune contrainte de latence.</strong> Une
+          exécution est mise en file d'attente, un worker la prend, elle dure déjà
+          plusieurs minutes, et personne n'attend devant l'écran. Vingt-six pages
+          à une minute, c'est une demi-heure de plus — parfaitement acceptable
+          pour un run nocturne.
+        </p>
+        <p>
+          Autrement dit : <em>l'obstacle n'est pas le matériel, c'est la qualité
+          et le travail de mise au point.</em> Il n'y a pas besoin de louer un
+          GPU en production. Il en faut un pour l'entraînement, quelques heures,
+          une fois.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 8 -->
+  <section>
+    <div class="col">
+      <h2>La cascade : ce qui marcherait vraiment</h2>
+      <p>
+        Remplacer un appel au modèle par un autre appel à un autre modèle, c'est
+        la formulation la moins intéressante du problème. La bonne question est :
+        <strong>combien de travail peut-on retirer au modèle avant de l'appeler ?</strong>
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1040 400" role="img" aria-label="Comparaison entre le pipeline actuel, où cent pages sur cent passent par un appel payant complet, et une cascade où des filtres gratuits écartent les pages hors sujet et pré-remplissent les champs factuels, ne laissant au modèle qu'un appel plus court sur environ quatre-vingts pages.">
+          <defs>
+            <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path class="d-head" d="M 0 1 L 10 5 L 0 9 z"></path>
+            </marker>
+          </defs>
+
+          <text class="d-k neutral" x="14" y="24">AUJOURD'HUI</text>
+
+          <rect class="d-box" x="14" y="40" width="150" height="62" rx="6"></rect>
+          <text class="d-num" x="34" y="66">100</text>
+          <text class="d-s" x="34" y="86">pages lues</text>
+
+          <rect class="d-paid" x="284" y="40" width="230" height="62" rx="6"></rect>
+          <text class="d-k paid" x="304" y="64">MODÈLE · PROMPT COMPLET</text>
+          <text class="d-t" x="304" y="88">21 champs, ≈ 3 400 jetons</text>
+
+          <rect class="d-box" x="634" y="40" width="150" height="62" rx="6"></rect>
+          <text class="d-num" x="654" y="66">100</text>
+          <text class="d-s" x="654" y="86">fiches</text>
+
+          <path class="d-line" marker-end="url(#a3)" d="M 164 71 H 278"></path>
+          <path class="d-line" marker-end="url(#a3)" d="M 514 71 H 628"></path>
+
+          <text class="d-lbl" x="804" y="66">100 appels payants,</text>
+          <text class="d-lbl" x="804" y="84">tous de taille maximale</text>
+
+          <line class="d-tick" x1="14" y1="132" x2="1026" y2="132"></line>
+
+          <text class="d-k neutral" x="14" y="164">EN CASCADE</text>
+
+          <rect class="d-box" x="14" y="180" width="122" height="70" rx="6"></rect>
+          <text class="d-num" x="32" y="208">100</text>
+          <text class="d-s" x="32" y="228">pages lues</text>
+
+          <rect class="d-free" x="166" y="180" width="150" height="70" rx="6"></rect>
+          <text class="d-k free" x="182" y="202">A · JSON-LD</text>
+          <text class="d-t" x="182" y="224">dates, prix,</text>
+          <text class="d-s" x="182" y="242">adresse, image</text>
+
+          <rect class="d-free" x="346" y="180" width="150" height="70" rx="6"></rect>
+          <text class="d-k free" x="362" y="202">B · RÈGLES</text>
+          <text class="d-t" x="362" y="224">« Gratuit », « 8 € »,</text>
+          <text class="d-s" x="362" y="242">code postal, horaires</text>
+
+          <rect class="d-free" x="526" y="180" width="150" height="70" rx="6"></rect>
+          <text class="d-k free" x="542" y="202">C · CLASSIFIEUR</text>
+          <text class="d-t" x="542" y="224">est-ce une sortie</text>
+          <text class="d-s" x="542" y="242">pour enfants ?</text>
+
+          <rect class="d-paid" x="706" y="180" width="164" height="70" rx="6"></rect>
+          <text class="d-k paid" x="722" y="202">D · MODÈLE</text>
+          <text class="d-t" x="722" y="224">description +</text>
+          <text class="d-s" x="722" y="242">ce qui manque encore</text>
+
+          <rect class="d-box" x="900" y="180" width="126" height="70" rx="6"></rect>
+          <text class="d-num" x="918" y="208">80</text>
+          <text class="d-s" x="918" y="228">fiches</text>
+
+          <path class="d-line" marker-end="url(#a3)" d="M 136 215 H 160"></path>
+          <path class="d-line" marker-end="url(#a3)" d="M 316 215 H 340"></path>
+          <path class="d-line" marker-end="url(#a3)" d="M 496 215 H 520"></path>
+          <path class="d-line" marker-end="url(#a3)" d="M 676 215 H 700"></path>
+          <path class="d-line" marker-end="url(#a3)" d="M 870 215 H 894"></path>
+
+          <path class="d-line dash" marker-end="url(#a3)" d="M 241 250 V 288"></path>
+          <text class="d-lbl" x="176" y="308">remplit sans rien</text>
+          <text class="d-lbl" x="176" y="324">payer</text>
+
+          <path class="d-line dash" marker-end="url(#a3)" d="M 421 250 V 288"></path>
+          <text class="d-lbl" x="356" y="308">remplit sans rien</text>
+          <text class="d-lbl" x="356" y="324">payer</text>
+
+          <path class="d-line dash" marker-end="url(#a3)" d="M 601 250 V 288"></path>
+          <text class="d-lbl" x="536" y="308">−20 pages écartées :</text>
+          <text class="d-lbl" x="536" y="324">aucun appel du tout</text>
+
+          <text class="d-lbl" x="716" y="308">80 appels, deux fois</text>
+          <text class="d-lbl" x="716" y="324">plus courts</text>
+
+          <text class="d-lbl" x="14" y="376">Les proportions sont des hypothèses de travail : la première tâche est justement de les mesurer sur les pages déjà lues.</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Figure 4 — la différence entre les deux montages.</b> Le classifieur
+        (C) supprime des appels entiers ; le JSON-LD (A) et les règles (B) n'en
+        suppriment aucun mais les raccourcissent — moins de champs à demander,
+        donc un prompt plus court et une sortie plus courte, sur l'étage où la
+        sortie coûte cinq fois l'entrée. Aucun de ces trois filtres n'exige
+        d'entraîner quoi que ce soit de génératif ; le seul qui demande de
+        l'apprentissage automatique, le classifieur, est aussi le plus facile à
+        entraîner et le moins risqué en cas d'erreur.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============================================================ 9 -->
+  <section>
+    <div class="col">
+      <h2>Le retournement : ce n'est pas l'extraction qu'il faut viser</h2>
+      <p>
+        En lisant le code avec la question « quel étage se remplace le mieux ? »,
+        l'extraction arrive en dernier sur les trois critères qui comptent.
+      </p>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Étage</th>
+              <th>Difficulté de la tâche</th>
+              <th>Données d'entraînement disponibles</th>
+              <th>Coût d'une erreur</th>
+              <th class="num">Verdict</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="name">1 · Recherche</td>
+              <td>Il faut un moteur de recherche. Ce n'est pas une question de modèle.</td>
+              <td>Sans objet.</td>
+              <td>Un run vide.</td>
+              <td class="num">Irremplaçable</td>
+            </tr>
+            <tr>
+              <td class="name">3 · Sélection</td>
+              <td><strong>Facile.</strong> Classer un texte court en oui/non.</td>
+              <td><strong>Abondantes, mais seulement pour l'avenir.</strong> 200 exemples étiquetés par agenda dépouillé, dès qu'on les enregistre.</td>
+              <td>Une page manquée. Le repli existe déjà dans le code.</td>
+              <td class="num">Le bon candidat</td>
+            </tr>
+            <tr>
+              <td class="name">5 · Extraction</td>
+              <td><strong>Difficile.</strong> Rédiger, dater, adresser, juger.</td>
+              <td><strong>Reconstructibles.</strong> Les pages se re-téléchargent depuis <code>Event.sourceUrl</code>, avec une perte due aux pages disparues.</td>
+              <td>Une fiche fausse arrive en modération, avec l'air d'être vraie.</td>
+              <td class="num">Viable, plus dur</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        L'étage <strong>sélection</strong> est le point d'entrée idéal pour
+        apprendre l'apprentissage automatique sur ce projet. La tâche — « ce lien,
+        avec ce texte et ce contexte, mène-t-il à la page d'une sortie ? » — est
+        une classification binaire sur du texte court. Une régression logistique
+        sur des sacs de mots, qui tient en trente lignes de scikit-learn et
+        s'entraîne en dix secondes sur un portable, y atteint des résultats
+        honnêtes. Un CamemBERT affiné fait mieux et tourne encore sur le
+        processeur du VPS.
+      </p>
+      <p>
+        Et les données arrivent toutes seules : à chaque agenda dépouillé, le
+        code produit déjà une liste de liens et la décision prise sur chacun. Il
+        suffit de les écrire dans un fichier. <strong>Un seul run de six agendas
+        fournit plus de mille exemples étiquetés.</strong> Deux semaines
+        d'exploitation suffisent à constituer un jeu de données sérieux, là où
+        l'extraction en demanderait des mois.
+      </p>
+
+      <div class="note">
+        <span class="h">Le code est déjà prêt pour ça</span>
+        <p>
+          <code>providers/base.py</code> définit un <code>Protocol</code> à trois
+          méthodes — <code>search</code>, <code>select</code>,
+          <code>extract</code> — et <code>get_provider()</code> choisit
+          l'implémentation d'après le champ <code>provider</code> de la
+          configuration. Un <code>LocalProvider</code> qui garde
+          <code>search</code> chez Anthropic et fait <code>select</code> en local
+          s'insère <strong>sans toucher une ligne de
+          <code>pipeline.py</code></strong>.
+        </p>
+        <p>
+          Mieux : <code>searchModel</code>, <code>selectModel</code> et
+          <code>extractionModel</code> sont déjà des colonnes distinctes de
+          <code>ScraperConfig</code>, éditables depuis la console. On peut donc
+          faire tourner deux configurations identiques à un seul champ près et
+          comparer ce qu'elles proposent à la modération. C'est un dispositif de
+          comparaison A/B gratuit, déjà en place.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 10 -->
+  <section>
+    <div class="col">
+      <h2>Le plan, dans l'ordre</h2>
+      <p>
+        Chaque étape a une valeur propre et se lit sur la facture ou sur la file
+        de modération. On peut s'arrêter après n'importe laquelle.
+      </p>
+
+      <ol class="steps">
+        <li>
+          <div>
+            <h3>Mesurer avant de décider <span class="effort">une demi-journée</span></h3>
+            <p>
+              Lire les lignes <code>usage</code> de <code>runs/*.jsonl</code> et
+              les colonnes de <code>ScraperRun</code>, et remplacer les estimations
+              de la figure 2 par les vrais chiffres. Il est parfaitement possible
+              que la répartition réelle soit très différente de celle qui est
+              calculée ici.
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Enregistrer les paires <span class="effort">un jour</span></h3>
+            <p>
+              Écrire, à chaque appel d'extraction et de sélection, le texte envoyé
+              et la réponse reçue dans un fichier JSONL. Rien d'autre. C'est la
+              condition nécessaire de tout le reste, et à partir de ce jour-là le
+              jeu de données grossit tout seul.
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Construire le juge <span class="effort">deux jours</span></h3>
+            <p>
+              Mettre 150 pages de côté, avec pour chacune la fiche jugée correcte
+              (les fiches approuvées par la modération en fournissent la moitié
+              gratuitement), et écrire un script qui compare champ par champ :
+              exact pour les dates et les prix, approché pour le titre et
+              l'adresse, longueur et langue pour la description.
+            </p>
+            <p>
+              Faire tourner Haiku dessus : le score obtenu est
+              <strong>la barre à battre</strong>. C'est l'étape la moins
+              gratifiante et la plus indispensable — sans elle, on ne saura jamais
+              si le modèle maison est moins bon, on le découvrira dans la file de
+              modération.
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Encaisser les économies gratuites <span class="effort">deux à trois jours</span></h3>
+            <p>
+              JSON-LD étendu, étage sélection dégraissé, API Batch pour les runs
+              planifiés. Remesurer avec le juge de l'étape 3 : la qualité doit
+              être identique, la facture nettement plus basse. Il est possible que
+              le sujet soit clos ici.
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Premier vrai modèle : le classifieur de liens <span class="effort">une semaine</span></h3>
+            <p>
+              Avec les données de l'étape 2, entraîner un classifieur binaire sur
+              les liens. Commencer par une régression logistique — c'est le
+              « bonjour le monde » du domaine et ça suffit peut-être. Le brancher
+              derrière un <code>LocalProvider</code> qui ne remplace que
+              <code>select</code>. Comparer sur deux configurations jumelles.
+            </p>
+            <p>
+              À l'issue de cette étape, vous saurez faire tout le cycle —
+              données, entraînement, évaluation, mise en production — sur la tâche
+              la plus indulgente du projet.
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Puis, seulement si ça vaut encore le coup : distiller l'extraction <span class="effort">deux à quatre semaines</span></h3>
+            <p>
+              Étiqueter 3 000 pages archivées avec Opus ou Sonnet, affiner un
+              Qwen3 1,7 Md en LoRA (Unsloth ou TRL de Hugging Face font ça en
+              quelques dizaines de lignes), quantifier le résultat en GGUF, le
+              servir avec llama.cpp sur le VPS. Passer le juge. Ne remplacer Haiku
+              que si le score tient.
+            </p>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ============================================================ 11 -->
+  <section>
+    <div class="col">
+      <h2>Verdict</h2>
+
+      <div class="verdict">
+        <p>
+          <strong>Pour économiser de l'argent : non.</strong> L'extraction pèse
+          environ un tiers d'un run à 0,37 $, soit quelques dollars par mois.
+          Toute infrastructure dédiée coûterait dix à cent fois plus. Les
+          économies réelles sont dans le JSON-LD non exploité, l'étage sélection
+          surdimensionné et l'API Batch — et elles ne demandent aucune IA.
+        </p>
+        <p>
+          <strong>Pour ne plus dépendre d'une clé d'API : oui, c'est faisable</strong>,
+          et le pipeline n'a pas de contrainte de latence, ce qui lève l'obstacle
+          habituel. Il faut compter un ou deux mois de travail pour quelqu'un qui
+          apprend, et accepter que la première version soit moins bonne.
+        </p>
+        <p>
+          <strong>Entraîner à partir des sorties déjà postées : oui.</strong>
+          L'extraction lit la page d'un événement, dont l'adresse est gardée dans
+          <code>Event.sourceUrl</code> et dont le contenu bouge peu : le texte se
+          récupère en la re-téléchargeant, et la fiche validée par la modération
+          fait l'étiquette. Restent trois pièges à traiter — les pages disparues,
+          la dérive du contenu, et la date du run à réinjecter.
+        </p>
+        <p>
+          <strong>Et si vous ne deviez retenir qu'une chose :</strong> l'étage à
+          remplacer en premier n'est pas l'extraction, c'est la
+          <strong>sélection des liens</strong>. Tâche plus simple, données déjà
+          produites par milliers à chaque run, erreur sans conséquence, et un
+          quart de la facture. C'est aussi, et ce n'est pas un hasard, le meilleur
+          endroit pour apprendre.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <p>
+      Établi par lecture du dépôt : <code>scraper/sortiesbot/</code>
+      (<code>pipeline.py</code>, <code>discovery.py</code>,
+      <code>harvest.py</code>, <code>prompts.py</code>, <code>config.py</code>,
+      <code>providers/</code>) et <code>server/prisma/schema.prisma</code>.
+      Tarifs Claude Haiku 4.5 : 1 $ / 5 $ par million de jetons (entrée /
+      sortie), plus 0,01 $ par recherche web. Les coûts par run sont des
+      estimations dérivées des plafonds de configuration, pas des mesures.
+    </p>
+  </footer>
+
+</div>
+</body>
+</html>

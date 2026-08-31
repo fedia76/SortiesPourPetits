@@ -74,6 +74,14 @@ communauté et validées par une équipe de modération.
   sont pas complétés. Tout ce qu'une exécution a produit — ses sorties et ce
   qu'elle a mémorisé — se supprime d'un bouton depuis sa page.
 
+## Documentation illustrée
+
+Trois pages HTML à ouvrir dans un navigateur, dans [`docs/`](docs/README.md) :
+deux **planches** qui résument le scraper étage par étage, l'**anatomie**
+détaillée du pipeline et de son coût, et un mode d'emploi pour **fabriquer un
+modèle maison** à la place de Haiku. Ce sont des documents d'analyse datés, pas
+des spécifications — leur statut est précisé dans l'index.
+
 ## Démarrage
 
 Prérequis : Node 20+, MySQL 8 (ou MariaDB) en local.

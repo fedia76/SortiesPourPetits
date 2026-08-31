@@ -115,6 +115,12 @@ Chaque run écrit deux fichiers dans `runs/` :
 
 ## Comment ça marche
 
+> Les mêmes explications en version illustrée, à ouvrir dans un navigateur :
+> [`docs/scraper-posters.html`](../docs/scraper-posters.html) (deux planches
+> d'une page) et [`docs/scraper-anatomie.html`](../docs/scraper-anatomie.html)
+> (le document long, avec le détail du coût). Index et statut de ces documents
+> dans [`docs/`](../docs/README.md).
+
 ### Les six étages, et où ils sont dans le code
 
 Le pipeline a toujours eu six étages, mais ils ne vivaient que dans cette
@@ -618,6 +624,13 @@ totalise jetons, recherches et coût, par étape.
 Pour mémoire, les mesures des versions précédentes : 3,24 $ avec Opus 5 et des
 pages de 30 000 jetons, 2,35 $ avec Sonnet 5 — dans les deux cas, la boucle
 serveur refacturant le contexte accumulé à chaque itération.
+
+Où part cet argent poste par poste, quelles économies restent à faire sans rien
+changer au modèle, et ce que remplacer Haiku par un **modèle maison**
+demanderait vraiment : [`docs/scraper-anatomie.html`](../docs/scraper-anatomie.html),
+puis [`docs/fabriquer-le-modele.html`](../docs/fabriquer-le-modele.html) pour la
+marche à suivre. Rien n'a été implémenté dans ce sens ; ces documents disent
+seulement ce que ça coûterait et ce que ça rapporterait.
 
 ## Et ensuite
 

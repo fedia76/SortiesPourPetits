@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Socle minimal : la page apporte ses propres couleurs et sa typographie.
+     `color-scheme` laisse le navigateur suivre le thème du système, que les
+     variables de la feuille ci-dessous savent honorer dans les deux sens. */
+  :root { color-scheme: light dark; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>Le scraper en posters</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root {
+  --sans: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+
+  --paper: #F7F8FA;
+  --box: #FFFFFF;
+  --sunk: #EDF0F4;
+  --line: #DCE1E8;
+  --ink: #101725;
+  --ink-2: #38414F;
+  --muted: #626C7B;
+
+  --c1: #2563EB; --c1s: #EAF0FE;
+  --c2: #0E9F6E; --c2s: #E5F6F0;
+  --c3: #7C3AED; --c3s: #F1EBFE;
+  --c4: #C2410C; --c4s: #FCEDE6;
+  --c5: #0891B2; --c5s: #E4F3F8;
+  --c6: #BE185D; --c6s: #FCE9F1;
+
+  --hub: #131A2B;
+  --hub-ink: #F2F5F9;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #101521; --box: #18202D; --sunk: #141B27;
+    --line: #2A3442; --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
+    --c1: #4A82E8; --c1s: #172234;
+    --c2: #12A87B; --c2s: #10261F;
+    --c3: #9068F0; --c3s: #1D1830;
+    --c4: #D2612F; --c4s: #2A1A12;
+    --c5: #189AB4; --c5s: #10262D;
+    --c6: #DB4F84; --c6s: #2A1520;
+    --hub: #0B111C; --hub-ink: #EAF0F7;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #101521; --box: #18202D; --sunk: #141B27;
+  --line: #2A3442; --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
+  --c1: #4A82E8; --c1s: #172234;
+  --c2: #12A87B; --c2s: #10261F;
+  --c3: #9068F0; --c3s: #1D1830;
+  --c4: #D2612F; --c4s: #2A1A12;
+  --c5: #189AB4; --c5s: #10262D;
+  --c6: #DB4F84; --c6s: #2A1520;
+  --hub: #0B111C; --hub-ink: #EAF0F7;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink-2); font-family: var(--sans); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.sprite symbol { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.wrap { padding: 26px 20px 70px; }
+.poster { max-width: 1300px; margin: 0 auto 46px; background: var(--box); border: 1px solid var(--line); border-radius: 18px; padding: 26px; box-shadow: 0 1px 3px rgba(16,23,37,.06), 0 18px 44px -30px rgba(16,23,37,.35); overflow-x: auto; }
+.inner { min-width: 1120px; }
+
+.tone-c1 { --a: var(--c1); --as: var(--c1s); }
+.c1 { --a: var(--c1); --as: var(--c1s); }
+.c2 { --a: var(--c2); --as: var(--c2s); }
+.c3 { --a: var(--c3); --as: var(--c3s); }
+.c4 { --a: var(--c4); --as: var(--c4s); }
+.c5 { --a: var(--c5); --as: var(--c5s); }
+.c6 { --a: var(--c6); --as: var(--c6s); }
+
+/* ---- masthead ---- */
+.head { text-align: center; padding: 4px 10px 14px; }
+.head .kicker { font: 600 11px var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.head h1 { font-size: clamp(1.9rem, 1.2rem + 2vw, 2.6rem); font-weight: 800; letter-spacing: -.02em; color: var(--ink); margin: 0 0 6px; line-height: 1.1; }
+.head p.sub { margin: 0 0 16px; color: var(--muted); font-size: 1.02rem; font-weight: 500; }
+.chips { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.legendchip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--sunk); border-radius: 999px; padding: 6px 14px 6px 10px; font-size: .82rem; font-weight: 600; color: var(--ink-2); }
+.dot { width: 11px; height: 11px; border-radius: 50%; background: var(--a); flex: none; }
+
+/* ---- grille planche A ---- */
+.gridA { display: grid; gap: 14px; grid-template-columns: 1fr 1fr 1fr .92fr;
+  grid-template-areas: "head head head tr" "s1 hub s4 tr" "s2 hub s5 tr" "s3 s6 s6 tr"; }
+.gridA > * { align-self: start; }
+
+/* ---- cartes ---- */
+.card { border: 2px solid var(--a); background: var(--box); border-radius: 14px; padding: 13px 15px 14px; }
+.card header { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+.card .ico { width: 28px; height: 28px; border-radius: 8px; background: var(--as); color: var(--a); display: grid; place-items: center; flex: none; }
+.card .ico svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.card h3 { margin: 0; font-size: .98rem; font-weight: 700; color: var(--a); letter-spacing: -.01em; line-height: 1.25; }
+.card h3 b { font-weight: 800; }
+.card ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
+.card li { position: relative; padding-left: 13px; font-size: .845rem; line-height: 1.42; color: var(--ink-2); }
+.card li::before { content: ""; position: absolute; left: 0; top: .55em; width: 4px; height: 4px; border-radius: 50%; background: var(--a); opacity: .7; }
+.card .foot { margin: 10px 0 0; padding-top: 8px; border-top: 1px dashed var(--line); font-size: .78rem; color: var(--muted); font-style: italic; }
+.card.mini h3 { font-size: .9rem; }
+.card.mini li { font-size: .8rem; }
+.chip { margin-left: auto; font: 600 9.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.chip.paid { color: var(--c4); background: var(--c4s); }
+.chip.free { color: var(--c2); background: var(--c2s); }
+
+/* ---- hub ---- */
+.hub { grid-area: hub; background: var(--hub); border-radius: 14px; padding: 18px 20px; color: var(--hub-ink); align-self: start; }
+.hub b, .hub strong { color: var(--hub-ink); font-weight: 800; }
+.hub h2 { margin: 0 0 12px; font-size: 1.05rem; font-weight: 700; text-align: center; letter-spacing: -.01em; }
+.hub ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
+.hub li { display: flex; gap: 10px; align-items: flex-start; font-size: .855rem; line-height: 1.35; }
+.hub .n { font: 700 10px var(--mono); background: rgba(255,255,255,.12); border-radius: 6px; padding: 3px 6px; flex: none; min-width: 22px; text-align: center; }
+.hub .n.paid { background: rgba(219,111,69,.28); }
+
+/* ---- rail transverse ---- */
+.rail { background: var(--sunk); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 12px; align-self: start; }
+.railtitle { margin: 0 0 2px; font-size: .95rem; font-weight: 700; color: var(--ink); text-align: center; }
+.rail .card { border-width: 1px; }
+
+/* ---- flux ---- */
+.flow { margin: 16px 0 0; }
+.flow svg { display: block; width: 100%; height: auto; }
+.f-step rect { fill: var(--as); stroke: var(--a); stroke-width: 1.6; }
+.f-t { fill: var(--ink); font: 700 13px var(--sans); }
+.f-s { fill: var(--muted); font: 500 11px var(--sans); }
+.f-n { fill: var(--a); font: 800 15px var(--mono); }
+.f-line { stroke: var(--muted); stroke-width: 1.8; fill: none; }
+.f-dash { stroke: var(--muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+.f-head { fill: var(--muted); }
+.f-lbl { fill: var(--muted); font: 400 10.5px var(--mono); }
+
+/* ---- bandes ---- */
+.band { margin-top: 16px; background: var(--sunk); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+.band > h2 { margin: 0 0 12px; font-size: 1rem; font-weight: 700; color: var(--ink); text-align: center; }
+.bandgrid { display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
+.bandgrid .card { border-width: 1px; background: var(--box); }
+
+.row3 { display: grid; gap: 14px; grid-template-columns: repeat(3, 1fr); margin-top: 14px; }
+.row2 { display: grid; gap: 14px; grid-template-columns: repeat(2, 1fr); margin-top: 14px; }
+.rowhead { display: flex; align-items: center; gap: 12px; margin: 22px 0 2px; }
+.rowhead h2 { margin: 0; font-size: 1.06rem; font-weight: 700; color: var(--ink); white-space: nowrap; }
+.rowhead .bar { height: 2px; background: var(--line); flex: 1; border-radius: 2px; }
+.rowhead .tagn { font: 700 11px var(--mono); color: var(--box); background: var(--ink); border-radius: 6px; padding: 3px 8px; }
+
+/* ---- correction ---- */
+.fix { margin-top: 14px; border: 2px solid var(--c2); background: var(--c2s); border-radius: 14px; padding: 16px 18px; }
+.fix h2 { margin: 0 0 8px; font-size: 1rem; font-weight: 700; color: var(--c2); }
+.fix p { margin: 0 0 8px; font-size: .89rem; }
+.fix p:last-child { margin-bottom: 0; }
+
+/* ---- étapes ---- */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(5, 1fr); }
+.step { background: var(--box); border: 1px solid var(--line); border-radius: 12px; padding: 13px 14px; display: flex; gap: 10px; align-items: flex-start; }
+.stepn { font: 800 12px var(--mono); color: var(--box); background: var(--c1); border-radius: 7px; padding: 4px 8px; flex: none; }
+.step h4 { margin: 0 0 4px; font-size: .87rem; font-weight: 700; color: var(--ink); line-height: 1.25; }
+.step p { margin: 0 0 7px; font-size: .79rem; line-height: 1.4; color: var(--ink-2); }
+.effort { display: inline-block; font: 500 10px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+
+code { font-family: var(--mono); font-size: .88em; background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: 0 .28em; color: var(--ink); }
+.card li code, .step p code { font-size: .84em; }
+b { color: var(--ink); font-weight: 700; }
+
+.posterfoot { max-width: 1300px; margin: 0 auto; font-size: .8rem; color: var(--muted); text-align: center; padding: 0 20px; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+@media (max-width: 760px) { .wrap { padding: 14px 10px 50px; } .poster { padding: 14px; border-radius: 12px; } }
+</style>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" focusable="false"><defs>
+<symbol id="ic-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2 L20 20"/></symbol>
+<symbol id="ic-download" viewBox="0 0 24 24"><path d="M12 3.5 V14"/><path d="M7.6 10 L12 14.4 L16.4 10"/><path d="M4.5 17.5 v2 h15 v-2"/></symbol>
+<symbol id="ic-filter" viewBox="0 0 24 24"><path d="M3.5 5.5 h17 L14 12.6 V19 l-4 1.4 v-7.8 Z"/></symbol>
+<symbol id="ic-doc" viewBox="0 0 24 24"><path d="M6 3.2 h8 l4.5 4.5 V20.8 H6 Z"/><path d="M14 3.2 V8 h4.5"/><path d="M8.6 12.5 h7"/><path d="M8.6 16 h7"/></symbol>
+<symbol id="ic-form" viewBox="0 0 24 24"><rect x="3.6" y="4.2" width="16.8" height="15.6" rx="2.2"/><path d="M7.2 9 h5.4"/><path d="M7.2 12.5 h9.6"/><path d="M7.2 16 h7"/></symbol>
+<symbol id="ic-send" viewBox="0 0 24 24"><path d="M20.5 3.6 L3.6 10.4 l6.7 2.8 2.8 6.7 Z"/><path d="M10.3 13.2 L20.5 3.6"/></symbol>
+<symbol id="ic-shield" viewBox="0 0 24 24"><path d="M12 3 l7 2.6 v6.1 c0 4.2-2.9 7.4-7 9.3-4.1-1.9-7-5.1-7-9.3V5.6 Z"/><path d="M8.8 12.1 l2.3 2.3 4.2-4.5"/></symbol>
+<symbol id="ic-gauge" viewBox="0 0 24 24"><path d="M3.6 17.4 a8.8 8.8 0 0 1 16.8 0"/><path d="M12 17.4 L16.2 11"/><circle cx="12" cy="17.4" r="1.5"/></symbol>
+<symbol id="ic-db" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7.4" ry="2.9"/><path d="M4.6 6 v12 c0 1.6 3.3 2.9 7.4 2.9 s7.4-1.3 7.4-2.9 V6"/><path d="M4.6 12 c0 1.6 3.3 2.9 7.4 2.9 s7.4-1.3 7.4-2.9"/></symbol>
+<symbol id="ic-chart" viewBox="0 0 24 24"><path d="M4 20 V4"/><path d="M4 20 h16"/><rect x="7.2" y="12.2" width="3" height="5"/><rect x="12.3" y="8.4" width="3" height="8.8"/><rect x="17.4" y="10.2" width="3" height="7"/></symbol>
+<symbol id="ic-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.2 V12 l3.4 2"/></symbol>
+<symbol id="ic-warn" viewBox="0 0 24 24"><path d="M12 3.6 L21 19.6 H3 Z"/><path d="M12 9.6 v4.6"/><path d="M12 16.8 v.1"/></symbol>
+<symbol id="ic-brain" viewBox="0 0 24 24"><path d="M9.4 4.2 a3 3 0 0 0-3 3 a2.8 2.8 0 0 0-1.6 5 a2.9 2.9 0 0 0 1.9 4.6 a2.9 2.9 0 0 0 5.3 1.6 V4.9 a2.8 2.8 0 0 0-2.6-.7 Z"/><path d="M14.6 4.2 a3 3 0 0 1 3 3 a2.8 2.8 0 0 1 1.6 5 a2.9 2.9 0 0 1-1.9 4.6 a2.9 2.9 0 0 1-5.3 1.6"/></symbol>
+<symbol id="ic-plug" viewBox="0 0 24 24"><path d="M9 3.4 v5"/><path d="M15 3.4 v5"/><path d="M6.4 8.6 h11.2 v3.1 a5.6 5.6 0 0 1-11.2 0 Z"/><path d="M12 17.3 v3.3"/></symbol>
+<symbol id="ic-list" viewBox="0 0 24 24"><path d="M8.4 6.6 h11.4"/><path d="M8.4 12 h11.4"/><path d="M8.4 17.4 h11.4"/><circle cx="4.6" cy="6.6" r="1.4"/><circle cx="4.6" cy="12" r="1.4"/><circle cx="4.6" cy="17.4" r="1.4"/></symbol>
+<symbol id="ic-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.4"/><path d="M3.6 12 h16.8"/><path d="M12 3.6 a13 13 0 0 1 0 16.8 a13 13 0 0 1 0-16.8"/></symbol>
+</defs></svg>
+
+<div class="wrap">
+
+<!-- ============================ PLANCHE A ============================ -->
+<div class="poster">
+ <div class="inner">
+  <div class="gridA">
+
+  <div class="head" style="grid-area:head">
+    <p class="kicker">SortiesPourPetits · scraper/sortiesbot</p>
+    <h1>Le scraper, étage par étage</h1>
+    <p class="sub">Comment une recherche web devient une sortie en attente de modération</p>
+    <div class="chips">
+      <span class="legendchip c2"><span class="dot"></span>Python — gratuit</span>
+      <span class="legendchip c4"><span class="dot"></span>Modèle Haiku 4.5 — facturé</span>
+      <span class="legendchip c1"><span class="dot"></span>Site — API et modération</span>
+    </div>
+  </div>
+
+  <div class="hub">
+    <h2>Le partage des rôles</h2>
+    <ul>
+      <li><span class="n paid">1</span><span>Le modèle <b>cherche</b> sur le web et classe les pages</span></li>
+      <li><span class="n">2</span><span>Python <b>télécharge</b> les agendas et en tire les liens</span></li>
+      <li><span class="n paid">3</span><span>Le modèle <b>trie</b> les liens, en répondant des numéros</span></li>
+      <li><span class="n">4</span><span>Python <b>lit</b> la page : texte, JSON-LD, illustration</span></li>
+      <li><span class="n paid">5</span><span>Le modèle <b>remplit</b> la fiche, 21 champs imposés</span></li>
+      <li><span class="n">6</span><span>Python <b>géocode, date, illustre</b> et propose la sortie</span></li>
+    </ul>
+    <p style="margin:14px 0 0;font-size:.8rem;line-height:1.45;opacity:.78;border-top:1px solid rgba(255,255,255,.14);padding-top:11px">
+      Trois appels au modèle, bornés, sans outil et <b style="color:inherit">sans boucle</b>.
+      C'est ce découpage qui rend le coût prévisible : environ <b style="color:inherit">0,37 $</b>
+      pour un run de 20 sorties, contre 2,35 $ pour six sorties avec la version agentique précédente.
+    </p>
+  </div>
+
+  <article class="card c1" style="grid-area:s1">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-search"></use></svg></span>
+      <h3><b>1.</b> Découverte</h3>
+      <span class="chip paid">modèle</span>
+    </header>
+    <ul>
+      <li>6 recherches web via l'outil serveur <code>web_search</code></li>
+      <li>Le modèle classe chaque page : <b>agenda</b> ou <b>sortie</b></li>
+      <li>Une URL absente des résultats réels est <b>rejetée</b></li>
+      <li>Mode « site » : les URLs sont données, aucune recherche</li>
+      <li>Plafonds <code>max_searches</code>, <code>max_agendas</code></li>
+    </ul>
+    <p class="foot">Seul étage qui diffère entre les deux modes.</p>
+  </article>
+  <article class="card c2" style="grid-area:s2">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-download"></use></svg></span>
+      <h3><b>2.</b> Dépouillement des agendas</h3>
+      <span class="chip free">Python</span>
+    </header>
+    <ul>
+      <li><code>requests</code> + BeautifulSoup, aucun jeton</li>
+      <li><code>robots.txt</code> lu et respecté, User-Agent identifiable</li>
+      <li>1 requête par seconde et par hôte, 5 Mo maximum</li>
+      <li>Liens internes seulement (les sortants sont de la pub)</li>
+      <li>200 caractères de contexte autour de chaque lien</li>
+      <li>Débruitage : mentions légales, pagination, navigation</li>
+    </ul>
+  </article>
+  <article class="card c3" style="grid-area:s3">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-filter"></use></svg></span>
+      <h3><b>3.</b> Sélection des liens</h3>
+      <span class="chip paid">modèle</span>
+    </header>
+    <ul>
+      <li>Reçoit la liste <b>numérotée</b> des liens et leur contexte</li>
+      <li>Répond des <b>numéros de ligne</b>, jamais des URL</li>
+      <li>Au plus 8 liens retenus par agenda</li>
+      <li>Trie selon le thème, la zone et la période</li>
+      <li>Aucun lien retenu → la page est relue comme une sortie</li>
+    </ul>
+    <p class="foot">C'est l'étage qui envoie le plus de texte : jusqu'à 200 liens.</p>
+  </article>
+  <article class="card c4" style="grid-area:s4">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-doc"></use></svg></span>
+      <h3><b>4.</b> Lecture de la page</h3>
+      <span class="chip free">Python</span>
+    </header>
+    <ul>
+      <li>Texte nettoyé, plafonné à 8 000 caractères</li>
+      <li>Dates de représentation lues dans le <b>JSON-LD</b> schema.org</li>
+      <li>Illustration relevée dans <code>og:image</code> / <code>twitter:image</code></li>
+      <li>Moins de 200 caractères → page écartée sans rien payer</li>
+      <li>Filtres préalables : domaine bloqué, page déjà vue</li>
+    </ul>
+    <p class="foot">Le modèle ne voit que le texte : ni le HTML, ni les images.</p>
+  </article>
+  <article class="card c5" style="grid-area:s5">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-form"></use></svg></span>
+      <h3><b>5.</b> Extraction de la fiche</h3>
+      <span class="chip paid">modèle</span>
+    </header>
+    <ul>
+      <li>Schéma JSON de <b>21 champs</b> imposé par l'API</li>
+      <li><code>relevant</code> + <code>skip_reason</code> : son droit de veto</li>
+      <li><code>weekdays</code> / <code>dates</code> : les jours réels, pas la plage</li>
+      <li>Page de programme : jusqu'à 40 fiches d'un seul appel</li>
+      <li>Aucun outil, donc aucune boucle, donc coût prévisible</li>
+    </ul>
+    <p class="foot">La page lue ici est celle d'un événement précis, pas un agenda.</p>
+  </article>
+  <article class="card c6" style="grid-area:s6">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-send"></use></svg></span>
+      <h3><b>6.</b> Publication</h3>
+      <span class="chip free">Python</span>
+    </header>
+    <ul>
+      <li>Géocodage Photon (OpenStreetMap, sans clé)</li>
+      <li>Calendrier résolu en croisant l'annonce et le JSON-LD</li>
+      <li>Photo téléchargée avec la même session HTTP</li>
+      <li>Non géocodé → <code>(0, 0)</code> · tarif inconnu → <code>-1</code></li>
+      <li><code>POST /api/events</code> → la sortie arrive <b>en attente de modération</b></li>
+    </ul>
+  </article>
+
+  <div class="rail" style="grid-area:tr">
+    <h2 class="railtitle">Ce qui tient l'ensemble</h2>
+  <article class="card mini c1">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-shield"></use></svg></span>
+      <h3>Garde-fous</h3>
+    </header>
+    <ul>
+      <li>URL rejetée si absente des résultats de recherche</li>
+      <li>Sélection par numéros de ligne : aucune URL inventable</li>
+      <li>Schéma JSON imposé côté API</li>
+      <li>Image lue dans le HTML, jamais devinée</li>
+      <li><b>Aucun appel ne boucle</b></li>
+    </ul>
+  </article>
+  <article class="card mini c4">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-gauge"></use></svg></span>
+      <h3>Budget et plafonds</h3>
+    </header>
+    <ul>
+      <li><code>max_cost_usd</code> : arrêt en cours de run</li>
+      <li><code>max_events</code>, <code>max_page_chars</code></li>
+      <li><code>max_agendas</code>, <code>max_links_per_agenda</code></li>
+      <li>Jetons comptés étage par étage</li>
+      <li>Trois modèles réglables séparément</li>
+    </ul>
+  </article>
+  <article class="card mini c5">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-db"></use></svg></span>
+      <h3>Mémoire des pages</h3>
+    </header>
+    <ul>
+      <li>Table <code>ScrapedUrl</code>, commune à toutes les recherches</li>
+      <li>Décision définitive (ne plus relire) ou provisoire</li>
+      <li>Un programme est mémorisé sortie par sortie</li>
+      <li>Oubli possible depuis la console</li>
+      <li>Filtre appliqué <b>avant</b> de payer l'extraction</li>
+    </ul>
+  </article>
+  </div>
+
+  </div>
+
+<figure class="flow">
+  <svg viewBox="0 0 1240 108" role="img" aria-label="Le run en six étapes : découverte, dépouillement, sélection, lecture, extraction, publication. Les étapes une, trois et cinq sont payantes.">
+    <defs>
+      <marker id="fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path class="f-head" d="M 0 1 L 10 5 L 0 9 z"></path>
+      </marker>
+    </defs>
+    <g class="f-step c1"><rect x="4" y="26" width="176" height="56" rx="10"/><text class="f-n" x="20" y="50">1</text><text class="f-t" x="40" y="50">Découverte</text><text class="f-s" x="40" y="68">modèle · web_search</text></g>
+    <path class="f-line" marker-end="url(#fa)" d="M 184 54 H 208"></path>
+    <g class="f-step c2"><rect x="212" y="26" width="176" height="56" rx="10"/><text class="f-n" x="228" y="50">2</text><text class="f-t" x="248" y="50">Dépouillement</text><text class="f-s" x="248" y="68">Python · liens</text></g>
+    <path class="f-line" marker-end="url(#fa)" d="M 392 54 H 416"></path>
+    <g class="f-step c3"><rect x="420" y="26" width="176" height="56" rx="10"/><text class="f-n" x="436" y="50">3</text><text class="f-t" x="456" y="50">Sélection</text><text class="f-s" x="456" y="68">modèle · numéros</text></g>
+    <path class="f-line" marker-end="url(#fa)" d="M 600 54 H 624"></path>
+    <g class="f-step c4"><rect x="628" y="26" width="176" height="56" rx="10"/><text class="f-n" x="644" y="50">4</text><text class="f-t" x="664" y="50">Lecture</text><text class="f-s" x="664" y="68">Python · texte</text></g>
+    <path class="f-line" marker-end="url(#fa)" d="M 808 54 H 832"></path>
+    <g class="f-step c5"><rect x="836" y="26" width="176" height="56" rx="10"/><text class="f-n" x="852" y="50">5</text><text class="f-t" x="872" y="50">Extraction</text><text class="f-s" x="872" y="68">modèle · 21 champs</text></g>
+    <path class="f-line" marker-end="url(#fa)" d="M 1016 54 H 1040"></path>
+    <g class="f-step c6"><rect x="1044" y="26" width="192" height="56" rx="10"/><text class="f-n" x="1060" y="50">6</text><text class="f-t" x="1080" y="50">Publication</text><text class="f-s" x="1080" y="68">Python · modération</text></g>
+    <path class="f-dash" marker-end="url(#fa)" d="M 92 26 V 12 H 716 V 26"></path>
+    <text class="f-lbl" x="330" y="8">une page classée « sortie » saute les étages 2 et 3</text>
+  </svg>
+</figure>
+
+<section class="band">
+  <h2>Ce qu'un run laisse derrière lui</h2>
+  <div class="bandgrid">
+  <article class="card mini c1">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-chart"></use></svg></span>
+      <h3>ScraperRun</h3>
+    </header>
+    <ul>
+      <li>Compteurs : candidats, pages, retenues, soumises</li>
+      <li>Jetons entrée / sortie, recherches web, coût</li>
+      <li>Statut et date, purge possible</li>
+    </ul>
+  </article>
+  <article class="card mini c2">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-list"></use></svg></span>
+      <h3>ScraperRunItem</h3>
+    </header>
+    <ul>
+      <li>Une ligne par page traitée</li>
+      <li><code>url</code>, <code>title</code>, <code>decision</code>, <code>reason</code></li>
+      <li><code>at</code> (la date du run) et <code>eventId</code></li>
+    </ul>
+  </article>
+  <article class="card mini c5">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-db"></use></svg></span>
+      <h3>ScrapedUrl</h3>
+    </header>
+    <ul>
+      <li>Mémoire commune à toutes les recherches</li>
+      <li><code>decision</code>, <code>firstSeen</code>, <code>eventId</code></li>
+      <li>Empêche de repayer une page connue</li>
+    </ul>
+  </article>
+  <article class="card mini c6">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-send"></use></svg></span>
+      <h3>Event</h3>
+    </header>
+    <ul>
+      <li>La sortie proposée, statut <code>PENDING</code></li>
+      <li><code>sourceUrl</code> : l'adresse de la page lue</li>
+      <li>Corrigée puis approuvée par un modérateur</li>
+    </ul>
+  </article>
+  </div>
+</section>
+ </div>
+</div>
+
+<!-- ============================ PLANCHE B ============================ -->
+<div class="poster">
+ <div class="inner">
+
+  <div class="head">
+    <p class="kicker">Analyse · remplacer Haiku à l'extraction</p>
+    <h1>Du run au modèle maison</h1>
+    <p class="sub">Ce que la base garde déjà, ce qu'il faut reconstruire, et dans quel ordre</p>
+  </div>
+
+  <div class="fix">
+    <h2>Correction — les données d'entraînement existent bel et bien</h2>
+    <p>
+      L'extraction ne lit pas un agenda : elle lit la page d'<b>un événement précis</b>, retenue à l'étage 3
+      et enregistrée dans <code>Event.sourceUrl</code>. Une fiche de spectacle change bien moins qu'un agenda,
+      qui se réécrit chaque semaine. <b>La question — le texte de la page — est donc récupérable en la
+      re-téléchargeant</b>, et la réponse est déjà en base, relue par un modérateur.
+    </p>
+    <p>
+      L'objection « la page a changé » vaut pour l'étage <b>sélection</b>, dont les listes de liens ne sont
+      nulle part et dont les agendas se renouvellent : ce corpus-là ne peut être constitué que pour l'avenir.
+      L'extraction, elle, se reconstruit rétroactivement — sous réserve des trois pièges ci-dessous.
+    </p>
+  </div>
+
+  <div class="rowhead"><span class="tagn">A</span><h2>Ce que la base garde déjà</h2><span class="bar"></span></div>
+  <div class="row3">
+  <article class="card mini c1">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-globe"></use></svg></span>
+      <h3>La question est retrouvable</h3>
+    </header>
+    <ul>
+      <li><code>Event.sourceUrl</code> garde l'adresse exacte de la page lue</li>
+      <li>C'est la page d'<b>un événement</b>, pas un agenda</li>
+      <li>Une fiche de spectacle bouge peu : titre, lieu, description</li>
+      <li>Il suffit de la re-télécharger pour retrouver l'entrée</li>
+    </ul>
+  </article>
+  <article class="card mini c2">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-form"></use></svg></span>
+      <h3>La réponse est déjà propre</h3>
+    </header>
+    <ul>
+      <li><code>Event</code> porte la fiche : titre, description, dates, prix, lieu</li>
+      <li><code>EventDate[]</code> porte les jours réels</li>
+      <li>Et surtout : elle a été <b>relue par un modérateur</b></li>
+      <li>Un exemple corrigé par un humain vaut mieux qu'un exemple brut</li>
+    </ul>
+  </article>
+  <article class="card mini c3">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-filter"></use></svg></span>
+      <h3>Les refus aussi sont gardés</h3>
+    </header>
+    <ul>
+      <li><code>ScraperRunItem.decision</code> = <code>irrelevant</code>, <code>invalid</code>, <code>out_of_period</code></li>
+      <li><code>reason</code> donne le motif écrit par le modèle</li>
+      <li>Ce sont les <b>exemples négatifs</b>, indispensables au champ <code>relevant</code></li>
+      <li>Sans eux, le modèle dirait oui à tout</li>
+    </ul>
+  </article>
+  </div>
+
+  <div class="rowhead"><span class="tagn">B</span><h2>Les trois pièges de la reconstruction</h2><span class="bar"></span></div>
+  <div class="row3">
+  <article class="card mini c4">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-warn"></use></svg></span>
+      <h3>Piège 1 — les pages disparaissent</h3>
+    </header>
+    <ul>
+      <li>Un site retire souvent ses événements passés (404, redirection)</li>
+      <li>Plus la sortie est ancienne, moins la page répond</li>
+      <li><b>Se mesure en une après-midi</b> : re-télécharger 200 <code>sourceUrl</code> et compter les 200 OK</li>
+      <li>C'est ce chiffre qui dit si le corpus rétroactif est exploitable</li>
+    </ul>
+  </article>
+  <article class="card mini c4">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-clock"></use></svg></span>
+      <h3>Piège 2 — la page a bougé</h3>
+    </header>
+    <ul>
+      <li>Dates repoussées, « complet », tarif changé depuis la lecture</li>
+      <li>La paire devient fausse sans prévenir</li>
+      <li>Garde-fou : ne garder que les pages dont le texte contient encore le titre stocké</li>
+      <li>Et privilégier les sorties récentes</li>
+    </ul>
+  </article>
+  <article class="card mini c4">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-warn"></use></svg></span>
+      <h3>Piège 3 — la date du jour</h3>
+    </header>
+    <ul>
+      <li>Le prompt injecte <code>$today</code>, et une règle en dépend :</li>
+      <li>« jusqu'au 23 octobre » → <code>date_start</code> = <b>la date du run</b></li>
+      <li>Il faut donc réinjecter <code>ScraperRunItem.at</code>, pas la date d'aujourd'hui</li>
+      <li>Oublier ça rend les étiquettes de dates incohérentes</li>
+    </ul>
+  </article>
+  </div>
+
+  <div class="rowhead"><span class="tagn">C</span><h2>La chaîne, de la base au pipeline</h2><span class="bar"></span></div>
+<figure class="flow">
+  <svg viewBox="0 0 1240 132" role="img" aria-label="Chaîne de reconstruction : la base de données fournit les URL et les fiches, le re-téléchargement fournit le texte des pages, l'assemblage produit les paires d'entraînement, puis l'entraînement produit le modèle local qui se branche dans le pipeline.">
+    <defs>
+      <marker id="fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path class="f-head" d="M 0 1 L 10 5 L 0 9 z"></path>
+      </marker>
+    </defs>
+    <g class="f-step c1"><rect x="4" y="20" width="222" height="70" rx="10"/><text class="f-t" x="24" y="46">Base du site</text><text class="f-s" x="24" y="65">Event · ScraperRunItem</text><text class="f-s" x="24" y="81">URL, fiches, décisions, dates</text></g>
+    <path class="f-line" marker-end="url(#fb)" d="M 230 55 H 258"></path>
+    <text class="f-lbl" x="244" y="108" text-anchor="middle">SQL</text>
+    <g class="f-step c2"><rect x="262" y="20" width="222" height="70" rx="10"/><text class="f-t" x="282" y="46">Re-téléchargement</text><text class="f-s" x="282" y="65">le texte de chaque page</text><text class="f-s" x="282" y="81">= la question manquante</text></g>
+    <path class="f-line" marker-end="url(#fb)" d="M 488 55 H 516"></path>
+    <text class="f-lbl" x="502" y="108" text-anchor="middle">HTTP</text>
+    <g class="f-step c3"><rect x="520" y="20" width="222" height="70" rx="10"/><text class="f-t" x="540" y="46">Paires vérifiées</text><text class="f-s" x="540" y="65">texte + $today du run</text><text class="f-s" x="540" y="81">→ fiche validée</text></g>
+    <path class="f-line" marker-end="url(#fb)" d="M 746 55 H 774"></path>
+    <text class="f-lbl" x="760" y="108" text-anchor="middle">tri</text>
+    <g class="f-step c5"><rect x="778" y="20" width="222" height="70" rx="10"/><text class="f-t" x="798" y="46">Entraînement</text><text class="f-s" x="798" y="65">LoRA sur un modèle libre</text><text class="f-s" x="798" y="81">quelques heures de GPU</text></g>
+    <path class="f-line" marker-end="url(#fb)" d="M 1004 55 H 1032"></path>
+    <text class="f-lbl" x="1018" y="108" text-anchor="middle">GGUF</text>
+    <g class="f-step c6"><rect x="1036" y="20" width="200" height="70" rx="10"/><text class="f-t" x="1056" y="46">LocalProvider</text><text class="f-s" x="1056" y="65">branché dans le pipeline</text><text class="f-s" x="1056" y="81">comparé à Haiku en A/B</text></g>
+  </svg>
+</figure>
+
+  <div class="rowhead"><span class="tagn">D</span><h2>Entraîner, puis brancher</h2><span class="bar"></span></div>
+  <div class="row2">
+  <article class="card mini c5">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-brain"></use></svg></span>
+      <h3>Entraîner</h3>
+    </header>
+    <ul>
+      <li>Partir d'un modèle libre déjà entraîné : Qwen3 1,7 Md, Llama 3.2</li>
+      <li><b>LoRA</b> : on n'ajuste qu'une petite couche de quelques Mo</li>
+      <li>Quelques heures sur un GPU loué, une dizaine d'euros, une fois</li>
+      <li>Compléter le corpus par distillation si le rétroactif ne suffit pas</li>
+      <li>Ne jamais distiller Haiku : l'élève plafonne sous son professeur</li>
+    </ul>
+  </article>
+  <article class="card mini c6">
+    <header>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-plug"></use></svg></span>
+      <h3>Brancher</h3>
+    </header>
+    <ul>
+      <li><code>providers/base.py</code> est un <code>Protocol</code> à trois méthodes</li>
+      <li>Un <code>LocalProvider</code> s'insère sans toucher <code>pipeline.py</code></li>
+      <li><code>extractionModel</code> est déjà une colonne de <code>ScraperConfig</code></li>
+      <li>Deux configurations jumelles = un A/B gratuit</li>
+      <li>Comparer ce que chacune propose à la modération</li>
+    </ul>
+  </article>
+  </div>
+
+  <div class="band" style="margin-top:22px">
+    <h2>Dans quel ordre s'y prendre</h2>
+    <ol class="steps">
+    <li class="step">
+      <span class="stepn">1</span>
+      <div><h4>Compter ce qui est récupérable</h4><p>Combien d'<code>Event</code> avec <code>sourceUrl</code> ? Combien de pages répondent encore ? C'est la seule question qui décide de la suite.</p><span class="effort">une après-midi</span></div>
+    </li>
+    <li class="step">
+      <span class="stepn">2</span>
+      <div><h4>Enregistrer les paires dès maintenant</h4><p>Écrire le texte envoyé et le JSON reçu à chaque appel. Dix lignes. Le corpus grossit alors tout seul, et la sélection devient entraînable aussi.</p><span class="effort">un jour</span></div>
+    </li>
+    <li class="step">
+      <span class="stepn">3</span>
+      <div><h4>Construire le juge</h4><p>150 pages mises de côté, la fiche correcte, un script qui compare champ par champ. Faire tourner Haiku dessus : c'est la barre à battre.</p><span class="effort">deux jours</span></div>
+    </li>
+    <li class="step">
+      <span class="stepn">4</span>
+      <div><h4>Encaisser les économies gratuites</h4><p>JSON-LD étendu, étage sélection dégraissé, API Batch. Même qualité, facture nettement plus basse.</p><span class="effort">deux à trois jours</span></div>
+    </li>
+    <li class="step">
+      <span class="stepn">5</span>
+      <div><h4>Reconstruire, entraîner, comparer</h4><p>Corpus rétroactif complété par distillation, LoRA sur Qwen3, quantification, <code>LocalProvider</code>. Ne remplacer Haiku que si le juge le permet.</p><span class="effort">deux à quatre semaines</span></div>
+    </li>
+    </ol>
+  </div>
+
+ </div>
+</div>
+
+<p class="posterfoot">
+  Établi par lecture de <code>scraper/sortiesbot/</code> et <code>server/prisma/schema.prisma</code>.
+  Coûts : estimations dérivées des plafonds de configuration et des tarifs Haiku 4.5 (1 $ / 5 $ par million
+  de jetons, plus 0,01 $ par recherche web) — les valeurs mesurées sont dans les lignes <code>usage</code>
+  de <code>runs/*.jsonl</code> et les colonnes de <code>ScraperRun</code>.
+</p>
+
+</div>
+</body>
+</html>
