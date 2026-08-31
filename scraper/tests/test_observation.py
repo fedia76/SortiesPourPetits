@@ -75,7 +75,7 @@ def test_une_fiche_annoncee_agenda_est_signalee_mais_traitee_comme_avant(journal
     assert api.created == []
 
 
-def test_une_page_sans_declaration_ne_contredit_personne(journal):
+def test_une_page_qui_sabstient_ne_contredit_personne(journal):
     """Le classifieur s'abstient sur cet agenda : abstention n'est pas désaccord.
 
     Aucun de ces sites d'agenda ne déclare de `ItemList` en JSON-LD — c'est ce
@@ -84,8 +84,8 @@ def test_une_page_sans_declaration_ne_contredit_personne(journal):
     signaler comme un désaccord.
     """
     log, events = journal
-    agenda_url = "https://agenda.exemple-departement.fr/agenda/"
-    agenda_html = (PAGES / "agenda-departemental.html").read_text(encoding="utf-8")
+    agenda_url = MUETTE_URL
+    agenda_html = MUETTE_HTML
     provider = FakeProvider(
         [FoundPage(url=agenda_url, title="Agenda", kind="agenda")],
         # Aucun lien retenu : le filet relit la page, qui se révèle être une
@@ -156,19 +156,24 @@ def test_un_registre_impossible_ne_casse_pas_le_run(tmp_path, capsys):
 AGENDA_URL = "https://agenda.exemple-departement.fr/agenda/"
 AGENDA_HTML = (PAGES / "agenda-departemental.html").read_text(encoding="utf-8")
 
+#: Cette page-ci ne déclare rien : ni pagination, ni JSON-LD, ni `og:type`.
+#: C'est donc la seule du jeu sur laquelle le modèle soit appelé.
+MUETTE_URL = "https://www.ville-exemple.fr/culture/atelier-cirque-en-famille"
+MUETTE_HTML = (PAGES / "atelier-sans-donnees-structurees.html").read_text(encoding="utf-8")
 
-def lance(provider, log, ledger=None, **conf):
-    """Un run sur la page d'agenda, qui ne déclare rien en JSON-LD."""
-    fetcher = FakeFetcher({AGENDA_URL: AGENDA_HTML})
+
+def lance(provider, log, ledger=None, url=None, html=None, **conf):
     with SeenStore() as store:
         return run(config(**conf), provider, store, FakeApi(), log,
-                   fetcher=fetcher, ledger=ledger)
+                   fetcher=FakeFetcher({url or MUETTE_URL: html or MUETTE_HTML}),
+                   ledger=ledger)
 
 
-def agenda_provider(verdicts=None):
+def agenda_provider(verdicts=None, url=None):
+    cible = url or MUETTE_URL
     provider = FakeProvider(
-        [FoundPage(url=AGENDA_URL, title="Agenda", kind="agenda")],
-        {AGENDA_URL: sortie(relevant=False, skip_reason="page de liste")},
+        [FoundPage(url=cible, title="Une page", kind="agenda")],
+        {cible: sortie(relevant=False, skip_reason="page de liste")},
         select_all=False,
     )
     provider.verdicts = list(verdicts or [])
@@ -178,18 +183,29 @@ def agenda_provider(verdicts=None):
 def test_le_modele_est_appele_quand_les_signaux_certains_se_taisent(journal):
     """Cette page n'a ni paramètre d'URL, ni JSON-LD, ni og:type : on demande."""
     log, events = journal
-    provider = agenda_provider([("agenda", "douze liens datés, c'est une liste")])
+    provider = agenda_provider([("sortie", "un atelier daté, avec son lieu")])
     lance(provider, log)
 
     assert provider.classified, "le condensé aurait dû partir au modèle"
     envoye = provider.classified[0]
-    assert "dont 12 voisinent une date" in envoye
-    assert "Que faire en famille" in envoye
+    assert "Atelier cirque en famille" in envoye
+    assert "Liens exploitables : 0, dont 0 voisinent une date" in envoye
     assert "<html" not in envoye, "on envoie un condensé, jamais du HTML"
 
     constat = kinds(events, "classified")[0]
-    assert (constat["verdict"], constat["signal"]) == ("agenda", "modele")
-    assert constat["detail"] == "douze liens datés, c'est une liste"
+    assert (constat["verdict"], constat["signal"]) == ("sortie", "modele")
+    assert constat["detail"] == "un atelier daté, avec son lieu"
+
+
+def test_une_page_qui_se_pagine_ne_coute_aucun_appel(journal):
+    """Le signal gratuit passe avant le payant : c'est tout son intérêt."""
+    log, events = journal
+    provider = agenda_provider([("sortie", "jamais demandé")], url=AGENDA_URL)
+    lance(provider, log, url=AGENDA_URL, html=AGENDA_HTML)
+
+    assert provider.classified == [], "la pagination a tranché, personne n'a payé"
+    constat = kinds(events, "classified")[0]
+    assert (constat["verdict"], constat["signal"]) == ("agenda", "pagination")
 
 
 def test_sans_modele_configure_personne_nest_appele(journal):
@@ -212,8 +228,8 @@ def test_un_echec_du_modele_laisse_la_page_inconnue(journal):
             raise ProviderError("quota dépassé")
 
     provider = Cassé(
-        [FoundPage(url=AGENDA_URL, title="Agenda", kind="agenda")],
-        {AGENDA_URL: sortie(relevant=False, skip_reason="page de liste")},
+        [FoundPage(url=MUETTE_URL, title="Une page", kind="agenda")],
+        {MUETTE_URL: sortie(relevant=False, skip_reason="page de liste")},
         select_all=False,
     )
     result = lance(provider, log)
@@ -222,16 +238,33 @@ def test_un_echec_du_modele_laisse_la_page_inconnue(journal):
     assert result.summary.errors == 0, "une observation ratée n'est pas une erreur de run"
 
 
-def test_le_condense_est_archive_avec_le_verdict(journal, tmp_path):
-    """C'est le corpus : sans lui, rien à quoi entraîner un classifieur local."""
+def test_le_condense_est_archive_meme_quand_python_a_tranche(journal, tmp_path):
+    """C'est le corpus : sans lui, rien à quoi entraîner un classifieur local.
+
+    Il est archivé même quand aucun modèle n'est appelé — surtout, même : ce
+    sont ces pages-là, tranchées gratuitement, qui font les étiquettes sûres.
+    """
     log, _ = journal
     ledger_path = tmp_path / "classifier.jsonl"
     with Ledger(ledger_path, run="essai") as ledger:
-        lance(agenda_provider([("agenda", "liste datée")]), log, ledger=ledger)
+        lance(agenda_provider(url=AGENDA_URL), log,
+              ledger=ledger, url=AGENDA_URL, html=AGENDA_HTML)
 
     ligne = json.loads(ledger_path.read_text().splitlines()[0])
-    assert ligne["asked"] == "claude-haiku-4-5", "on note qui a tranché"
+    assert ligne["asked"] == "", "la pagination a tranché, aucun modèle appelé"
+    assert ligne["signal"] == "pagination"
     assert ligne["digest"]["dated"] == 12
     assert ligne["digest"]["links"] == 12
     assert ligne["digest"]["heading"] == "Que faire en famille ce mois-ci ?"
     assert len(ligne["digest"]["texts"]) == 12
+
+
+def test_le_condense_du_modele_est_archive_avec_son_nom(journal, tmp_path):
+    log, _ = journal
+    ledger_path = tmp_path / "classifier.jsonl"
+    with Ledger(ledger_path, run="essai") as ledger:
+        lance(agenda_provider([("sortie", "une fiche d'atelier")]), log, ledger=ledger)
+
+    ligne = json.loads(ledger_path.read_text().splitlines()[0])
+    assert ligne["asked"] == "claude-haiku-4-5"
+    assert (ligne["verdict"], ligne["signal"]) == ("sortie", "modele")

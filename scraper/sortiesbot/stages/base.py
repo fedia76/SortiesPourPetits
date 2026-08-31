@@ -185,6 +185,12 @@ class Brick:
         model = self.config.classify_model
         if not model:
             return fallback, ""
+        if self.ctx.budget_reached:
+            # La reconnaissance consomme le budget du run comme les autres
+            # appels — c'est de l'argent réel. Mais elle ne décide encore rien :
+            # dépenser pour observer un run déjà à sec serait le comble.
+            self.log.event("skip", reason="budget atteint, page non reconnue", url=card.url)
+            return fallback, ""
         try:
             nature, pourquoi = self.ctx.provider.classify(card.as_prompt(), self.config, self.log)
         except ProviderError as err:

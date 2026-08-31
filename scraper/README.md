@@ -255,12 +255,21 @@ en cascade, du plus certain au plus flou :
 | # | Signal | Ce qu'il dit | Confiance | Coût |
 |---|---|---|---|---|
 | 1 | **URL** | `?page=2`, `?search=`, `?filter[]=` → agenda | certain | nul |
-| 2 | **JSON-LD** | un seul spectacle nommé → sortie ; trois titres distincts ou un `ItemList` → agenda | certain | nul |
-| 3 | **OpenGraph** | `og:type: event` → sortie | probable | nul |
-| 4 | **Le modèle**, sur le condensé | agenda, sortie, ou inconnu | probable | ~0,001 $ |
+| 2 | **Pagination** | `rel="next"`, ou des liens « 1 2 3 » → agenda | certain | nul |
+| 3 | **JSON-LD** | un seul spectacle nommé → sortie ; trois titres distincts ou un `ItemList` → agenda | certain | nul |
+| 4 | **OpenGraph** | `og:type: event` → sortie | probable | nul |
+| 5 | **Le modèle**, sur le condensé | agenda, sortie, ou inconnu | probable | ~0,001 $ |
 
-Les trois premiers sont du Python : ils ne coûtent rien et couvrent, sur le
-premier échantillon, environ la moitié des pages. Le quatrième n'est appelé que
+La **pagination** comble le manque que la première mesure avait révélé : sans
+elle, rien ne savait dire « agenda » — ni l'`ItemList`, ni les paramètres
+d'URL, dont aucun n'a tiré sur les vingt-sept premières pages. Une page qui se
+pagine a une page suivante, donc plusieurs pages de quelque chose ; une fiche
+n'en a pas. Elle se lit sur le HTML brut, pas sur `links_of` : celui-ci écarte
+justement ces liens-là — moins de quinze caractères de texte, et `/page/2`
+parmi les chemins de service. Ce qui est du bruit pour le dépouillement est ici
+le signal.
+
+Les quatre premiers sont du Python : ils ne coûtent rien. Le quatrième n'est appelé que
 lorsqu'ils se taisent tous — `classify_model: ""` en configuration le
 désactive, et la page reste « inconnue ».
 

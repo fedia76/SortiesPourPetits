@@ -16,10 +16,13 @@ tranche :
 1. **L'URL** — `?page=2`, `?search=`, `?filter[]=` : une page paginée ou
    filtrée *est* une liste de résultats. Ce n'est pas une heuristique sur le
    gabarit d'un site, c'est la sémantique d'un paramètre de requête.
-2. **JSON-LD** — le site déclare lui-même ce qu'il publie. Un seul spectacle
+2. **La pagination** — `rel="next"`, ou une suite de liens « 1 2 3 … ». Une
+   page qui se pagine a une page suivante, donc plusieurs pages de quelque
+   chose. Une fiche n'en a pas.
+3. **JSON-LD** — le site déclare lui-même ce qu'il publie. Un seul spectacle
    nommé, c'est une sortie ; trois titres différents ou un `ItemList`, c'est
    une liste. C'est le signal le plus rentable des trois.
-3. **OpenGraph** — `og:type: event`, rare mais sans ambiguïté quand il est là.
+4. **OpenGraph** — `og:type: event`, rare mais sans ambiguïté quand il est là.
 
 Et quand rien ne tranche, la réponse est `INCONNU` — ce n'est pas un échec.
 L'orchestrateur sait déjà quoi faire d'une page dont on ignore la nature : il
@@ -87,6 +90,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
+from bs4 import BeautifulSoup
+
 from .harvest import Link, _is_event, _ld_blocks, _soup, _walk, links_of
 
 #: Les trois réponses possibles. `INCONNU` est une réponse, pas une panne.
@@ -110,6 +115,15 @@ _LIST_QUERY = re.compile(
 
 #: Segments de chemin qui paginent, quel que soit le site : /page/2, /p/3.
 _LIST_PATH = re.compile(r"/(page|p)/\d+/?$", re.I)
+
+#: Un lien dont le texte n'est qu'un numéro de page — « 3 » ou « Page 3 ».
+#: Volontairement pas « suivant », « next », « › » : ces mots-là décorent
+#: aussi des carrousels et des fils d'articles, et on ne veut que du sûr.
+_PAGE_NUMBER = re.compile(r"^(page\s+)?\d{1,3}$", re.I)
+
+#: En dessous, ce n'est pas une pagination — deux liens numérotés se trouvent
+#: dans n'importe quel sommaire.
+PAGER_LINKS = 3
 
 #: Types JSON-LD qui annoncent une liste plutôt qu'un événement.
 _LIST_TYPES = re.compile(r"ItemList|CollectionPage|SearchResultsPage", re.I)
@@ -157,6 +171,10 @@ def classify(html: str, url: str, *, links: int | None = None) -> Verdict:
     if verdict is not None:
         return verdict
 
+    verdict = _by_pagination(html)
+    if verdict is not None:
+        return verdict
+
     verdict = _by_json_ld(html)
     if verdict is not None:
         return verdict
@@ -189,7 +207,44 @@ def _by_url(url: str) -> Verdict | None:
     return None
 
 
-# ------------------------------------------------------- 2. ce que le site déclare
+# ------------------------------------------------------- 2. la page se pagine-t-elle
+
+
+def _by_pagination(html: str) -> Verdict | None:
+    """Une page qui se pagine liste quelque chose. Une fiche ne se pagine pas.
+
+    Deux formes, et il faut lire le HTML brut pour les voir : `links_of` écarte
+    précisément ces liens-là — un texte de moins de quinze caractères est jugé
+    sans intérêt, et `/page/2` fait partie des chemins de service. Ce qui est
+    du bruit pour le dépouillement est ici le signal.
+
+    Le sens est à sens unique : la pagination prouve un agenda, jamais une
+    fiche. C'est exactement le manque — jusqu'ici, seuls un `ItemList` ou des
+    paramètres d'URL savaient dire « agenda », et ni l'un ni l'autre n'a tiré
+    sur les vingt-sept premières pages.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    # `rel="next"` est normalisé, et les moteurs de blog le posent tout seuls.
+    for tag in soup.find_all(["link", "a"], rel=True):
+        rels = tag.get("rel") or []
+        rels = rels if isinstance(rels, list) else [rels]
+        if any(str(r).lower() == "next" for r in rels):
+            return Verdict(AGENDA, "pagination", 'lien rel="next"', "certain")
+
+    # Sinon, une suite de liens dont le texte n'est qu'un numéro.
+    numeros = {
+        anchor.get_text(strip=True)
+        for anchor in soup.find_all("a", href=True)
+        if _PAGE_NUMBER.match(anchor.get_text(strip=True))
+    }
+    if len(numeros) >= PAGER_LINKS:
+        suite = ", ".join(sorted(numeros, key=int)[:5])
+        return Verdict(AGENDA, "pagination", f"liens numérotés ({suite}…)", "certain")
+    return None
+
+
+# ------------------------------------------------------- 3. ce que le site déclare
 
 
 def _by_json_ld(html: str) -> Verdict | None:
@@ -233,7 +288,7 @@ def _declares_list(node: dict) -> bool:
     return any(isinstance(t, str) and _LIST_TYPES.search(t) for t in types)
 
 
-# ------------------------------------------------------------ 3. les métadonnées
+# ------------------------------------------------------------ 4. les métadonnées
 
 
 #: `<meta property="og:type" content="…">`, cherché dans l'en-tête seule. Une
