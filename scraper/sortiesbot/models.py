@@ -41,6 +41,11 @@ class Candidate:
     #: Page de programme : elle porte plusieurs sorties, à relever d'un coup.
     #: Seul le mode « site » en produit ; ailleurs une page vaut une sortie.
     multiple: bool = False
+    #: Ce que la découverte a annoncé de cette page (« agenda », « sortie »),
+    #: quand elle s'est prononcée. Vide pour un lien tiré d'un agenda : le
+    #: modèle n'a rien dit de cette page-là. Sert à confronter son classement
+    #: à celui que `classify.py` rend sur le HTML, et à rien d'autre.
+    announced: str = ""
 
 
 @dataclass(frozen=True)

@@ -20,12 +20,16 @@ from .base import Brick
 class Harvest(Brick):
     stage = Stage.HARVEST
 
-    def run(self, url: str) -> list[Link] | None:
+    def run(self, url: str, announced: str = "") -> list[Link] | None:
         """Rend les liens de l'agenda, ou `None` s'il est injoignable.
 
         La liste vide est une réponse : la page a bien été lue, elle ne mène
         simplement nulle part. `None` dit que la question n'a pas pu être
         posée — l'appelant ne doit alors rien conclure de cette page.
+
+        `announced` est le classement rendu par la découverte, uniquement pour
+        le confronter à ce que le HTML dit de la page. Il n'entre dans aucune
+        décision de cette brique.
         """
         with self.opened(url=url, agenda=url) as st:
             self.log.event("fetching", url=url)
@@ -37,6 +41,9 @@ class Harvest(Brick):
                 return None
 
             links = links_of(html, url)
+            # Le HTML est là et les liens sont comptés : la classification ne
+            # coûte donc rien de plus qu'une lecture de plus du même texte.
+            self.observed(url, html, announced=announced, links=len(links))
             self.summary.pages += 1
             self.log.event("harvested", url=url, links=len(links), chars=len(html))
             st.produced(f"{len(links)} lien(s) extrait(s)", links=len(links))

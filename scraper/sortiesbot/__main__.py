@@ -16,7 +16,9 @@ from pathlib import Path
 
 from .api import SppApi
 from .config import ConfigError, Environment, load_config, load_dotenv, with_limit
+from .harvest import Fetcher
 from .journal import RunLog, run_log_path
+from .ledger import Ledger
 from .orchestrator import run
 from .providers.base import ProviderError, get_provider
 from .store import SeenStore
@@ -46,6 +48,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--state",
         default=str(ROOT / "state" / "seen.sqlite3"),
         help="base des URLs déjà vues (défaut : scraper/state/seen.sqlite3)",
+    )
+    parser.add_argument(
+        "--classifier-log",
+        default=str(ROOT / "state" / "classifier.jsonl"),
+        help=(
+            "registre du classifieur en observation, hors journaux de run "
+            "(défaut : scraper/state/classifier.jsonl ; « - » pour ne rien écrire)"
+        ),
+    )
+    parser.add_argument(
+        "--save-pages",
+        metavar="DOSSIER",
+        help="archive chaque page téléchargée, pour en faire des fixtures de test",
     )
     parser.add_argument(
         "--forget",
@@ -97,8 +112,16 @@ def main(argv: list[str] | None = None) -> int:
                 "fur et à mesure, le temps écoulé est indiqué à gauche.\n"
             )
 
-    with RunLog(log_path, verbose=not args.quiet) as log, SeenStore(state_path) as store:
-        result = run(config, provider, store, api, log, submit=args.submit)
+    ledger_path = None if args.classifier_log in ("", "-") else args.classifier_log
+    fetcher = Fetcher(archive=args.save_pages) if args.save_pages else None
+
+    with RunLog(log_path, verbose=not args.quiet) as log, SeenStore(state_path) as store, Ledger(
+        ledger_path, run=log_path.stem
+    ) as ledger:
+        result = run(
+            config, provider, store, api, log,
+            submit=args.submit, fetcher=fetcher, ledger=ledger,
+        )
 
     output = log_path.with_suffix(".json")
     output.write_text(

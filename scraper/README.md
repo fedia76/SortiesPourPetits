@@ -104,6 +104,8 @@ c'est anormal ; sinon, c'est que ça travaille.
 | `--quiet` | pas de sortie console (le journal reste écrit) |
 | `--forget` | ignore la mémoire des URLs déjà vues, pour rejouer un run |
 | `--runs-dir`, `--state` | emplacements du journal et de la mémoire |
+| `--classifier-log` | registre du classifieur en observation (`-` pour ne rien écrire) |
+| `--save-pages DOSSIER` | archive chaque page téléchargée, pour en faire des fixtures |
 
 Chaque run écrit deux fichiers dans `runs/` :
 
@@ -141,9 +143,26 @@ par brique**, leur vocabulaire commun dans
 
 Aucune brique ne sait ce qui vient avant ou après elle : l'ordre n'existe qu'à
 un seul endroit, [`sortiesbot/orchestrator.py`](sortiesbot/orchestrator.py),
-où la classe `Run` les enchaîne. C'est là qu'on lit d'un coup d'œil combien de
-fois chacune tourne — la découverte une fois par run, le dépouillement une fois
-par agenda, la lecture une fois par page, la publication une fois par fiche.
+et plus précisément dans une seule méthode, `Run.chain()`. Les six appels s'y
+suivent de haut en bas, chacun annoncé par son numéro, et leur **indentation
+dit la cardinalité** — ce qui est plus à droite tourne plus souvent :
+
+```
+1  découverte                              1 fois par run
+     2  dépouillement                      1 fois par agenda
+     3  sélection                          1 fois par agenda
+   puis, pour chaque page retenue :
+     4  lecture                            1 fois par page
+     5  extraction                         1 fois par page → n fiches
+          6  publication                   1 fois par fiche
+```
+
+`chain()` ne contient rien d'autre que ces six appels et les branchements qui
+décident de la suite. Ce qui tranche *si* une page est lue — doublons du run,
+plafond de sorties, budget — est en amont, dans `_to_read()` ; l'intendance du
+run — catégories du site, comptes finaux, ouverture et clôture du journal —
+est groupée à part, dans `go()`. Sans ce partage, la chaîne se lisait coupée
+en trois par des décisions qui ne la concernaient pas.
 
 Elles n'ont **pas** de signature commune, et c'est délibéré : ces cardinalités
 diffèrent, et une interface uniforme aurait fait croire à une chaîne de six
@@ -193,8 +212,8 @@ dedans en hérite, et le code n'a pas à répéter `agenda=…` sur quarante app
 | Clé | Posée par | Ce qu'elle relie |
 |---|---|---|
 | `query` | le fournisseur, à chaque `search_result` | la requête web → les URL qu'elle a remontées |
-| `agenda` | `Run._collect`, autour des étages 2 et 3 | l'agenda → ses liens, ses liens retenus, ses pages |
-| `page` | `Run._read_and_publish` | la page → sa lecture, son extraction, son verdict |
+| `agenda` | `Run.chain`, autour des étages 2 et 3 | l'agenda → ses liens, ses liens retenus, ses pages |
+| `page` | `Run.chain`, autour des étages 4 à 6 | la page → sa lecture, son extraction, son verdict |
 
 La console reconstitue l'arbre à partir de ces trois clés
 (`server/src/lib/scraperTree.ts`), et la page de débogage l'affiche en regard
@@ -220,6 +239,77 @@ par la recherche n'apparaissait nulle part, sans qu'on sache pourquoi :
 
 Chaque résultat de recherche porte donc son sort, et un agenda jamais ouvert
 garde son nœud dans l'arbre avec le motif.
+
+### Le classifieur en observation
+
+Aujourd'hui, c'est le modèle qui dit d'une page trouvée si elle est un
+**agenda** ou une **sortie**, à l'étape 1 : la recherche lui remonte le
+contenu des pages, et il le lit. Cette réponse est confortable, mais elle est
+liée au fournisseur — un moteur de recherche ordinaire ne rend que des
+extraits, pas des pages — et elle est payante à chaque run.
+
+Or la même question se répond sur le HTML, gratuitement, une fois la page
+téléchargée. C'est ce que fait [`sortiesbot/classify.py`](sortiesbot/classify.py),
+en cascade, du plus certain au plus flou :
+
+| Signal | Ce qu'il dit | Confiance |
+|---|---|---|
+| **JSON-LD** | un seul spectacle nommé → sortie ; trois titres distincts ou un `ItemList` → agenda | certain |
+| **OpenGraph** | `og:type: event` → sortie | probable |
+| **Les liens** | au-delà de 8 liens exploitables → agenda ; 4 ou moins → sortie | probable |
+| — | entre les deux : **inconnu** | — |
+
+Le piège est documenté dans `json_ld_dates` : beaucoup de sites publient « un
+`schema.org/Event` par représentation ». Compter les objets classerait en
+agenda toute pièce jouée douze fois — on compte donc les **titres distincts**.
+
+`inconnu` est une réponse, pas une panne : l'orchestrateur sait déjà quoi
+faire d'une page dont il ignore la nature. Il la traite en agenda, et son
+filet la relit comme une sortie si le dépouillement ne donne rien. L'erreur
+n'est pas symétrique — croire qu'une sortie est un agenda coûte un appel de
+sélection et se rattrape tout seul, l'inverse coûte tous les liens d'un
+agenda. D'où le biais assumé : **dans le doute, agenda.**
+
+**Rien de tout cela ne décide quoi que ce soit pour l'instant.** Le classement
+suivi reste celui du modèle ; `classify.py` dit en parallèle ce qu'il aurait
+répondu, et le journal note s'ils sont d'accord. On mesure avant de
+remplacer — plutôt que de troquer un jugement qui marche contre un jugement
+qu'on espère bon.
+
+La classification a lieu là où le HTML est déjà en main, donc sans
+téléchargement supplémentaire : au **dépouillement** pour les agendas, à la
+**lecture** pour les pages que la recherche a remontées directement. Une page
+passée par les deux est donc constatée deux fois, et le champ `stage` les
+distingue.
+
+### Le registre, et comment le lire
+
+Les journaux de run s'oublient — un bouton de la console est là pour ça. Une
+mesure qui s'accumule sur des semaines n'a donc rien à y faire : elle part
+dans un fichier à part, en ajout seul, hors de `runs/`.
+
+* en ligne de commande : `state/classifier.jsonl`, réglable par
+  `--classifier-log` (`-` pour ne rien écrire) ;
+* dans le service : `state/classifier.jsonl` également, une ligne par page
+  constatée, avec l'identifiant de l'exécution.
+
+```bash
+# Le taux d'accord, en ne comptant chaque page qu'une fois par run.
+jq -s 'unique_by(.run + .url) | map(select(.agrees != null))
+       | (map(select(.agrees)) | length) as $ok | "\($ok) / \(length)"' \
+   state/classifier.jsonl
+
+# Les désaccords, et le signal qui les a produits.
+jq -r 'select(.agrees == false) | "\(.signal)\t\(.announced) → \(.verdict)\t\(.url)"' \
+   state/classifier.jsonl
+```
+
+Un désaccord ne dit pas encore qui a raison. C'est le **sort final de la
+page**, dans le même run, qui tranche : une page annoncée « agenda » dont
+aucun lien n'est retenu et dont l'extraction rend une sortie valide donne tort
+au modèle ; une page annoncée « sortie » dont l'extraction rend
+`relevant=false` avec « page de liste » lui donne tort dans l'autre sens. Le
+journal porte les deux bouts, reliés par l'URL.
 
 ### Le partage des rôles
 
@@ -600,6 +690,39 @@ Aucun test n'appelle le réseau : le fournisseur Claude est branché sur un
 serveur HTTP local qui enregistre les requêtes, ce qui verrouille la forme de
 ce qui est envoyé (outils serveur, format structuré, reprise après
 `pause_turn`) sans dépenser de jetons.
+
+### Le jeu de vraies pages
+
+Ce qui casse en production n'est presque jamais l'enchaînement — c'est la
+couche qui **lit le HTML** : un lien dont le texte a changé, un JSON-LD
+reformaté, une illustration remplacée par un logo. Ces régressions-là ne se
+voient que sur des pages entières, avec leur bandeau de cookies, leur
+navigation et leur pied de page.
+
+`tests/fixtures/pages/` en contient donc quelques-unes, décrites par un
+`pages.jsonl` — une ligne par page : son fichier, son URL, et sa nature quand
+elle a été étiquetée. `tests/test_golden.py` les rejoue.
+
+**Ce format est celui qu'écrit `--save-pages`.** Élargir la couverture ne
+demande donc pas une ligne de code :
+
+```bash
+python -m sortiesbot -c configs/spectacles-weekend.yaml --save-pages /tmp/pages
+cp /tmp/pages/<page>.html scraper/tests/fixtures/pages/
+# puis on recopie sa ligne dans pages.jsonl, en ajoutant "kind": "agenda"|"sortie"
+```
+
+Une page déposée est immédiatement utile : elle doit se lire sans rien casser.
+Ajouter `kind` en fait en plus un cas de vérité pour le classifieur — c'est ce
+jeu étiqueté qui dira, le moment venu, si on peut se passer du classement du
+modèle.
+
+Les assertions portent sur l'essentiel : quelles pages deviennent candidates,
+combien de sorties sortent, leurs titres. Jamais sur le JSON octet par octet —
+un test qu'un changement cosmétique fait rougir finit désactivé, et ne protège
+plus rien. Et comme une capture porte des dates figées alors qu'un run se juge
+par rapport à aujourd'hui, les assertions sur les dates restent du côté de la
+lecture, où elles valent pour toujours.
 
 ## Coût d'un run
 

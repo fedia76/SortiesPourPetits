@@ -20,10 +20,12 @@ lui en demander une revenait à lui demander de l'inventer.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
@@ -84,11 +86,22 @@ class Link:
 class Fetcher:
     """Client HTTP poli : robots.txt respecté, un hôte à la fois."""
 
-    def __init__(self, session: requests.Session | None = None):
+    def __init__(
+        self,
+        session: requests.Session | None = None,
+        archive: Path | str | None = None,
+    ):
         self.session = session or requests.Session()
         self.session.headers["User-Agent"] = USER_AGENT
         self._robots: dict[str, RobotFileParser | None] = {}
         self._last_call: dict[str, float] = {}
+        #: Dossier où déposer chaque page téléchargée. Sert à constituer des
+        #: fixtures de vraies pages pour les tests de non-régression : le
+        #: pipeline se rejoue ensuite hors ligne, sur ce que le web disait ce
+        #: jour-là.
+        self.archive = Path(archive) if archive else None
+        if self.archive is not None:
+            self.archive.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------- politesse
 
@@ -151,7 +164,28 @@ class Fetcher:
             raise FetchError(f"page inaccessible ({err.__class__.__name__})") from err
 
         encoding = response.encoding or "utf-8"
-        return b"".join(chunks).decode(encoding, errors="replace")
+        html = b"".join(chunks).decode(encoding, errors="replace")
+        self._keep(url, html)
+        return html
+
+    def _keep(self, url: str, html: str) -> None:
+        """Dépose la page dans le dossier d'archive, si on en a un.
+
+        Le nom du fichier vient de l'URL, pour qu'un second passage réécrive
+        la même page plutôt que d'en accumuler des copies. L'index à côté
+        rend la correspondance lisible sans avoir à recalculer l'empreinte.
+        """
+        if self.archive is None:
+            return
+        name = hashlib.sha1(url.encode()).hexdigest()[:16]
+        try:
+            (self.archive / f"{name}.html").write_text(html, encoding="utf-8")
+            with open(self.archive / "pages.jsonl", "a", encoding="utf-8") as index:
+                index.write(json.dumps({"file": f"{name}.html", "url": url}) + "\n")
+        except OSError:
+            # Archiver est un confort de mise au point : un disque plein ne
+            # doit pas faire échouer une collecte.
+            pass
 
 
 # --------------------------------------------------------------- extraction
