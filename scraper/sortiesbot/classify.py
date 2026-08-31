@@ -15,10 +15,8 @@ tranche :
 
 1. **JSON-LD** — le site déclare lui-même ce qu'il publie. Un seul spectacle
    nommé, c'est une sortie ; trois titres différents ou un `ItemList`, c'est
-   une liste. C'est le seul signal qu'on peut qualifier de certain.
+   une liste. C'est le seul signal qu'on puisse qualifier de certain.
 2. **OpenGraph** — `og:type: event`, rare mais sans ambiguïté quand il est là.
-3. **Les liens** — beaucoup de liens exploitables trahissent une liste, très
-   peu trahissent une fiche. Signal faible, en dernier recours.
 
 Et quand rien ne tranche, la réponse est `INCONNU` — ce n'est pas un échec.
 L'orchestrateur sait déjà quoi faire d'une page dont on ignore la nature : il
@@ -31,6 +29,27 @@ Un piège, et il vient d'ici : `harvest.json_ld_dates` rappelle que beaucoup de
 sites publient « un `schema.org/Event` par représentation ». Compter les
 objets `Event` classerait donc en agenda toute pièce jouée douze fois. On
 compte les **titres distincts**, pas les objets.
+
+## Pourquoi il n'y a pas de troisième signal
+
+Une première version tranchait, faute de mieux, sur le **nombre de liens
+exploitables** : beaucoup de liens pour une liste, peu pour une fiche. Vingt-sept
+pages réelles ont suffi à l'enterrer. Les deux populations se recouvrent de bout
+en bout :
+
+    agendas, liens dépouillés        10   33   55  65  78  90
+    fiches tirées d'un agenda        10 10 10 10 11  21  38  42  61
+
+Aucun seuil ne les sépare, et deux observations disent pourquoi. Sur
+`parismomes.fr`, huit pages du même site — agendas et fiches mêlés — rendent
+toutes **exactement dix liens** : c'est le gabarit du site qu'on mesurait, pas
+la nature de la page. Sur `sortiraparis.com`, une fiche unique en rend deux
+cents, c'est-à-dire le plafond de `links_of` : le compteur est saturé et ne
+mesure plus rien.
+
+Le compte reste **relevé** — il part au registre, où il servira le jour où on
+cherchera un vrai signal structurel (des blocs répétés portant chacun un lien
+*et* une date, par exemple). Il n'a simplement plus voix au chapitre.
 """
 
 from __future__ import annotations
@@ -39,14 +58,16 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from bs4 import BeautifulSoup
-
 from .harvest import _is_event, _ld_blocks, _walk, links_of
 
 #: Les trois réponses possibles. `INCONNU` est une réponse, pas une panne.
 AGENDA = "agenda"
 SORTIE = "sortie"
 INCONNU = "inconnu"
+
+#: L'en-tête d'une page, où vivent les métadonnées. Au-delà, on est dans le
+#: corps, et un `og:` qui s'y trouve est du texte, pas une déclaration.
+HEAD_CHARS = 8192
 
 #: Types JSON-LD qui annoncent une liste plutôt qu'un événement.
 _LIST_TYPES = re.compile(r"ItemList|CollectionPage|SearchResultsPage", re.I)
@@ -55,17 +76,6 @@ _LIST_TYPES = re.compile(r"ItemList|CollectionPage|SearchResultsPage", re.I)
 #: suffisent pas : une page de spectacle annonce souvent la séance scolaire à
 #: côté de la séance tout public, sous deux noms.
 LIST_NAMES = 3
-
-#: Au-delà de tant de liens exploitables, la page mène ailleurs — c'est une
-#: liste. `links_of` a déjà retiré la navigation et les pages de service, donc
-#: ce qui reste est du contenu. Une page « que faire ce week-end » en annonce
-#: rarement moins de huit ; viser plus haut la laisserait passer pour une fiche.
-AGENDA_LINKS = 8
-
-#: En dessous, la page ne mène nulle part : c'est elle, le contenu. On garde
-#: de la marge pour les « vous aimerez aussi » qui ornent toute fiche.
-#: Entre les deux — cinq à sept liens — le classifieur répond « inconnu ».
-SORTIE_LINKS = 4
 
 
 @dataclass(frozen=True)
@@ -109,8 +119,10 @@ def classify(html: str, url: str, *, links: int | None = None) -> Verdict:
     if verdict is not None:
         return verdict
 
+    # Rien de déclaré : on ne devine pas. Le compte de liens accompagne le
+    # verdict pour finir au registre, mais il ne le décide pas — voir l'en-tête.
     count = links if links is not None else len(links_of(html, url))
-    return _by_links(count)
+    return Verdict(INCONNU, "aucun", f"rien de déclaré ({count} liens relevés)", "faible")
 
 
 # ------------------------------------------------------- 1. ce que le site déclare
@@ -160,31 +172,23 @@ def _declares_list(node: dict) -> bool:
 # ------------------------------------------------------------ 2. les métadonnées
 
 
+#: `<meta property="og:type" content="…">`, cherché dans l'en-tête seule. Une
+#: expression régulière plutôt qu'un arbre : monter tout le document en mémoire
+#: pour une balise que presque aucun site ne pose serait payer cher un signal
+#: qui, sur nos vingt-sept premières pages, n'a jamais servi une seule fois.
+_OG_TYPE = re.compile(
+    r"""<meta[^>]+property\s*=\s*['"]og:type['"][^>]+content\s*=\s*['"]([^'"]+)['"]""",
+    re.I,
+)
+
+
 def _by_opengraph(html: str) -> Verdict | None:
     """`og:type: event` — rare, mais sans ambiguïté quand il est là."""
-    soup = BeautifulSoup(html, "html.parser")
-    tag = soup.find("meta", attrs={"property": re.compile(r"^og:type$", re.I)})
-    value = (tag.get("content") or "").strip().lower() if tag else ""
+    match = _OG_TYPE.search(html[:HEAD_CHARS])
+    value = match.group(1).strip().lower() if match else ""
     if value in ("event", "article:event", "activity"):
         return Verdict(SORTIE, "opengraph", f"og:type = {value}", "probable")
     return None
-
-
-# ------------------------------------------------------------------ 3. les liens
-
-
-def _by_links(count: int) -> Verdict:
-    """Le signal faible, et il est assumé comme tel.
-
-    C'est ce qui rendait un classement par comptage hasardeux quand il était
-    le seul juge. Ici il n'intervient que sur les pages qui n'ont rien
-    déclaré, et il a le droit de répondre « je ne sais pas ».
-    """
-    if count >= AGENDA_LINKS:
-        return Verdict(AGENDA, "liens", f"{count} liens exploitables", "probable")
-    if count <= SORTIE_LINKS:
-        return Verdict(SORTIE, "liens", f"{count} lien(s) exploitable(s) seulement", "probable")
-    return Verdict(INCONNU, "liens", f"{count} liens : ni liste ni fiche", "faible")
 
 
 def _fold(text: str) -> str:

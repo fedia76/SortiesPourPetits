@@ -7,6 +7,12 @@ Trois choses se vérifient ici, et la troisième est la plus importante :
   `harvest.json_ld_dates` documente déjà, un `Event` par représentation ;
 * qu'il répond « inconnu » plutôt que de trancher au hasard. C'est ce qui
   autorise l'orchestrateur à garder son filet : dans le doute, agenda.
+
+Le comptage de liens a été un troisième signal, et vingt-sept pages réelles
+l'ont enterré : les deux populations se recouvrent complètement (voir l'en-tête
+de `classify.py`). Les tests qui l'exerçaient sont devenus des tests
+d'abstention — c'est bien le comportement qu'on veut verrouiller, pour que
+personne ne le réintroduise sans mesure.
 """
 
 from __future__ import annotations
@@ -69,10 +75,8 @@ def test_deux_titres_ne_suffisent_pas_a_faire_un_agenda():
         {"@type": "Event", "name": "Le Petit Prince", "startDate": "2026-09-12"},
         {"@type": "Event", "name": "Le Petit Prince — séance scolaire", "startDate": "2026-09-13"},
     ]
-    # Deux titres : le JSON-LD ne tranche pas, on retombe sur les liens.
-    verdict = classify(page(ld(seances) + liens(2)), URL)
-    assert verdict.kind == SORTIE
-    assert verdict.signal == "liens"
+    # Deux titres : le JSON-LD ne tranche pas, et rien d'autre ne le fera.
+    assert classify(page(ld(seances) + liens(2)), URL).kind == INCONNU
 
 
 def test_une_liste_declaree_est_un_agenda():
@@ -88,7 +92,7 @@ def test_une_liste_declaree_est_un_agenda():
 
 def test_un_json_ld_illisible_ne_fait_pas_echouer_le_classement():
     html = page('<script type="application/ld+json">{ pas du json</script>' + liens(20))
-    assert classify(html, URL).kind == AGENDA
+    assert classify(html, URL).kind == INCONNU
 
 
 def test_opengraph_event_designe_une_sortie():
@@ -97,36 +101,45 @@ def test_opengraph_event_designe_une_sortie():
     assert (verdict.kind, verdict.signal) == (SORTIE, "opengraph")
 
 
-# ------------------------------------------------------------ le signal faible
+def test_un_og_type_dans_le_corps_de_page_ne_compte_pas():
+    """Seule l'en-tête déclare ; plus bas, c'est du texte qui parle d'`og:type`."""
+    corps = "x" * 9000 + '<meta property="og:type" content="event">'
+    assert classify(page(corps), URL).kind == INCONNU
 
 
-def test_beaucoup_de_liens_trahissent_une_liste():
+# ------------------------------------------------- ce qu'on refuse de deviner
+
+
+def test_beaucoup_de_liens_ne_font_pas_un_agenda():
+    """Enterré par la mesure : `parismomes` rend dix liens sur toutes ses pages.
+
+    Le compte reste relevé — il part au registre — mais il ne décide plus rien.
+    """
     verdict = classify(page(liens(30)), URL)
-    assert (verdict.kind, verdict.signal, verdict.confidence) == (AGENDA, "liens", "probable")
+    assert (verdict.kind, verdict.signal) == (INCONNU, "aucun")
+    assert "30 liens relevés" in verdict.detail
 
 
-def test_une_page_qui_ne_mene_nulle_part_est_la_sortie():
-    verdict = classify(page("<h1>Le Petit Prince</h1>" + liens(2)), URL)
-    assert (verdict.kind, verdict.signal) == (SORTIE, "liens")
-
-
-def test_entre_les_deux_le_classifieur_ne_tranche_pas():
-    """« Inconnu » est une réponse : l'orchestrateur sait déjà quoi en faire."""
-    verdict = classify(page(liens(6)), URL)
-    assert (verdict.kind, verdict.confidence) == (INCONNU, "faible")
+def test_une_page_qui_ne_mene_nulle_part_nest_pas_pour_autant_une_sortie():
+    """`sortiraparis` rend deux cents liens sur une fiche unique. Symétrique."""
+    assert classify(page("<h1>Le Petit Prince</h1>" + liens(2)), URL).kind == INCONNU
 
 
 def test_les_liens_deja_comptes_ne_sont_pas_recomptes():
     """Le dépouillement a déjà la liste : lui refaire lire le HTML serait bête."""
     verdict = classify(page("<p>rien</p>"), URL, links=40)
-    assert verdict.kind == AGENDA
+    assert "40 liens relevés" in verdict.detail
 
 
 # --------------------------------------------------------------- la confrontation
 
 
 def test_l_accord_avec_la_decouverte_se_lit_en_trois_etats():
-    verdict = classify(page(liens(30)), URL)
+    catalogue = [
+        {"@type": "Event", "name": titre, "startDate": "2026-09-12"}
+        for titre in ("Le Petit Prince", "Pierre et le Loup", "Boucle d'or")
+    ]
+    verdict = classify(page(ld(catalogue)), URL)
     assert verdict.agrees_with("agenda") is True
     assert verdict.agrees_with("sortie") is False
     # Rien d'annoncé : il n'y a rien à comparer, ce n'est pas un désaccord.

@@ -108,15 +108,29 @@ def test_une_vraie_page_se_lit_sans_rien_faire_exploser(entry):
 @pytest.mark.parametrize(
     "entry", [e for e in corpus() if e.get("kind")], ids=[e["file"] for e in corpus() if e.get("kind")]
 )
-def test_le_classifieur_retrouve_la_nature_etiquetee(entry):
+def test_le_classifieur_ne_se_trompe_jamais_sur_une_page_etiquetee(entry):
     """La vérité terrain du classifieur, une ligne de `pages.jsonl` à la fois.
 
-    Ajouter `"kind"` à une capture suffit à en faire un cas de non-régression :
-    c'est le jeu étiqueté qui dira, plus tard, si on peut se passer du
-    classement du modèle.
+    Le contrat n'est pas « répondre », c'est **ne pas se tromper** : la cascade
+    a le droit de s'abstenir, et elle le fait souvent depuis qu'on lui a retiré
+    le comptage de liens. C'est un verdict faux qui coûte cher, jamais une
+    abstention — l'orchestrateur sait quoi faire d'un « inconnu ».
+
+    Ajouter `"kind"` à une capture suffit à en faire un cas de non-régression.
     """
     verdict = classify(html_of(entry), entry["url"])
-    assert verdict.kind == entry["kind"], f"{entry['file']} : {verdict.detail}"
+    assert verdict.kind in (entry["kind"], INCONNU), f"{entry['file']} : {verdict.detail}"
+
+
+def test_la_cascade_tranche_encore_sur_au_moins_une_page():
+    """Garde-fou : un classifieur qui s'abstient partout est un classifieur mort.
+
+    Sans cette assertion, casser le JSON-LD ne ferait rougir aucun test — tout
+    deviendrait « inconnu », et le test ci-dessus passerait avec les honneurs.
+    """
+    etiquetees = [e for e in corpus() if e.get("kind")]
+    tranches = [e for e in etiquetees if classify(html_of(e), e["url"]).kind != INCONNU]
+    assert tranches, "aucune page étiquetée n'obtient plus de verdict"
 
 
 # ══════════════════════════════════════ ce que ces pages-ci doivent donner

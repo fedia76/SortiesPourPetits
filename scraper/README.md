@@ -256,12 +256,31 @@ en cascade, du plus certain au plus flou :
 |---|---|---|
 | **JSON-LD** | un seul spectacle nommé → sortie ; trois titres distincts ou un `ItemList` → agenda | certain |
 | **OpenGraph** | `og:type: event` → sortie | probable |
-| **Les liens** | au-delà de 8 liens exploitables → agenda ; 4 ou moins → sortie | probable |
-| — | entre les deux : **inconnu** | — |
+| — | rien de déclaré : **inconnu** | — |
 
 Le piège est documenté dans `json_ld_dates` : beaucoup de sites publient « un
 `schema.org/Event` par représentation ». Compter les objets classerait en
 agenda toute pièce jouée douze fois — on compte donc les **titres distincts**.
+
+Il y a eu un troisième signal, le **nombre de liens exploitables**, et
+vingt-sept pages réelles l'ont enterré. Les deux populations se recouvrent de
+bout en bout :
+
+```
+agendas dépouillés          10   33   55  65  78  90
+fiches tirées d'un agenda   10 10 10 10 11  21  38  42  61
+```
+
+Aucun seuil ne les sépare. Sur `parismomes.fr`, huit pages du même site —
+agendas et fiches mêlés — rendent toutes **exactement dix liens** : c'est le
+gabarit du site qu'on mesurait, pas la nature de la page. Sur
+`sortiraparis.com`, une fiche unique en rend deux cents, le plafond de
+`links_of` : le compteur est saturé. Le compte reste relevé au registre — il
+servira si l'on cherche un jour un vrai signal structurel, des blocs répétés
+portant chacun un lien *et* une date — mais il ne décide plus rien.
+
+Sur ce premier échantillon, le JSON-LD couvrait **47 % des pages lues**, sans
+une erreur apparente. C'est peu de données (27 pages, 7 domaines) : à confirmer.
 
 `inconnu` est une réponse, pas une panne : l'orchestrateur sait déjà quoi
 faire d'une page dont il ignore la nature. Il la traite en agenda, et son

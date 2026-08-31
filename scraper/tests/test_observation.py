@@ -75,8 +75,14 @@ def test_une_fiche_annoncee_agenda_est_signalee_mais_traitee_comme_avant(journal
     assert api.created == []
 
 
-def test_un_accord_ne_produit_aucun_desaccord(journal):
-    """Une page d'agenda annoncée « agenda » : rien à signaler."""
+def test_une_page_sans_declaration_ne_contredit_personne(journal):
+    """Le classifieur s'abstient sur cet agenda : abstention n'est pas désaccord.
+
+    Aucun de ces sites d'agenda ne déclare de `ItemList` en JSON-LD — c'est ce
+    que la première mesure a montré. La cascade répond donc « inconnu », et
+    `agrees` vaut `None` : il n'y a rien à confronter, et surtout rien à
+    signaler comme un désaccord.
+    """
     log, events = journal
     agenda_url = "https://agenda.exemple-departement.fr/agenda/"
     agenda_html = (PAGES / "agenda-departemental.html").read_text(encoding="utf-8")
@@ -94,7 +100,8 @@ def test_un_accord_ne_produit_aucun_desaccord(journal):
             fetcher=FakeFetcher({agenda_url: agenda_html}))
 
     constats = kinds(events, "classified")
-    assert constats and all(c["agrees"] for c in constats if c["announced"])
+    assert constats, "chaque page téléchargée doit être constatée"
+    assert all(c["agrees"] is not False for c in constats)
     assert kinds(events, "classify_disagreement") == []
 
 
