@@ -222,8 +222,9 @@ function stageLabel(stage: string | null) {
   return node ? `${node.number}. ${node.label}` : stage;
 }
 
+/** Le numéro de l'étage, ou null s'il ne figure pas dans le graphe. */
 function stageNumber(stage: string | null) {
-  return stages.value.find((s) => s.stage === stage)?.number ?? 0;
+  return stages.value.find((s) => s.stage === stage)?.number ?? null;
 }
 
 function kindLabel(kind: string) {
@@ -429,11 +430,11 @@ function clip(text: string, max = 22) {
                 {{ s.errors }} ⚠
               </text>
             </g>
-            <text :x="boxX(i)" y="122" class="io">
+            <text v-if="s.takes" :x="boxX(i)" y="122" class="io">
               ↳ reçoit : {{ clip(s.takes) }}
               <title>{{ s.takes }}</title>
             </text>
-            <text :x="boxX(i)" y="140" class="io">
+            <text v-if="s.gives" :x="boxX(i)" y="140" class="io">
               ↳ rend : {{ clip(s.gives) }}
               <title>{{ s.gives }}</title>
             </text>
@@ -444,9 +445,15 @@ function clip(text: string, max = 22) {
           </g>
         </svg>
       </div>
-      <p v-else-if="!loading" class="muted">
+      <p v-else-if="!loading && !total" class="muted">
         Cette exécution n'a pas de journal détaillé. Seules les exécutions lancées
         après la mise en place de cette page en produisent un.
+      </p>
+      <p v-else-if="!loading" class="muted">
+        Le journal de cette exécution ne porte pas le graphe de ses étages : elle
+        est antérieure à cette page. Les événements ci-dessous restent lisibles,
+        mais leur détail — ce qui entre et sort de chaque brique — n'a pas été
+        enregistré. La prochaine exécution l'aura.
       </p>
 
       <!-- ------------------------------------------------------- filtres -->
@@ -497,10 +504,10 @@ function clip(text: string, max = 22) {
           <div class="head" role="button" tabindex="0" @click="toggle(log.id)" @keydown.enter="toggle(log.id)">
             <span class="seq">{{ log.seq }}</span>
             <span class="hour">{{ time(log.at) }}</span>
-            <span v-if="log.stage" class="badge stage" :data-n="stageNumber(log.stage)">
-              {{ stageNumber(log.stage) }}
+            <span v-if="log.stage" class="badge stage" :title="stageLabel(log.stage)">
+              {{ stageNumber(log.stage) ?? '·' }}
             </span>
-            <span v-else class="badge stage out">—</span>
+            <span v-else class="badge stage out" title="Hors étage">—</span>
             <span class="kind">{{ kindLabel(log.kind) }}</span>
             <span class="sum">{{ summary(log) }}</span>
           </div>

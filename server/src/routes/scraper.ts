@@ -563,6 +563,34 @@ scraperRouter.post('/runs/:id/items', async (req, res) => {
   res.json({ ok: true, recorded: parsed.data.items.length });
 });
 
+/**
+ * Repli quand une exécution ne porte pas son propre graphe.
+ *
+ * La source de vérité reste `scraper/sortiesbot/stages.py`, transportée par
+ * l'événement `run_start` : c'est elle qui donne les libellés, et renommer une
+ * brique côté scraper la renomme partout. Ces tables ne servent que pour les
+ * exécutions antérieures, dont on ne sait plus que l'identifiant d'étage.
+ */
+const FALLBACK_ORDER = ['discovery', 'harvest', 'select', 'read', 'extract', 'publish'];
+
+const FALLBACK_LABELS: Record<string, string> = {
+  discovery: 'Découverte',
+  harvest: 'Dépouillement',
+  select: 'Sélection',
+  read: 'Lecture',
+  extract: 'Extraction',
+  publish: 'Publication',
+};
+
+const FALLBACK_ACTORS: Record<string, string> = {
+  discovery: 'modele',
+  harvest: 'python',
+  select: 'modele',
+  read: 'python',
+  extract: 'modele',
+  publish: 'python',
+};
+
 // ------------------------------------------------------- journal détaillé
 
 /**
@@ -729,10 +757,21 @@ scraperRouter.get('/runs/:id/graph', async (req, res) => {
   const described = (() => {
     try {
       const data = start?.data ? (JSON.parse(start.data) as Record<string, unknown>) : {};
-      return Array.isArray(data.stages) ? (data.stages as Record<string, unknown>[]) : [];
+      if (Array.isArray(data.stages) && data.stages.length) {
+        return data.stages as Record<string, unknown>[];
+      }
     } catch {
-      return [];
+      // JSON illisible : on retombe sur le repli ci-dessous.
     }
+    // Repli pour les exécutions dont le `run_start` ne porte pas le graphe —
+    // celles d'avant cette page, ou celles enregistrées quand le scraper
+    // envoyait ses événements à plat. On dessine alors les briques réellement
+    // traversées, à partir de la seule colonne `stage`.
+    return byStage
+      .map((g) => g.stage)
+      .filter((s): s is string => Boolean(s))
+      .map((s) => ({ stage: s, number: FALLBACK_ORDER.indexOf(s) + 1, label: FALLBACK_LABELS[s] ?? s, actor: FALLBACK_ACTORS[s] ?? '', takes: '', gives: '' }))
+      .sort((a, b) => a.number - b.number);
   })();
 
   res.json({

@@ -98,3 +98,63 @@ def test_le_journal_distant_renonce_apres_trois_echecs():
 
     assert journal.given_up is True
     assert ApiCassee.appels == RemoteJournal.MAX_FAILURES
+
+
+def test_le_journal_distant_imbrique_les_champs_sous_data():
+    """Le site range l'enveloppe à plat et le reste dans une colonne JSON.
+
+    Sans cette mise en forme, la validation côté serveur jette silencieusement
+    tout ce qui n'est pas une colonne connue : les lignes arrivent, mais vides.
+    C'est exactement le bug qu'a montré la première mise en production.
+    """
+    envoyes: list[list[dict]] = []
+
+    class ApiCapture:
+        def report_logs(self, run_id, entries):
+            envoyes.append(entries)
+
+    journal = RemoteJournal(ApiCapture(), run_id=1, batch=1)
+    journal.add(
+        {
+            "seq": 3,
+            "at": "2026-08-31T04:13:28+00:00",
+            "stage": "discovery",
+            "kind": "prompt",
+            "level": "info",
+            "op": "search",
+            "chars": 1196,
+        }
+    )
+
+    (entry,) = envoyes[0]
+    # L'enveloppe reste à plat : ce sont les colonnes de `ScraperRunLog`.
+    assert entry["seq"] == 3
+    assert entry["stage"] == "discovery"
+    assert entry["kind"] == "prompt"
+    assert entry["level"] == "info"
+    # Le reste est imbriqué, et rien ne se perd en route.
+    assert entry["data"] == {"op": "search", "chars": 1196}
+
+
+def test_le_journal_distant_tronque_ce_qui_ferait_refuser_le_paquet():
+    """Une URL trop longue ferait perdre les trente-neuf autres événements."""
+    envoyes: list[list[dict]] = []
+
+    class ApiCapture:
+        def report_logs(self, run_id, entries):
+            envoyes.append(entries)
+
+    journal = RemoteJournal(ApiCapture(), run_id=1, batch=1)
+    journal.add({"seq": 1, "kind": "skip", "url": "https://exemple.fr/" + "a" * 900})
+
+    (entry,) = envoyes[0]
+    assert len(entry["url"]) == 500
+
+
+def test_le_graphe_part_avec_le_premier_evenement():
+    """`run_start` porte les six étages : la console dessine sans rien deviner."""
+    from sortiesbot.journal import _wire
+    from sortiesbot.stages import describe
+
+    entry = _wire({"seq": 1, "kind": "run_start", "level": "info", "stages": describe()})
+    assert [s["number"] for s in entry["data"]["stages"]] == [1, 2, 3, 4, 5, 6]
