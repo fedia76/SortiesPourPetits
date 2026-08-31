@@ -181,8 +181,9 @@ class AnthropicProvider:
 
     def __init__(self, api_key: str | None = None, client: Any = None):
         self.usage = Usage()
-        #: Dernière requête web lancée, pour rattacher ses résultats.
-        self._last_query = ""
+        #: Requête de chaque `server_tool_use`, par identifiant de bloc.
+        #: C'est ce qui relie un résultat à la recherche qui l'a remonté.
+        self._queries: dict[str, str] = {}
         if client is not None:
             self._client = client
             return
@@ -415,15 +416,25 @@ class AnthropicProvider:
         if kind == "server_tool_use" and getattr(block, "name", "") == "web_search":
             step.web_searches += 1
             query = str((getattr(block, "input", {}) or {}).get("query", ""))
-            # Les résultats arrivent dans le bloc suivant : on retient la
-            # requête pour les lui rattacher. Sans ça, impossible de savoir
-            # quelle formulation a remonté quel site.
-            self._last_query = query
-            log.event("query", op=op, query=query)
+            # C'est `id` qui relie une requête à ses résultats, et rien d'autre.
+            # Se fier à l'ordre serait faux : le modèle lance volontiers ses
+            # recherches en salve, auquel cas toutes les requêtes sortent avant
+            # le premier résultat — et tout se retrouverait attribué à la
+            # dernière.
+            tool_use_id = str(getattr(block, "id", "") or "")
+            if tool_use_id:
+                self._queries[tool_use_id] = query
+            log.event("query", op=op, query=query, tool_use_id=tool_use_id)
 
         elif kind == "web_search_tool_result":
+            tool_use_id = str(getattr(block, "tool_use_id", "") or "")
+            query = self._queries.get(tool_use_id, "")
             content = getattr(block, "content", None)
             if isinstance(content, list):
+                if not query:
+                    # Sans rattachement, l'arbre du run ne saurait plus dire
+                    # quelle formulation a remonté quoi : autant le signaler.
+                    log.warn(op, f"résultats non rattachés à une requête ({tool_use_id or '?'})")
                 for result in content:
                     url = str(getattr(result, "url", ""))
                     if seen is not None and url.startswith(("http://", "https://")):
@@ -431,11 +442,12 @@ class AnthropicProvider:
                     log.event(
                         "search_result", op=op, url=url,
                         title=getattr(result, "title", ""),
-                        query=getattr(self, "_last_query", ""),
+                        query=query,
+                        tool_use_id=tool_use_id,
                     )
             else:
                 code = getattr(content, "error_code", "") if content is not None else ""
-                log.error(op, f"recherche web en échec : {code}")
+                log.error(op, f"recherche web en échec : {code}", query=query)
 
 
 # ---------------------------------------------------------------------- outils

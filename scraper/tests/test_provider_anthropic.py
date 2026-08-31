@@ -410,3 +410,44 @@ def test_le_programme_est_plafonne_par_max_events(log):
 
     assert len(events) == 3
 
+
+
+def test_chaque_resultat_est_rattache_a_sa_propre_requete():
+    """Le modèle lance ses recherches en salve : l'ordre ne relie rien.
+
+    Toutes les requêtes sortent avant le premier résultat. Se fier à « la
+    dernière requête vue » attribuait alors la totalité des résultats à la
+    sixième recherche, et affichait les cinq autres à zéro — ce qu'on a
+    effectivement vu en production. Seul `tool_use_id` relie les deux.
+    """
+    salve = [
+        {"type": "server_tool_use", "id": "s1", "name": "web_search",
+         "input": {"query": "Malakoff animations enfants"}},
+        {"type": "server_tool_use", "id": "s2", "name": "web_search",
+         "input": {"query": "Châtillon ateliers enfants"}},
+        {"type": "web_search_tool_result", "tool_use_id": "s1",
+         "content": [{"type": "web_search_result", "url": "https://malakoff.fr/agenda",
+                      "title": "Malakoff", "encrypted_content": "x", "page_age": None}]},
+        {"type": "web_search_tool_result", "tool_use_id": "s2",
+         "content": [{"type": "web_search_result", "url": "https://agenda.fr/jeune-public/",
+                      "title": "Châtillon", "encrypted_content": "x", "page_age": None}]},
+        text_block(AGENDAS),
+    ]
+
+    recus: list[dict] = []
+    log = RunLog(path=None, verbose=False)
+    log.sink = recus.append
+
+    server = FakeApiServer([message(salve)])
+    try:
+        provider_for(server).search(Config(name="t", theme="spectacles"), log)
+    finally:
+        server.close()
+
+    par_url = {
+        r["url"]: r["query"] for r in recus if r["kind"] == "search_result"
+    }
+    assert par_url["https://malakoff.fr/agenda"] == "Malakoff animations enfants"
+    assert par_url["https://agenda.fr/jeune-public/"] == "Châtillon ateliers enfants"
+    # Et aucune requête ne se retrouve orpheline ni bonne à tout attribuer.
+    assert not [r for r in recus if r["kind"] == "error" and "non rattachés" in r["message"]]
