@@ -250,6 +250,90 @@ export interface ScraperRun {
   items?: ScraperRunItem[];
 }
 
+/**
+ * Un étage du pipeline, tel que la page de débogage le dessine.
+ *
+ * Les libellés ne sont pas définis ici : ils viennent du scraper
+ * (`sortiesbot/stages.py`), transportés par l'événement `run_start`. Renommer
+ * une brique côté scraper suffit donc à la renommer partout.
+ */
+export interface ScraperStageNode {
+  stage: string;
+  number: number;
+  label: string;
+  /** « modele » = l'étage est facturé ; « python » = il est gratuit. */
+  actor: 'modele' | 'python' | string;
+  takes: string;
+  gives: string;
+  /** Nombre d'événements journalisés dans cet étage. */
+  events: number;
+  errors: number;
+  /** Passages : un étage est traversé une fois par agenda, ou par page. */
+  passes: number;
+  seconds: number;
+  /** Ce que chaque passage a produit, en une ligne. */
+  produced: string[];
+}
+
+export type ScraperLogLevel = 'info' | 'warn' | 'error';
+
+/** Une ligne du journal détaillé d'une exécution. */
+export interface ScraperRunLog {
+  id: number;
+  /** Numéro d'ordre émis par le scraper : c'est le curseur de pagination. */
+  seq: number;
+  at: string;
+  /** L'un des six étages, ou null hors étage (démarrage, clôture). */
+  stage: string | null;
+  kind: string;
+  level: ScraperLogLevel;
+  url: string | null;
+  message: string | null;
+  /** Le reste des champs de l'événement. */
+  data: Record<string, unknown> | null;
+}
+
+export const LOG_LEVEL_LABELS: Record<ScraperLogLevel, string> = {
+  info: 'Information',
+  warn: 'Avertissement',
+  error: 'Erreur',
+};
+
+/** Rendu court d'un événement, par type. Miroir de `journal._CONSOLE`. */
+export const LOG_KIND_LABELS: Record<string, string> = {
+  run_start: 'Démarrage',
+  run_end: 'Fin du run',
+  stage_start: "Entrée dans l'étage",
+  stage_end: "Sortie de l'étage",
+  query: 'Requête web',
+  search_result: 'Résultat de recherche',
+  direct: 'Sortie trouvée directement',
+  seed: 'Point de départ',
+  fetching: 'Téléchargement',
+  harvested: 'Liens extraits',
+  link: 'Lien proposé au tri',
+  link_kept: 'Lien retenu',
+  selected: 'Tri terminé',
+  fallback: 'Repli',
+  candidate: 'Page candidate',
+  page: 'Page lue',
+  prompt: 'Prompt envoyé',
+  usage: 'Jetons consommés',
+  programme: 'Programme dépouillé',
+  extract: 'Fiche extraite',
+  geocode: 'Géocodage',
+  schedule: 'Calendrier',
+  photo: 'Photo',
+  incomplete: 'Champ à compléter',
+  out_of_scope: 'Hors périmètre, gardée',
+  skip: 'Écartée',
+  budget: 'Budget atteint',
+  dry_run: 'Retenue (essai)',
+  submit: 'Proposée',
+  nothing_found: 'Aucun candidat',
+  error: 'Erreur',
+};
+
 export interface ScraperRunItem {
   id: number;
   url: string;

@@ -26,6 +26,7 @@ from .harvest import FetchError, Fetcher, links_of
 from .journal import RunLog
 from .models import Candidate, Summary
 from .providers.base import Provider, ProviderError
+from .stages import Stage
 
 
 def candidates(
@@ -56,15 +57,24 @@ def _by_search(
     summary: Summary,
 ) -> list[Candidate]:
     """Recherches web, puis dépouillement des agendas remontés."""
-    found = provider.search(config, log)
+    # Étage 1 — le modèle cherche et classe. C'est le seul étage qui diffère
+    # d'un mode à l'autre, et le seul qui paie une recherche web.
+    with log.stage(Stage.DISCOVERY, mode="recherche", theme=config.theme, area=config.area) as st:
+        found = provider.search(config, log)
 
-    # Une recherche ne remonte pas que des agendas : elle tombe régulièrement
-    # sur la page d'une sortie précise, qui part telle quelle à l'extraction.
-    agendas = [p for p in found if p.is_agenda][: config.max_agendas]
-    directes = [p for p in found if not p.is_agenda]
+        # Une recherche ne remonte pas que des agendas : elle tombe régulièrement
+        # sur la page d'une sortie précise, qui part telle quelle à l'extraction.
+        agendas = [p for p in found if p.is_agenda][: config.max_agendas]
+        directes = [p for p in found if not p.is_agenda]
 
-    for page in directes:
-        log.event("direct", url=page.url, title=page.title, why=page.reason)
+        for page in directes:
+            log.event("direct", url=page.url, title=page.title, why=page.reason)
+
+        st.produced(
+            f"{len(agendas)} agenda(s) à dépouiller, {len(directes)} sortie(s) directe(s)",
+            agendas=len(agendas),
+            direct=len(directes),
+        )
 
     trouvees = [
         Candidate(url=p.url, title=p.title, source="recherche", context=p.reason)
@@ -95,8 +105,15 @@ def _by_seeds(
     trouvees: list[Candidate] = []
     # Même plafond que les agendas d'une recherche : c'est le même travail, et
     # la console présente le réglage sous les deux noms.
-    for url in config.seed_urls[: config.max_agendas]:
-        log.event("seed", url=url)
+    seeds = config.seed_urls[: config.max_agendas]
+    # L'étage 1 existe aussi ici, il ne coûte simplement rien : les URL sont
+    # données. Le graphe de la console garde ainsi ses six briques.
+    with log.stage(Stage.DISCOVERY, mode="site", seeds=len(seeds)) as st:
+        for url in seeds:
+            log.event("seed", url=url)
+        st.produced(f"{len(seeds)} point(s) de départ, aucune recherche lancée", agendas=len(seeds))
+
+    for url in seeds:
         trouvees.extend(
             _harvest(
                 url,
@@ -133,29 +150,39 @@ def _harvest(
     agenda mal classé) ou comme un programme (mode site, où c'est le cas
     normal d'un festival tenant sur une page).
     """
-    log.event("fetching", stage="agenda", url=url)
-    try:
-        html = fetcher.get_html(url)
-    except FetchError as err:
-        log.error("agenda", str(err), url=url)
-        return []
+    # Étage 2 — Python télécharge l'agenda et en extrait les liens. Gratuit.
+    with log.stage(Stage.HARVEST, url=url) as st:
+        log.event("fetching", url=url)
+        try:
+            html = fetcher.get_html(url)
+        except FetchError as err:
+            log.error("agenda", str(err), url=url)
+            st.produced("page inaccessible", links=0)
+            return []
 
-    links = links_of(html, url)
-    summary.pages += 1
-    log.event("harvested", url=url, links=len(links))
+        links = links_of(html, url)
+        summary.pages += 1
+        log.event("harvested", url=url, links=len(links), chars=len(html))
+        st.produced(f"{len(links)} lien(s) extrait(s)", links=len(links))
+
     if not links:
         # Pas un seul lien exploitable : ce n'est pas un agenda. La page est
         # téléchargée, autant la lire pour ce qu'elle est.
         return [_fallback(url, log, source, fallback_multiple)]
 
-    try:
-        kept = provider.select(url, links, config, log)
-    except ProviderError as err:
-        summary.errors += 1
-        log.error("select", str(err), url=url)
-        return []
+    # Étage 3 — le modèle tranche, sur une liste numérotée. Facturé.
+    with log.stage(Stage.SELECT, url=url, among=len(links)) as st:
+        try:
+            kept = provider.select(url, links, config, log)
+        except ProviderError as err:
+            summary.errors += 1
+            log.error("select", str(err), url=url)
+            st.produced("échec de la sélection", kept=0, among=len(links))
+            return []
 
-    log.event("selected", url=url, kept=len(kept), among=len(links))
+        log.event("selected", url=url, kept=len(kept), among=len(links))
+        st.produced(f"{len(kept)} lien(s) retenu(s) sur {len(links)}", kept=len(kept), among=len(links))
+
     if not kept:
         # Un agenda dont on ne tire aucun lien est peut-être une page de
         # sortie que la recherche a mal classée. Elle est déjà téléchargée :

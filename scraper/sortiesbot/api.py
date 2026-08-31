@@ -79,6 +79,17 @@ class SppApi:
             return
         self._post_json(f"/api/scraper/runs/{run_id}/items", {"items": items})
 
+    def report_logs(self, run_id: int, entries: list[dict[str, Any]]) -> None:
+        """Renvoie le journal détaillé du run, par paquets.
+
+        Distinct de `report_items` : celui-ci décide du sort d'une page et
+        alimente la mémoire, celui-là ne fait que raconter. Deux routes, pour
+        que le journal ne puisse jamais, par un bug, mémoriser quoi que ce soit.
+        """
+        if not entries:
+            return
+        self._post_json(f"/api/scraper/runs/{run_id}/logs", {"entries": entries})
+
     def finish_run(self, run_id: int, status: str, **counters: Any) -> None:
         """Clôt l'exécution avec ses compteurs (status : DONE ou FAILED)."""
         self._post_json(f"/api/scraper/runs/{run_id}/finish", {"status": status, **counters})

@@ -47,6 +47,15 @@ communauté et validées par une équipe de modération.
 - **Mémoire du scraper** : les pages déjà analysées sont consultables et
   filtrables par verdict. Les oublier les rend à nouveau lisibles — utile pour
   relire un site qui était en panne, sans réexposer ce qui est déjà proposé.
+- **Débogage d'une exécution** : depuis la page d'une exécution, une vue qui
+  dessine le **graphe des six étages** du scraper — découverte, dépouillement,
+  sélection, lecture, extraction, publication — avec, sur chaque brique, ce
+  qu'elle reçoit, ce qu'elle rend, ce qu'elle a produit et combien de temps
+  elle a pris. Le journal complet est en dessous : chaque requête lancée,
+  chaque lien extrait puis retenu, chaque prompt envoyé, chaque jeton
+  consommé. Un journal fait facilement mille lignes, alors on ne le lit pas
+  d'un bloc : cliquer une brique ne garde que son étage, cliquer une ligne
+  suit une page d'un bout à l'autre du pipeline, et les filtres se composent.
 - **Statistiques du scraping** : par recherche ou toutes confondues, la part
   de chaque domaine source — avec ce qu'il a réellement donné, et pas
   seulement ce qu'il a coûté à lire — et la part de chaque catégorie, qui dit
@@ -107,6 +116,9 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | GET | `/api/categories` | public | Liste des catégories |
 | POST / PATCH / DELETE | `/api/categories[/:id]` | admin | Gérer les catégories |
 | GET | `/api/scraper/stats` | modérateur | Statistiques du scraping (`configId`, `days`) |
+| GET | `/api/scraper/runs/:id/logs` | modérateur | Journal détaillé d'une exécution (`stage`, `kind`, `level`, `url`, `q`, `after`, `limit`) |
+| GET | `/api/scraper/runs/:id/graph` | modérateur | Les six étages du pipeline, avec ce que chacun a produit |
+| DELETE | `/api/scraper/runs/:id/logs` | modérateur | Oublier le journal détaillé (les compteurs restent) |
 | GET | `/api/scraper/memory` | modérateur | Mémoire des pages analysées (`q`, `decision`, `page`) |
 | DELETE | `/api/scraper/memory` | modérateur | Oublier des pages (`decision` pour n'en purger qu'un lot) |
 | DELETE | `/api/scraper/runs/:id/data` | modérateur | Supprimer ce qu'une exécution a produit : ses sorties et ce qu'elle a mémorisé (le journal reste) |

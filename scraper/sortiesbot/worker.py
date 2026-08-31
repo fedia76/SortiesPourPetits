@@ -19,14 +19,15 @@ from __future__ import annotations
 import argparse
 import signal
 import sys
+import tempfile
 import time
 import traceback
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .api import ApiError, SppApi
 from .config import ConfigError, Environment, config_from_api, load_dotenv
-from .journal import RunLog, run_log_path
+from .journal import RemoteJournal, RunLog, run_log_path
 from .models import Summary
 from .pipeline import run as run_pipeline
 from .providers.base import ProviderError, get_provider
@@ -48,25 +49,43 @@ def _handle_signal(*_args: object) -> None:
     print("Arrêt demandé : le worker s'arrêtera après l'exécution en cours.", flush=True)
 
 
-def open_log(runs_dir: Path, name: str, quiet: bool) -> RunLog:
-    """Ouvre le journal fichier du run, ou s'en passe.
+def open_log(
+    runs_dir: Path,
+    name: str,
+    quiet: bool,
+    sink: Callable[[dict[str, Any]], None] | None = None,
+) -> RunLog:
+    """Ouvre le journal fichier du run, en insistant un peu.
 
-    Pour le worker, ce fichier est un confort : le vrai journal est en base,
-    page par page, et c'est lui que la console affiche. Un dossier `runs/`
-    devenu illisible — typiquement créé par root lors d'un essai en ligne de
-    commande, alors que le service tourne en `deploy` — ne doit donc pas faire
-    échouer une recherche.
+    Un dossier `runs/` devenu illisible — typiquement créé par root lors d'un
+    essai en ligne de commande, alors que le service tourne en `deploy` — ne
+    doit pas faire échouer une recherche. Mais s'en passer entièrement, comme
+    avant, laissait le run sans aucune trace fichier : on se rabat donc sur un
+    dossier temporaire, qui est toujours accessible, avant d'abandonner.
+
+    Le `sink` est l'autre destination du journal : le site, qui l'affiche dans
+    sa page de débogage.
     """
-    try:
-        return RunLog(run_log_path(runs_dir, name), verbose=not quiet)
-    except OSError as err:
-        print(
-            f"Journal fichier indisponible ({err}) : le run continue, "
-            "la console garde la trace de chaque page.",
-            file=sys.stderr,
-            flush=True,
-        )
-        return RunLog(None, verbose=not quiet)
+    candidates = [runs_dir, Path(tempfile.gettempdir()) / "sortiesbot-runs"]
+    for index, directory in enumerate(candidates):
+        try:
+            log = RunLog(run_log_path(directory, name), verbose=not quiet, sink=sink)
+        except OSError as err:
+            print(
+                f"Journal impossible dans {directory} ({err}).",
+                file=sys.stderr,
+                flush=True,
+            )
+            continue
+        if index and not quiet:
+            print(f"  journal replié sur {log.path}", flush=True)
+        return log
+    print(
+        "Aucun journal fichier : le run continue, le site garde le sien.",
+        file=sys.stderr,
+        flush=True,
+    )
+    return RunLog(None, verbose=not quiet, sink=sink)
 
 
 def counters(summary: Summary) -> dict[str, Any]:
@@ -113,9 +132,12 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
         print(f"▶ Exécution #{run_id} — « {config.name} »", flush=True)
 
     store = RemoteStore(api, run_id)
+    # Le journal détaillé part au site au fil de l'eau : c'est lui que la page
+    # de débogage affiche, étage par étage.
+    journal = RemoteJournal(api, run_id)
     try:
         provider = get_provider(config, api_key=env.anthropic_key)
-        with open_log(runs_dir, config.name, quiet) as log:
+        with open_log(runs_dir, config.name, quiet, sink=journal.add) as log:
             if log.path and not quiet:
                 print(f"  journal : {log.path}", flush=True)
             result = run_pipeline(config, provider, store, api, log, submit=submit)
@@ -129,6 +151,9 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
         traceback.print_exc()
         error = f"{err.__class__.__name__} : {err}"
     finally:
+        # Le journal d'abord : la console doit pouvoir montrer ce qui s'est
+        # passé, y compris — surtout — quand l'exécution se termine en échec.
+        journal.flush()
         try:
             store.flush()
         except ApiError as err:

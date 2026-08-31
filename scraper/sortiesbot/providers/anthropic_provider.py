@@ -205,7 +205,7 @@ class AnthropicProvider:
             prompt=config.render_search(),
             schema=SEARCH_SCHEMA,
             max_tokens=SEARCH_MAX_TOKENS,
-            stage="search",
+            op="search",
             log=log,
             tools=[
                 {
@@ -253,12 +253,14 @@ class AnthropicProvider:
         listing = "\n".join(
             f"{i}. {link.text} | {link.context}" for i, link in enumerate(links, start=1)
         )
+        for i, link in enumerate(links, start=1):
+            log.event("link", index=i, url=link.url, text=link.text, context=link.context)
         data = self._ask(
             model=config.select_model,
             prompt=config.render_select(page, listing),
             schema=SELECT_SCHEMA,
             max_tokens=SELECT_MAX_TOKENS,
-            stage="select",
+            op="select",
             log=log,
         )
         # Le modèle rend des numéros : aucune URL ne peut sortir d'ailleurs que
@@ -267,7 +269,10 @@ class AnthropicProvider:
         for number in data.get("kept") or []:
             if isinstance(number, int) and 1 <= number <= len(links):
                 kept.append(links[number - 1])
-        return kept[: config.max_links_per_agenda]
+        kept = kept[: config.max_links_per_agenda]
+        for link in kept:
+            log.event("link_kept", url=link.url, text=link.text, page=page)
+        return kept
 
     # -------------------------------------------------------------- 3. extraire
 
@@ -293,7 +298,7 @@ class AnthropicProvider:
                 prompt=config.render_extraction(url, content, categories),
                 schema=EXTRACTION_SCHEMA,
                 max_tokens=EXTRACTION_MAX_TOKENS,
-                stage="extraction",
+                op="extraction",
                 log=log,
             )
             return [ExtractedEvent.from_json(data)]
@@ -303,7 +308,7 @@ class AnthropicProvider:
             prompt=config.render_extraction_multi(url, content, categories),
             schema=EXTRACTION_MULTI_SCHEMA,
             max_tokens=EXTRACTION_MULTI_MAX_TOKENS,
-            stage="extraction",
+            op="extraction",
             log=log,
         )
         raw = data.get("events")
@@ -333,11 +338,12 @@ class AnthropicProvider:
         prompt: str,
         schema: dict[str, Any],
         max_tokens: int,
-        stage: str,
+        op: str,
         log: RunLog,
         tools: list[dict[str, Any]] | None = None,
         seen_urls: set[str] | None = None,
     ) -> dict[str, Any]:
+        log.event("prompt", op=op, chars=len(prompt), model=model, prompt=prompt)
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
         params: dict[str, Any] = {
             "model": model,
@@ -350,7 +356,7 @@ class AnthropicProvider:
 
         for _ in range(MAX_CONTINUATIONS + 1):
             response = self._stream(
-                params, messages, stage=stage, model=model, log=log, seen_urls=seen_urls
+                params, messages, op=op, model=model, log=log, seen_urls=seen_urls
             )
             if getattr(response, "stop_reason", None) != "pause_turn":
                 return _parse_json(response)
@@ -361,14 +367,14 @@ class AnthropicProvider:
             else:
                 messages.append({"role": "assistant", "content": blocks})
 
-        raise ProviderError(f"{stage} : tour toujours en pause après {MAX_CONTINUATIONS} reprises")
+        raise ProviderError(f"{op} : tour toujours en pause après {MAX_CONTINUATIONS} reprises")
 
     def _stream(
         self,
         params: dict[str, Any],
         messages: list[dict[str, Any]],
         *,
-        stage: str,
+        op: str,
         model: str,
         log: RunLog,
         seen_urls: set[str] | None = None,
@@ -382,7 +388,7 @@ class AnthropicProvider:
                         continue
                     block = getattr(event, "content_block", None)
                     if block is not None:
-                        self._trace_block(block, stage=stage, log=log, step=step, seen=seen_urls)
+                        self._trace_block(block, op=op, log=log, step=step, seen=seen_urls)
                 response = stream.get_final_message()
         except ProviderError:
             raise
@@ -396,17 +402,17 @@ class AnthropicProvider:
         step.output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
         step.cost_usd = _token_cost(model, step)
         self.usage.add(step)
-        log.event("usage", stage=stage, model=model, **step.as_dict())
+        log.event("usage", op=op, model=model, **step.as_dict())
         return response
 
     def _trace_block(
-        self, block: Any, *, stage: str, log: RunLog, step: Usage, seen: set[str] | None
+        self, block: Any, *, op: str, log: RunLog, step: Usage, seen: set[str] | None
     ) -> None:
         kind = getattr(block, "type", "")
 
         if kind == "server_tool_use" and getattr(block, "name", "") == "web_search":
             step.web_searches += 1
-            log.event("query", stage=stage, query=(getattr(block, "input", {}) or {}).get("query", ""))
+            log.event("query", op=op, query=(getattr(block, "input", {}) or {}).get("query", ""))
 
         elif kind == "web_search_tool_result":
             content = getattr(block, "content", None)
@@ -416,12 +422,12 @@ class AnthropicProvider:
                     if seen is not None and url.startswith(("http://", "https://")):
                         seen.add(normalize_url(url))
                     log.event(
-                        "search_result", stage=stage, url=url,
+                        "search_result", op=op, url=url,
                         title=getattr(result, "title", ""),
                     )
             else:
                 code = getattr(content, "error_code", "") if content is not None else ""
-                log.error(stage, f"recherche web en échec : {code}")
+                log.error(op, f"recherche web en échec : {code}")
 
 
 # ---------------------------------------------------------------------- outils

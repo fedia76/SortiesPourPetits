@@ -50,6 +50,7 @@ from .payload import UNKNOWN_PRICE, OutOfPeriod, Rejected, build_payload
 from .photo import PhotoError, download
 from .providers.base import Provider, ProviderError
 from .schedule import Schedule, resolve as resolve_schedule
+from .stages import Stage, describe as describe_stages
 from .store import Memory, event_key, normalize_url
 from . import geocode as geocoding
 
@@ -69,7 +70,7 @@ class RunResult:
 
 
 @dataclass
-class _Stage:
+class _Context:
     """Ce dont la lecture d'une page a besoin, d'un bout à l'autre.
 
     Ces dix objets voyageaient en paramètres de fonction en fonction ; les
@@ -152,7 +153,14 @@ def run(
     result = RunResult()
     summary = result.summary
     fetcher = fetcher or Fetcher()
-    log.event("run_start", config=describe(config), mode="soumission" if submit else "dry-run")
+    # Le graphe part avec le premier événement : la console peut dessiner les
+    # six briques avant même que la première ait produit quoi que ce soit.
+    log.event(
+        "run_start",
+        config=describe(config),
+        mode="soumission" if submit else "dry-run",
+        stages=describe_stages(),
+    )
 
     categories: dict[str, int] = {}
     try:
@@ -219,7 +227,7 @@ def run(
     # qu'une fois la page lue.
     store.preload([c.url for c in candidates if not c.multiple])
 
-    stage = _Stage(
+    ctx = _Context(
         config=config,
         provider=provider,
         store=store,
@@ -244,7 +252,7 @@ def run(
                 candidates=len(candidates),
             )
             break
-        _process(candidate, stage)
+        _process(candidate, ctx)
 
     summary.retained = len(result.events)
     summary.usage.add(provider.usage)
@@ -253,79 +261,107 @@ def run(
     return result
 
 
-def _process(candidate: Candidate, stage: _Stage) -> None:
+def _process(candidate: Candidate, ctx: _Context) -> None:
     """Lit une page et publie ce qu'elle porte : une sortie, ou vingt."""
-    config, log, store = stage.config, stage.log, stage.store
-    summary = stage.summary
+    config, log, store = ctx.config, ctx.log, ctx.store
+    summary = ctx.summary
     url = candidate.url
 
-    if _is_blocked(url, config.blocked_domains):
-        summary.skipped_blocked += 1
-        log.event("skip", reason="domaine bloqué", url=url)
-        # Provisoire : la liste des domaines bloqués est un réglage, pas un
-        # jugement sur la page. La retirer de la liste doit suffire à la lire.
-        store.report(url, "blocked", title=candidate.title, remember=False)
-        return
-    # Une page de programme échappe à ce filtre, et c'est le but : le
-    # programme d'un festival s'étoffe, et ce sont ses sorties qui sont
-    # mémorisées une à une, pas lui. Le relire est justement ce qu'on veut.
-    if not candidate.multiple and store.seen(url):
-        summary.skipped_seen += 1
-        log.event("skip", reason="déjà vue lors d'un run précédent", url=url)
-        store.report(url, "seen", title=candidate.title, remember=False)
-        return
+    # Étage 4 — les filtres qui évitent de payer, puis la lecture en Python.
+    # Les trois écarts possibles (domaine bloqué, page déjà vue, page vide)
+    # sont ici et nulle part ailleurs : c'est le dernier point où une page peut
+    # être abandonnée sans avoir rien coûté.
+    with log.stage(Stage.READ, url=url, source=candidate.source) as st:
+        if _is_blocked(url, config.blocked_domains):
+            summary.skipped_blocked += 1
+            log.event("skip", reason="domaine bloqué", url=url)
+            # Provisoire : la liste des domaines bloqués est un réglage, pas un
+            # jugement sur la page. La retirer de la liste doit suffire à la lire.
+            store.report(url, "blocked", title=candidate.title, remember=False)
+            st.produced("écartée : domaine bloqué", chars=0)
+            return
+        # Une page de programme échappe à ce filtre, et c'est le but : le
+        # programme d'un festival s'étoffe, et ce sont ses sorties qui sont
+        # mémorisées une à une, pas lui. Le relire est justement ce qu'on veut.
+        if not candidate.multiple and store.seen(url):
+            summary.skipped_seen += 1
+            log.event("skip", reason="déjà vue lors d'un run précédent", url=url)
+            store.report(url, "seen", title=candidate.title, remember=False)
+            st.produced("écartée : déjà vue", chars=0)
+            return
 
-    # La page est lue en Python : le modèle ne reçoit que du texte, sans outil,
-    # donc sans boucle serveur ni refacturation. Le HTML brut sert une seconde
-    # fois, pour le JSON-LD que le nettoyage du texte jetterait.
-    try:
-        html = stage.fetcher.get_html(url)
-        content = page_text(html, limit=config.max_page_chars)
-        declared = json_ld_dates(html)
-        # L'illustration se lit dans le HTML, pas dans le texte : le modèle ne
-        # voit que le second et ne pouvait donc jamais donner d'URL d'image.
-        page_image = main_image(html, url)
-    except FetchError as err:
-        summary.errors += 1
-        log.error("extraction", str(err), url=url)
-        # Un site injoignable aujourd'hui peut répondre demain : on ne
-        # mémorise pas, le prochain run réessaiera.
-        store.report(url, "error", title=candidate.title, reason=str(err), remember=False)
-        return
-    if len(content) < MIN_PAGE_CHARS:
-        summary.skipped_invalid += 1
-        log.event("skip", reason="page vide ou illisible", url=url)
-        store.report(url, "invalid", title=candidate.title, reason="page vide ou illisible")
-        return
+        # La page est lue en Python : le modèle ne reçoit que du texte, sans outil,
+        # donc sans boucle serveur ni refacturation. Le HTML brut sert une seconde
+        # fois, pour le JSON-LD que le nettoyage du texte jetterait.
+        try:
+            html = ctx.fetcher.get_html(url)
+            content = page_text(html, limit=config.max_page_chars)
+            declared = json_ld_dates(html)
+            # L'illustration se lit dans le HTML, pas dans le texte : le modèle ne
+            # voit que le second et ne pouvait donc jamais donner d'URL d'image.
+            page_image = main_image(html, url)
+        except FetchError as err:
+            summary.errors += 1
+            log.error("extraction", str(err), url=url)
+            # Un site injoignable aujourd'hui peut répondre demain : on ne
+            # mémorise pas, le prochain run réessaiera.
+            store.report(url, "error", title=candidate.title, reason=str(err), remember=False)
+            st.produced(f"page inaccessible ({err})", chars=0)
+            return
+        if len(content) < MIN_PAGE_CHARS:
+            summary.skipped_invalid += 1
+            log.event("skip", reason="page vide ou illisible", url=url)
+            store.report(url, "invalid", title=candidate.title, reason="page vide ou illisible")
+            st.produced("écartée : page vide ou illisible", chars=len(content))
+            return
 
-    try:
-        extracted = stage.provider.extract(
-            url,
-            content,
-            config,
-            sorted(stage.categories),
-            log,
-            multiple=candidate.multiple,
-        )
-    except ProviderError as err:
-        summary.errors += 1
-        log.error("extraction", str(err), url=url)
-        store.report(url, "error", title=candidate.title, reason=str(err), remember=False)
-        return
-
-    if candidate.multiple:
         log.event(
-            "programme",
+            "page",
             url=url,
-            found=len([e for e in extracted if e.relevant]),
             chars=len(content),
+            json_ld=len(declared),
+            image=bool(page_image),
+            image_url=page_image,
         )
+        st.produced(
+            f"{len(content)} caractères, {len(declared)} date(s) JSON-LD",
+            chars=len(content),
+            json_ld=len(declared),
+        )
+
+    # Étage 5 — le modèle remplit la ou les fiches. Facturé, une fois par page.
+    with log.stage(Stage.EXTRACT, url=url, chars=len(content), multiple=candidate.multiple) as st:
+        try:
+            extracted = ctx.provider.extract(
+                url,
+                content,
+                config,
+                sorted(ctx.categories),
+                log,
+                multiple=candidate.multiple,
+            )
+        except ProviderError as err:
+            summary.errors += 1
+            log.error("extraction", str(err), url=url)
+            store.report(url, "error", title=candidate.title, reason=str(err), remember=False)
+            st.produced(f"extraction en échec ({err})", fiches=0)
+            return
+
+        if candidate.multiple:
+            log.event(
+                "programme",
+                url=url,
+                found=len([e for e in extracted if e.relevant]),
+                chars=len(content),
+            )
+        retenues = len([e for e in extracted if e.relevant])
+        st.produced(f"{retenues} fiche(s) exploitable(s) sur {len(extracted)}", fiches=retenues)
 
     for event in extracted:
-        if len(stage.result.events) >= config.max_events:
+        if len(ctx.result.events) >= config.max_events:
             log.event("skip", reason="plafond de sorties atteint", url=url)
             break
-        _publish(event, candidate, page_image, declared, stage)
+        _publish(event, candidate, page_image, declared, ctx)
 
 
 def _publish(
@@ -333,15 +369,34 @@ def _publish(
     candidate: Candidate,
     page_image: str,
     declared: list[str],
-    stage: _Stage,
+    ctx: _Context,
+) -> None:
+    """Étage 6 — la fiche devient une proposition, ou est écartée en le disant.
+
+    L'étage est ouvert ici plutôt que dans `_publish_one` : une page de
+    programme en porte plusieurs, et chacune mérite sa propre brique dans le
+    graphe — c'est ce qui permet de voir laquelle des vingt sorties d'un
+    festival a échoué au géocodage.
+    """
+    with ctx.log.stage(Stage.PUBLISH, url=candidate.url, title=extracted.title) as st:
+        _publish_one(extracted, candidate, page_image, declared, ctx, st)
+
+
+def _publish_one(
+    extracted: ExtractedEvent,
+    candidate: Candidate,
+    page_image: str,
+    declared: list[str],
+    ctx: _Context,
+    st: Any,
 ) -> None:
     """Géocode, date, illustre et propose une sortie déjà lue.
 
     Appelé une fois par page en mode « recherche », autant de fois qu'il y a
     de sorties sur une page de programme. Rien ici ne sait laquelle des deux.
     """
-    config, log, store = stage.config, stage.log, stage.store
-    summary = stage.summary
+    config, log, store = ctx.config, ctx.log, ctx.store
+    summary = ctx.summary
     url = candidate.url
 
     # Sur une page de programme, l'unité mémorisable n'est pas la page mais
@@ -359,10 +414,11 @@ def _publish(
             title=candidate.title,
             reason=extracted.skip_reason or "hors sujet",
         )
+        st.produced(f"écartée : {extracted.skip_reason or 'hors sujet'}")
         return
 
     if key is not None:
-        if key in stage.keys or store.seen(url, key):
+        if key in ctx.keys or store.seen(url, key):
             summary.duplicates += 1
             log.event("skip", reason="sortie déjà connue", url=url, title=extracted.title)
             store.report(
@@ -373,8 +429,9 @@ def _publish(
                 reason="déjà relevée sur ce programme",
                 remember=False,
             )
+            st.produced("écartée : sortie déjà connue")
             return
-        stage.keys.add(key)
+        ctx.keys.add(key)
 
     log.event(
         "extract",
@@ -389,6 +446,7 @@ def _publish(
             reason = f"code postal {extracted.venue_postal_code} hors zone"
             log.event("skip", reason=reason, url=url)
             store.report(url, "out_of_area", key=key, title=extracted.title, reason=reason)
+            st.produced(f"écartée : {reason}")
             return
         log.event("out_of_scope", field="zone", url=url, detail=extracted.venue_postal_code)
 
@@ -401,7 +459,7 @@ def _publish(
         summary.ungeocoded += 1
 
     try:
-        category_id = resolve_category(extracted.category, stage.categories, config.default_category)
+        category_id = resolve_category(extracted.category, ctx.categories, config.default_category)
         payload = build_payload(
             extracted,
             geo.location,
@@ -413,6 +471,7 @@ def _publish(
         summary.out_of_period += 1
         log.event("skip", reason=str(err), url=url)
         store.report(url, "out_of_period", key=key, title=extracted.title, reason=str(err))
+        st.produced(f"écartée : {err}")
         return
     except Rejected as err:
         summary.skipped_invalid += 1
@@ -424,6 +483,7 @@ def _publish(
             title=extracted.title or candidate.title,
             reason=str(err),
         )
+        st.produced(f"écartée : {err}")
         return
 
     if payload["dateStart"] and payload["dateStart"] > config.date_to.isoformat():
@@ -470,11 +530,11 @@ def _publish(
         log.event("photo", status="aucune image sur la page", url=url)
 
     photo = None
-    if stage.submit and photo_url:
+    if ctx.submit and photo_url:
         try:
             # Même session que les pages : sans notre User-Agent, beaucoup de
             # serveurs refusent l'image qu'ils viennent pourtant d'annoncer.
-            photo = download(photo_url, stage.fetcher.session)
+            photo = download(photo_url, ctx.fetcher.session)
             log.event("photo", status="téléchargée", url=photo_url)
         except PhotoError as err:
             log.event("photo", status=f"ignorée ({err})", url=photo_url)
@@ -488,8 +548,8 @@ def _publish(
         "schedule": schedule.as_dict(),
     }
 
-    if not stage.submit:
-        stage.result.events.append(record)
+    if not ctx.submit:
+        ctx.result.events.append(record)
         log.event("dry_run", title=payload["title"], url=url)
         # Un essai ne mémorise pas : sinon la sortie qu'il vient de repérer ne
         # serait jamais proposée, le run réel la sautant comme « déjà vue ».
@@ -501,21 +561,23 @@ def _publish(
             reason=describe_schedule(schedule, payload),
             remember=False,
         )
+        st.produced(f"retenue sans soumission : {payload['title']}", retained=1)
         return
 
     try:
-        event = stage.api.create_event(payload, photo)
+        event = ctx.api.create_event(payload, photo)
     except ApiError as err:
         summary.errors += 1
         log.error("submit", str(err), url=url)
         store.report(
             url, "error", key=key, title=payload["title"], reason=str(err), remember=False
         )
+        st.produced(f"soumission en échec : {err}")
         return
 
     event_id = event.get("id")
     record["event_id"] = event_id
-    stage.result.events.append(record)
+    ctx.result.events.append(record)
     summary.submitted += 1
     store.report(
         url,
@@ -526,3 +588,4 @@ def _publish(
         event_id=event_id,
     )
     log.event("submit", event_id=event_id, title=payload["title"], url=url)
+    st.produced(f"proposée à la modération (#{event_id})", submitted=1)
