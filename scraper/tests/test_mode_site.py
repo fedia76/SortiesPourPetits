@@ -131,7 +131,7 @@ def log():
 def photo_hors_ligne(monkeypatch):
     """La page du festival annonce une affiche : personne ne la télécharge ici."""
     monkeypatch.setattr(
-        "sortiesbot.pipeline.download",
+        "sortiesbot.stages.publication.download",
         lambda url, session=None: ("affiche.jpg", b"\xff\xd8\xff-des-octets", "image/jpeg"),
     )
 

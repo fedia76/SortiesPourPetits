@@ -633,7 +633,7 @@ def test_l_image_de_la_page_est_relevee_et_telechargee(log, monkeypatch):
         telecharge["session"] = session
         return ("chaperon.jpg", b"\xff\xd8\xff-des-octets", "image/jpeg")
 
-    monkeypatch.setattr("sortiesbot.pipeline.download", faux_download)
+    monkeypatch.setattr("sortiesbot.stages.publication.download", faux_download)
 
     provider = FakeProvider([FoundPage(url=AGENDA_URL, title="Agenda 92")], {EVENT_URL: sortie()})
     fetcher = FakeFetcher({AGENDA_URL: AGENDA_HTML, EVENT_URL: PAGE_ILLUSTREE})

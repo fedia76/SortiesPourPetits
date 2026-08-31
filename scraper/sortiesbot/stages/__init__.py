@@ -1,4 +1,14 @@
-"""Les six étages d'un run, nommés une fois pour toutes.
+"""Les six étages d'un run : leur nom ici, leur code dans les modules voisins.
+
+Ce fichier est le **vocabulaire** — l'identité de chaque brique, son numéro,
+son libellé, qui la fait travailler et ce qu'elle prend et rend. Chaque module
+voisin en implémente une, et une seule : `discovery.py`, `harvest.py`,
+`selection.py`, `reading.py`, `extraction.py`, `publication.py`. Le socle
+commun est dans `base.py`, l'enchaînement dans `sortiesbot/orchestrator.py`.
+
+Séparer les deux n'est pas une coquetterie : le vocabulaire voyage jusqu'au
+site (l'événement `run_start` le transporte, et la console dessine le graphe
+avec), alors que le code, lui, ne sort jamais d'ici.
 
 Le pipeline a toujours eu six étages, mais ils n'existaient que dans la
 documentation : le code les enchaînait sans jamais les nommer, et le journal
