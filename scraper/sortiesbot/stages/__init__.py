@@ -1,4 +1,14 @@
-"""Les six étages d'un run, nommés une fois pour toutes.
+"""Les six étages d'un run : leur nom ici, leur code dans les modules voisins.
+
+Ce fichier est le **vocabulaire** — l'identité de chaque brique, son numéro,
+son libellé, qui la fait travailler et ce qu'elle prend et rend. Chaque module
+voisin en implémente une, et une seule : `discovery.py`, `harvest.py`,
+`selection.py`, `reading.py`, `extraction.py`, `publication.py`. Le socle
+commun est dans `base.py`, l'enchaînement dans `sortiesbot/orchestrator.py`.
+
+Séparer les deux n'est pas une coquetterie : le vocabulaire voyage jusqu'au
+site (l'événement `run_start` le transporte, et la console dessine le graphe
+avec), alors que le code, lui, ne sort jamais d'ici.
 
 Le pipeline a toujours eu six étages, mais ils n'existaient que dans la
 documentation : le code les enchaînait sans jamais les nommer, et le journal
@@ -7,9 +17,9 @@ répondre à « qu'est-ce qui entre et qu'est-ce qui sort de chaque brique ? »
 autrement qu'en relisant le code.
 
 Ce module est la référence unique. `journal.RunLog` marque chaque événement
-de l'étage courant, `pipeline` et `discovery` ouvrent chacun le leur avec
-`log.stage(...)`, et la console d'administration lit les mêmes identifiants
-pour dessiner le graphe.
+de l'étage courant, chaque brique ouvre le sien avec `log.stage(...)` — par
+`Brick.opened(...)`, qui s'en charge — et la console d'administration lit les
+mêmes identifiants pour dessiner le graphe.
 
 Trois étages appellent le modèle et sont donc facturés (1, 3, 5) ; les trois
 autres sont du Python pur et ne coûtent rien (2, 4, 6). C'est ce que porte

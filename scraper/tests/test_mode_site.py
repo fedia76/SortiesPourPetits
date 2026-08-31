@@ -25,7 +25,7 @@ import pytest
 from sortiesbot.config import Config, ConfigError, validated
 from sortiesbot.journal import RunLog
 from sortiesbot.models import ExtractedEvent, Usage
-from sortiesbot.pipeline import run
+from sortiesbot.orchestrator import run
 from sortiesbot.store import SeenStore, event_key
 
 from test_pipeline import FakeApi, FakeFetcher
@@ -131,7 +131,7 @@ def log():
 def photo_hors_ligne(monkeypatch):
     """La page du festival annonce une affiche : personne ne la télécharge ici."""
     monkeypatch.setattr(
-        "sortiesbot.pipeline.download",
+        "sortiesbot.stages.publication.download",
         lambda url, session=None: ("affiche.jpg", b"\xff\xd8\xff-des-octets", "image/jpeg"),
     )
 
