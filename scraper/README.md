@@ -104,8 +104,8 @@ c'est anormal ; sinon, c'est que ça travaille.
 | `--quiet` | pas de sortie console (le journal reste écrit) |
 | `--forget` | ignore la mémoire des URLs déjà vues, pour rejouer un run |
 | `--runs-dir`, `--state` | emplacements du journal et de la mémoire |
-| `--classifier-log` | registre du classifieur en observation (`-` pour ne rien écrire) |
-| `--save-pages DOSSIER` | archive chaque page téléchargée, pour en faire des fixtures |
+| `--classifier-dir` | dossier du registre du classifieur, un fichier horodaté par run (`-` pour ne rien écrire) |
+| `--save-pages DOSSIER` | archive chaque page téléchargée dans un sous-dossier horodaté |
 
 Chaque run écrit deux fichiers dans `runs/` :
 
@@ -255,14 +255,21 @@ en cascade, du plus certain au plus flou :
 | # | Signal | Ce qu'il dit | Confiance | Coût |
 |---|---|---|---|---|
 | 1 | **URL** | `?page=2`, `?search=`, `?filter[]=` → agenda | certain | nul |
-| 2 | **Pagination** | `rel="next"`, ou des liens « 1 2 3 » → agenda | certain | nul |
+| 2 | **Pagination** | `rel="next"`, ou une suite « 1 2 3 » → agenda | certain | nul |
 | 3 | **JSON-LD** | un seul spectacle nommé → sortie ; trois titres distincts ou un `ItemList` → agenda | certain | nul |
 | 4 | **OpenGraph** | `og:type: event` → sortie | probable | nul |
 | 5 | **Le modèle**, sur le condensé | agenda, sortie, ou inconnu | probable | ~0,001 $ |
 
 La **pagination** comble le manque que la première mesure avait révélé : sans
 elle, rien ne savait dire « agenda » — ni l'`ItemList`, ni les paramètres
-d'URL, dont aucun n'a tiré sur les vingt-sept premières pages. Une page qui se
+d'URL, dont aucun n'a tiré sur les vingt-sept premières pages.
+
+Elle exige une suite **consécutive** partant du début : `1 2 3` ou `2 3 4`,
+jamais trois numéros quelconques. La première version se contentait de trois
+nombres, et `22, 29, 35, 44, 56` — le gabarit de `recreatiloups.com` — a fait
+passer trois fiches pour des agendas, avec la mention « certain ». Une erreur
+étiquetée certaine ne fausse pas seulement le verdict : elle empoisonne le
+corpus qu'on est en train de constituer. Une page qui se
 pagine a une page suivante, donc plusieurs pages de quelque chose ; une fiche
 n'en a pas. Elle se lit sur le HTML brut, pas sur `links_of` : celui-ci écarte
 justement ces liens-là — moins de quinze caractères de texte, et `/page/2`
@@ -274,8 +281,10 @@ lorsqu'ils se taisent tous — `classify_model: ""` en configuration le
 désactive, et la page reste « inconnue ».
 
 Le **condensé** (`classify.digest`) est la carte d'identité d'une page : URL,
-titre, `h1`, trois cents caractères d'amorce, et les textes des vingt premiers
-liens avec **combien d'entre eux voisinent une date**. Quelques centaines de
+titre, `h1`, trois cents caractères d'amorce, et vingt textes de liens —
+**les datés d'abord** — avec combien d'entre eux voisinent une date. Sur un
+grand portail, les vingt premiers liens du document sont le menu : les moins
+instructifs de la page, et c'étaient eux qui remplissaient le condensé. Quelques centaines de
 jetons, jamais la page entière — celle-là, l'extraction la paie déjà. Il est
 borné par construction, que la page fasse 2 Ko ou 2 Mo.
 
@@ -361,20 +370,28 @@ Les journaux de run s'oublient — un bouton de la console est là pour ça. Une
 mesure qui s'accumule sur des semaines n'a donc rien à y faire : elle part
 dans un fichier à part, en ajout seul, hors de `runs/`.
 
-* en ligne de commande : `state/classifier.jsonl`, réglable par
-  `--classifier-log` (`-` pour ne rien écrire) ;
-* dans le service : `state/classifier.jsonl` également, une ligne par page
-  constatée, avec l'identifiant de l'exécution.
+**Un fichier horodaté par exécution** — `state/classifier_2026-09-01T03-38-29_14.jsonl` —
+sur le modèle des journaux de `runs/` : deux runs ne se marchent jamais
+dessus, et un fichier se copie ou s'envoie sans emporter les autres. Le
+dossier se règle par `--classifier-dir` en ligne de commande (`-` pour ne rien
+écrire) ; le service écrit dans `state/` de la même façon.
+
+`--save-pages` suit la même règle : chaque run archive dans son propre
+sous-dossier horodaté. Deux captures du même site à deux semaines d'écart sont
+deux données, pas une qui écrase l'autre.
 
 ```bash
 # Le taux d'accord, en ne comptant chaque page qu'une fois par run.
 jq -s 'unique_by(.run + .url) | map(select(.agrees != null))
        | (map(select(.agrees)) | length) as $ok | "\($ok) / \(length)"' \
-   state/classifier.jsonl
+   state/classifier_*.jsonl
 
 # Les désaccords, et le signal qui les a produits.
 jq -r 'select(.agrees == false) | "\(.signal)\t\(.announced) → \(.verdict)\t\(.url)"' \
-   state/classifier.jsonl
+   state/classifier_*.jsonl
+
+# Quel signal a tranché, et combien de fois on a payé.
+jq -r .signal state/classifier_*.jsonl | sort | uniq -c | sort -rn
 ```
 
 Un désaccord ne dit pas encore qui a raison. C'est le **sort final de la

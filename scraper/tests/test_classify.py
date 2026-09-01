@@ -153,6 +153,43 @@ def test_un_verdict_inconnu_ne_contredit_personne():
     assert verdict.agrees_with("agenda") is None
 
 
+# ═════════════════════════════════════════════════════════ la pagination
+
+
+def pager(*numeros: int) -> str:
+    return "".join(f'<a href="/p{n}">{n}</a>' for n in numeros)
+
+
+def test_une_vraie_pagination_designe_un_agenda():
+    verdict = classify(page(pager(1, 2, 3, 9)), URL)
+    assert (verdict.kind, verdict.signal, verdict.confidence) == (AGENDA, "pagination", "certain")
+
+
+def test_rel_next_suffit():
+    html = page("x", head='<link rel="next" href="/agenda/page/2">')
+    assert classify(html, URL).signal == "pagination"
+
+
+def test_des_numeros_epars_ne_sont_pas_une_pagination():
+    """Enterré par la mesure : `22, 29, 35, 44, 56` sur trois fiches de
+    `recreatiloups.com`, classées « agenda » avec la mention « certain ».
+
+    Ce n'était pas une pagination, c'était le gabarit du site — et une erreur
+    étiquetée « certain » ne fausse pas seulement le verdict, elle empoisonne
+    le corpus qu'on est en train de constituer.
+    """
+    assert classify(page(pager(22, 29, 35, 44, 56)), URL).kind == INCONNU
+
+
+def test_une_suite_qui_ne_part_pas_du_debut_non_plus():
+    """Des numéros de salle ou d'arrondissement se suivent aussi."""
+    assert classify(page(pager(5, 6, 7)), URL).kind == INCONNU
+
+
+def test_deux_numeros_consecutifs_ne_suffisent_pas():
+    assert classify(page(pager(1, 2)), URL).kind == INCONNU
+
+
 # ═══════════════════════════════════════════════════ ce que l'URL seule dit
 
 
@@ -206,6 +243,24 @@ def test_le_condense_compte_les_liens_qui_voisinent_une_date():
     assert card.links == 12 and card.dated == 12
     assert card.heading == "Que faire en famille"
     assert card.title == "Que faire ce week-end"
+
+
+def test_les_liens_dates_passent_devant_la_navigation():
+    """Sur un grand portail, les vingt premiers liens du document sont le menu.
+
+    Ce sont les moins instructifs de la page, et ce sont eux qui remplissaient
+    le condensé — vingt lignes de « Home », « Noël », « Où manger ? » pour
+    `sortiraparis`, pendant que les vrais titres restaient dehors.
+    """
+    navigation = "".join(
+        f'<a href="/rubrique-{i}">Une rubrique de navigation {i}</a>' for i in range(25)
+    )
+    fiche = ('<article><a href="/e/1">Le Petit Prince au Chapiteau</a>'
+             "<p>Samedi 12 septembre 2026</p></article>")
+    html = page(navigation + fiche)
+    card = digest(html, "https://x.fr/a", links_of(html, "https://x.fr/a"))
+    assert card.texts[0] == "Le Petit Prince au Chapiteau"
+    assert card.dated == 1
 
 
 def test_une_fiche_ne_voisine_aucune_date():
