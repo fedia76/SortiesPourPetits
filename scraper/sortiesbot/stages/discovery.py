@@ -1,20 +1,23 @@
-"""Étage 1 — trouver par où commencer. Le seul étage qui dépend du mode.
+"""Étage 1 — trouver par où commencer. Des URL, et rien d'autre.
 
-Deux stratégies, une seule sortie : une liste de `FoundPage`, chacune classée
-agenda (à dépouiller) ou sortie (à lire telle quelle). Tout ce qui suit ignore
-laquelle a servi, et c'est ce qui évite d'avoir deux scrapers à corriger au
-lieu d'un.
+Cet étage **ne juge plus**. Il rend ce que les recherches ont remonté, sans
+dire d'aucune page si elle liste des sorties ou en est une : c'est le travail
+de la reconnaissance, à l'étage suivant, sur le HTML.
 
-* **mode recherche** — le modèle lance des recherches web et classe ce qu'elles
-  remontent. C'est le seul endroit du run où une recherche est facturée.
-* **mode site** — les URLs sont données par la configuration, aucune recherche
-  n'est lancée. L'étage existe quand même, il ne coûte simplement rien : le
-  graphe de la console garde ainsi ses six briques dans les deux modes.
+Ce n'est pas une coquetterie. Un moteur de recherche ordinaire rend des URL et
+des titres — pas des avis. En ramenant la découverte à ce contrat, on la rend
+remplaçable : brancher un autre moteur ne demande plus qu'il sache classer une
+page, seulement qu'il sache en trouver.
 
-Le mode décide aussi de deux détails que l'orchestrateur ne peut pas deviner,
-et que cette brique porte donc : sous quel nom une page trouvée sera rattachée
-(`source`), et ce qu'on fait d'une page dont on ne tire aucun lien
-(`fallback_multiple`).
+Les requêtes viennent de la configuration quand elle en donne — le run est
+alors reproductible d'une semaine sur l'autre, et comparable. Sinon un appel au
+modèle les formule, pour quelques dizaines de jetons : c'est le plus petit
+appel du pipeline.
+
+* **mode recherche** — les requêtes partent au moteur.
+* **mode site** — les URL sont données, aucune recherche n'est lancée.
+  L'étage existe quand même, il ne coûte simplement rien : le graphe de la
+  console garde ainsi ses sept briques dans les deux modes.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ class Discovery(Brick):
     stage = Stage.DISCOVERY
 
     def run(self) -> list[FoundPage]:
-        """Les pages par où commencer, agendas et sorties mêlés.
+        """Les pages par où commencer. Leur nature reste à constater.
 
         Peut lever `ProviderError` : une recherche impossible arrête le run,
         et c'est l'orchestrateur qui en rend compte.
@@ -53,53 +56,51 @@ class Discovery(Brick):
     # ------------------------------------------------------------- recherche
 
     def _search(self) -> list[FoundPage]:
-        """Le modèle cherche et classe ; on plafonne les agendas à ouvrir."""
+        """Les requêtes partent au moteur ; on garde ce qu'il remonte.
+
+        Le plafond porte désormais sur **toutes** les pages retenues, et non
+        sur les seuls agendas : la découverte ne sait plus lesquelles en sont.
+        """
         with self.opened(
             mode="recherche", theme=self.config.theme, area=self.config.area
         ) as st:
-            found = self.ctx.provider.search(self.config, self.log)
+            queries = self._queries()
+            found = self.ctx.provider.search(queries, self.config, self.log)
 
-            # Une recherche ne remonte pas que des agendas : elle tombe
-            # régulièrement sur la page d'une sortie précise, qui part telle
-            # quelle à l'extraction.
-            candidats = [p for p in found if p.is_agenda]
-            agendas = candidats[: self.config.max_agendas]
-            recales = candidats[self.config.max_agendas :]
-            directes = [p for p in found if not p.is_agenda]
-
-            for page in directes:
-                self.log.event("direct", url=page.url, title=page.title, why=page.reason)
-
-            # Le sort de chaque agenda désigné est journalisé avant qu'on
-            # l'ouvre : sans ça, un agenda recalé par le plafond ou injoignable
-            # disparaissait de la console sans laisser de trace, et on cherchait
-            # pourquoi un site remonté par la recherche n'apparaissait nulle part.
-            for page in agendas:
-                self.log.event(
-                    "agenda_planned", url=page.url, title=page.title, why=page.reason
-                )
-            for page in recales:
+            gardees = found[: self.config.max_agendas]
+            recalees = found[self.config.max_agendas :]
+            for page in gardees:
+                self.log.event("found", url=page.url, title=page.title, query=page.query)
+            for page in recalees:
                 self.log.warn(
                     "discovery",
-                    f"plafond de {self.config.max_agendas} agenda(s) atteint : "
-                    "celui-ci ne sera pas ouvert",
+                    f"plafond de {self.config.max_agendas} page(s) atteint : "
+                    "celle-ci ne sera pas ouverte",
                     url=page.url,
                     title=page.title,
-                    why=page.reason,
                 )
-
             st.produced(
-                f"{len(agendas)} agenda(s) à dépouiller, "
-                f"{len(directes)} sortie(s) directe(s)"
-                + (f", {len(recales)} au-delà du plafond" if recales else ""),
-                agendas=len(agendas),
-                direct=len(directes),
-                over_cap=len(recales),
+                f"{len(queries)} recherche(s), {len(gardees)} page(s) à reconnaître"
+                + (f", {len(recalees)} au-delà du plafond" if recalees else ""),
+                queries=len(queries),
+                pages=len(gardees),
+                over_cap=len(recalees),
             )
+            return gardees
 
-        # Les sorties directes d'abord : elles ne coûtent aucun dépouillement,
-        # autant les avoir en main avant que le budget ne se consomme.
-        return directes + agendas
+    def _queries(self) -> list[str]:
+        """Celles de la configuration, ou celles que le modèle formule.
+
+        Les figer dans le YAML rend deux runs comparables ; les faire formuler
+        varie les angles. Le choix appartient à la configuration, et le journal
+        garde trace des requêtes réellement lancées dans les deux cas.
+        """
+        if self.config.queries:
+            self.log.event("queries", source="configuration", count=len(self.config.queries))
+            return list(self.config.queries)
+        queries = self.ctx.provider.queries(self.config, self.log)
+        self.log.event("queries", source="modele", count=len(queries))
+        return queries
 
     # ------------------------------------------------------------------ site
 
@@ -120,6 +121,6 @@ class Discovery(Brick):
                 self.log.event("seed", url=url)
             st.produced(
                 f"{len(seeds)} point(s) de départ, aucune recherche lancée",
-                agendas=len(seeds),
+                pages=len(seeds),
             )
         return [FoundPage(url=url) for url in seeds]

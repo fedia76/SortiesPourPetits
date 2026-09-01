@@ -265,3 +265,46 @@ def test_ni_svg_ni_data_uri():
 
 def test_une_page_sans_image_ne_ment_pas():
     assert main_image("<html><body><p>Rien à voir</p></body></html>", PAGE) == ""
+
+
+def test_une_page_nest_telechargee_quune_fois_par_run():
+    """Le pipeline lit la même page deux fois — reconnaissance puis lecture.
+
+    C'est la bande passante du site, et une seconde d'attente polie, pour un
+    contenu identique. Le cache meurt avec le run : la semaine suivante, la
+    page sera bien retéléchargée.
+    """
+    from sortiesbot.harvest import Fetcher
+
+    appels: list[str] = []
+
+    class SessionSimulee:
+        headers: dict = {}
+
+        def get(self, url, timeout=None, stream=False):
+            appels.append(url)
+            return _Reponse("<html><body><p>une page</p></body></html>")
+
+    fetcher = Fetcher(session=SessionSimulee())
+    fetcher._robots["https://exemple.fr"] = None  # pas de robots.txt à lire
+
+    premier = fetcher.get_html("https://exemple.fr/page")
+    second = fetcher.get_html("https://exemple.fr/page")
+
+    assert premier == second
+    assert appels == ["https://exemple.fr/page"], "un seul aller-retour réseau"
+
+
+class _Reponse:
+    """Le minimum de ce que `get_html` attend d'une réponse HTTP."""
+
+    def __init__(self, texte: str):
+        self._texte = texte
+        self.headers = {"Content-Type": "text/html"}
+        self.encoding = "utf-8"
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, taille):
+        yield self._texte.encode("utf-8")

@@ -1,9 +1,9 @@
-"""Les six étages d'un run : leur nom ici, leur code dans les modules voisins.
+"""Les sept étages d'un run : leur nom ici, leur code dans les modules voisins.
 
 Ce fichier est le **vocabulaire** — l'identité de chaque brique, son numéro,
 son libellé, qui la fait travailler et ce qu'elle prend et rend. Chaque module
-voisin en implémente une, et une seule : `discovery.py`, `harvest.py`,
-`selection.py`, `reading.py`, `extraction.py`, `publication.py`. Le socle
+voisin en implémente une, et une seule : `discovery.py`, `identification.py`,
+`harvest.py`, `selection.py`, `reading.py`, `extraction.py`, `publication.py`. Le socle
 commun est dans `base.py`, l'enchaînement dans `sortiesbot/orchestrator.py`,
 méthode `Run.chain()` — les six appels s'y suivent, numérotés, à leur
 profondeur d'imbrication.
@@ -23,9 +23,17 @@ de l'étage courant, chaque brique ouvre le sien avec `log.stage(...)` — par
 `Brick.opened(...)`, qui s'en charge — et la console d'administration lit les
 mêmes identifiants pour dessiner le graphe.
 
-Trois étages appellent le modèle et sont donc facturés (1, 3, 5) ; les trois
-autres sont du Python pur et ne coûtent rien (2, 4, 6). C'est ce que porte
-`ACTOR`, et c'est la seule chose qu'il faut savoir pour lire une facture.
+Trois étages appellent le modèle à chaque passage et sont donc facturés (1, 4,
+6) ; trois sont du Python pur et ne coûtent rien (3, 5, 7). Le deuxième, la
+reconnaissance, est **mixte** : gratuit quand un signal certain tranche, facturé
+quand ils se taisent tous. C'est ce que porte `ACTOR`, et c'est la seule chose
+qu'il faut savoir pour lire une facture.
+
+La reconnaissance est arrivée en dernier, et elle est arrivée d'un constat : la
+découverte classait les pages parce que le fournisseur savait le faire au
+passage, pas parce que c'était sa place. La nature d'une page est une propriété
+de la page, pas de la façon dont on l'a trouvée — d'où un étage à elle, entre
+celui qui trouve et ceux qui exploitent.
 """
 
 from __future__ import annotations
@@ -37,6 +45,7 @@ class Stage(str, Enum):
     """Un étage du pipeline. La valeur est l'identifiant stable, côté API."""
 
     DISCOVERY = "discovery"
+    IDENTIFY = "identify"
     HARVEST = "harvest"
     SELECT = "select"
     READ = "read"
@@ -47,6 +56,7 @@ class Stage(str, Enum):
 #: Ordre d'exécution. Sert à numéroter et à ranger le graphe.
 ORDER: tuple[Stage, ...] = (
     Stage.DISCOVERY,
+    Stage.IDENTIFY,
     Stage.HARVEST,
     Stage.SELECT,
     Stage.READ,
@@ -58,6 +68,7 @@ NUMBER: dict[Stage, int] = {stage: i for i, stage in enumerate(ORDER, start=1)}
 
 LABEL: dict[Stage, str] = {
     Stage.DISCOVERY: "Découverte",
+    Stage.IDENTIFY: "Reconnaissance",
     Stage.HARVEST: "Dépouillement",
     Stage.SELECT: "Sélection",
     Stage.READ: "Lecture",
@@ -68,6 +79,9 @@ LABEL: dict[Stage, str] = {
 #: Qui travaille, donc qui paie. « modele » = un appel facturé.
 ACTOR: dict[Stage, str] = {
     Stage.DISCOVERY: "modele",
+    #: Gratuit tant qu'un signal certain tranche — URL, pagination, JSON-LD —
+    #: et facturé seulement quand ils se taisent tous. D'où « mixte ».
+    Stage.IDENTIFY: "mixte",
     Stage.HARVEST: "python",
     Stage.SELECT: "modele",
     Stage.READ: "python",
@@ -77,7 +91,8 @@ ACTOR: dict[Stage, str] = {
 
 #: Ce qui entre et ce qui sort, en une ligne — le contrat de chaque brique.
 IN_OUT: dict[Stage, tuple[str, str]] = {
-    Stage.DISCOVERY: ("thème, zone, période", "URL classées agenda ou sortie"),
+    Stage.DISCOVERY: ("des requêtes web", "les URL qu'elles ont remontées"),
+    Stage.IDENTIFY: ("une URL trouvée", "sa nature : agenda, ou sortie"),
     Stage.HARVEST: ("URL d'agenda", "liens et leur contexte"),
     Stage.SELECT: ("liens numérotés", "numéros retenus"),
     Stage.READ: ("URL de page", "texte, dates JSON-LD, image"),

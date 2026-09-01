@@ -44,8 +44,9 @@ def text_block(payload: dict) -> dict:
     return {"type": "text", "text": json.dumps(payload)}
 
 
-AGENDAS = {"pages": [{"url": "https://agenda.fr/jeune-public/", "title": "Agenda 92",
-                      "kind": "agenda", "reason": "liste des spectacles"}]}
+#: La réponse du modèle à une recherche : les requêtes lancées, et rien
+#: d'autre. Les résultats sont relevés sur le flux, pas dans ce texte.
+LANCEES = {"lancees": ["spectacle enfant"]}
 
 
 def search_for(*urls: str, tool_use_id: str = "s1") -> list[dict]:
@@ -117,7 +118,7 @@ class FakeApiServer:
                 length = int(self.headers.get("Content-Length", 0))
                 outer.requests.append(json.loads(self.rfile.read(length)))
                 body = sse(
-                    outer.responses.pop(0) if outer.responses else message([text_block(AGENDAS)])
+                    outer.responses.pop(0) if outer.responses else message([text_block(LANCEES)])
                 )
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -152,69 +153,92 @@ def provider_for(server: FakeApiServer) -> AnthropicProvider:
 
 def test_la_recherche_ne_recoit_que_web_search(log):
     server = FakeApiServer(
-        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(AGENDAS)])]
+        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(LANCEES)])]
     )
     try:
-        agendas = provider_for(server).search(Config(name="t", theme="spectacles"), log)
+        pages = provider_for(server).search(
+            ["spectacle enfant"], Config(name="t", theme="spectacles"), log
+        )
     finally:
         server.close()
 
-    assert [a.url for a in agendas] == ["https://agenda.fr/jeune-public/"]
-    assert agendas[0].is_agenda
+    assert [p.url for p in pages] == ["https://agenda.fr/jeune-public/"]
     body = server.requests[0]
     # Un seul outil, et la variante de base : on ne fait plus lire de pages au
     # modèle, le filtrage dynamique n'a plus d'objet.
     assert [t["type"] for t in body["tools"]] == ["web_search_20250305"]
     assert body["output_config"]["format"]["type"] == "json_schema"
     assert body["stream"] is True
+    # Les requêtes sont dictées, pas laissées à son initiative.
+    assert "- spectacle enfant" in body["messages"][0]["content"]
 
 
-def test_une_sortie_trouvee_directement_est_classee_comme_telle(log):
-    page = {"pages": [{"url": "https://agenda.fr/jeune-public/", "title": "Un spectacle",
-                       "kind": "sortie", "reason": "page d'événement"}]}
+def test_la_recherche_ne_rend_aucun_jugement(log):
+    """Elle ne rend que des URL et des titres : c'est le contrat qu'un moteur
+    ordinaire saura honorer le jour où il prendra la place de celui-ci."""
     server = FakeApiServer(
-        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(page)])]
+        [message(search_for("https://agenda.fr/a", "https://agenda.fr/b")
+                 + [text_block(LANCEES)])]
     )
     try:
-        pages = provider_for(server).search(Config(name="t", theme="x"), log)
+        pages = provider_for(server).search(["x"], Config(name="t", theme="x"), log)
     finally:
         server.close()
 
-    assert pages[0].kind == "sortie"
-    assert not pages[0].is_agenda
+    assert [(p.url, p.title, p.query) for p in pages] == [
+        ("https://agenda.fr/a", "https://agenda.fr/a", "spectacle enfant"),
+        ("https://agenda.fr/b", "https://agenda.fr/b", "spectacle enfant"),
+    ]
+    assert not hasattr(pages[0], "kind"), "la découverte ne classe plus rien"
 
 
-def test_agenda_invente_est_rejete():
-    """Le modèle propose une page qu'aucune recherche n'a remontée."""
+def test_le_modele_ne_peut_plus_inventer_durl():
+    """Il n'en écrit aucune : la garantie n'est plus vérifiée, elle est acquise.
+
+    L'ancienne version lui faisait rendre la liste des pages retenues, et il
+    fallait recouper chaque URL avec les résultats réellement remontés. Ici sa
+    réponse ne porte que les requêtes lancées ; les URL viennent du flux de
+    l'outil, où il n'a pas la main.
+    """
     stream = io.StringIO()
     log = RunLog(path=None, verbose=True, stream=stream)
-    invente = {"pages": [
-        {"url": "https://agenda.fr/jeune-public/", "title": "vu", "kind": "agenda", "reason": ""},
-        {"url": "https://paris.fr/listing/9475", "title": "inventé", "kind": "agenda", "reason": ""},
-    ]}
+    invente = {"lancees": ["x"], "pages": ["https://paris.fr/listing/9475"]}
     server = FakeApiServer(
         [message(search_for("https://agenda.fr/jeune-public/") + [text_block(invente)])]
     )
     try:
-        agendas = provider_for(server).search(Config(name="t", theme="x"), log)
+        pages = provider_for(server).search(["x"], Config(name="t", theme="x"), log)
     finally:
         server.close()
 
-    assert [a.url for a in agendas] == ["https://agenda.fr/jeune-public/"]
-    assert "absente des résultats" in stream.getvalue()
+    assert [p.url for p in pages] == ["https://agenda.fr/jeune-public/"]
 
 
-def test_reponse_de_memoire_sans_aucune_recherche_est_rejetee():
+def test_une_recherche_sans_resultat_est_journalisee():
     stream = io.StringIO()
     log = RunLog(path=None, verbose=True, stream=stream)
-    server = FakeApiServer([message([text_block(AGENDAS)])])
+    server = FakeApiServer([message([text_block(LANCEES)])])
     try:
-        agendas = provider_for(server).search(Config(name="t", theme="x"), log)
+        pages = provider_for(server).search(["x"], Config(name="t", theme="x"), log)
     finally:
         server.close()
 
-    assert agendas == []
-    assert "aucune recherche lancée" in stream.getvalue()
+    assert pages == []
+    assert "aucun résultat" in stream.getvalue()
+
+
+def test_les_requetes_sont_formulees_par_le_modele_quand_on_nen_donne_pas(log):
+    server = FakeApiServer(
+        [message([text_block({"queries": ["spectacle enfant 92", "atelier famille 93"]})])]
+    )
+    try:
+        found = provider_for(server).queries(Config(name="t", theme="spectacles"), log)
+    finally:
+        server.close()
+
+    assert found == ["spectacle enfant 92", "atelier famille 93"]
+    body = server.requests[0]
+    assert "tools" not in body, "formuler des requêtes ne demande aucun outil"
 
 
 def test_la_reconnaissance_ne_recoit_quun_condense(log):
@@ -323,10 +347,10 @@ def test_reprise_apres_pause_turn(log):
         stop_reason="pause_turn",
     )
     server = FakeApiServer(
-        [paused, message(search_for("https://agenda.fr/jeune-public/") + [text_block(AGENDAS)])]
+        [paused, message(search_for("https://agenda.fr/jeune-public/") + [text_block(LANCEES)])]
     )
     try:
-        agendas = provider_for(server).search(Config(name="t", theme="spectacles"), log)
+        agendas = provider_for(server).search(["x"], Config(name="t", theme="spectacles"), log)
     finally:
         server.close()
 
@@ -339,11 +363,11 @@ def test_journal_des_recherches():
     stream = io.StringIO()
     log = RunLog(path=None, verbose=True, stream=stream)
     server = FakeApiServer(
-        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(AGENDAS)])]
+        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(LANCEES)])]
     )
     try:
         provider = provider_for(server)
-        provider.search(Config(name="t", theme="spectacles"), log)
+        provider.search(["x"], Config(name="t", theme="spectacles"), log)
     finally:
         server.close()
 
@@ -362,11 +386,11 @@ def test_erreur_de_recherche_est_journalisee():
     response = message([
         {"type": "web_search_tool_result", "tool_use_id": "s1",
          "content": {"type": "web_search_tool_result_error", "error_code": "max_uses_exceeded"}},
-        text_block(AGENDAS),
+        text_block(LANCEES),
     ])
     server = FakeApiServer([response])
     try:
-        provider_for(server).search(Config(name="t", theme="x"), log)
+        provider_for(server).search(["x"], Config(name="t", theme="x"), log)
     finally:
         server.close()
 
@@ -466,7 +490,7 @@ def test_chaque_resultat_est_rattache_a_sa_propre_requete():
         {"type": "web_search_tool_result", "tool_use_id": "s2",
          "content": [{"type": "web_search_result", "url": "https://agenda.fr/jeune-public/",
                       "title": "Châtillon", "encrypted_content": "x", "page_age": None}]},
-        text_block(AGENDAS),
+        text_block(LANCEES),
     ]
 
     recus: list[dict] = []
@@ -475,7 +499,7 @@ def test_chaque_resultat_est_rattache_a_sa_propre_requete():
 
     server = FakeApiServer([message(salve)])
     try:
-        provider_for(server).search(Config(name="t", theme="spectacles"), log)
+        provider_for(server).search(["x"], Config(name="t", theme="spectacles"), log)
     finally:
         server.close()
 

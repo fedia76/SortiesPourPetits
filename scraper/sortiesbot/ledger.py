@@ -23,6 +23,19 @@ from pathlib import Path
 from typing import Any, TextIO
 
 
+def ledger_path(directory: Path | str, run: str = "") -> Path:
+    """`state/classifier_2026-09-01T03-38-29_14.jsonl`
+
+    Un fichier par exécution, horodaté comme les journaux de `runs/` : deux
+    runs ne se marchent jamais dessus, et un fichier se copie, s'archive ou
+    s'envoie sans emporter les autres. L'analyse les relit d'un coup —
+    `state/classifier_*.jsonl` — donc rien n'est perdu à les séparer.
+    """
+    stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    slug = "".join(c for c in str(run) if c.isalnum() or c in "-_")
+    return Path(directory) / f"classifier_{stamp}{'_' + slug if slug else ''}.jsonl"
+
+
 class Ledger:
     """Un JSONL en ajout seul. Muet si aucun chemin n'est donné."""
 

@@ -104,8 +104,8 @@ c'est anormal ; sinon, c'est que ça travaille.
 | `--quiet` | pas de sortie console (le journal reste écrit) |
 | `--forget` | ignore la mémoire des URLs déjà vues, pour rejouer un run |
 | `--runs-dir`, `--state` | emplacements du journal et de la mémoire |
-| `--classifier-log` | registre du classifieur en observation (`-` pour ne rien écrire) |
-| `--save-pages DOSSIER` | archive chaque page téléchargée, pour en faire des fixtures |
+| `--classifier-dir` | dossier du registre du classifieur, un fichier horodaté par run (`-` pour ne rien écrire) |
+| `--save-pages DOSSIER` | archive chaque page téléchargée dans un sous-dossier horodaté |
 
 Chaque run écrit deux fichiers dans `runs/` :
 
@@ -123,7 +123,7 @@ Chaque run écrit deux fichiers dans `runs/` :
 > (le document long, avec le détail du coût). Index et statut de ces documents
 > dans [`docs/`](../docs/README.md).
 
-### Les six étages, et où ils sont dans le code
+### Les sept étages, et où ils sont dans le code
 
 Le pipeline a toujours eu six étages, mais ils ne vivaient que dans cette
 documentation : le code les enchaînait sans les nommer, dans trois fonctions
@@ -134,12 +134,24 @@ par brique**, leur vocabulaire commun dans
 
 | # | Étage | Qui travaille | Reçoit | Rend | Où |
 |---|---|---|---|---|---|
-| 1 | Découverte | modèle | thème, zone, période | URL classées agenda ou sortie | `stages/discovery.py` — `Discovery` |
-| 2 | Dépouillement | Python | URL d'agenda | liens et leur contexte | `stages/harvest.py` — `Harvest` |
-| 3 | Sélection | modèle | liens numérotés | numéros retenus | `stages/selection.py` — `Selection` |
-| 4 | Lecture | Python | URL de page | texte, dates JSON-LD, image | `stages/reading.py` — `Reading` |
-| 5 | Extraction | modèle | texte de la page | fiche(s) JSON | `stages/extraction.py` — `Extraction` |
-| 6 | Publication | Python | fiche JSON | sortie en attente de modération | `stages/publication.py` — `Publication` |
+| 1 | Découverte | modèle | des requêtes web | les URL qu'elles ont remontées | `stages/discovery.py` — `Discovery` |
+| 2 | Reconnaissance | **mixte** | une URL trouvée | sa nature : agenda, ou sortie | `stages/identification.py` — `Identification` |
+| 3 | Dépouillement | Python | URL d'agenda | liens et leur contexte | `stages/harvest.py` — `Harvest` |
+| 4 | Sélection | modèle | liens numérotés | numéros retenus | `stages/selection.py` — `Selection` |
+| 5 | Lecture | Python | URL de page | texte, dates JSON-LD, image | `stages/reading.py` — `Reading` |
+| 6 | Extraction | modèle | texte de la page | fiche(s) JSON | `stages/extraction.py` — `Extraction` |
+| 7 | Publication | Python | fiche JSON | sortie en attente de modération | `stages/publication.py` — `Publication` |
+
+La **reconnaissance** est arrivée en dernier, d'un constat : la découverte
+classait les pages parce que le fournisseur savait le faire au passage, pas
+parce que c'était sa place. La nature d'une page est une propriété de la page,
+pas de la façon dont on l'a trouvée. En la sortant de là, la découverte se
+réduit à « des requêtes entrent, des URL sortent » — le seul contrat qu'un
+moteur de recherche ordinaire sait honorer, et donc la condition pour en
+brancher un autre un jour.
+
+Elle est le seul étage **mixte** : gratuite tant qu'un signal certain tranche,
+facturée quand ils se taisent tous.
 
 Aucune brique ne sait ce qui vient avant ou après elle : l'ordre n'existe qu'à
 un seul endroit, [`sortiesbot/orchestrator.py`](sortiesbot/orchestrator.py),
@@ -149,15 +161,18 @@ dit la cardinalité** — ce qui est plus à droite tourne plus souvent :
 
 ```
 1  découverte                              1 fois par run
-     2  dépouillement                      1 fois par agenda
-     3  sélection                          1 fois par agenda
+     2  reconnaissance                     1 fois par URL trouvée
+       si agenda :
+         3  dépouillement                  1 fois par agenda
+         4  sélection                      1 fois par agenda
+       si sortie : elle saute 3 et 4
    puis, pour chaque page retenue :
-     4  lecture                            1 fois par page
-     5  extraction                         1 fois par page → n fiches
-          6  publication                   1 fois par fiche
+     5  lecture                            1 fois par page
+     6  extraction                         1 fois par page → n fiches
+          7  publication                   1 fois par fiche
 ```
 
-`chain()` ne contient rien d'autre que ces six appels et les branchements qui
+`chain()` ne contient rien d'autre que ces sept appels et les branchements qui
 décident de la suite. Ce qui tranche *si* une page est lue — doublons du run,
 plafond de sorties, budget — est en amont, dans `_to_read()` ; l'intendance du
 run — catégories du site, comptes finaux, ouverture et clôture du journal —
@@ -255,27 +270,37 @@ en cascade, du plus certain au plus flou :
 | # | Signal | Ce qu'il dit | Confiance | Coût |
 |---|---|---|---|---|
 | 1 | **URL** | `?page=2`, `?search=`, `?filter[]=` → agenda | certain | nul |
-| 2 | **Pagination** | `rel="next"`, ou des liens « 1 2 3 » → agenda | certain | nul |
+| 2 | **Pagination** | `rel="next"`, ou une suite « 1 2 3 » → agenda | certain | nul |
 | 3 | **JSON-LD** | un seul spectacle nommé → sortie ; trois titres distincts ou un `ItemList` → agenda | certain | nul |
 | 4 | **OpenGraph** | `og:type: event` → sortie | probable | nul |
 | 5 | **Le modèle**, sur le condensé | agenda, sortie, ou inconnu | probable | ~0,001 $ |
 
 La **pagination** comble le manque que la première mesure avait révélé : sans
 elle, rien ne savait dire « agenda » — ni l'`ItemList`, ni les paramètres
-d'URL, dont aucun n'a tiré sur les vingt-sept premières pages. Une page qui se
+d'URL, dont aucun n'a tiré sur les vingt-sept premières pages.
+
+Elle exige une suite **consécutive** partant du début : `1 2 3` ou `2 3 4`,
+jamais trois numéros quelconques. La première version se contentait de trois
+nombres, et `22, 29, 35, 44, 56` — le gabarit de `recreatiloups.com` — a fait
+passer trois fiches pour des agendas, avec la mention « certain ». Une erreur
+étiquetée certaine ne fausse pas seulement le verdict : elle empoisonne le
+corpus qu'on est en train de constituer. Une page qui se
 pagine a une page suivante, donc plusieurs pages de quelque chose ; une fiche
 n'en a pas. Elle se lit sur le HTML brut, pas sur `links_of` : celui-ci écarte
 justement ces liens-là — moins de quinze caractères de texte, et `/page/2`
 parmi les chemins de service. Ce qui est du bruit pour le dépouillement est ici
 le signal.
 
-Les quatre premiers sont du Python : ils ne coûtent rien. Le quatrième n'est appelé que
+Les quatre premiers sont du Python : ils ne coûtent rien. C'est la cascade de
+la **reconnaissance** (étage 2). Le quatrième n'est appelé que
 lorsqu'ils se taisent tous — `classify_model: ""` en configuration le
 désactive, et la page reste « inconnue ».
 
 Le **condensé** (`classify.digest`) est la carte d'identité d'une page : URL,
-titre, `h1`, trois cents caractères d'amorce, et les textes des vingt premiers
-liens avec **combien d'entre eux voisinent une date**. Quelques centaines de
+titre, `h1`, trois cents caractères d'amorce, et vingt textes de liens —
+**les datés d'abord** — avec combien d'entre eux voisinent une date. Sur un
+grand portail, les vingt premiers liens du document sont le menu : les moins
+instructifs de la page, et c'étaient eux qui remplissaient le condensé. Quelques centaines de
 jetons, jamais la page entière — celle-là, l'extraction la paie déjà. Il est
 borné par construction, que la page fasse 2 Ko ou 2 Mo.
 
@@ -343,17 +368,15 @@ n'est pas symétrique — croire qu'une sortie est un agenda coûte un appel de
 sélection et se rattrape tout seul, l'inverse coûte tous les liens d'un
 agenda. D'où le biais assumé : **dans le doute, agenda.**
 
-**Rien de tout cela ne décide quoi que ce soit pour l'instant.** Le classement
-suivi reste celui du modèle ; `classify.py` dit en parallèle ce qu'il aurait
-répondu, et le journal note s'ils sont d'accord. On mesure avant de
-remplacer — plutôt que de troquer un jugement qui marche contre un jugement
-qu'on espère bon.
+Cette cascade **décide** désormais : un agenda descend au dépouillement, une
+sortie saute directement à la lecture. Une page qu'on ne sait pas reconnaître
+part **en agenda**, et c'est délibéré — prendre une sortie pour un agenda coûte
+un tri et se rattrape tout seul, prendre un agenda pour une sortie coûte tous
+ses liens sans rattrapage.
 
-La classification a lieu là où le HTML est déjà en main, donc sans
-téléchargement supplémentaire : au **dépouillement** pour les agendas, à la
-**lecture** pour les pages que la recherche a remontées directement. Une page
-passée par les deux est donc constatée deux fois, et le champ `stage` les
-distingue.
+Le HTML est téléchargé une fois pour toutes à cet étage : le `Fetcher` garde
+les pages du run et les rend à qui les redemandera, si bien que le
+dépouillement et la lecture ne repassent pas sur le réseau.
 
 ### Le registre, et comment le lire
 
@@ -361,20 +384,28 @@ Les journaux de run s'oublient — un bouton de la console est là pour ça. Une
 mesure qui s'accumule sur des semaines n'a donc rien à y faire : elle part
 dans un fichier à part, en ajout seul, hors de `runs/`.
 
-* en ligne de commande : `state/classifier.jsonl`, réglable par
-  `--classifier-log` (`-` pour ne rien écrire) ;
-* dans le service : `state/classifier.jsonl` également, une ligne par page
-  constatée, avec l'identifiant de l'exécution.
+**Un fichier horodaté par exécution** — `state/classifier_2026-09-01T03-38-29_14.jsonl` —
+sur le modèle des journaux de `runs/` : deux runs ne se marchent jamais
+dessus, et un fichier se copie ou s'envoie sans emporter les autres. Le
+dossier se règle par `--classifier-dir` en ligne de commande (`-` pour ne rien
+écrire) ; le service écrit dans `state/` de la même façon.
+
+`--save-pages` suit la même règle : chaque run archive dans son propre
+sous-dossier horodaté. Deux captures du même site à deux semaines d'écart sont
+deux données, pas une qui écrase l'autre.
 
 ```bash
 # Le taux d'accord, en ne comptant chaque page qu'une fois par run.
 jq -s 'unique_by(.run + .url) | map(select(.agrees != null))
        | (map(select(.agrees)) | length) as $ok | "\($ok) / \(length)"' \
-   state/classifier.jsonl
+   state/classifier_*.jsonl
 
 # Les désaccords, et le signal qui les a produits.
 jq -r 'select(.agrees == false) | "\(.signal)\t\(.announced) → \(.verdict)\t\(.url)"' \
-   state/classifier.jsonl
+   state/classifier_*.jsonl
+
+# Quel signal a tranché, et combien de fois on a payé.
+jq -r .signal state/classifier_*.jsonl | sort | uniq -c | sort -rn
 ```
 
 Un désaccord ne dit pas encore qui a raison. C'est le **sort final de la

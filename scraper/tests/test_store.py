@@ -157,7 +157,7 @@ def test_le_graphe_part_avec_le_premier_evenement():
     from sortiesbot.stages import describe
 
     entry = _wire({"seq": 1, "kind": "run_start", "level": "info", "stages": describe()})
-    assert [s["number"] for s in entry["data"]["stages"]] == [1, 2, 3, 4, 5, 6]
+    assert [s["number"] for s in entry["data"]["stages"]] == [1, 2, 3, 4, 5, 6, 7]
 
 
 def test_la_filiation_descend_sur_toute_la_piste():

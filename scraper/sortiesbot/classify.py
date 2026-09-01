@@ -119,11 +119,17 @@ _LIST_PATH = re.compile(r"/(page|p)/\d+/?$", re.I)
 #: Un lien dont le texte n'est qu'un numéro de page — « 3 » ou « Page 3 ».
 #: Volontairement pas « suivant », « next », « › » : ces mots-là décorent
 #: aussi des carrousels et des fils d'articles, et on ne veut que du sûr.
-_PAGE_NUMBER = re.compile(r"^(page\s+)?\d{1,3}$", re.I)
+_PAGE_NUMBER = re.compile(r"^(page\s+)?(\d{1,3})$", re.I)
 
-#: En dessous, ce n'est pas une pagination — deux liens numérotés se trouvent
-#: dans n'importe quel sommaire.
-PAGER_LINKS = 3
+#: Longueur de la suite consécutive exigée. Trois numéros qui se suivent, pas
+#: trois numéros quelconques : `22, 29, 35, 44, 56` n'est pas une pagination,
+#: c'est un gabarit de site — trois fiches de `recreatiloups.com` ont été
+#: classées « agenda » avec la mention « certain » avant qu'on l'apprenne.
+PAGER_RUN = 3
+
+#: Une pagination commence au début. Au-delà, une suite consécutive est une
+#: coïncidence : des numéros de salle, d'arrondissement, de tarif.
+PAGER_START = 2
 
 #: Types JSON-LD qui annoncent une liste plutôt qu'un événement.
 _LIST_TYPES = re.compile(r"ItemList|CollectionPage|SearchResultsPage", re.I)
@@ -145,12 +151,6 @@ class Verdict:
     detail: str
     #: `certain` : le site le déclare. `probable` : on l'infère de sa forme.
     confidence: str
-
-    def agrees_with(self, announced: str) -> bool | None:
-        """Vrai, faux, ou `None` s'il n'y a rien à comparer."""
-        if not announced or self.kind == INCONNU:
-            return None
-        return self.kind == announced
 
     def as_dict(self) -> dict[str, str]:
         return {
@@ -232,16 +232,34 @@ def _by_pagination(html: str) -> Verdict | None:
         if any(str(r).lower() == "next" for r in rels):
             return Verdict(AGENDA, "pagination", 'lien rel="next"', "certain")
 
-    # Sinon, une suite de liens dont le texte n'est qu'un numéro.
-    numeros = {
-        anchor.get_text(strip=True)
-        for anchor in soup.find_all("a", href=True)
-        if _PAGE_NUMBER.match(anchor.get_text(strip=True))
-    }
-    if len(numeros) >= PAGER_LINKS:
-        suite = ", ".join(sorted(numeros, key=int)[:5])
-        return Verdict(AGENDA, "pagination", f"liens numérotés ({suite}…)", "certain")
+    # Sinon, une suite de liens dont le texte n'est qu'un numéro — et qui se
+    # suivent réellement, en partant du début.
+    numeros = set()
+    for anchor in soup.find_all("a", href=True):
+        found = _PAGE_NUMBER.match(anchor.get_text(strip=True))
+        if found:
+            numeros.add(int(found.group(2)))
+    suite = _pager_run(numeros)
+    if suite:
+        return Verdict(
+            AGENDA, "pagination", f"pagination {', '.join(map(str, suite))}…", "certain"
+        )
     return None
+
+
+def _pager_run(numeros: set[int]) -> list[int]:
+    """La suite consécutive d'une pagination, ou une liste vide.
+
+    Une pagination, ce sont des numéros **qui se suivent** et qui commencent au
+    début : 1, 2, 3 ou 2, 3, 4. Trois nombres épars, aussi petits soient-ils,
+    sont un gabarit de site — et la mention « certain » qu'on leur accolait
+    empoisonnait le corpus autant qu'elle faussait le verdict.
+    """
+    for depart in range(1, PAGER_START + 1):
+        attendu = list(range(depart, depart + PAGER_RUN))
+        if numeros.issuperset(attendu):
+            return attendu
+    return []
 
 
 # ------------------------------------------------------- 3. ce que le site déclare
@@ -409,12 +427,20 @@ def digest(html: str, url: str, links: list[Link] | None = None) -> Digest:
         tag.decompose()
     opening = " ".join(soup.get_text(" ", strip=True).split())[:OPENING_CHARS]
 
+    # Les liens datés d'abord. Sur un grand portail, les vingt premiers liens
+    # du document sont le menu — « Home », « Noël », « Où manger ? » — et ce
+    # sont les moins instructifs de la page. Ceux qui voisinent une date sont
+    # exactement ceux qui distinguent une liste d'une fiche.
+    dates = [link for link in found if _DATE.search(link.context or "")]
+    autres = [link for link in found if link not in dates]
+    retenus = (dates + autres)[:DIGEST_LINKS]
+
     return Digest(
         url=url,
         title=" ".join(title.split())[:150],
         heading=heading[:150],
         opening=opening,
         links=len(found),
-        dated=sum(1 for link in found if _DATE.search(link.context or "")),
-        texts=[link.text[:80] for link in found[:DIGEST_LINKS]],
+        dated=len(dates),
+        texts=[link.text[:80] for link in retenus],
     )

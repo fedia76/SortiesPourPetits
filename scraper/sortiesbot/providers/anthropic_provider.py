@@ -52,7 +52,10 @@ MAX_CONTINUATIONS = 2
 TIMEOUT_SECONDS = 300.0
 
 CLASSIFY_MAX_TOKENS = 300
-SEARCH_MAX_TOKENS = 8_000
+QUERIES_MAX_TOKENS = 600
+#: La réponse ne porte plus que les requêtes lancées : quelques dizaines de
+#: jetons là où le classement des pages en demandait des milliers.
+SEARCH_MAX_TOKENS = 600
 SELECT_MAX_TOKENS = 2_000
 EXTRACTION_MAX_TOKENS = 4_000
 #: Une page de programme rend jusqu'à `max_events` fiches d'un coup ; le
@@ -81,25 +84,22 @@ CLASSIFY_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+#: Une liste de requêtes, et rien d'autre : c'est tout ce qu'on demande à ce
+#: premier appel. Le modèle n'écrit aucune URL, donc il ne peut pas en inventer.
+QUERIES_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"queries": {"type": "array", "items": {"type": "string"}}},
+    "required": ["queries"],
+    "additionalProperties": False,
+}
+
+#: La recherche ne rend plus de jugement : ce qu'elle a remonté est relevé sur
+#: le flux, bloc par bloc, et la réponse du modèle ne sert qu'à clore le tour.
+#: D'où un schéma minuscule et un plafond de jetons de sortie très bas.
 SEARCH_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {
-        "pages": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string"},
-                    "title": {"type": "string"},
-                    "kind": {"type": "string", "enum": ["agenda", "sortie"]},
-                    "reason": {"type": "string"},
-                },
-                "required": ["url", "title", "kind", "reason"],
-                "additionalProperties": False,
-            },
-        }
-    },
-    "required": ["pages"],
+    "properties": {"lancees": {"type": "array", "items": {"type": "string"}}},
+    "required": ["lancees"],
     "additionalProperties": False,
 }
 
@@ -231,11 +231,38 @@ class AnthropicProvider:
 
     # -------------------------------------------------------------- 1. chercher
 
-    def search(self, config: Config, log: RunLog) -> list[FoundPage]:
-        seen: set[str] = set()
+    def queries(self, config: Config, log: RunLog) -> list[str]:
+        """Formule les requêtes. Le plus petit appel du pipeline."""
         data = self._ask(
             model=config.search_model,
-            prompt=config.render_search(),
+            prompt=config.render_queries(),
+            schema=QUERIES_SCHEMA,
+            max_tokens=QUERIES_MAX_TOKENS,
+            op="queries",
+            log=log,
+        )
+        found = [str(q).strip() for q in (data.get("queries") or []) if str(q).strip()]
+        return found[: config.max_searches]
+
+    def search(self, queries: list[str], config: Config, log: RunLog) -> list[FoundPage]:
+        """Lance ces recherches et rend ce qu'elles ont remonté, sans jugement.
+
+        Les résultats ne sont pas lus dans la réponse du modèle mais relevés
+        sur le flux, bloc par bloc — c'est `_trace_block` qui les collecte. Le
+        modèle sert ici de télécommande à l'outil serveur, rien de plus : il ne
+        classe rien, il ne résume rien, et il ne peut donc rien inventer.
+
+        La contrepartie, avec cet outil-ci, est qu'il **voit** tout de même le
+        contenu des résultats — c'est ainsi que `web_search` fonctionne, et ces
+        jetons d'entrée restent facturés. C'est précisément ce qu'un moteur
+        ordinaire n'imposerait pas.
+        """
+        if not queries:
+            return []
+        seen: dict[str, FoundPage] = {}
+        self._ask(
+            model=config.search_model,
+            prompt=config.render_search(queries),
             schema=SEARCH_SCHEMA,
             max_tokens=SEARCH_MAX_TOKENS,
             op="search",
@@ -244,37 +271,16 @@ class AnthropicProvider:
                 {
                     "type": WEB_SEARCH_TOOL,
                     "name": "web_search",
-                    "max_uses": config.max_searches,
+                    "max_uses": max(len(queries), config.max_searches),
                     "user_location": USER_LOCATION,
                     **({"blocked_domains": config.blocked_domains} if config.blocked_domains else {}),
                 }
             ],
-            seen_urls=seen,
+            found=seen,
         )
-
         if not seen:
-            log.error("search", "aucune recherche lancée : réponse écartée")
-            return []
-
-        pages: list[FoundPage] = []
-        for raw in data.get("pages") or []:
-            if not isinstance(raw, dict):
-                continue
-            url = str(raw.get("url", "")).strip()
-            if not url.startswith(("http://", "https://")):
-                continue
-            if normalize_url(url) not in seen:
-                log.error("search", "URL absente des résultats de recherche", url=url)
-                continue
-            pages.append(
-                FoundPage(
-                    url=url,
-                    title=str(raw.get("title", "")).strip(),
-                    kind=str(raw.get("kind", "agenda")).strip().lower(),
-                    reason=str(raw.get("reason", "")).strip(),
-                )
-            )
-        return pages
+            log.error("search", "aucun résultat de recherche")
+        return list(seen.values())
 
     # ------------------------------------------------------------ 2. reconnaître
 
@@ -404,7 +410,7 @@ class AnthropicProvider:
         op: str,
         log: RunLog,
         tools: list[dict[str, Any]] | None = None,
-        seen_urls: set[str] | None = None,
+        found: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         log.event("prompt", op=op, chars=len(prompt), model=model, prompt=prompt)
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
@@ -419,7 +425,7 @@ class AnthropicProvider:
 
         for _ in range(MAX_CONTINUATIONS + 1):
             response = self._stream(
-                params, messages, op=op, model=model, log=log, seen_urls=seen_urls
+                params, messages, op=op, model=model, log=log, found=found
             )
             if getattr(response, "stop_reason", None) != "pause_turn":
                 return _parse_json(response)
@@ -440,7 +446,7 @@ class AnthropicProvider:
         op: str,
         model: str,
         log: RunLog,
-        seen_urls: set[str] | None = None,
+        found: dict[str, Any] | None = None,
     ) -> Any:
         step = Usage()
 
@@ -451,7 +457,7 @@ class AnthropicProvider:
                         continue
                     block = getattr(event, "content_block", None)
                     if block is not None:
-                        self._trace_block(block, op=op, log=log, step=step, seen=seen_urls)
+                        self._trace_block(block, op=op, log=log, step=step, found=found)
                 response = stream.get_final_message()
         except ProviderError:
             raise
@@ -469,7 +475,7 @@ class AnthropicProvider:
         return response
 
     def _trace_block(
-        self, block: Any, *, op: str, log: RunLog, step: Usage, seen: set[str] | None
+        self, block: Any, *, op: str, log: RunLog, step: Usage, found: dict[str, Any] | None
     ) -> None:
         kind = getattr(block, "type", "")
 
@@ -497,8 +503,14 @@ class AnthropicProvider:
                     log.warn(op, f"résultats non rattachés à une requête ({tool_use_id or '?'})")
                 for result in content:
                     url = str(getattr(result, "url", ""))
-                    if seen is not None and url.startswith(("http://", "https://")):
-                        seen.add(normalize_url(url))
+                    title = str(getattr(result, "title", "") or "")
+                    if found is not None and url.startswith(("http://", "https://")):
+                        # Dédupliqué à la clé normalisée : deux requêtes
+                        # remontent souvent la même page, et c'est la première
+                        # qui garde la paternité.
+                        found.setdefault(
+                            normalize_url(url), FoundPage(url=url, title=title, query=query)
+                        )
                     log.event(
                         "search_result", op=op, url=url,
                         title=getattr(result, "title", ""),

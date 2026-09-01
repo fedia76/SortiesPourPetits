@@ -205,7 +205,7 @@ def run_job(api, monkeypatch, provider, fetcher, runs_dir, payload=None):
     )
     # Le registre du classifieur s'accumule d'un run à l'autre : un test ne
     # doit surtout pas écrire dans celui du dépôt.
-    monkeypatch.setattr(worker, "LEDGER_PATH", runs_dir / "classifier.jsonl")
+    monkeypatch.setattr(worker, "LEDGER_DIR", runs_dir)
     env = type("Env", (), {"anthropic_key": "clé"})()
     worker.execute(payload or job(), api, env, runs_dir=runs_dir, quiet=True)
 

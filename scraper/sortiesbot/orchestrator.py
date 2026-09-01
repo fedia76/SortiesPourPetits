@@ -1,21 +1,24 @@
 """L'enchaînement d'un run : qui appelle qui, et combien de fois.
 
-Les six briques vivent dans `stages/`, une par fichier, et aucune ne sait ce
+Les sept briques vivent dans `stages/`, une par fichier, et aucune ne sait ce
 qui vient avant ou après elle. Ce module est le seul endroit où l'ordre
 existe, et c'est délibéré : la question « qu'est-ce qui s'exécute, dans quel
 ordre, combien de fois ? » se répond ici, en une lecture, sans ouvrir une
 brique.
 
-La réponse tient dans une seule méthode, `Run.chain()`, où les six appels se
+La réponse tient dans une seule méthode, `Run.chain()`, où les sept appels se
 suivent de haut en bas, à leur profondeur d'imbrication :
 
     1  découverte                              1 fois par run
-         2  dépouillement                      1 fois par agenda
-         3  sélection                          1 fois par agenda
+         2  reconnaissance                     1 fois par URL trouvée
+           si agenda :
+             3  dépouillement                  1 fois par agenda
+             4  sélection                      1 fois par agenda
+           si sortie : elle saute 3 et 4
        puis, pour chaque page retenue :
-         4  lecture                            1 fois par page
-         5  extraction                         1 fois par page → n fiches
-              6  publication                   1 fois par fiche
+         5  lecture                            1 fois par page
+         6  extraction                         1 fois par page → n fiches
+              7  publication                   1 fois par fiche
 
 Rien d'autre n'est dans `chain()` : ce qui décide *si* une page est lue
 (doublons, plafonds, budget) est en amont dans `_to_read()`, ce qui décide de
@@ -56,6 +59,7 @@ from .config import Config, describe
 from .harvest import Fetcher, Link
 from .journal import RunLog
 from .ledger import Ledger
+from .classify import SORTIE
 from .models import Candidate, FoundPage
 from .providers.base import Provider, ProviderError
 from .stages import ORDER, describe as describe_stages
@@ -63,6 +67,7 @@ from .stages.base import Brick, RunContext, RunResult
 from .stages.discovery import Discovery
 from .stages.extraction import Extraction
 from .stages.harvest import Harvest
+from .stages.identification import Identification
 from .stages.publication import Publication
 from .stages.reading import Reading
 from .stages.selection import Selection
@@ -111,13 +116,14 @@ class Run:
         self.config = ctx.config
         self.summary = ctx.summary
 
-        # Les six briques, déclarées dans l'ordre où `chain()` les appelle.
-        self.discovery = Discovery(ctx)      # 1
-        self.harvest = Harvest(ctx)          # 2
-        self.selection = Selection(ctx)      # 3
-        self.reading = Reading(ctx)          # 4
-        self.extraction = Extraction(ctx)    # 5
-        self.publication = Publication(ctx)  # 6
+        # Les sept briques, déclarées dans l'ordre où `chain()` les appelle.
+        self.discovery = Discovery(ctx)          # 1
+        self.identification = Identification(ctx)  # 2
+        self.harvest = Harvest(ctx)              # 3
+        self.selection = Selection(ctx)          # 4
+        self.reading = Reading(ctx)              # 5
+        self.extraction = Extraction(ctx)        # 6
+        self.publication = Publication(ctx)      # 7
 
         # Le même ordre, mais parcourable — et vérifié identique à celui du
         # vocabulaire. La console dessine son graphe d'après `stages.ORDER` :
@@ -125,6 +131,7 @@ class Run:
         # celui qui tourne, et le journal serait numéroté de travers.
         self.bricks: tuple[Brick, ...] = (
             self.discovery,
+            self.identification,
             self.harvest,
             self.selection,
             self.reading,
@@ -176,20 +183,24 @@ class Run:
         """
         trouvees: list[Candidate] = []
 
-        # ── ÉTAGE 1/6 · Découverte ─────────────────── 1 fois par run ──────
+        # ── ÉTAGE 1/7 · Découverte ─────────────────── 1 fois par run ──────
         for source in self.discovery.run():
-            if not source.is_agenda:
-                # La recherche tombe régulièrement sur la page d'une sortie
-                # précise : elle saute les étages 2 et 3.
-                trouvees.append(self._direct(source))
-                continue
-
-            # Tout ce qui se journalise dans cette piste descend de cet
-            # agenda : c'est ce qui permet à la console de répondre à « quels
+            # Tout ce qui se journalise dans cette piste descend de cette
+            # page : c'est ce qui permet à la console de répondre à « quels
             # liens venaient de quelle page ? ».
             with self.log.trail(agenda=source.url):
-                # ── ÉTAGE 2/6 · Dépouillement ───── 1 fois par agenda ──────
-                links = self.harvest.run(source.url, announced=source.kind)
+                # ── ÉTAGE 2/7 · Reconnaissance ──── 1 fois par URL ─────────
+                nature = self.identification.run(source)
+                if nature is None:
+                    continue  # injoignable : rien à en tirer, rien à conclure.
+                if nature == SORTIE:
+                    # Elle saute le dépouillement et le tri : c'est la page
+                    # qu'on cherchait, pas une liste qui y mène.
+                    trouvees.append(self._direct(source))
+                    continue
+
+                # ── ÉTAGE 3/7 · Dépouillement ───── 1 fois par agenda ──────
+                links = self.harvest.run(source.url)
                 if links is None:
                     continue  # injoignable : rien à en tirer, rien à conclure.
                 if not links:
@@ -198,30 +209,30 @@ class Run:
                     trouvees.append(self._itself(source.url))
                     continue
 
-                # ── ÉTAGE 3/6 · Sélection ───────── 1 fois par agenda ──────
+                # ── ÉTAGE 4/7 · Sélection ───────── 1 fois par agenda ──────
                 kept = self.selection.run(source.url, links)
                 if kept is None:
                     continue  # le modèle n'a pas répondu : on n'invente rien.
                 if not kept:
                     # Un agenda dont on ne tire aucun lien est peut-être une
-                    # page de sortie mal classée. Elle est déjà téléchargée :
+                    # page de sortie mal reconnue. Elle est déjà téléchargée :
                     # la lire coûte une extraction, l'ignorer coûte la sortie.
                     trouvees.append(self._itself(source.url))
                     continue
 
                 trouvees.extend(self._listed(source.url, kept))
 
-        # Les trois premiers étages ont dit *où* lire, les trois suivants
+        # Les quatre premiers étages ont dit *où* lire, les trois suivants
         # lisent. `_to_read` tranche entre les deux — doublons du run,
         # plafonds, budget — pour que la chaîne n'ait pas à s'en occuper.
         for candidate in self._to_read(trouvees):
             with self.log.trail(page=candidate.url, agenda=candidate.source):
-                # ── ÉTAGE 4/6 · Lecture ───────────── 1 fois par page ──────
+                # ── ÉTAGE 5/7 · Lecture ───────────── 1 fois par page ──────
                 page = self.reading.run(candidate)
                 if page is None:
                     continue  # écartée : la brique a journalisé le motif.
 
-                # ── ÉTAGE 5/6 · Extraction ────────── 1 fois par page ──────
+                # ── ÉTAGE 6/7 · Extraction ────────── 1 fois par page ──────
                 #    Une page de spectacle rend une fiche, un programme vingt.
                 for extracted in self.extraction.run(page, candidate):
                     if self.ctx.full:
@@ -230,7 +241,7 @@ class Run:
                         )
                         break
 
-                    # ── ÉTAGE 6/6 · Publication ──── 1 fois par fiche ──────
+                    # ── ÉTAGE 7/7 · Publication ──── 1 fois par fiche ──────
                     self.publication.run(extracted, candidate, page)
 
     # ═════════════════════════════════════════ ce qui entre dans la chaîne
@@ -241,24 +252,15 @@ class Run:
             url=source.url,
             title=source.title,
             source=self.discovery.source,
-            context=source.reason,
-            announced=source.kind,
+            context=source.query,
         )
 
     def _itself(self, url: str) -> Candidate:
         """La page d'agenda relue pour elle-même, faute d'en tirer des liens."""
         multiple = self.discovery.fallback_multiple
         self.log.event("fallback", url=url, multiple=multiple)
-        # `announced` reste « agenda » : c'est bien ce que la découverte avait
-        # dit de cette page, et c'est ce verdict-là qu'on veut confronter au
-        # HTML — pas la conclusion que le pipeline vient d'en tirer.
         return Candidate(
-            url=url,
-            title="",
-            source=self.discovery.source,
-            context="",
-            multiple=multiple,
-            announced="agenda",
+            url=url, title="", source=self.discovery.source, context="", multiple=multiple
         )
 
     def _listed(self, agenda: str, kept: list[Link]) -> list[Candidate]:
