@@ -273,6 +273,12 @@ export interface ScraperStageNode {
   seconds: number;
   /** Ce que chaque passage a produit, en une ligne. */
   produced: string[];
+  /** Ce que l'étage a coûté sur ce run, jetons et recherches web compris. */
+  costUsd: number;
+  tokens: number;
+  searches: number;
+  /** Nombre d'appels au modèle. Zéro pour un étage gratuit. */
+  calls: number;
 }
 
 /**
