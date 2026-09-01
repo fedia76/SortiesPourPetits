@@ -88,7 +88,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -215,6 +215,24 @@ def _by_url(url: str) -> Verdict | None:
 
 
 # ------------------------------------------------------- 2. la page se pagine-t-elle
+
+
+def next_page(html: str, url: str) -> str:
+    """L'URL de la page suivante d'un agenda, ou une chaîne vide.
+
+    Le même `rel="next"` qui trahit une liste dit aussi où elle continue. On
+    ne suit que celui-là : deviner « page 2 » à partir d'une suite de liens
+    numérotés reviendrait à reconstruire l'URL, donc à l'inventer.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup.find_all(["link", "a"], rel=True, href=True):
+        rels = tag.get("rel") or []
+        rels = rels if isinstance(rels, list) else [rels]
+        if any(str(r).lower() == "next" for r in rels):
+            suivante = urljoin(url, str(tag["href"]).strip()).split("#")[0]
+            # Une page qui se déclare sa propre suite ferait tourner en rond.
+            return "" if suivante == url else suivante
+    return ""
 
 
 def _by_pagination(html: str) -> Verdict | None:

@@ -308,3 +308,107 @@ class _Reponse:
 
     def iter_content(self, taille):
         yield self._texte.encode("utf-8")
+
+
+# ══════════════════════════════════════════════════ la pagination d'un agenda
+
+
+def agenda(n: int, suivante: str = "") -> str:
+    """Un agenda de `n` liens, avec ou sans page suivante déclarée."""
+    liens = "".join(
+        f'<a href="/sortie-{n}-{i}">Un spectacle jeune public numéro {i}</a>' for i in range(n)
+    )
+    tete = f'<link rel="next" href="{suivante}">' if suivante else ""
+    return f"<html><head>{tete}</head><body>{liens}</body></html>"
+
+
+def test_l_url_de_la_page_suivante_se_lit_sur_rel_next():
+    from sortiesbot.classify import next_page
+
+    html = agenda(3, "/agenda/page/2")
+    assert next_page(html, "https://x.fr/agenda/") == "https://x.fr/agenda/page/2"
+
+
+def test_une_page_qui_se_declare_sa_propre_suite_ne_boucle_pas():
+    from sortiesbot.classify import next_page
+
+    html = agenda(3, "https://x.fr/agenda/")
+    assert next_page(html, "https://x.fr/agenda/") == ""
+
+
+def test_un_agenda_maigre_va_chercher_ses_pages_suivantes(log_muet):
+    """Peu de liens sur la première page : la suite vaut le téléchargement."""
+    from sortiesbot.stages.harvest import Harvest
+
+    pages = {
+        "https://x.fr/agenda/": agenda(3, "/agenda/2"),
+        "https://x.fr/agenda/2": agenda(4, "/agenda/3"),
+        "https://x.fr/agenda/3": agenda(5),
+    }
+    brique = _brique(pages, log_muet, max_next_pages=2)
+    links = brique.run("https://x.fr/agenda/")
+
+    assert len(links) == 12, "les trois pages sont dépouillées et fusionnées"
+
+
+def test_un_agenda_deja_riche_sarrete_a_sa_premiere_page(log_muet):
+    """Les liens partent au tri, qui est facturé : en ajouter le gonflerait."""
+    from sortiesbot.stages.harvest import Harvest
+
+    pages = {
+        "https://x.fr/agenda/": agenda(200, "/agenda/2"),
+        "https://x.fr/agenda/2": agenda(50),
+    }
+    brique = _brique(pages, log_muet, max_next_pages=5)
+    links = brique.run("https://x.fr/agenda/")
+
+    assert len(links) == 200
+    assert brique.ctx.fetcher.asked == ["https://x.fr/agenda/"], "une seule requête"
+
+
+def test_le_plafond_de_pages_suivantes_est_respecte(log_muet):
+    pages = {f"https://x.fr/agenda/{i}": agenda(2, f"/agenda/{i + 1}") for i in range(1, 9)}
+    pages["https://x.fr/agenda/"] = agenda(2, "/agenda/1")
+    brique = _brique(pages, log_muet, max_next_pages=2)
+    brique.run("https://x.fr/agenda/")
+
+    assert len(brique.ctx.fetcher.asked) == 3, "la première, puis deux suivantes"
+
+
+def test_une_page_suivante_injoignable_narrete_pas_le_reste(log_muet):
+    pages = {"https://x.fr/agenda/": agenda(3, "/agenda/2")}
+    brique = _brique(pages, log_muet, max_next_pages=2)
+    links = brique.run("https://x.fr/agenda/")
+
+    assert len(links) == 3, "on garde ce que la première page a donné"
+
+
+def _brique(pages, log, **conf):
+    """Un `Harvest` branché sur un serveur simulé."""
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+    from test_pipeline import FakeApi, FakeFetcher, config
+
+    from sortiesbot.stages.base import RunContext
+    from sortiesbot.stages.harvest import Harvest
+    from sortiesbot.store import SeenStore
+
+    ctx = RunContext(
+        config=config(**conf),
+        provider=None,
+        store=SeenStore(),
+        api=FakeApi(),
+        fetcher=FakeFetcher(pages),
+        log=log,
+        submit=False,
+    )
+    return Harvest(ctx)
+
+
+@pytest.fixture
+def log_muet():
+    import io
+
+    from sortiesbot.journal import RunLog
+
+    return RunLog(path=None, verbose=False, stream=io.StringIO())

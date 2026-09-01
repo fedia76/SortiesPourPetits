@@ -137,6 +137,7 @@ par brique**, leur vocabulaire commun dans
 | 1 | Découverte | modèle | des requêtes web | les URL qu'elles ont remontées | `stages/discovery.py` — `Discovery` |
 | 2 | Reconnaissance | **mixte** | une URL trouvée | sa nature : agenda, sortie ou programme | `stages/identification.py` — `Identification` |
 | 3 | Dépouillement | Python | URL d'agenda | liens et leur contexte | `stages/harvest.py` — `Harvest` |
+
 | 4 | Sélection | modèle | liens numérotés | numéros retenus | `stages/selection.py` — `Selection` |
 | 5 | Lecture | Python | URL de page | texte, dates JSON-LD, image | `stages/reading.py` — `Reading` |
 | 6 | Extraction | modèle | texte de la page | fiche(s) JSON | `stages/extraction.py` — `Extraction` |
@@ -189,6 +190,22 @@ gestionnaire de contexte, et tout ce qui est journalisé à l'intérieur lui est
 rattaché. C'est ce qui permet à la console de reconstituer le graphe sans que
 le code ait à se répéter — et à `stages.describe()` d'être la seule source des
 libellés, y compris pour l'interface du site.
+
+### La pagination d'un agenda
+
+La deuxième page d'un agenda porte des sorties que la première n'a pas. Le
+dépouillement la suit — **mais seulement tant qu'il manque de liens**.
+
+C'est ce qui borne la dépense : les liens partent ensuite au tri, qui est
+facturé, et tripler leur nombre triplerait cet appel. Un agenda déjà riche
+s'arrête donc à sa première page ; un agenda maigre va chercher plus loin, ce
+qui est exactement l'inverse d'un gaspillage. Deux plafonds, et ils ne disent
+pas la même chose : `max_next_pages` (deux par défaut) borne le nombre de
+pages, les deux cents liens de `links_of` bornent la récolte.
+
+On ne suit que `rel="next"`. Reconstruire « page 2 » à partir d'une suite de
+liens numérotés reviendrait à **inventer une URL**, ce qu'on s'interdit partout
+ailleurs — et une page qui se déclare sa propre suite ferait tourner en rond.
 
 ### Le journal, et où il va
 

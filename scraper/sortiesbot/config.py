@@ -75,6 +75,10 @@ class Config:
     max_searches: int = 6
     #: Pages d'agenda ouvertes. Elles sont téléchargées en Python : gratuites.
     max_agendas: int = 6
+    #: Pages suivantes d'un même agenda. Zéro : on s'arrête à la première.
+    #: Chacune coûte un téléchargement, une seconde d'attente polie, et un
+    #: appel de tri — d'où un plafond bas par défaut.
+    max_next_pages: int = 2
     #: Liens retenus par agenda, pour ne pas noyer l'étage extraction.
     max_links_per_agenda: int = 8
     #: Caractères de page transmis au modèle à l'extraction (~4 jetons pour
@@ -298,6 +302,7 @@ def config_from_api(raw: dict[str, Any]) -> Config:
             max_events=integer("maxEvents", defaults.max_events),
             max_searches=integer("maxSearches", defaults.max_searches),
             max_agendas=integer("maxAgendas", defaults.max_agendas),
+            max_next_pages=integer("maxNextPages", defaults.max_next_pages),
             max_links_per_agenda=integer("maxLinksPerAgenda", defaults.max_links_per_agenda),
             max_page_chars=integer("maxPageChars", defaults.max_page_chars),
             max_cost_usd=number("maxCostUsd", defaults.max_cost_usd),
@@ -398,6 +403,7 @@ def describe(config: Config) -> dict[str, Any]:
         "max_events": config.max_events,
         "max_searches": config.max_searches,
         "max_agendas": config.max_agendas,
+        "max_next_pages": config.max_next_pages,
         "provider": config.provider,
         "queries": list(config.queries),
         "classify_model": config.classify_model,
