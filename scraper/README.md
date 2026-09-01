@@ -209,7 +209,9 @@ ailleurs — et une page qui se déclare sa propre suite ferait tourner en rond.
 
 ### Chercher avec Google plutôt qu'avec le modèle
 
-`provider: serper` dans la configuration remplace **un seul des cinq appels**,
+Depuis la console : **Recherche auto** → une configuration → *Moteur de
+recherche*. En YAML : `provider: serper`. Dans les deux cas, cela remplace
+**un seul des cinq appels**,
 la recherche. Serper interroge Google et rend du JSON ; il ne reconnaît pas une
 page et ne remplit pas une fiche, donc le modèle reste derrière pour les quatre
 autres. C'est ce que l'étage 1 a rendu possible en cessant de juger : il ne

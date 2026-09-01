@@ -172,6 +172,8 @@ model ScraperConfig {
   maxEvents         Int     @default(20)
   maxSearches       Int     @default(6)
   maxAgendas        Int     @default(6)
+  /// Pages suivantes d'un agenda, suivies tant que la moisson est maigre.
+  maxNextPages      Int     @default(2)
   maxLinksPerAgenda Int     @default(8)
   maxPageChars      Int     @default(8000)
   maxCostUsd        Decimal @default(1.00) @db.Decimal(6, 2)
@@ -183,11 +185,22 @@ model ScraperConfig {
   /// Domaines écartés d'office, séparés par des virgules.
   blockedDomains  String @default("") @db.Text
 
+  /// Qui lance les recherches : « anthropic » (outil serveur) ou « serper »
+  /// (Google). Le modèle reste derrière dans les deux cas pour le reste.
+  provider        String @default("anthropic")
+  /// Tranche la nature d'une page quand aucun signal certain ne la donne.
+  /// Vide : on ne demande à personne, et la page part en agenda.
+  classifyModel   String @default("claude-haiku-4-5")
   searchModel     String @default("claude-haiku-4-5")
   selectModel     String @default("claude-haiku-4-5")
   extractionModel String @default("claude-haiku-4-5")
 
+  /// Requêtes imposées, une par ligne. Vide : le modèle les formule.
+  queries         String? @db.Text
+
   /// Prompts personnalisés ; vides, le scraper utilise les siens.
+  queriesPrompt    String? @db.Text
+  classifyPrompt   String? @db.Text
   searchPrompt     String? @db.Text
   selectPrompt     String? @db.Text
   extractionPrompt String? @db.Text

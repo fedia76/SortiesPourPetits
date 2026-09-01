@@ -212,9 +212,19 @@ export interface ScraperConfig {
   defaultCategory: string;
   postalPrefixes: string;
   blockedDomains: string;
+  /** Qui lance les recherches : l'outil serveur du modèle, ou Google. */
+  provider: 'anthropic' | 'serper';
+  /** Pages suivantes d'un agenda, suivies tant que la moisson est maigre. */
+  maxNextPages: number;
+  /** Requêtes imposées, une par ligne. Vide : le modèle les formule. */
+  queries: string | null;
+  /** Vide : la reconnaissance s'en tient aux signaux gratuits. */
+  classifyModel: string;
   searchModel: string;
   selectModel: string;
   extractionModel: string;
+  queriesPrompt: string | null;
+  classifyPrompt: string | null;
   searchPrompt: string | null;
   selectPrompt: string | null;
   extractionPrompt: string | null;
