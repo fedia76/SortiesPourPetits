@@ -207,6 +207,31 @@ On ne suit que `rel="next"`. Reconstruire « page 2 » à partir d'une suite de
 liens numérotés reviendrait à **inventer une URL**, ce qu'on s'interdit partout
 ailleurs — et une page qui se déclare sa propre suite ferait tourner en rond.
 
+### Chercher avec Google plutôt qu'avec le modèle
+
+`provider: serper` dans la configuration remplace **un seul des cinq appels**,
+la recherche. Serper interroge Google et rend du JSON ; il ne reconnaît pas une
+page et ne remplit pas une fiche, donc le modèle reste derrière pour les quatre
+autres. C'est ce que l'étage 1 a rendu possible en cessant de juger : il ne
+demande plus que des URL, et un moteur sait en rendre.
+
+| | `web_search` (Anthropic) | Serper |
+|---|---|---|
+| Index | Brave | Google, plus profond sur le local francophone |
+| Prix d'une requête | 0,01 $ | **0,001 $**, annoncé par la réponse |
+| Jetons d'entrée | le contenu des résultats entre dans le contexte | aucun |
+| Ce qu'on reçoit | contenu de page | titre, lien, extrait |
+
+Ce qu'on perd — le contenu — n'a plus d'importance depuis que la
+reconnaissance télécharge la page et juge sur son HTML.
+
+La forme des réponses a été **confrontée au service** ; le détail de ce qui a
+été observé est en tête de `providers/serper_provider.py`. Les tests, eux,
+simulent : ils verrouillent ce que le code fait de cette forme, pas qu'elle
+soit la bonne. Pour la revérifier — après un changement d'API, par exemple —
+il suffit de mettre `[serper]` dans un message de commit : le job du même nom
+appelle le vrai service et affiche ce qu'il rend.
+
 ### Le journal, et où il va
 
 Un même événement part vers trois destinations :

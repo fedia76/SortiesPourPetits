@@ -4,12 +4,14 @@ Aucun appel réseau. Les réponses sont simulées à la forme documentée de
 l'API — un objet portant un tableau `organic` dont chaque entrée a `title`,
 `link`, `snippet` et `position`.
 
-**Cette forme n'a pas été vérifiée contre le service réel depuis cette
-session** : serper.dev est injoignable derrière le proxy. Le travail de
-vérification revient donc à l'exécution manuelle du workflow
-`.github/workflows/verifier.yml`, qui dispose de la clé et affiche la forme
-réellement reçue. Ces tests-ci verrouillent ce que le code fait de cette
-forme ; ils ne prouvent pas que la forme soit la bonne.
+La forme a été **confrontée au service le 1er septembre 2026**, par le job
+`serper` de `.github/workflows/verifier.yml` — le détail est en tête de
+`serper_provider.py`. Elle concorde, à un détail près qu'on ignorait : la
+réponse annonce elle-même ce qu'elle a coûté, en crédits.
+
+Ces tests verrouillent ce que le code fait de cette forme. Ce n'est pas eux
+qui garantissent qu'elle soit la bonne — ça, seul un appel réel le dit, et
+c'est à quoi sert ce job.
 """
 
 from __future__ import annotations
@@ -82,9 +84,11 @@ class ModeleSimule:
         return [ExtractedEvent(relevant=True, title="Une sortie")]
 
 
-def organique(*urls: str) -> dict:
+def organique(*urls: str, credits: int = 1) -> dict:
+    """Une réponse à la forme réellement observée le 1er septembre 2026."""
     return {
         "searchParameters": {"q": "spectacle enfant", "gl": "fr", "hl": "fr"},
+        "credits": credits,
         "organic": [
             {"title": f"Titre de {u}", "link": u, "snippet": "un extrait", "position": i + 1}
             for i, u in enumerate(urls)
@@ -224,6 +228,35 @@ def test_chaque_requete_est_imputee_au_compteur_du_run(log):
     assert p.usage.search_cost_usd == pytest.approx(0.002)
     # Dix fois moins que l'outil serveur d'Anthropic, qui facture un centime.
     assert p.usage.search_cost_usd < 2 * 0.01
+
+
+def test_le_cout_est_celui_que_la_reponse_annonce(log):
+    """Serper dit combien de crédits il a pris : on le lit, on ne le déduit pas.
+
+    Une règle de notre cru — « un crédit jusqu'à dix résultats » — finirait par
+    diverger de sa grille sans que rien ne le signale.
+    """
+    moteur = MoteurSimule(Reponse(organique("https://a.fr/1", credits=2)))
+    p = provider(moteur)
+    p.search(["une"], config(), log)
+
+    assert p.usage.search_cost_usd == pytest.approx(0.002)
+
+
+def test_sans_le_champ_credits_on_retombe_sur_une_requete(log):
+    """Repli : si le champ disparaissait, la facture resterait plausible."""
+    reponse = organique("https://a.fr/1")
+    del reponse["credits"]
+    p = provider(MoteurSimule(Reponse(reponse)))
+    p.search(["une"], config(), log)
+
+    assert p.usage.search_cost_usd == pytest.approx(0.001)
+
+
+def test_moins_de_resultats_que_demande_ne_gene_personne(log):
+    """`num` est un souhait, pas un contrat : dix demandés, neuf rendus."""
+    moteur = MoteurSimule(Reponse(organique(*[f"https://a.fr/{i}" for i in range(9)])))
+    assert len(provider(moteur).search(["une"], config(), log)) == 9
 
 
 def test_une_requete_en_erreur_nest_pas_facturee(log):

@@ -26,6 +26,21 @@ télécharge la page et juge sur son HTML.
 Une requête par appel : la documentation publique ne garantit pas qu'un envoi
 groupé soit accepté, et six requêtes de plus ne valent pas un pari sur une
 forme non vérifiée.
+
+## Ce que le service rend vraiment
+
+Vérifié le 1er septembre 2026 contre le service, par
+`tools/serper_shape.py` — les tests, eux, simulent :
+
+    HTTP 200
+    Clés de premier niveau : ['credits', 'organic', 'searchParameters']
+    Résultats organiques   : 9   (pour `num: 10` : Google en rend ce qu'il veut)
+    Champs d'un résultat   : ['link', 'position', 'snippet', 'title']
+
+Deux enseignements. La réponse **annonce ce qu'elle a coûté** (`credits`), et
+on le lit plutôt que de le déduire. Et `num` est un souhait, pas un contrat :
+demander dix résultats peut en rendre neuf, ce dont la suite s'accommode
+puisqu'elle ne compte jamais dessus.
 """
 
 from __future__ import annotations
@@ -47,10 +62,13 @@ ENDPOINT = "https://google.serper.dev/search"
 
 TIMEOUT = 30
 
-#: Tarif du palier d'entrée : 50 $ les 50 000 crédits. Un crédit couvre dix
-#: résultats ; au-delà de dix, la requête en consomme deux. C'est ce que
-#: `_credits` calcule, pour que la facture affichée soit la vraie.
+#: Tarif du palier d'entrée : 50 $ les 50 000 crédits.
 PRICE_PER_CREDIT_USD = 0.001
+
+#: Ce qu'une requête consomme quand la réponse ne le dit pas. Elle le dit
+#: presque toujours — voir `_charge` — et c'est mieux ainsi : combien coûte un
+#: appel est une question à laquelle le service répond, pas nous.
+CREDITS_FALLBACK = 1
 
 #: Résultats demandés par requête. Dix tiennent dans un crédit, et la
 #: reconnaissance télécharge chacun d'eux : en demander cent reviendrait à
@@ -151,18 +169,21 @@ class SerperProvider:
         except ValueError as err:
             raise ProviderError("réponse du moteur illisible") from err
 
-        self._charge()
+        self._charge(data.get("credits"))
         organic = data.get("organic")
         return [r for r in organic if isinstance(r, dict)] if isinstance(organic, list) else []
 
-    def _charge(self) -> None:
-        """Impute une requête au compteur du run, au tarif du moteur."""
-        self.usage.web_searches += 1
-        self.usage.search_cost_usd += self._credits() * PRICE_PER_CREDIT_USD
+    def _charge(self, credits: Any) -> None:
+        """Impute la requête au compteur du run, au tarif du moteur.
 
-    def _credits(self) -> int:
-        """Un crédit jusqu'à dix résultats, deux au-delà."""
-        return 1 if RESULTS_PER_QUERY <= 10 else 2
+        Le nombre de crédits est **lu dans la réponse** plutôt que déduit du
+        nombre de résultats demandés : le service le dit, et une règle de
+        notre cru finirait par diverger de sa grille. Le repli ne sert que si
+        le champ venait à disparaître.
+        """
+        self.usage.web_searches += 1
+        consommes = credits if isinstance(credits, int) and credits > 0 else CREDITS_FALLBACK
+        self.usage.search_cost_usd += consommes * PRICE_PER_CREDIT_USD
 
     @staticmethod
     def _blocked(url: str, config: Config) -> bool:
