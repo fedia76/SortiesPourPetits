@@ -59,11 +59,13 @@ from .config import Config, describe
 from .harvest import Fetcher, Link
 from .journal import RunLog
 from .ledger import Ledger
+from dataclasses import replace
+
 from .classify import PROGRAMME, SORTIE
-from .models import Candidate, FoundPage
+from .models import Candidate, ExtractedEvent, FoundPage
 from .providers.base import Provider, ProviderError
 from .stages import ORDER, describe as describe_stages
-from .stages.base import Brick, RunContext, RunResult
+from .stages.base import Brick, PageContent, RunContext, RunResult
 from .stages.discovery import Discovery
 from .stages.extraction import Extraction
 from .stages.harvest import Harvest
@@ -235,7 +237,10 @@ class Run:
 
                 # ── ÉTAGE 6/7 · Extraction ────────── 1 fois par page ──────
                 #    Une page de spectacle rend une fiche, un programme vingt.
-                for extracted in self.extraction.run(page, candidate):
+                fiches = self.extraction.run(page, candidate)
+                candidate, fiches = self._requalified(candidate, page, fiches)
+
+                for extracted in fiches:
                     if self.ctx.full:
                         self.log.event(
                             "skip", reason="plafond de sorties atteint", url=candidate.url
@@ -271,6 +276,42 @@ class Run:
             Candidate(url=link.url, title=link.text, source=agenda, context=link.context)
             for link in kept
         ]
+
+    def _requalified(
+        self, candidate: Candidate, page: PageContent, fiches: list[ExtractedEvent]
+    ) -> tuple[Candidate, list[ExtractedEvent]]:
+        """Relit d'un bloc une page que l'extraction dit porter plusieurs sorties.
+
+        La reconnaissance juge sur un condensé ; l'extraction, elle, a lu le
+        texte entier — c'est la première du pipeline à le faire. Quand elle
+        répond « ce n'est pas une sortie, il y en a plusieurs ici », elle en
+        sait plus que l'étage 2, et la page repart pour un tour en programme.
+
+        **Une seule reprise, garantie par construction** : la relecture pose
+        `multiple`, et la condition ci-dessous exige qu'il soit faux. Il n'y a
+        pas de compteur à tenir, pas de boucle à borner — le second passage ne
+        peut pas remplir la condition qui a déclenché le premier.
+
+        C'est aussi la meilleure étiquette dont on dispose : « l'étage 6 a
+        corrigé l'étage 2 », consignée au registre pour qui voudra un jour
+        apprendre à mieux reconnaître.
+        """
+        if candidate.multiple or len(fiches) != 1 or not fiches[0].several:
+            return candidate, fiches
+
+        self.log.event(
+            "requalified", url=candidate.url, was="sortie", now="programme",
+            reason=fiches[0].skip_reason or "plusieurs sorties sur la page",
+        )
+        self.ctx.ledger.record(
+            "requalify",
+            url=candidate.url,
+            was="sortie",
+            now="programme",
+            reason=fiches[0].skip_reason,
+        )
+        programme = replace(candidate, multiple=True)
+        return programme, self.extraction.run(page, programme)
 
     def _to_read(self, trouvees: list[Candidate]) -> Iterator[Candidate]:
         """Les pages qui seront effectivement lues, dans l'ordre.

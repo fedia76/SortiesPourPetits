@@ -383,6 +383,18 @@ fiches sont ailleurs — donc cette distinction-là revient presque toujours au
 modèle. Le condensé s'y prête : un programme a beaucoup de dates et peu de
 liens, un agenda a beaucoup des deux.
 
+**L'extraction peut corriger la reconnaissance.** Elle est la première du
+pipeline à lire le texte entier ; quand elle répond « ce n'est pas une sortie,
+il y en a plusieurs ici » (`several`), la page repart pour un tour, en
+programme cette fois. Une seule reprise, et la garantie tient à la structure
+plutôt qu'à un compteur : la relecture pose `multiple`, et la condition de
+reprise exige qu'il soit faux — le second passage ne peut pas remplir la
+condition qui a déclenché le premier.
+
+C'est aussi la meilleure étiquette dont on dispose : « l'étage 6 a corrigé
+l'étage 2 » part au registre sous le sujet `requalify`, et c'est cette
+vérité-là qui servira à apprendre à mieux reconnaître.
+
 Le chemin du programme n'est pas neuf : c'est celui que le mode « site »
 empruntait déjà (`multiple`), et ses sorties se mémorisent une à une plutôt que
 la page — sinon un programme lu une fois ne serait plus jamais relu, et tout ce

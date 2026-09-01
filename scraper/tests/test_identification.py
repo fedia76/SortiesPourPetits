@@ -228,3 +228,86 @@ def test_un_programme_memorise_ses_sorties_et_non_sa_page(journal):
             fetcher=FakeFetcher({MUETTE_URL: MUETTE_HTML}), submit=True)
         # La page n'est pas mémorisée : ce sont ses sorties qui le sont.
         assert not store.seen(MUETTE_URL)
+
+
+# ═══════════════════════════════ quand l'extraction corrige la reconnaissance
+
+
+class Requalifiant(FakeProvider):
+    """L'extraction dit « ce n'est pas une sortie, il y en a plusieurs ici ».
+
+    Puis, relue en programme, elle rend les fiches. C'est le cas réel : la
+    reconnaissance juge sur un condensé, l'extraction a lu tout le texte.
+    """
+
+    def extract(self, url, content, config, categories, log, *, multiple=False):
+        self.extracted.append((url, multiple))
+        if not multiple:
+            return [sortie(relevant=False, skip_reason="c'est un programme", several=True)]
+        return [sortie(title="Premier rendez-vous"), sortie(title="Second rendez-vous")]
+
+
+def test_une_page_prise_pour_une_sortie_est_relue_en_programme(journal):
+    log, events = journal
+    provider = Requalifiant([FoundPage(url=MUETTE_URL)], {}, select_all=False)
+    provider.verdicts = [("sortie", "on dirait une fiche")]
+    with SeenStore() as store:
+        result = run(config(), provider, store, FakeApi(), log,
+                     fetcher=FakeFetcher({MUETTE_URL: MUETTE_HTML}), submit=True)
+
+    assert provider.extracted == [(MUETTE_URL, False), (MUETTE_URL, True)]
+    assert len(result.events) == 2, "les deux sorties du programme sont retenues"
+
+    trace = kinds(events, "requalified")
+    assert len(trace) == 1
+    assert (trace[0]["was"], trace[0]["now"]) == ("sortie", "programme")
+
+
+def test_la_page_nest_relue_quune_fois(journal):
+    """La garantie tient à la structure, pas à un compteur : la relecture pose
+    `multiple`, et la condition de reprise exige qu'il soit faux."""
+    log, _ = journal
+
+    class Insistant(Requalifiant):
+        def extract(self, url, content, config, categories, log, *, multiple=False):
+            self.extracted.append((url, multiple))
+            # Même en programme, elle réclame encore une relecture.
+            return [sortie(relevant=False, skip_reason="encore", several=True)]
+
+    provider = Insistant([FoundPage(url=MUETTE_URL)], {}, select_all=False)
+    provider.verdicts = [("sortie", "on dirait une fiche")]
+    with SeenStore() as store:
+        run(config(), provider, store, FakeApi(), log,
+            fetcher=FakeFetcher({MUETTE_URL: MUETTE_HTML}))
+
+    assert provider.extracted == [(MUETTE_URL, False), (MUETTE_URL, True)]
+
+
+def test_un_programme_deja_reconnu_ne_repasse_pas(journal):
+    """Il est déjà lu d'un bloc : il n'y a rien à requalifier."""
+    log, events = journal
+    provider = Requalifiant([FoundPage(url=MUETTE_URL)], {}, select_all=False)
+    provider.verdicts = [("programme", "un festival sur une page")]
+    with SeenStore() as store:
+        run(config(), provider, store, FakeApi(), log,
+            fetcher=FakeFetcher({MUETTE_URL: MUETTE_HTML}))
+
+    assert provider.extracted == [(MUETTE_URL, True)]
+    assert kinds(events, "requalified") == []
+
+
+def test_la_correction_part_au_registre(journal, tmp_path):
+    """« L'étage 6 a corrigé l'étage 2 » : la meilleure étiquette qu'on ait."""
+    log, _ = journal
+    chemin = tmp_path / "classifier.jsonl"
+    provider = Requalifiant([FoundPage(url=MUETTE_URL)], {}, select_all=False)
+    provider.verdicts = [("sortie", "on dirait une fiche")]
+    with SeenStore() as store, Ledger(chemin, run="essai") as ledger:
+        run(config(), provider, store, FakeApi(), log,
+            fetcher=FakeFetcher({MUETTE_URL: MUETTE_HTML}), ledger=ledger)
+
+    lignes = [json.loads(l) for l in chemin.read_text().splitlines()]
+    correction = [l for l in lignes if l["topic"] == "requalify"]
+    assert len(correction) == 1
+    assert (correction[0]["was"], correction[0]["now"]) == ("sortie", "programme")
+    assert correction[0]["url"] == MUETTE_URL

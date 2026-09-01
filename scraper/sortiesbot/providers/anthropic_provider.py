@@ -140,6 +140,9 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
     "properties": {
         "relevant": {"type": "boolean"},
         "skip_reason": {"type": "string"},
+        # Le seul champ qui puisse renvoyer la page en arrière : elle n'est
+        # pas une sortie, mais elle en porte plusieurs.
+        "several": {"type": "boolean"},
         "title": {"type": "string"},
         "description": {"type": "string"},
         "free": {"type": "boolean"},
@@ -173,7 +176,7 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
         "photo_url": {"type": "string"},
     },
     "required": [
-        "relevant", "skip_reason", "title", "description", "free", "price",
+        "relevant", "skip_reason", "several", "title", "description", "free", "price",
         "age_min", "age_max", "permanent", "date_start", "date_end",
         "weekdays", "dates",
         "open_time", "close_time", "setting", "category", "venue_name",
@@ -191,9 +194,12 @@ _MULTI_ITEM_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         k: v for k, v in EXTRACTION_SCHEMA["properties"].items()
-        if k not in ("relevant", "skip_reason")
+        if k not in ("relevant", "skip_reason", "several")
     },
-    "required": [k for k in EXTRACTION_SCHEMA["required"] if k not in ("relevant", "skip_reason")],
+    "required": [
+        k for k in EXTRACTION_SCHEMA["required"]
+        if k not in ("relevant", "skip_reason", "several")
+    ],
     "additionalProperties": False,
 }
 

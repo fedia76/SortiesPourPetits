@@ -135,6 +135,11 @@ Règles :
   aux enfants (page de liste, billetterie, article générique, événement
   terminé, contenu pour adultes) : explique alors pourquoi dans `skip_reason`
   et laisse les autres champs vides.
+- `several` vaut true dans un seul cas : la page ne décrit pas *une* sortie
+  mais **en présente plusieurs, décrites ici même** — un programme de
+  festival, une saison, un week-end. Elle sera relue pour toutes les relever,
+  et rien ne sera perdu. Ne le mets pas pour une page qui se contente de
+  renvoyer vers des fiches ailleurs : celle-là n'a rien à donner.
 - `description` : 3 à 6 phrases en français, écrites pour un parent, à partir
   du contenu réel de la page. N'invente rien, ne recopie pas un texte
   publicitaire.

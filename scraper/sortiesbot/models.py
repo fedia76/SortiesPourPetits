@@ -66,6 +66,11 @@ class ExtractedEvent:
 
     relevant: bool
     skip_reason: str = ""
+    #: La page ne décrit pas *une* sortie : elle en présente plusieurs. C'est
+    #: la reconnaissance qui s'est trompée, et l'extraction s'en aperçoit la
+    #: première — elle a lu le texte, ce que personne n'avait fait avant elle.
+    #: L'orchestrateur la requalifie alors en programme et la relit d'un bloc.
+    several: bool = False
     title: str = ""
     description: str = ""
     free: bool = False
@@ -118,6 +123,7 @@ class ExtractedEvent:
         return cls(
             relevant=bool(data.get("relevant", False)),
             skip_reason=text("skip_reason"),
+            several=bool(data.get("several")),
             title=text("title"),
             description=text("description"),
             free=bool(data.get("free", False)),
