@@ -102,6 +102,13 @@ class Fetcher:
         self.archive = Path(archive) if archive else None
         if self.archive is not None:
             self.archive.mkdir(parents=True, exist_ok=True)
+        #: Pages déjà téléchargées pendant ce run. Le pipeline lit la même page
+        #: deux fois par conception — on la reconnaît, puis on la dépouille ou
+        #: on la lit — et le site n'a pas à en pâtir : c'est sa bande passante,
+        #: et le délai de politesse que la seconde requête ferait attendre.
+        #: Le cache meurt avec le run : deux exécutions à une semaine d'écart
+        #: doivent bien voir deux versions de la page.
+        self._pages: dict[str, str] = {}
 
     # ------------------------------------------------------------- politesse
 
@@ -139,9 +146,16 @@ class Fetcher:
     # ---------------------------------------------------------- récupération
 
     def get_html(self, url: str) -> str:
-        """Télécharge une page HTML, ou lève `FetchError`."""
+        """Télécharge une page HTML, ou lève `FetchError`.
+
+        Une page déjà lue pendant ce run est rendue telle quelle : la seconde
+        lecture serait identique, et elle coûterait une requête au site plus
+        une seconde de délai de politesse.
+        """
         if not url.startswith(("http://", "https://")):
             raise FetchError("URL invalide")
+        if url in self._pages:
+            return self._pages[url]
         if not self.allowed(url):
             raise FetchError("interdit par robots.txt")
 
@@ -165,6 +179,7 @@ class Fetcher:
 
         encoding = response.encoding or "utf-8"
         html = b"".join(chunks).decode(encoding, errors="replace")
+        self._pages[url] = html
         self._keep(url, html)
         return html
 
