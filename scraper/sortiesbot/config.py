@@ -44,6 +44,9 @@ MODE_SEARCH = "recherche"
 MODE_SITE = "site"
 MODES = (MODE_SEARCH, MODE_SITE)
 
+#: Qui lance les recherches. Le modèle reste derrière dans les deux cas.
+PROVIDERS = ("anthropic", "serper")
+
 DEFAULT_BLOCKED_DOMAINS = [
     # Pages non lisibles ou sans contenu exploitable.
     "facebook.com",
@@ -235,6 +238,13 @@ def validated(config: Config) -> Config:
         raise ConfigError(
             f"mode inconnu : « {config.mode} » (connus : {', '.join(MODES)})"
         )
+    if config.provider not in PROVIDERS:
+        # Au chargement plutôt qu'au premier appel : une faute de frappe dans
+        # la console ne doit pas se découvrir à mi-run, après des dépenses.
+        raise ConfigError(
+            f"fournisseur inconnu : « {config.provider} » "
+            f"(connus : {', '.join(PROVIDERS)})"
+        )
     urls = [u.strip() for u in config.seed_urls if u.strip()]
     for url in urls:
         if not url.startswith(("http://", "https://")):
@@ -242,6 +252,16 @@ def validated(config: Config) -> Config:
     if config.mode == MODE_SITE and not urls:
         raise ConfigError("le mode « site » réclame au moins une URL de départ (seed_urls)")
     return replace(config, seed_urls=urls)
+
+
+def _lines(value: Any) -> list[str]:
+    """Les requêtes, qu'elles viennent d'une liste YAML ou d'un texte à lignes.
+
+    La console offre un champ libre — une requête par ligne, c'est ce qu'on
+    tape naturellement — et le YAML une liste. Les deux disent la même chose.
+    """
+    items = value if isinstance(value, list) else str(value or "").splitlines()
+    return [str(item).strip() for item in items if str(item).strip()]
 
 
 def _split(value: Any, fallback: list[str]) -> list[str]:
@@ -310,12 +330,13 @@ def config_from_api(raw: dict[str, Any]) -> Config:
             default_category=str(raw.get("defaultCategory") or defaults.default_category),
             postal_prefixes=_split(raw.get("postalPrefixes"), defaults.postal_prefixes),
             blocked_domains=_split(raw.get("blockedDomains"), defaults.blocked_domains),
+            provider=str(raw.get("provider") or defaults.provider).strip().lower(),
+            queries=_lines(raw.get("queries")),
             classify_model=str(raw.get("classifyModel", defaults.classify_model)),
             search_model=str(raw.get("searchModel") or defaults.search_model),
             select_model=str(raw.get("selectModel") or defaults.select_model),
             extraction_model=str(raw.get("extractionModel") or defaults.extraction_model),
             search_prompt=prompt("searchPrompt", defaults.search_prompt),
-            queries=[str(q).strip() for q in (raw.get("queries") or []) if str(q).strip()],
             queries_prompt=prompt("queriesPrompt", defaults.queries_prompt),
             classify_prompt=prompt("classifyPrompt", defaults.classify_prompt),
             select_prompt=prompt("selectPrompt", defaults.select_prompt),

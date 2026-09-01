@@ -35,6 +35,7 @@ function blank() {
     maxEvents: 20,
     maxSearches: 6,
     maxAgendas: 6,
+    maxNextPages: 2,
     maxLinksPerAgenda: 8,
     maxPageChars: 8000,
     maxCostUsd: 1,
@@ -42,9 +43,14 @@ function blank() {
     defaultCategory: 'Non classé',
     postalPrefixes: '75,77,78,91,92,93,94,95',
     blockedDomains: '',
+    provider: 'anthropic' as 'anthropic' | 'serper',
+    queries: '',
+    classifyModel: 'claude-haiku-4-5',
     searchModel: 'claude-haiku-4-5',
     selectModel: 'claude-haiku-4-5',
     extractionModel: 'claude-haiku-4-5',
+    queriesPrompt: '',
+    classifyPrompt: '',
     searchPrompt: '',
     selectPrompt: '',
     extractionPrompt: '',
@@ -121,6 +127,10 @@ async function save() {
   // Un prompt laissé vide veut dire « garde celui du scraper », pas « aucun ».
   const payload = {
     ...form,
+    // Vide veut dire « laisse le scraper décider », pas « aucune requête ».
+    queries: form.queries.trim() || null,
+    queriesPrompt: form.queriesPrompt.trim() || null,
+    classifyPrompt: form.classifyPrompt.trim() || null,
     searchPrompt: form.searchPrompt.trim() || null,
     selectPrompt: form.selectPrompt.trim() || null,
     extractionPrompt: form.extractionPrompt.trim() || null,
@@ -358,6 +368,15 @@ onUnmounted(() => clearInterval(timer));
               <span class="hint">Plafond appliqué à vos adresses.</span>
             </div>
             <div class="field">
+              <label for="s-next">Pages suivantes</label>
+              <input id="s-next" v-model.number="form.maxNextPages" type="number" min="0" max="10" />
+              <span class="hint">
+                Un agenda qui se pagine est suivi, mais seulement tant qu'il rend peu de
+                liens : ceux-ci partent ensuite au tri, qui est facturé. Zéro pour s'en
+                tenir à la première page.
+              </span>
+            </div>
+            <div class="field">
               <label for="s-links">
                 {{ cibleUnSite ? 'Liens suivis par page' : 'Liens retenus par agenda' }}
               </label>
@@ -391,10 +410,43 @@ onUnmounted(() => clearInterval(timer));
             <span class="hint">Séparés par des virgules. Laissez vide pour la liste par défaut.</span>
           </div>
 
+          <div v-if="!cibleUnSite" class="field">
+            <label for="s-provider">Moteur de recherche</label>
+            <select id="s-provider" v-model="form.provider">
+              <option value="anthropic">Anthropic — l'outil du modèle</option>
+              <option value="serper">Serper — Google</option>
+            </select>
+            <span class="hint">
+              Anthropic passe par l'outil serveur du modèle : les résultats entrent dans
+              son contexte, et ces jetons se facturent. Serper interroge Google — un
+              dixième du prix, pas un jeton d'entrée, et un index plus profond sur le
+              local francophone. Le modèle reste derrière dans les deux cas : un moteur
+              trouve des pages, il ne les juge pas.
+            </span>
+          </div>
+
+          <div v-if="!cibleUnSite" class="field">
+            <label for="s-queries">Requêtes imposées</label>
+            <textarea id="s-queries" v-model="form.queries" rows="4" maxlength="4000"></textarea>
+            <span class="hint">
+              Une par ligne. Laissez vide pour que le modèle les formule — elles
+              varieront alors d'un run à l'autre. Les figer rend deux exécutions
+              comparables d'une semaine sur l'autre.
+            </span>
+          </div>
+
           <div class="row">
             <div v-if="!cibleUnSite" class="field">
               <label for="s-m1">Modèle — recherche</label>
               <input id="s-m1" v-model="form.searchModel" type="text" maxlength="60" />
+            </div>
+            <div class="field">
+              <label for="s-m0">Modèle — reconnaissance</label>
+              <input id="s-m0" v-model="form.classifyModel" type="text" maxlength="60" />
+              <span class="hint">
+                Videz-le pour n'utiliser que les signaux gratuits : une page dont
+                la nature reste indécise part alors en agenda.
+              </span>
             </div>
             <div class="field">
               <label for="s-m2">Modèle — tri des liens</label>
@@ -404,6 +456,20 @@ onUnmounted(() => clearInterval(timer));
               <label for="s-m3">Modèle — lecture des pages</label>
               <input id="s-m3" v-model="form.extractionModel" type="text" maxlength="60" />
             </div>
+          </div>
+
+          <div v-if="!cibleUnSite" class="field">
+            <label for="s-p0">Prompt — formulation des requêtes</label>
+            <textarea id="s-p0" v-model="form.queriesPrompt" rows="4"></textarea>
+            <span class="hint">Sans objet si vous imposez les requêtes ci-dessus.</span>
+          </div>
+
+          <div class="field">
+            <label for="s-pc">Prompt — reconnaissance d'une page</label>
+            <textarea id="s-pc" v-model="form.classifyPrompt" rows="4"></textarea>
+            <span class="hint">
+              N'est utilisé que lorsque aucun signal certain ne tranche.
+            </span>
           </div>
 
           <div v-if="!cibleUnSite" class="field">

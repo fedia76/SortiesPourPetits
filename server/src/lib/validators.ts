@@ -180,6 +180,18 @@ export const SCRAPER_MODES = ['recherche', 'site'] as const;
 export type ScraperMode = (typeof SCRAPER_MODES)[number];
 
 /**
+ * Qui lance les recherches web.
+ *
+ * « anthropic » passe par l'outil serveur du modèle : les résultats entrent
+ * dans son contexte, et ces jetons se facturent. « serper » interroge Google
+ * et rend du JSON — un dixième du prix, pas un jeton d'entrée, et un index
+ * plus profond sur le local francophone. Le modèle reste derrière dans les
+ * deux cas : un moteur trouve des pages, il ne les juge pas.
+ */
+export const SCRAPER_PROVIDERS = ['anthropic', 'serper'] as const;
+export type ScraperProvider = (typeof SCRAPER_PROVIDERS)[number];
+
+/**
  * Les URLs de départ, saisies une par ligne dans la console.
  *
  * Vérifiées ici plutôt que dans le scraper : un run qui part sur une adresse
@@ -212,6 +224,9 @@ export const scraperConfigSchema = z.object({
   maxEvents: z.number().int().min(1).max(100).optional(),
   maxSearches: z.number().int().min(1).max(20).optional(),
   maxAgendas: z.number().int().min(1).max(20).optional(),
+  // Deux pages suivantes suffisent : chacune coûte un téléchargement, une
+  // seconde d'attente polie et des liens de plus au tri, qui est facturé.
+  maxNextPages: z.number().int().min(0).max(10).optional(),
   maxLinksPerAgenda: z.number().int().min(1).max(50).optional(),
   maxPageChars: z.number().int().min(1000).max(40_000).optional(),
   maxCostUsd: z.number().min(0.05).max(20).optional(),
@@ -219,9 +234,16 @@ export const scraperConfigSchema = z.object({
   defaultCategory: z.string().trim().min(2).max(50).optional(),
   postalPrefixes: z.string().trim().max(200).optional(),
   blockedDomains: z.string().trim().max(2000).optional(),
+  provider: z.enum(SCRAPER_PROVIDERS).optional(),
+  // Seul modèle qu'on puisse vider : sans lui, la reconnaissance s'en tient
+  // aux signaux gratuits et laisse la page partir en agenda.
+  classifyModel: z.string().trim().max(60).optional(),
   searchModel: z.string().trim().min(3).max(60).optional(),
   selectModel: z.string().trim().min(3).max(60).optional(),
   extractionModel: z.string().trim().min(3).max(60).optional(),
+  queries: z.string().max(4000).nullable().optional(),
+  queriesPrompt: z.string().max(20_000).nullable().optional(),
+  classifyPrompt: z.string().max(20_000).nullable().optional(),
   searchPrompt: z.string().max(20_000).nullable().optional(),
   selectPrompt: z.string().max(20_000).nullable().optional(),
   extractionPrompt: z.string().max(20_000).nullable().optional(),
