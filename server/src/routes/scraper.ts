@@ -572,10 +572,11 @@ scraperRouter.post('/runs/:id/items', async (req, res) => {
  * brique côté scraper la renomme partout. Ces tables ne servent que pour les
  * exécutions antérieures, dont on ne sait plus que l'identifiant d'étage.
  */
-const FALLBACK_ORDER = ['discovery', 'harvest', 'select', 'read', 'extract', 'publish'];
+const FALLBACK_ORDER = ['discovery', 'identify', 'harvest', 'select', 'read', 'extract', 'publish'];
 
 const FALLBACK_LABELS: Record<string, string> = {
   discovery: 'Découverte',
+  identify: 'Reconnaissance',
   harvest: 'Dépouillement',
   select: 'Sélection',
   read: 'Lecture',
@@ -585,6 +586,8 @@ const FALLBACK_LABELS: Record<string, string> = {
 
 const FALLBACK_ACTORS: Record<string, string> = {
   discovery: 'modele',
+  // Gratuite tant qu'un signal certain tranche, facturée sinon.
+  identify: 'mixte',
   harvest: 'python',
   select: 'modele',
   read: 'python',
@@ -714,7 +717,7 @@ scraperRouter.get('/runs/:id/logs', async (req, res) => {
 });
 
 /**
- * Le graphe des six étages, avec ce que chacun a produit.
+ * Le graphe des étages, avec ce que chacun a produit et ce qu'il a coûté.
  *
  * Les libellés ne sont pas écrits ici : ils viennent de l'événement
  * `run_start`, que le scraper remplit depuis `stages.py`. Une brique renommée
@@ -727,9 +730,14 @@ scraperRouter.get('/runs/:id/graph', async (req, res) => {
     return;
   }
 
-  const [start, ends, byStage, errorsByStage] = await Promise.all([
+  const [start, ends, spend, byStage, errorsByStage] = await Promise.all([
     prisma.scraperRunLog.findFirst({ where: { runId, kind: 'run_start' }, orderBy: { seq: 'asc' } }),
     prisma.scraperRunLog.findMany({ where: { runId, kind: 'stage_end' }, orderBy: { seq: 'asc' } }),
+    // La dépense est portée par les événements `usage`, un par appel au
+    // modèle. Elle ne se somme pas en base : `data` est du JSON dans une
+    // colonne texte. Une exécution en compte quelques dizaines, on additionne
+    // ici plutôt que d'ajouter des colonnes pour un total qu'on sait dériver.
+    prisma.scraperRunLog.findMany({ where: { runId, kind: 'usage' }, orderBy: { seq: 'asc' } }),
     prisma.scraperRunLog.groupBy({ by: ['stage'], where: { runId }, _count: { _all: true } }),
     prisma.scraperRunLog.groupBy({
       by: ['stage'],
@@ -739,6 +747,24 @@ scraperRouter.get('/runs/:id/graph', async (req, res) => {
   ]);
 
   const events = new Map(byStage.map((g) => [g.stage ?? '', g._count._all]));
+
+  /** Ce que chaque étage a dépensé : dollars, jetons, recherches web. */
+  const cost = new Map<string, { usd: number; tokens: number; searches: number; calls: number }>();
+  for (const row of spend) {
+    if (!row.stage) continue;
+    let d: Record<string, unknown> = {};
+    try {
+      d = row.data ? (JSON.parse(row.data) as Record<string, unknown>) : {};
+    } catch {
+      continue;
+    }
+    const entry = cost.get(row.stage) ?? { usd: 0, tokens: 0, searches: 0, calls: 0 };
+    entry.usd += Number(d.total_usd ?? 0);
+    entry.tokens += Number(d.input_tokens ?? 0) + Number(d.output_tokens ?? 0);
+    entry.searches += Number(d.web_searches ?? 0);
+    entry.calls += 1;
+    cost.set(row.stage, entry);
+  }
   const errors = new Map(errorsByStage.map((g) => [g.stage ?? '', g._count._all]));
 
   // Un étage est traversé plusieurs fois par run — une fois par agenda, une
@@ -785,6 +811,7 @@ scraperRouter.get('/runs/:id/graph', async (req, res) => {
     stages: described.map((s) => {
       const key = String(s.stage);
       const pass = passes.get(key);
+      const spent = cost.get(key);
       return {
         ...s,
         events: events.get(key) ?? 0,
@@ -792,6 +819,12 @@ scraperRouter.get('/runs/:id/graph', async (req, res) => {
         passes: pass?.runs ?? 0,
         seconds: pass ? Math.round(pass.seconds * 10) / 10 : 0,
         produced: pass?.produced ?? [],
+        // Quatre décimales : un appel de reconnaissance coûte un millième de
+        // dollar, et l'arrondir au centime l'afficherait à zéro.
+        costUsd: spent ? Math.round(spent.usd * 10000) / 10000 : 0,
+        tokens: spent?.tokens ?? 0,
+        searches: spent?.searches ?? 0,
+        calls: spent?.calls ?? 0,
       };
     }),
     // Ce qui n'appartient à aucun étage : démarrage, clôture, erreurs hors run.

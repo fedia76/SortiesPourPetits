@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     state_path = ":memory:" if args.forget else args.state
 
     try:
-        provider = get_provider(config, api_key=env.anthropic_key)
+        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
     except ProviderError as err:
         print(str(err), file=sys.stderr)
         return 2

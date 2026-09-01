@@ -1,0 +1,86 @@
+name: Vérification
+
+# Le déploiement compile le front, donc il typecheck — mais seulement sur
+# `main`, et donc seulement une fois qu'il est trop tard : une erreur de type
+# y casse la mise en production au lieu de casser une branche. Et les tests du
+# scraper, eux, ne tournaient nulle part.
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  scraper:
+    name: Tests du scraper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Installer
+        working-directory: scraper
+        run: pip install -e ".[dev]"
+      - name: Tests
+        working-directory: scraper
+        run: python -m pytest -q
+
+  front:
+    name: Types et compilation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Types du front
+        working-directory: client
+        run: |
+          npm ci
+          npm run typecheck
+      - name: Compilation de l'API
+        working-directory: server
+        run: |
+          npm ci
+          npm run build
+
+  # Ce job-ci appelle le vrai service et consomme un crédit : il ne part jamais
+  # tout seul. Deux façons de le demander, et la seconde existe parce que la
+  # première ne suffit pas — GitHub n'affiche le bouton « Run workflow » que
+  # pour les workflows présents sur la branche par défaut. Tant que ce fichier
+  # vit sur une branche de travail, `workflow_dispatch` est hors d'atteinte.
+  #
+  #   · « [serper] » dans le message d'un commit : marche depuis n'importe
+  #     quelle branche, aujourd'hui ;
+  #   · le bouton « Run workflow » : une fois ce fichier fusionné dans `main`.
+  serper:
+    name: Forme réelle des réponses Serper (sur demande)
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || contains(github.event.head_commit.message, '[serper]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Vérifier la clé
+        env:
+          SERPER_API_KEY: ${{ secrets.SERPER }}
+        # Un secret absent donnerait un « 403 » qu'on mettrait dix minutes à
+        # relier au bon endroit. Autant le dire tout de suite.
+        run: |
+          if [ -z "$SERPER_API_KEY" ]; then
+            echo "::error::Le secret SERPER est vide ou absent des secrets du dépôt."
+            exit 1
+          fi
+          echo "Clé présente (${#SERPER_API_KEY} caractères)."
+      - name: Installer
+        working-directory: scraper
+        run: pip install -e .
+      - name: Interroger Serper
+        working-directory: scraper
+        env:
+          SERPER_API_KEY: ${{ secrets.SERPER }}
+        run: python -m tools.serper_shape "spectacle jeune public Paris septembre"

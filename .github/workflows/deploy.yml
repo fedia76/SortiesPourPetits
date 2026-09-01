@@ -98,11 +98,13 @@ jobs:
         env:
           CLAUDE_KEY: ${{ secrets.CLAUDE_KEY }}
           SPP_API_KEY: ${{ secrets.SPP_API_KEY }}
+          SERPER: ${{ secrets.SERPER }}
         run: |
           printf '%s\n' \
             "ANTHROPIC_API_KEY=$CLAUDE_KEY" \
             "SPP_API_URL=http://localhost:3000" \
             "SPP_API_KEY=$SPP_API_KEY" \
+            "SERPER_API_KEY=$SERPER" \
           | ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
               "umask 077 && cat > '${{ secrets.VPS_APP_DIR }}/scraper/.env'"
 

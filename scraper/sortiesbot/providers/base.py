@@ -87,10 +87,22 @@ class Provider(Protocol):
         ...
 
 
-def get_provider(config: Config, api_key: str | None = None) -> Provider:
-    """Instancie le fournisseur nommé dans la configuration."""
-    if config.provider == "anthropic":
-        from .anthropic_provider import AnthropicProvider
+def get_provider(
+    config: Config, api_key: str | None = None, serper_key: str | None = None
+) -> Provider:
+    """Instancie le fournisseur nommé dans la configuration.
 
+    « serper » ne remplace que la recherche : le modèle reste derrière pour les
+    quatre autres appels, qu'un moteur ne sait pas rendre.
+    """
+    from .anthropic_provider import AnthropicProvider
+
+    if config.provider == "anthropic":
         return AnthropicProvider(api_key=api_key)
-    raise ProviderError(f"Fournisseur inconnu : « {config.provider} » (connu : anthropic)")
+    if config.provider == "serper":
+        from .serper_provider import SerperProvider
+
+        return SerperProvider(AnthropicProvider(api_key=api_key), api_key=serper_key)
+    raise ProviderError(
+        f"Fournisseur inconnu : « {config.provider} » (connus : anthropic, serper)"
+    )

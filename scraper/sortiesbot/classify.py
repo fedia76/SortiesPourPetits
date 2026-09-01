@@ -88,15 +88,22 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
 from .harvest import Link, _is_event, _ld_blocks, _soup, _walk, links_of
 
-#: Les trois réponses possibles. `INCONNU` est une réponse, pas une panne.
+#: Les quatre réponses possibles. `INCONNU` en est une, pas une panne.
+#:
+#: `PROGRAMME` est le cas du festival qui tient sur une seule page : elle porte
+#: plusieurs sorties, mais ne mène nulle part — les entrées ne sont reliées que
+#: par des ancres. Un agenda **renvoie** vers des fiches, un programme **est**
+#: les fiches. D'où deux chemins différents : l'un se dépouille, l'autre se lit
+#: d'un coup.
 AGENDA = "agenda"
 SORTIE = "sortie"
+PROGRAMME = "programme"
 INCONNU = "inconnu"
 
 #: L'en-tête d'une page, où vivent les métadonnées. Au-delà, on est dans le
@@ -210,6 +217,24 @@ def _by_url(url: str) -> Verdict | None:
 # ------------------------------------------------------- 2. la page se pagine-t-elle
 
 
+def next_page(html: str, url: str) -> str:
+    """L'URL de la page suivante d'un agenda, ou une chaîne vide.
+
+    Le même `rel="next"` qui trahit une liste dit aussi où elle continue. On
+    ne suit que celui-là : deviner « page 2 » à partir d'une suite de liens
+    numérotés reviendrait à reconstruire l'URL, donc à l'inventer.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup.find_all(["link", "a"], rel=True, href=True):
+        rels = tag.get("rel") or []
+        rels = rels if isinstance(rels, list) else [rels]
+        if any(str(r).lower() == "next" for r in rels):
+            suivante = urljoin(url, str(tag["href"]).strip()).split("#")[0]
+            # Une page qui se déclare sa propre suite ferait tourner en rond.
+            return "" if suivante == url else suivante
+    return ""
+
+
 def _by_pagination(html: str) -> Verdict | None:
     """Une page qui se pagine liste quelque chose. Une fiche ne se pagine pas.
 
@@ -287,6 +312,11 @@ def _by_json_ld(html: str) -> Verdict | None:
             AGENDA, "json-ld", f"liste déclarée, {len(names)} titre(s) distinct(s)", "certain"
         )
     if len(names) >= LIST_NAMES:
+        # Plusieurs sorties déclarées sur la page. Reste à savoir si elles y
+        # sont **décrites** ou seulement **annoncées** : c'est la différence
+        # entre un programme et un agenda, et le JSON-LD ne la dit pas. On
+        # rend « agenda », le moins risqué des deux — un programme mal pris
+        # pour un agenda ne donne aucun lien, et le filet le relit d'un bloc.
         return Verdict(
             AGENDA, "json-ld", f"{len(names)} événements distincts déclarés", "certain"
         )

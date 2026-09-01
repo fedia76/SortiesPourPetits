@@ -259,9 +259,11 @@ def test_la_reconnaissance_ne_recoit_quun_condense(log):
     assert "tools" not in body, "aucun outil : aucune boucle serveur possible"
     assert body["model"] == "claude-haiku-4-5"
     assert condense in body["messages"][0]["content"]
-    # Trois étiquettes et rien d'autre : le modèle ne peut pas écrire d'URL.
+    # Quatre étiquettes et rien d'autre : le modèle ne peut pas écrire d'URL.
     schema = body["output_config"]["format"]["schema"]
-    assert schema["properties"]["nature"]["enum"] == ["agenda", "sortie", "inconnu"]
+    assert schema["properties"]["nature"]["enum"] == [
+        "agenda", "sortie", "programme", "inconnu",
+    ]
     assert set(schema["properties"]) == {"nature", "pourquoi"}
 
 

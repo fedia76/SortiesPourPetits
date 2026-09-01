@@ -135,8 +135,9 @@ par brique**, leur vocabulaire commun dans
 | # | Étage | Qui travaille | Reçoit | Rend | Où |
 |---|---|---|---|---|---|
 | 1 | Découverte | modèle | des requêtes web | les URL qu'elles ont remontées | `stages/discovery.py` — `Discovery` |
-| 2 | Reconnaissance | **mixte** | une URL trouvée | sa nature : agenda, ou sortie | `stages/identification.py` — `Identification` |
+| 2 | Reconnaissance | **mixte** | une URL trouvée | sa nature : agenda, sortie ou programme | `stages/identification.py` — `Identification` |
 | 3 | Dépouillement | Python | URL d'agenda | liens et leur contexte | `stages/harvest.py` — `Harvest` |
+
 | 4 | Sélection | modèle | liens numérotés | numéros retenus | `stages/selection.py` — `Selection` |
 | 5 | Lecture | Python | URL de page | texte, dates JSON-LD, image | `stages/reading.py` — `Reading` |
 | 6 | Extraction | modèle | texte de la page | fiche(s) JSON | `stages/extraction.py` — `Extraction` |
@@ -165,7 +166,7 @@ dit la cardinalité** — ce qui est plus à droite tourne plus souvent :
        si agenda :
          3  dépouillement                  1 fois par agenda
          4  sélection                      1 fois par agenda
-       si sortie : elle saute 3 et 4
+       si sortie ou programme : elle saute 3 et 4
    puis, pour chaque page retenue :
      5  lecture                            1 fois par page
      6  extraction                         1 fois par page → n fiches
@@ -189,6 +190,47 @@ gestionnaire de contexte, et tout ce qui est journalisé à l'intérieur lui est
 rattaché. C'est ce qui permet à la console de reconstituer le graphe sans que
 le code ait à se répéter — et à `stages.describe()` d'être la seule source des
 libellés, y compris pour l'interface du site.
+
+### La pagination d'un agenda
+
+La deuxième page d'un agenda porte des sorties que la première n'a pas. Le
+dépouillement la suit — **mais seulement tant qu'il manque de liens**.
+
+C'est ce qui borne la dépense : les liens partent ensuite au tri, qui est
+facturé, et tripler leur nombre triplerait cet appel. Un agenda déjà riche
+s'arrête donc à sa première page ; un agenda maigre va chercher plus loin, ce
+qui est exactement l'inverse d'un gaspillage. Deux plafonds, et ils ne disent
+pas la même chose : `max_next_pages` (deux par défaut) borne le nombre de
+pages, les deux cents liens de `links_of` bornent la récolte.
+
+On ne suit que `rel="next"`. Reconstruire « page 2 » à partir d'une suite de
+liens numérotés reviendrait à **inventer une URL**, ce qu'on s'interdit partout
+ailleurs — et une page qui se déclare sa propre suite ferait tourner en rond.
+
+### Chercher avec Google plutôt qu'avec le modèle
+
+`provider: serper` dans la configuration remplace **un seul des cinq appels**,
+la recherche. Serper interroge Google et rend du JSON ; il ne reconnaît pas une
+page et ne remplit pas une fiche, donc le modèle reste derrière pour les quatre
+autres. C'est ce que l'étage 1 a rendu possible en cessant de juger : il ne
+demande plus que des URL, et un moteur sait en rendre.
+
+| | `web_search` (Anthropic) | Serper |
+|---|---|---|
+| Index | Brave | Google, plus profond sur le local francophone |
+| Prix d'une requête | 0,01 $ | **0,001 $**, annoncé par la réponse |
+| Jetons d'entrée | le contenu des résultats entre dans le contexte | aucun |
+| Ce qu'on reçoit | contenu de page | titre, lien, extrait |
+
+Ce qu'on perd — le contenu — n'a plus d'importance depuis que la
+reconnaissance télécharge la page et juge sur son HTML.
+
+La forme des réponses a été **confrontée au service** ; le détail de ce qui a
+été observé est en tête de `providers/serper_provider.py`. Les tests, eux,
+simulent : ils verrouillent ce que le code fait de cette forme, pas qu'elle
+soit la bonne. Pour la revérifier — après un changement d'API, par exemple —
+il suffit de mettre `[serper]` dans un message de commit : le job du même nom
+appelle le vrai service et affiche ce qu'il rend.
 
 ### Le journal, et où il va
 
@@ -368,8 +410,37 @@ n'est pas symétrique — croire qu'une sortie est un agenda coûte un appel de
 sélection et se rattrape tout seul, l'inverse coûte tous les liens d'un
 agenda. D'où le biais assumé : **dans le doute, agenda.**
 
-Cette cascade **décide** désormais : un agenda descend au dépouillement, une
-sortie saute directement à la lecture. Une page qu'on ne sait pas reconnaître
+Cette cascade **décide** désormais, et elle aiguille en trois :
+
+| Nature | Ce que c'est | Où elle va |
+|---|---|---|
+| **agenda** | liste des sorties et **renvoie** vers leurs fiches | dépouillement, puis tri |
+| **sortie** | la fiche d'un événement précis | droit à la lecture |
+| **programme** | porte plusieurs sorties et **les décrit lui-même** — le festival qui tient sur une page | droit à la lecture, et l'extraction en tire plusieurs fiches |
+
+Le partage entre agenda et programme tient à une question : pour lire le détail
+d'une de ces sorties, faut-il **cliquer**, ou est-ce déjà **sous les yeux** ?
+Aucun signal gratuit ne sait le dire — un `ItemList` n'indique pas si les
+fiches sont ailleurs — donc cette distinction-là revient presque toujours au
+modèle. Le condensé s'y prête : un programme a beaucoup de dates et peu de
+liens, un agenda a beaucoup des deux.
+
+**L'extraction peut corriger la reconnaissance.** Elle est la première du
+pipeline à lire le texte entier ; quand elle répond « ce n'est pas une sortie,
+il y en a plusieurs ici » (`several`), la page repart pour un tour, en
+programme cette fois. Une seule reprise, et la garantie tient à la structure
+plutôt qu'à un compteur : la relecture pose `multiple`, et la condition de
+reprise exige qu'il soit faux — le second passage ne peut pas remplir la
+condition qui a déclenché le premier.
+
+C'est aussi la meilleure étiquette dont on dispose : « l'étage 6 a corrigé
+l'étage 2 » part au registre sous le sujet `requalify`, et c'est cette
+vérité-là qui servira à apprendre à mieux reconnaître.
+
+Le chemin du programme n'est pas neuf : c'est celui que le mode « site »
+empruntait déjà (`multiple`), et ses sorties se mémorisent une à une plutôt que
+la page — sinon un programme lu une fois ne serait plus jamais relu, et tout ce
+qu'il annoncerait ensuite serait perdu. Une page qu'on ne sait pas reconnaître
 part **en agenda**, et c'est délibéré — prendre une sortie pour un agenda coûte
 un tri et se rattrape tout seul, prendre un agenda pour une sortie coûte tous
 ses liens sans rattrapage.
@@ -789,6 +860,13 @@ que le modèle lisait, et il ne lit plus de pages.
 pip install -e ".[dev]"
 python -m pytest
 ```
+
+Ils tournent aussi en intégration continue, sur toute branche et toute pull
+request (`.github/workflows/verifier.yml`), avec le typecheck du front et la
+compilation de l'API. Le workflow de déploiement compilait déjà le front, donc
+il typecheckait — mais seulement sur `main`, c'est-à-dire une fois qu'il est
+trop tard : une erreur de type y cassait la mise en production plutôt qu'une
+branche. Et les tests du scraper ne tournaient nulle part.
 
 Aucun test n'appelle le réseau : le fournisseur Claude est branché sur un
 serveur HTTP local qui enregistre les requêtes, ce qui verrouille la forme de

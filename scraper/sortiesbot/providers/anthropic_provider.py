@@ -21,7 +21,7 @@ from typing import Any
 from ..config import Config
 from ..harvest import Link
 from ..journal import RunLog
-from ..models import ExtractedEvent, FoundPage, Usage
+from ..models import SEARCH_PRICE_USD, ExtractedEvent, FoundPage, Usage
 from ..store import normalize_url
 from .base import ProviderError
 
@@ -77,7 +77,10 @@ PRICES = {
 CLASSIFY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "nature": {"type": "string", "enum": ["agenda", "sortie", "inconnu"]},
+        "nature": {
+            "type": "string",
+            "enum": ["agenda", "sortie", "programme", "inconnu"],
+        },
         "pourquoi": {"type": "string"},
     },
     "required": ["nature", "pourquoi"],
@@ -137,6 +140,9 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
     "properties": {
         "relevant": {"type": "boolean"},
         "skip_reason": {"type": "string"},
+        # Le seul champ qui puisse renvoyer la page en arrière : elle n'est
+        # pas une sortie, mais elle en porte plusieurs.
+        "several": {"type": "boolean"},
         "title": {"type": "string"},
         "description": {"type": "string"},
         "free": {"type": "boolean"},
@@ -170,7 +176,7 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
         "photo_url": {"type": "string"},
     },
     "required": [
-        "relevant", "skip_reason", "title", "description", "free", "price",
+        "relevant", "skip_reason", "several", "title", "description", "free", "price",
         "age_min", "age_max", "permanent", "date_start", "date_end",
         "weekdays", "dates",
         "open_time", "close_time", "setting", "category", "venue_name",
@@ -188,9 +194,12 @@ _MULTI_ITEM_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         k: v for k, v in EXTRACTION_SCHEMA["properties"].items()
-        if k not in ("relevant", "skip_reason")
+        if k not in ("relevant", "skip_reason", "several")
     },
-    "required": [k for k in EXTRACTION_SCHEMA["required"] if k not in ("relevant", "skip_reason")],
+    "required": [
+        k for k in EXTRACTION_SCHEMA["required"]
+        if k not in ("relevant", "skip_reason", "several")
+    ],
     "additionalProperties": False,
 }
 
@@ -295,7 +304,7 @@ class AnthropicProvider:
             log=log,
         )
         nature = str(data.get("nature", "")).strip().lower()
-        if nature not in ("agenda", "sortie", "inconnu"):
+        if nature not in ("agenda", "sortie", "programme", "inconnu"):
             # Le schéma l'interdit, mais une réponse tronquée peut passer au
             # travers : on ne devine pas à sa place.
             return "inconnu", f"réponse inattendue ({nature or 'vide'})"
@@ -470,6 +479,7 @@ class AnthropicProvider:
         step.input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
         step.output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
         step.cost_usd = _token_cost(model, step)
+        step.search_cost_usd = step.web_searches * SEARCH_PRICE_USD
         self.usage.add(step)
         log.event("usage", op=op, model=model, **step.as_dict())
         return response

@@ -77,6 +77,10 @@ _CONSOLE = {
         f"  ⚖ {f.get('nature')} [{f.get('signal')}] — {f.get('detail')}"
         + (f" · {f.get('asked')}" if f.get("asked") else "")
     ),
+    "requalified": lambda f: (
+        f"  ↻ requalifiée {f.get('was')} → {f.get('now')} par l'extraction "
+        f"({f.get('reason')}) : {f.get('url')}"
+    ),
     "visited": lambda f: f"  📄 page lue : {f.get('url')}",
     "page": lambda f: (
         f"  📄 page lue : {f.get('chars')} caractères, {f.get('json_ld')} date(s) JSON-LD, "

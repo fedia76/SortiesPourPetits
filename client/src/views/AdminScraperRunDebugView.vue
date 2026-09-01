@@ -36,6 +36,23 @@ const stages = ref<ScraperStageNode[]>([]);
  * reconnaissance : gratuite tant qu'un signal certain tranche — pagination,
  * JSON-LD, paramètres d'URL — et facturée seulement quand ils se taisent tous.
  */
+/**
+ * Ce qu'un étage a coûté sur ce run. Un étage gratuit le dit plutôt que
+ * d'afficher « 0,0000 $ », qui se lit mal et n'apprend rien.
+ */
+function money(s: ScraperStageNode): string {
+  if (!s.calls) return 'gratuit';
+  return `${s.costUsd.toFixed(4).replace('.', ',')} $`;
+}
+
+/** Le détail au survol : d'où vient la somme. */
+function detail(s: ScraperStageNode): string {
+  if (!s.calls) return 'Python seul : aucun appel au modèle.';
+  const parts = [`${s.calls} appel(s)`, `${s.tokens.toLocaleString('fr-FR')} jetons`];
+  if (s.searches) parts.push(`${s.searches} recherche(s) web`);
+  return parts.join(' · ');
+}
+
 const ACTORS: Record<string, string> = {
   modele: 'modèle · facturé',
   python: 'python · gratuit',
@@ -482,7 +499,7 @@ function toggle(id: number) {
 /** Géométrie du graphe : six briques en ligne, reliées par des flèches. */
 const BOX_W = 178;
 const GAP = 26;
-const BOX_H = 96;
+const BOX_H = 114;
 const graphWidth = computed(() => stages.value.length * BOX_W + (stages.value.length - 1) * GAP);
 function boxX(index: number) {
   return index * (BOX_W + GAP);
@@ -523,7 +540,7 @@ function clip(text: string, max = 22) {
       <div v-if="stages.length" class="graph-wrap">
         <svg
           class="graph"
-          :viewBox="`0 0 ${graphWidth} 168`"
+          :viewBox="`0 0 ${graphWidth} 190`"
           role="img"
           aria-label="Les six étages du pipeline, avec le nombre d'événements et la durée de chacun."
         >
@@ -578,19 +595,23 @@ function clip(text: string, max = 22) {
               <text :x="boxX(i) + 14" y="88" class="n-unit">
                 {{ s.passes }} passage(s) · {{ s.seconds }} s
               </text>
+              <text :x="boxX(i) + 14" y="106" class="n-cost" :class="{ free: !s.calls }">
+                {{ money(s) }}
+                <title>{{ detail(s) }}</title>
+              </text>
               <text v-if="s.errors" :x="boxX(i) + BOX_W - 14" y="26" class="n-err" text-anchor="end">
                 {{ s.errors }} ⚠
               </text>
             </g>
-            <text v-if="s.takes" :x="boxX(i)" y="122" class="io">
+            <text v-if="s.takes" :x="boxX(i)" y="142" class="io">
               ↳ reçoit : {{ clip(s.takes) }}
               <title>{{ s.takes }}</title>
             </text>
-            <text v-if="s.gives" :x="boxX(i)" y="140" class="io">
+            <text v-if="s.gives" :x="boxX(i)" y="160" class="io">
               ↳ rend : {{ clip(s.gives) }}
               <title>{{ s.gives }}</title>
             </text>
-            <text v-if="stageTotal(s.stage)" :x="boxX(i)" y="160" class="io done">
+            <text v-if="stageTotal(s.stage)" :x="boxX(i)" y="180" class="io done">
               {{ clip(stageTotal(s.stage), 30) }}
               <title>{{ stageTotal(s.stage) }} — cumul des {{ s.passes }} passage(s)</title>
             </text>
@@ -984,6 +1005,16 @@ h1 .badge {
   fill: var(--brand-dark);
 }
 
+.n-cost {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--warn);
+}
+.n-cost.free {
+  font-weight: 400;
+  opacity: 0.55;
+  fill: currentColor;
+}
 .n-count {
   font: 700 15px system-ui, sans-serif;
   fill: var(--ink);
