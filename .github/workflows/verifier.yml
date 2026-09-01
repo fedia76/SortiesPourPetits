@@ -45,19 +45,37 @@ jobs:
           npm ci
           npm run build
 
-  # Ce job-ci appelle le vrai service et consomme des crédits : il ne part
-  # jamais tout seul. On le lance à la main quand on veut confronter le
-  # fournisseur à la forme réellement rendue par Serper — ce qu'aucune suite
-  # de tests hors ligne ne peut faire.
+  # Ce job-ci appelle le vrai service et consomme un crédit : il ne part jamais
+  # tout seul. Deux façons de le demander, et la seconde existe parce que la
+  # première ne suffit pas — GitHub n'affiche le bouton « Run workflow » que
+  # pour les workflows présents sur la branche par défaut. Tant que ce fichier
+  # vit sur une branche de travail, `workflow_dispatch` est hors d'atteinte.
+  #
+  #   · « [serper] » dans le message d'un commit : marche depuis n'importe
+  #     quelle branche, aujourd'hui ;
+  #   · le bouton « Run workflow » : une fois ce fichier fusionné dans `main`.
   serper:
-    name: Forme réelle des réponses Serper (manuel)
-    if: github.event_name == 'workflow_dispatch'
+    name: Forme réelle des réponses Serper (sur demande)
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || contains(github.event.head_commit.message, '[serper]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Vérifier la clé
+        env:
+          SERPER_API_KEY: ${{ secrets.SERPER }}
+        # Un secret absent donnerait un « 403 » qu'on mettrait dix minutes à
+        # relier au bon endroit. Autant le dire tout de suite.
+        run: |
+          if [ -z "$SERPER_API_KEY" ]; then
+            echo "::error::Le secret SERPER est vide ou absent des secrets du dépôt."
+            exit 1
+          fi
+          echo "Clé présente (${#SERPER_API_KEY} caractères)."
       - name: Installer
         working-directory: scraper
         run: pip install -e .
