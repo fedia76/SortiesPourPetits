@@ -102,6 +102,11 @@ class Config:
     select_model: str = "claude-haiku-4-5"
     extraction_model: str = "claude-haiku-4-5"
     search_prompt: str = prompts.SEARCH
+    #: Requêtes web à lancer. Vides : un appel au modèle les formule, ce qui
+    #: coûte quelques centimes de centime et varie d'un run à l'autre. Les
+    #: fournir les fige — donc les rend comparables d'une semaine sur l'autre.
+    queries: list[str] = field(default_factory=list)
+    queries_prompt: str = prompts.QUERIES
     classify_prompt: str = prompts.CLASSIFY
     select_prompt: str = prompts.SELECT
     extraction_prompt: str = prompts.EXTRACTION
@@ -120,7 +125,7 @@ class Config:
     def date_to(self) -> date:
         return date.today() + timedelta(days=self.horizon_days)
 
-    def render_search(self) -> str:
+    def render_search(self, queries: list[str]) -> str:
         return Template(self.search_prompt).safe_substitute(
             theme=self.theme,
             area=self.area,
@@ -130,6 +135,18 @@ class Config:
             date_to=self.date_to.isoformat(),
             # Le prompt annonce le même quota que celui imposé à l'outil,
             # sinon le modèle tente des recherches qui échouent.
+            max_searches=self.max_searches,
+            queries="\n".join(f"- {q}" for q in queries),
+        )
+
+    def render_queries(self) -> str:
+        return Template(self.queries_prompt).safe_substitute(
+            theme=self.theme,
+            area=self.area,
+            period=self.period,
+            today=date.today().isoformat(),
+            date_from=self.date_from.isoformat(),
+            date_to=self.date_to.isoformat(),
             max_searches=self.max_searches,
         )
 
@@ -293,6 +310,8 @@ def config_from_api(raw: dict[str, Any]) -> Config:
             select_model=str(raw.get("selectModel") or defaults.select_model),
             extraction_model=str(raw.get("extractionModel") or defaults.extraction_model),
             search_prompt=prompt("searchPrompt", defaults.search_prompt),
+            queries=[str(q).strip() for q in (raw.get("queries") or []) if str(q).strip()],
+            queries_prompt=prompt("queriesPrompt", defaults.queries_prompt),
             classify_prompt=prompt("classifyPrompt", defaults.classify_prompt),
             select_prompt=prompt("selectPrompt", defaults.select_prompt),
             extraction_prompt=prompt("extractionPrompt", defaults.extraction_prompt),
@@ -380,6 +399,7 @@ def describe(config: Config) -> dict[str, Any]:
         "max_searches": config.max_searches,
         "max_agendas": config.max_agendas,
         "provider": config.provider,
+        "queries": list(config.queries),
         "classify_model": config.classify_model,
         "search_model": config.search_model,
         "select_model": config.select_model,

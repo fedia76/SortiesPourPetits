@@ -152,12 +152,6 @@ class Verdict:
     #: `certain` : le site le déclare. `probable` : on l'infère de sa forme.
     confidence: str
 
-    def agrees_with(self, announced: str) -> bool | None:
-        """Vrai, faux, ou `None` s'il n'y a rien à comparer."""
-        if not announced or self.kind == INCONNU:
-            return None
-        return self.kind == announced
-
     def as_dict(self) -> dict[str, str]:
         return {
             "verdict": self.kind,

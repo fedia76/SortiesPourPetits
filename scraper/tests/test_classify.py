@@ -132,27 +132,6 @@ def test_les_liens_deja_comptes_ne_sont_pas_recomptes():
     assert "40 liens relevés" in verdict.detail
 
 
-# --------------------------------------------------------------- la confrontation
-
-
-def test_l_accord_avec_la_decouverte_se_lit_en_trois_etats():
-    catalogue = [
-        {"@type": "Event", "name": titre, "startDate": "2026-09-12"}
-        for titre in ("Le Petit Prince", "Pierre et le Loup", "Boucle d'or")
-    ]
-    verdict = classify(page(ld(catalogue)), URL)
-    assert verdict.agrees_with("agenda") is True
-    assert verdict.agrees_with("sortie") is False
-    # Rien d'annoncé : il n'y a rien à comparer, ce n'est pas un désaccord.
-    assert verdict.agrees_with("") is None
-
-
-def test_un_verdict_inconnu_ne_contredit_personne():
-    verdict = classify(page(liens(6)), URL)
-    assert verdict.kind == INCONNU
-    assert verdict.agrees_with("agenda") is None
-
-
 # ═════════════════════════════════════════════════════════ la pagination
 
 

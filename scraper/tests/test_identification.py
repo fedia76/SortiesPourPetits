@@ -1,0 +1,180 @@
+"""L'étage 2 : constater ce qu'est une page, et l'aiguiller en conséquence.
+
+C'est le premier étage à **décider** quelque chose à partir du HTML. Deux
+choses se vérifient ici :
+
+* l'aiguillage — un agenda descend au dépouillement, une sortie saute
+  directement à la lecture ;
+* le biais assumé — une page qu'on ne sait pas reconnaître part en agenda,
+  parce que l'erreur n'y est pas symétrique.
+
+Le recours au modèle n'intervient qu'après le silence des quatre signaux
+gratuits, et son échec ne coûte rien : « inconnu » a déjà un comportement.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+from pathlib import Path
+
+import pytest
+
+from sortiesbot.journal import RunLog
+from sortiesbot.ledger import Ledger
+from sortiesbot.models import FoundPage
+from sortiesbot.orchestrator import run
+from sortiesbot.providers.base import ProviderError
+from sortiesbot.store import SeenStore
+
+from test_pipeline import FakeApi, FakeFetcher, FakeProvider, config, sortie
+
+PAGES = Path(__file__).parent / "fixtures" / "pages"
+
+AGENDA_URL = "https://agenda.exemple-departement.fr/agenda/"
+AGENDA_HTML = (PAGES / "agenda-departemental.html").read_text(encoding="utf-8")
+
+FICHE_URL = "https://theatre-du-chapiteau.exemple.fr/saison/le-petit-prince"
+FICHE_HTML = (PAGES / "spectacle-avec-json-ld.html").read_text(encoding="utf-8")
+
+#: Ni pagination, ni JSON-LD, ni `og:type` : la seule du jeu qui fasse appeler
+#: le modèle.
+MUETTE_URL = "https://www.ville-exemple.fr/culture/atelier-cirque-en-famille"
+MUETTE_HTML = (PAGES / "atelier-sans-donnees-structurees.html").read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def journal():
+    events: list[dict] = []
+    return RunLog(path=None, verbose=False, stream=io.StringIO(), sink=events.append), events
+
+
+def kinds(events: list[dict], kind: str) -> list[dict]:
+    return [e for e in events if e["kind"] == kind]
+
+
+def lance(log, url, html, verdicts=None, ledger=None, extra=None, **conf):
+    provider = FakeProvider(
+        [FoundPage(url=url, title="Une page")],
+        {url: sortie(), **(extra or {})},
+        select_all=False,
+    )
+    provider.verdicts = list(verdicts or [])
+    with SeenStore() as store:
+        result = run(config(**conf), provider, store, FakeApi(), log,
+                     fetcher=FakeFetcher({url: html}), ledger=ledger)
+    return provider, result
+
+
+# ══════════════════════════════════════════════════════════════ l'aiguillage
+
+
+def test_une_fiche_saute_le_depouillement_et_le_tri(journal):
+    """Elle déclare un seul spectacle : inutile d'y chercher des liens."""
+    log, events = journal
+    provider, result = lance(log, FICHE_URL, FICHE_HTML)
+
+    assert provider.selected == [], "aucun tri : ce n'est pas une liste"
+    assert provider.extracted == [FICHE_URL], "elle part droit à la lecture"
+    assert kinds(events, "identified")[0]["nature"] == "sortie"
+
+
+def test_un_agenda_descend_au_depouillement(journal):
+    """Sa pagination le trahit, et ses liens partent au tri."""
+    log, events = journal
+    provider, _ = lance(log, AGENDA_URL, AGENDA_HTML, extra={AGENDA_URL: sortie(relevant=False)})
+
+    assert provider.selected == [AGENDA_URL], "il est bien passé par le tri"
+    constat = kinds(events, "identified")[0]
+    assert (constat["nature"], constat["signal"]) == ("agenda", "pagination")
+
+
+def test_une_page_indecise_part_en_agenda(journal):
+    """Le biais assumé : l'erreur n'est pas symétrique.
+
+    Prendre une sortie pour un agenda coûte un tri, et le filet la relit.
+    Prendre un agenda pour une sortie coûte tous ses liens, sans rattrapage.
+    """
+    log, events = journal
+    provider, _ = lance(log, MUETTE_URL, MUETTE_HTML, classify_model="")
+
+    assert kinds(events, "identified")[0]["nature"] == "agenda"
+    # Elle descend donc au dépouillement, qui ne tire aucun lien de cette
+    # fiche — le tri n'est même pas appelé — et le filet la relit pour
+    # elle-même. La page est traitée, l'indécision n'a rien coûté.
+    assert provider.selected == []
+    assert provider.extracted == [MUETTE_URL]
+
+
+def test_une_page_injoignable_ne_va_nulle_part(journal):
+    log, events = journal
+    provider = FakeProvider([FoundPage(url=MUETTE_URL)], {}, select_all=False)
+    with SeenStore() as store:
+        result = run(config(), provider, store, FakeApi(), log, fetcher=FakeFetcher({}))
+
+    assert kinds(events, "identified") == []
+    assert result.candidates == []
+    assert provider.extracted == []
+
+
+# ═══════════════════════════════════════════════════ le recours au modèle
+
+
+def test_le_modele_tranche_quand_les_signaux_gratuits_se_taisent(journal):
+    log, events = journal
+    provider, _ = lance(log, MUETTE_URL, MUETTE_HTML, verdicts=[("sortie", "un atelier daté")])
+
+    envoye = provider.classified[0]
+    assert "Atelier cirque en famille" in envoye
+    assert "<html" not in envoye, "un condensé, jamais du HTML"
+
+    constat = kinds(events, "identified")[0]
+    assert (constat["nature"], constat["signal"]) == ("sortie", "modele")
+    assert constat["asked"] == "claude-haiku-4-5"
+
+
+def test_un_signal_gratuit_ne_coute_aucun_appel(journal):
+    log, _ = journal
+    provider, _ = lance(log, FICHE_URL, FICHE_HTML, verdicts=[("agenda", "jamais demandé")])
+    assert provider.classified == [], "le JSON-LD a tranché, personne n'a payé"
+
+
+def test_sans_modele_configure_personne_nest_appele(journal):
+    log, _ = journal
+    provider, _ = lance(log, MUETTE_URL, MUETTE_HTML, classify_model="")
+    assert provider.classified == []
+
+
+def test_un_echec_du_modele_laisse_la_page_en_agenda(journal):
+    """Un second appel pour une décision qu'un filet rattrape : non."""
+    log, events = journal
+
+    class Cassé(FakeProvider):
+        def classify(self, digest, config, log):
+            raise ProviderError("quota dépassé")
+
+    provider = Cassé([FoundPage(url=MUETTE_URL)], {MUETTE_URL: sortie()}, select_all=False)
+    with SeenStore() as store:
+        result = run(config(), provider, store, FakeApi(), log,
+                     fetcher=FakeFetcher({MUETTE_URL: MUETTE_HTML}))
+
+    assert kinds(events, "identified")[0]["nature"] == "agenda"
+    assert result.summary.errors == 0, "une reconnaissance ratée n'est pas une erreur de run"
+
+
+# ══════════════════════════════════════════════════════════════ le corpus
+
+
+def test_chaque_page_laisse_son_condense_au_registre(journal, tmp_path):
+    """Sans lui, rien à quoi entraîner un classifieur local plus tard."""
+    log, _ = journal
+    chemin = tmp_path / "classifier.jsonl"
+    with Ledger(chemin, run="essai") as ledger:
+        lance(log, AGENDA_URL, AGENDA_HTML, ledger=ledger,
+              extra={AGENDA_URL: sortie(relevant=False)})
+
+    ligne = json.loads(chemin.read_text().splitlines()[0])
+    assert ligne["run"] == "essai"
+    assert (ligne["nature"], ligne["signal"], ligne["asked"]) == ("agenda", "pagination", "")
+    assert ligne["digest"]["dated"] == 12
+    assert ligne["digest"]["heading"] == "Que faire en famille ce mois-ci ?"

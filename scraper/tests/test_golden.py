@@ -227,7 +227,10 @@ class ProviderScripte:
         self.classified: list[str] = []
         self.verdicts: list[tuple[str, str]] = []
 
-    def search(self, config, log):
+    def queries(self, config, log):
+        return ["une requête"]
+
+    def search(self, queries, config, log):
         return list(self.trouvees)
 
 
@@ -269,7 +272,7 @@ def test_un_run_sur_de_vraies_pages_rend_les_sorties_attendues(log):
     """Le run de référence : l'agenda est dépouillé, ses fiches sont soumises."""
     pages = by_url()
     provider = ProviderScripte(
-        [FoundPage(url=AGENDA, title="Agenda du Département", kind="agenda")],
+        [FoundPage(url=AGENDA, title="Agenda du Département")],
         {SPECTACLE: fiche("Le Petit Prince"), ATELIER: fiche("Atelier cirque en famille")},
     )
     # L'agenda mène à douze fiches ; seules deux ont été capturées, les autres
@@ -300,7 +303,7 @@ def test_une_fiche_trouvee_directement_est_lue_telle_quelle(log):
     """La recherche tombe sur la fiche elle-même : elle saute agenda et tri."""
     pages = by_url()
     provider = ProviderScripte(
-        [FoundPage(url=SPECTACLE, title="Le Petit Prince", kind="sortie")],
+        [FoundPage(url=SPECTACLE, title="Le Petit Prince")],
         {SPECTACLE: fiche("Le Petit Prince")},
     )
     api = FakeApi()

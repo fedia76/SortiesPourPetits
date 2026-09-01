@@ -30,6 +30,17 @@ const runId = computed(() => Number(route.params.id));
 
 const run = ref<ScraperRun | null>(null);
 const stages = ref<ScraperStageNode[]>([]);
+
+/**
+ * Qui travaille dans une brique, donc qui paie. « mixte » est le cas de la
+ * reconnaissance : gratuite tant qu'un signal certain tranche — pagination,
+ * JSON-LD, paramètres d'URL — et facturée seulement quand ils se taisent tous.
+ */
+const ACTORS: Record<string, string> = {
+  modele: 'modèle · facturé',
+  python: 'python · gratuit',
+  mixte: 'mixte · parfois facturé',
+};
 const outside = ref(0);
 const logs = ref<ScraperRunLog[]>([]);
 const tree = ref<ScraperTree | null>(null);
@@ -543,7 +554,7 @@ function clip(text: string, max = 22) {
             <g
               class="node"
               :class="{
-                paid: s.actor === 'modele',
+                paid: s.actor !== 'python',
                 on: filters.stage === s.stage,
                 failed: s.errors > 0,
               }"
@@ -558,7 +569,7 @@ function clip(text: string, max = 22) {
               <text :x="boxX(i) + 14" y="26" class="n-num">{{ s.number }}</text>
               <text :x="boxX(i) + 34" y="26" class="n-label">{{ s.label }}</text>
               <text :x="boxX(i) + 14" y="46" class="n-actor">
-                {{ s.actor === 'modele' ? 'modèle · facturé' : 'python · gratuit' }}
+                {{ ACTORS[s.actor] ?? 'python · gratuit' }}
               </text>
               <text :x="boxX(i) + 14" y="70" class="n-count">{{ s.events }}</text>
               <text :x="boxX(i) + 14 + String(s.events).length * 9 + 6" y="70" class="n-unit">

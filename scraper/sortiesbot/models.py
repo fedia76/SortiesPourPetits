@@ -12,22 +12,18 @@ from typing import Any
 
 @dataclass(frozen=True)
 class FoundPage:
-    """Une page retenue par la recherche.
+    """Une page remontée par la recherche. Rien de plus.
 
-    Une recherche ne remonte pas que des agendas : elle tombe aussi
-    directement sur la page d'une sortie. Les deux se traitent différemment —
-    l'agenda est dépouillé de ses liens, la sortie est lue telle quelle — d'où
-    ce `kind`.
+    La découverte ne juge pas : elle rend ce que le moteur a trouvé, et c'est
+    la reconnaissance qui constate, sur le HTML, si la page liste des sorties
+    ou en est une. C'est ce qui permet de remplacer le moteur sans toucher au
+    reste — un moteur rend des URL, il ne rend pas des avis.
     """
 
     url: str
     title: str = ""
-    kind: str = "agenda"
-    reason: str = ""
-
-    @property
-    def is_agenda(self) -> bool:
-        return self.kind != "sortie"
+    #: La requête qui l'a remontée. Sert la filiation, pas la décision.
+    query: str = ""
 
 
 @dataclass(frozen=True)
@@ -41,11 +37,7 @@ class Candidate:
     #: Page de programme : elle porte plusieurs sorties, à relever d'un coup.
     #: Seul le mode « site » en produit ; ailleurs une page vaut une sortie.
     multiple: bool = False
-    #: Ce que la découverte a annoncé de cette page (« agenda », « sortie »),
-    #: quand elle s'est prononcée. Vide pour un lien tiré d'un agenda : le
-    #: modèle n'a rien dit de cette page-là. Sert à confronter son classement
-    #: à celui que `classify.py` rend sur le HTML, et à rien d'autre.
-    announced: str = ""
+
 
 
 @dataclass(frozen=True)

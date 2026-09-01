@@ -9,7 +9,8 @@ texte n'ont pas besoin d'être échappées.
 Quatre gabarits, mais jamais plus de trois appels par page — plutôt qu'un
 seul appel à qui l'on demanderait de dérouler toute une procédure :
 
-  recherche          $theme $area $period $today $date_from $date_to $max_searches
+  requêtes           $theme $area $period $today $date_from $date_to $max_searches
+  recherche          $queries
   classement         $digest
   sélection          $theme $area $date_from $date_to $today $page $max_links
   extraction         $url $today $categories
@@ -23,6 +24,22 @@ Le schéma de sortie de l'extraction est défini côté fournisseur
 aussi, sinon le modèle n'a pas le droit de le renseigner.
 """
 
+QUERIES = """\
+Tu prépares une collecte de sorties à faire avec des enfants, pour un site
+communautaire francophone.
+
+Recherche demandée : $theme
+Zone géographique : $area
+Période : $period (du $date_from au $date_to — nous sommes le $today)
+
+Formule $max_searches requêtes web, telles qu'on les taperait dans un moteur.
+Varie les formulations et couvre les différents départements de la zone : une
+seule requête ne ramène qu'une seule bulle de résultats.
+
+Écris des requêtes, rien d'autre — pas de phrases, pas d'opérateurs exotiques,
+pas d'URL. Ce sont des mots-clés que le moteur comprendra.
+"""
+
 SEARCH = """\
 Tu prépares une collecte de sorties à faire avec des enfants, pour un site
 communautaire francophone.
@@ -31,26 +48,15 @@ Recherche demandée : $theme
 Zone géographique : $area
 Période : $period (du $date_from au $date_to — nous sommes le $today)
 
-Lance $max_searches recherches web variées, en changeant les formulations et
-en couvrant les différents départements de la zone. Une seule requête ne
-ramène qu'une seule bulle de résultats.
+Lance exactement ces recherches web, une par une, sans en ajouter ni en
+retirer :
 
-Puis désigne, parmi les résultats obtenus, les pages à ouvrir, en indiquant
-pour chacune ce qu'elle est :
+$queries
 
-- `agenda` : une page qui **liste des événements** — agenda départemental,
-  « que faire ce week-end », programmation de saison. On en tirera les liens
-  vers les sorties.
-- `sortie` : la page d'**une seule sortie précise**, avec son titre, ses
-  dates et son lieu. Une recherche en remonte régulièrement, et elles
-  comptent autant que les agendas.
-
-Écarte les billetteries généralistes, les annuaires de prestataires pour
-fêtes privées, les articles de blog sans dates, et tout ce qui est hors zone.
-
-Ne cherche pas à décrire les sorties maintenant : leur contenu sera lu
-séparément. N'écris aucune URL de mémoire — uniquement celles que les
-recherches ont remontées.
+Puis arrête-toi. Ne trie pas les résultats, ne les décris pas, n'écris aucune
+URL : ce que les recherches ont remonté est relevé ailleurs, et la nature de
+chaque page sera constatée sur son contenu. Réponds simplement par la liste
+des requêtes que tu as lancées.
 """
 
 CLASSIFY = """\

@@ -69,6 +69,11 @@ class FakeFetcher:
         self.session = object()
 
     def get_html(self, url: str) -> str:
+        # Comme le vrai `Fetcher` : une page lue pendant ce run n'est pas
+        # redemandée. Sans ça, les tests affirmeraient un trafic que la
+        # production ne produit pas.
+        if url in self.asked:
+            return self.pages[url]
         self.asked.append(url)
         if url in self.failing:
             raise FetchError("interdit par robots.txt")
@@ -92,7 +97,10 @@ class FakeProvider:
         self.verdicts: list[tuple[str, str]] = []
         self.selected: list[str] = []
 
-    def search(self, config, log):
+    def queries(self, config, log):
+        return ["une requête"]
+
+    def search(self, queries, config, log):
         return list(self.agendas)
 
 
@@ -441,7 +449,7 @@ def test_sortie_trouvee_directement_par_la_recherche(log):
     page d'une sortie. Elle était téléchargée, dépouillée de ses liens de
     navigation, puis perdue — jamais lue comme une sortie."""
     provider = FakeProvider(
-        [FoundPage(url=EVENT_URL, title="Le Petit Chaperon rouge", kind="sortie")],
+        [FoundPage(url=EVENT_URL, title="Le Petit Chaperon rouge")],
         {EVENT_URL: sortie()},
     )
     fetcher = FakeFetcher({EVENT_URL: EVENT_HTML})
@@ -458,7 +466,7 @@ def test_agenda_sans_lien_retenu_est_relu_comme_une_sortie(log):
     """Filet de sécurité : si le modèle classe une sortie en « agenda », on ne
     doit pas la perdre. La page est déjà téléchargée."""
     provider = FakeProvider(
-        [FoundPage(url=EVENT_URL, title="mal classée", kind="agenda")],
+        [FoundPage(url=EVENT_URL, title="mal classée")],
         {EVENT_URL: sortie()},
         select_all=False,
     )
@@ -473,7 +481,7 @@ def test_agenda_sans_lien_retenu_est_relu_comme_une_sortie(log):
 
 def test_sortie_directe_deja_listee_par_un_agenda_nest_pas_doublee(log):
     provider = FakeProvider(
-        [FoundPage(url=EVENT_URL, kind="sortie"), FoundPage(url=AGENDA_URL, kind="agenda")],
+        [FoundPage(url=EVENT_URL), FoundPage(url=AGENDA_URL)],
         {EVENT_URL: sortie()},
     )
     fetcher = FakeFetcher({AGENDA_URL: AGENDA_HTML, EVENT_URL: EVENT_HTML})
@@ -498,11 +506,17 @@ def test_categorie_defaut_absente_du_site():
         resolve_category("Cirque", {"Spectacle": 3}, "Non classé")
 
 
-def test_le_prompt_de_recherche_annonce_le_quota_reel():
+def test_le_prompt_des_requetes_annonce_le_quota_reel():
+    """C'est la formulation des requêtes qui porte le quota, désormais.
+
+    La recherche, elle, ne fait plus que lancer ce qu'on lui dicte : elle
+    n'a plus de quota à annoncer, seulement une liste à exécuter.
+    """
     from sortiesbot.config import with_limit
 
     c = with_limit(Config(name="t", theme="x"), 3)
-    assert f"Lance {c.max_searches} recherches" in c.render_search()
+    assert f"Formule {c.max_searches} requêtes" in c.render_queries()
+    assert "- une requête" in c.render_search(["une requête"])
 
 
 # --------------------------------------------------------------- calendrier

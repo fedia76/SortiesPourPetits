@@ -1,7 +1,7 @@
 """Interface commune aux fournisseurs.
 
-Quatre appels, quatre tâches bornées. Aucun n'a le droit de dérouler une
-procédure : chercher, reconnaître, choisir, remplir. C'est ce découpage qui
+Cinq appels, cinq tâches bornées. Aucun n'a le droit de dérouler une
+procédure : formuler, chercher, reconnaître, choisir, remplir. C'est ce découpage qui
 permet d'utiliser un modèle bon marché et de garder un coût prévisible — un
 appel qui ne boucle pas ne peut pas refacturer son contexte trente fois.
 
@@ -31,9 +31,21 @@ class Provider(Protocol):
     name: str
     usage: Usage
 
-    def search(self, config: Config, log: RunLog) -> list[FoundPage]:
-        """Lance les recherches web et désigne les pages à ouvrir, chacune
-        classée en agenda (à dépouiller) ou en sortie (à lire telle quelle)."""
+    def queries(self, config: Config, log: RunLog) -> list[str]:
+        """Formule les requêtes web à lancer, à partir du thème et de la zone.
+
+        Appelé seulement quand la configuration n'en fournit pas. Quelques
+        dizaines de jetons : c'est le plus petit appel du lot.
+        """
+        ...
+
+    def search(self, queries: list[str], config: Config, log: RunLog) -> list[FoundPage]:
+        """Lance ces recherches et rend ce qu'elles ont remonté. Sans jugement.
+
+        Ni tri, ni classement : des URL et leurs titres. C'est ce contrat-là
+        qu'un moteur de recherche ordinaire sait honorer, et c'est pourquoi il
+        pourra prendre la place de celui-ci sans que rien d'autre ne bouge.
+        """
         ...
 
     def classify(self, digest: str, config: Config, log: RunLog) -> tuple[str, str]:
