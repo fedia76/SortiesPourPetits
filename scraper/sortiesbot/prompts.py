@@ -64,16 +64,22 @@ Voici la carte d'identité d'une page web trouvée en cherchant des sorties.
 
 $digest
 
-Cette page est-elle **une sortie** — la fiche d'un événement précis, avec son
-titre, ses dates et son lieu — ou **un agenda**, c'est-à-dire une page qui en
-liste plusieurs et renvoie vers leurs fiches ?
+Cette page est-elle une **sortie**, un **agenda**, ou un **programme** ?
 
-Deux repères utiles :
-
-- un agenda mène à beaucoup de choses **datées** : c'est ce que dit la ligne
-  « dont N voisinent une date » ;
-- une fiche a pour titre principal le nom de l'événement lui-même, et ses
+- **sortie** — la fiche d'un événement précis, avec son titre, ses dates et
+  son lieu. Son titre principal est le nom de l'événement lui-même, et ses
   liens mènent à de la navigation ou à des suggestions, rarement datées.
+- **agenda** — une page qui liste plusieurs sorties et **renvoie vers leurs
+  fiches**. Elle mène à beaucoup de choses datées : c'est ce que dit la ligne
+  « dont N voisinent une date ».
+- **programme** — une page qui porte plusieurs sorties et **les décrit
+  elle-même**, sans renvoyer ailleurs : le programme d'un festival, une
+  saison, un week-end portes ouvertes. Beaucoup de dates dans le texte, mais
+  peu de liens exploitables — les entrées ne sont reliées que par des ancres.
+
+Le partage entre agenda et programme tient à cette question : pour lire le
+détail d'une de ces sorties, faut-il **cliquer** (agenda) ou est-ce déjà
+**sous les yeux** (programme) ?
 
 Réponds `inconnu` si le condensé ne permet pas de trancher. C'est une réponse
 utile : la page sera traitée comme un agenda, et relue comme une sortie si on

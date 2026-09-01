@@ -14,7 +14,7 @@ suivent de haut en bas, à leur profondeur d'imbrication :
            si agenda :
              3  dépouillement                  1 fois par agenda
              4  sélection                      1 fois par agenda
-           si sortie : elle saute 3 et 4
+           si sortie ou programme : elle saute 3 et 4
        puis, pour chaque page retenue :
          5  lecture                            1 fois par page
          6  extraction                         1 fois par page → n fiches
@@ -59,7 +59,7 @@ from .config import Config, describe
 from .harvest import Fetcher, Link
 from .journal import RunLog
 from .ledger import Ledger
-from .classify import SORTIE
+from .classify import PROGRAMME, SORTIE
 from .models import Candidate, FoundPage
 from .providers.base import Provider, ProviderError
 from .stages import ORDER, describe as describe_stages
@@ -193,10 +193,11 @@ class Run:
                 nature = self.identification.run(source)
                 if nature is None:
                     continue  # injoignable : rien à en tirer, rien à conclure.
-                if nature == SORTIE:
+                if nature in (SORTIE, PROGRAMME):
                     # Elle saute le dépouillement et le tri : c'est la page
-                    # qu'on cherchait, pas une liste qui y mène.
-                    trouvees.append(self._direct(source))
+                    # qu'on cherchait, pas une liste qui y mène. Un programme
+                    # suit le même chemin, mais on en attend plusieurs fiches.
+                    trouvees.append(self._direct(source, multiple=nature == PROGRAMME))
                     continue
 
                 # ── ÉTAGE 3/7 · Dépouillement ───── 1 fois par agenda ──────
@@ -246,13 +247,14 @@ class Run:
 
     # ═════════════════════════════════════════ ce qui entre dans la chaîne
 
-    def _direct(self, source: FoundPage) -> Candidate:
-        """Une sortie remontée telle quelle par la découverte, sans agenda."""
+    def _direct(self, source: FoundPage, multiple: bool = False) -> Candidate:
+        """Une page à lire telle quelle : une sortie, ou tout un programme."""
         return Candidate(
             url=source.url,
             title=source.title,
             source=self.discovery.source,
             context=source.query,
+            multiple=multiple,
         )
 
     def _itself(self, url: str) -> Candidate:

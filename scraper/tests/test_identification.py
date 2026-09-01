@@ -43,6 +43,26 @@ MUETTE_URL = "https://www.ville-exemple.fr/culture/atelier-cirque-en-famille"
 MUETTE_HTML = (PAGES / "atelier-sans-donnees-structurees.html").read_text(encoding="utf-8")
 
 
+@pytest.fixture(autouse=True)
+def photo_hors_ligne(monkeypatch):
+    """Les pages annoncent une illustration : personne ne la télécharge ici."""
+    monkeypatch.setattr(
+        "sortiesbot.stages.publication.download",
+        lambda url, session=None: ("affiche.jpg", b"\xff\xd8\xff-des-octets", "image/jpeg"),
+    )
+
+
+@pytest.fixture(autouse=True)
+def geocodeur_simule(monkeypatch):
+    from sortiesbot import geocode as geocoding
+
+    monkeypatch.setattr(
+        geocoding, "_search",
+        lambda query: [{"properties": {"city": "Vanves", "postcode": "92170"},
+                        "geometry": {"coordinates": [2.2896, 48.8226]}}],
+    )
+
+
 @pytest.fixture
 def journal():
     events: list[dict] = []
@@ -178,3 +198,33 @@ def test_chaque_page_laisse_son_condense_au_registre(journal, tmp_path):
     assert (ligne["nature"], ligne["signal"], ligne["asked"]) == ("agenda", "pagination", "")
     assert ligne["digest"]["dated"] == 12
     assert ligne["digest"]["heading"] == "Que faire en famille ce mois-ci ?"
+
+
+# ══════════════════════════════════════════════ le programme d'un festival
+
+
+def test_un_programme_est_lu_dun_bloc(journal):
+    """Il porte plusieurs sorties et ne renvoie nulle part : on l'extrait en
+    entier, comme une page de festival dont les entrées sont des ancres."""
+    log, events = journal
+    provider, _ = lance(log, MUETTE_URL, MUETTE_HTML,
+                        verdicts=[("programme", "un week-end, plusieurs rendez-vous")])
+
+    assert kinds(events, "identified")[0]["nature"] == "programme"
+    assert provider.selected == [], "un programme ne se dépouille pas"
+    # L'extraction est appelée en mode « plusieurs fiches d'un coup ».
+    assert provider.extracted == [MUETTE_URL]
+    assert kinds(events, "programme"), "la console doit pouvoir le distinguer"
+
+
+def test_un_programme_memorise_ses_sorties_et_non_sa_page(journal):
+    """Sinon un programme lu une fois ne serait plus jamais relu, et tout ce
+    qu'il annoncerait ensuite serait perdu."""
+    log, _ = journal
+    provider = FakeProvider([FoundPage(url=MUETTE_URL)], {MUETTE_URL: [sortie()]})
+    provider.verdicts = [("programme", "plusieurs rendez-vous")]
+    with SeenStore() as store:
+        run(config(), provider, store, FakeApi(), log,
+            fetcher=FakeFetcher({MUETTE_URL: MUETTE_HTML}), submit=True)
+        # La page n'est pas mémorisée : ce sont ses sorties qui le sont.
+        assert not store.seen(MUETTE_URL)

@@ -77,7 +77,10 @@ PRICES = {
 CLASSIFY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "nature": {"type": "string", "enum": ["agenda", "sortie", "inconnu"]},
+        "nature": {
+            "type": "string",
+            "enum": ["agenda", "sortie", "programme", "inconnu"],
+        },
         "pourquoi": {"type": "string"},
     },
     "required": ["nature", "pourquoi"],
@@ -295,7 +298,7 @@ class AnthropicProvider:
             log=log,
         )
         nature = str(data.get("nature", "")).strip().lower()
-        if nature not in ("agenda", "sortie", "inconnu"):
+        if nature not in ("agenda", "sortie", "programme", "inconnu"):
             # Le schéma l'interdit, mais une réponse tronquée peut passer au
             # travers : on ne devine pas à sa place.
             return "inconnu", f"réponse inattendue ({nature or 'vide'})"

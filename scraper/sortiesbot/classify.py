@@ -94,9 +94,16 @@ from bs4 import BeautifulSoup
 
 from .harvest import Link, _is_event, _ld_blocks, _soup, _walk, links_of
 
-#: Les trois réponses possibles. `INCONNU` est une réponse, pas une panne.
+#: Les quatre réponses possibles. `INCONNU` en est une, pas une panne.
+#:
+#: `PROGRAMME` est le cas du festival qui tient sur une seule page : elle porte
+#: plusieurs sorties, mais ne mène nulle part — les entrées ne sont reliées que
+#: par des ancres. Un agenda **renvoie** vers des fiches, un programme **est**
+#: les fiches. D'où deux chemins différents : l'un se dépouille, l'autre se lit
+#: d'un coup.
 AGENDA = "agenda"
 SORTIE = "sortie"
+PROGRAMME = "programme"
 INCONNU = "inconnu"
 
 #: L'en-tête d'une page, où vivent les métadonnées. Au-delà, on est dans le
@@ -287,6 +294,11 @@ def _by_json_ld(html: str) -> Verdict | None:
             AGENDA, "json-ld", f"liste déclarée, {len(names)} titre(s) distinct(s)", "certain"
         )
     if len(names) >= LIST_NAMES:
+        # Plusieurs sorties déclarées sur la page. Reste à savoir si elles y
+        # sont **décrites** ou seulement **annoncées** : c'est la différence
+        # entre un programme et un agenda, et le JSON-LD ne la dit pas. On
+        # rend « agenda », le moins risqué des deux — un programme mal pris
+        # pour un agenda ne donne aucun lien, et le filet le relit d'un bloc.
         return Verdict(
             AGENDA, "json-ld", f"{len(names)} événements distincts déclarés", "certain"
         )

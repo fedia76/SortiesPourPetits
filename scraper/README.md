@@ -135,7 +135,7 @@ par brique**, leur vocabulaire commun dans
 | # | Étage | Qui travaille | Reçoit | Rend | Où |
 |---|---|---|---|---|---|
 | 1 | Découverte | modèle | des requêtes web | les URL qu'elles ont remontées | `stages/discovery.py` — `Discovery` |
-| 2 | Reconnaissance | **mixte** | une URL trouvée | sa nature : agenda, ou sortie | `stages/identification.py` — `Identification` |
+| 2 | Reconnaissance | **mixte** | une URL trouvée | sa nature : agenda, sortie ou programme | `stages/identification.py` — `Identification` |
 | 3 | Dépouillement | Python | URL d'agenda | liens et leur contexte | `stages/harvest.py` — `Harvest` |
 | 4 | Sélection | modèle | liens numérotés | numéros retenus | `stages/selection.py` — `Selection` |
 | 5 | Lecture | Python | URL de page | texte, dates JSON-LD, image | `stages/reading.py` — `Reading` |
@@ -165,7 +165,7 @@ dit la cardinalité** — ce qui est plus à droite tourne plus souvent :
        si agenda :
          3  dépouillement                  1 fois par agenda
          4  sélection                      1 fois par agenda
-       si sortie : elle saute 3 et 4
+       si sortie ou programme : elle saute 3 et 4
    puis, pour chaque page retenue :
      5  lecture                            1 fois par page
      6  extraction                         1 fois par page → n fiches
@@ -368,8 +368,25 @@ n'est pas symétrique — croire qu'une sortie est un agenda coûte un appel de
 sélection et se rattrape tout seul, l'inverse coûte tous les liens d'un
 agenda. D'où le biais assumé : **dans le doute, agenda.**
 
-Cette cascade **décide** désormais : un agenda descend au dépouillement, une
-sortie saute directement à la lecture. Une page qu'on ne sait pas reconnaître
+Cette cascade **décide** désormais, et elle aiguille en trois :
+
+| Nature | Ce que c'est | Où elle va |
+|---|---|---|
+| **agenda** | liste des sorties et **renvoie** vers leurs fiches | dépouillement, puis tri |
+| **sortie** | la fiche d'un événement précis | droit à la lecture |
+| **programme** | porte plusieurs sorties et **les décrit lui-même** — le festival qui tient sur une page | droit à la lecture, et l'extraction en tire plusieurs fiches |
+
+Le partage entre agenda et programme tient à une question : pour lire le détail
+d'une de ces sorties, faut-il **cliquer**, ou est-ce déjà **sous les yeux** ?
+Aucun signal gratuit ne sait le dire — un `ItemList` n'indique pas si les
+fiches sont ailleurs — donc cette distinction-là revient presque toujours au
+modèle. Le condensé s'y prête : un programme a beaucoup de dates et peu de
+liens, un agenda a beaucoup des deux.
+
+Le chemin du programme n'est pas neuf : c'est celui que le mode « site »
+empruntait déjà (`multiple`), et ses sorties se mémorisent une à une plutôt que
+la page — sinon un programme lu une fois ne serait plus jamais relu, et tout ce
+qu'il annoncerait ensuite serait perdu. Une page qu'on ne sait pas reconnaître
 part **en agenda**, et c'est délibéré — prendre une sortie pour un agenda coûte
 un tri et se rattrape tout seul, prendre un agenda pour une sortie coûte tous
 ses liens sans rattrapage.

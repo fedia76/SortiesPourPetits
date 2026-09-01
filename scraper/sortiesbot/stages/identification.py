@@ -1,8 +1,13 @@
 """Étage 2 — constater ce qu'est une page. Gratuit le plus souvent.
 
 La découverte rend des URL, sans rien en dire. C'est ici qu'on décide où
-chacune va : un **agenda** part au dépouillement, une **sortie** saute
-directement à la lecture. Le HTML est téléchargé une fois pour toutes, et le
+chacune va :
+
+* un **agenda** part au dépouillement — il renvoie vers des fiches ;
+* une **sortie** saute directement à la lecture ;
+* un **programme** saute lui aussi à la lecture, mais on en attend plusieurs
+  fiches d'un coup : c'est le festival qui tient sur une page, où les entrées
+  ne sont reliées que par des ancres. Le HTML est téléchargé une fois pour toutes, et le
 `Fetcher` le rend à qui le redemandera.
 
 La cascade est dans `classify.py` : URL, pagination, JSON-LD, métadonnées, et
@@ -22,7 +27,7 @@ corpus : de quoi, un jour, entraîner de quoi se passer du cinquième signal.
 
 from __future__ import annotations
 
-from ..classify import AGENDA, INCONNU, SORTIE, Digest, Verdict, classify, digest
+from ..classify import AGENDA, INCONNU, PROGRAMME, SORTIE, Digest, Verdict, classify, digest
 from ..harvest import FetchError, links_of
 from ..models import FoundPage
 from ..providers.base import ProviderError
@@ -34,7 +39,7 @@ class Identification(Brick):
     stage = Stage.IDENTIFY
 
     def run(self, source: FoundPage) -> str | None:
-        """Rend « agenda » ou « sortie », ou `None` si la page est injoignable.
+        """Rend « agenda », « sortie » ou « programme ». `None` si injoignable.
 
         `None` n'est pas un verdict : c'est l'absence de question posée. Une
         page qu'on n'a pas pu lire ne va nulle part.
@@ -55,7 +60,9 @@ class Identification(Brick):
             if verdict.kind == INCONNU:
                 verdict, asked = self._asked(card, verdict)
 
-            nature = SORTIE if verdict.kind == SORTIE else AGENDA
+            # « Inconnu » part en agenda : c'est le seul des trois chemins
+            # qui se rattrape tout seul si l'on s'est trompé.
+            nature = verdict.kind if verdict.kind in (SORTIE, PROGRAMME) else AGENDA
             self._record(url, verdict, card, asked, nature)
             st.produced(
                 f"{nature} — {verdict.detail}"
