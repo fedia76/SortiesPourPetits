@@ -1,9 +1,14 @@
 """Interface commune aux fournisseurs.
 
-Trois appels, trois tâches bornées. Aucun n'a le droit de dérouler une
-procédure : chercher, choisir, remplir. C'est ce découpage qui permet
-d'utiliser un modèle bon marché et de garder un coût prévisible — un appel
-qui ne boucle pas ne peut pas refacturer son contexte trente fois.
+Quatre appels, quatre tâches bornées. Aucun n'a le droit de dérouler une
+procédure : chercher, reconnaître, choisir, remplir. C'est ce découpage qui
+permet d'utiliser un modèle bon marché et de garder un coût prévisible — un
+appel qui ne boucle pas ne peut pas refacturer son contexte trente fois.
+
+Le quatrième, `classify`, est le plus petit de tous : quelques centaines de
+jetons, un condensé de page en entrée, une étiquette en sortie. Il n'est appelé
+que lorsque le HTML ne déclare rien, et il a le droit de répondre « je ne sais
+pas ».
 """
 
 from __future__ import annotations
@@ -29,6 +34,15 @@ class Provider(Protocol):
     def search(self, config: Config, log: RunLog) -> list[FoundPage]:
         """Lance les recherches web et désigne les pages à ouvrir, chacune
         classée en agenda (à dépouiller) ou en sortie (à lire telle quelle)."""
+        ...
+
+    def classify(self, digest: str, config: Config, log: RunLog) -> tuple[str, str]:
+        """Dit ce qu'est une page à partir de son condensé, et pourquoi.
+
+        Rend `(nature, motif)` où nature vaut « agenda », « sortie » ou
+        « inconnu ». Aucune URL ne sort de cet appel : le modèle répond par une
+        étiquette, et rien d'autre.
+        """
         ...
 
     def select(

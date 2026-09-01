@@ -27,13 +27,13 @@ from typing import Any, ClassVar, Iterator
 
 from . import Stage
 from ..api import SppApi
-from ..classify import classify
+from ..classify import INCONNU, Digest, Verdict, classify, digest
 from ..config import Config
 from ..harvest import Fetcher
 from ..journal import RunLog
 from ..ledger import Ledger
 from ..models import Summary
-from ..providers.base import Provider
+from ..providers.base import Provider, ProviderError
 from ..store import Memory
 
 
@@ -132,18 +132,31 @@ class Brick:
         return self.ctx.summary
 
     def observed(
-        self, url: str, html: str, *, announced: str = "", links: int | None = None
+        self, url: str, html: str, *, announced: str = "", links: Any = None
     ) -> None:
-        """Classe la page sur son HTML et consigne le verdict, sans rien décider.
+        """Constate ce qu'est la page, et consigne — sans rien décider.
 
-        En observation : le pipeline suit toujours le classement du modèle. On
-        note ce que `classify.py` aurait répondu, et si les deux s'accordent,
-        pour pouvoir mesurer avant de remplacer.
+        En observation : le pipeline suit toujours le classement de la
+        découverte. On note ce que la reconnaissance aurait répondu, et si les
+        deux s'accordent, pour mesurer avant de remplacer.
 
-        Le verdict part au journal — d'où il rejoint la console — et au
-        registre, qui lui survit à l'oubli d'un run.
+        Deux étages : les signaux certains d'abord — l'URL, le JSON-LD, les
+        métadonnées — puis, s'ils se taisent et si la configuration nomme un
+        modèle, un appel sur le seul condensé de la page. Quelques centaines de
+        jetons, jamais la page entière : celle-ci, l'extraction la paie déjà.
+
+        Tout part au journal — d'où la console le reprend — et au registre, qui
+        survit à l'oubli d'un run. Le condensé y va **avec** le verdict : c'est
+        lui le corpus, le jour où l'on voudra apprendre à s'en passer.
         """
-        verdict = classify(html, url, links=links)
+        found = links if isinstance(links, list) else None
+        verdict = classify(html, url, links=len(found) if found is not None else links)
+        card = digest(html, url, found)
+        asked = ""
+
+        if verdict.kind == INCONNU:
+            verdict, asked = self._asked(card, verdict)
+
         agrees = verdict.agrees_with(announced)
         fields = verdict.as_dict()
         self.log.event("classified", url=url, announced=announced, agrees=agrees, **fields)
@@ -157,8 +170,33 @@ class Brick:
             stage=self.stage.value,
             announced=announced,
             agrees=agrees,
+            asked=asked,
+            digest=card.as_dict(),
             **fields,
         )
+
+    def _asked(self, card: Digest, fallback: Verdict) -> tuple[Verdict, str]:
+        """Fait trancher le modèle sur le condensé. Rend le verdict et le modèle.
+
+        Un échec n'est pas rattrapé : on garde « inconnu », qui a déjà un
+        comportement défini. Payer un second appel pour une observation qui ne
+        décide de rien serait absurde.
+        """
+        model = self.config.classify_model
+        if not model:
+            return fallback, ""
+        if self.ctx.budget_reached:
+            # La reconnaissance consomme le budget du run comme les autres
+            # appels — c'est de l'argent réel. Mais elle ne décide encore rien :
+            # dépenser pour observer un run déjà à sec serait le comble.
+            self.log.event("skip", reason="budget atteint, page non reconnue", url=card.url)
+            return fallback, ""
+        try:
+            nature, pourquoi = self.ctx.provider.classify(card.as_prompt(), self.config, self.log)
+        except ProviderError as err:
+            self.log.warn("classify", f"reconnaissance impossible : {err}", url=card.url)
+            return fallback, ""
+        return Verdict(nature, "modele", pourquoi or "sans motif", "probable"), model
 
     @contextmanager
     def opened(self, **fields: Any) -> Iterator[Any]:

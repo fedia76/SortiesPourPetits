@@ -43,7 +43,7 @@ class Harvest(Brick):
             links = links_of(html, url)
             # Le HTML est là et les liens sont comptés : la classification ne
             # coûte donc rien de plus qu'une lecture de plus du même texte.
-            self.observed(url, html, announced=announced, links=len(links))
+            self.observed(url, html, announced=announced, links=links)
             self.summary.pages += 1
             self.log.event("harvested", url=url, links=len(links), chars=len(html))
             st.produced(f"{len(links)} lien(s) extrait(s)", links=len(links))

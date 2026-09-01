@@ -94,10 +94,15 @@ class Config:
     blocked_domains: list[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS))
     provider: str = "anthropic"
     #: Chacun des trois appels est borné : Haiku suffit partout.
+    #: Modèle qui tranche la nature d'une page quand les signaux certains se
+    #: taisent. Vide : on ne demande à personne, la page reste « inconnue » —
+    #: et l'orchestrateur la traite en agenda, comme avant.
+    classify_model: str = "claude-haiku-4-5"
     search_model: str = "claude-haiku-4-5"
     select_model: str = "claude-haiku-4-5"
     extraction_model: str = "claude-haiku-4-5"
     search_prompt: str = prompts.SEARCH
+    classify_prompt: str = prompts.CLASSIFY
     select_prompt: str = prompts.SELECT
     extraction_prompt: str = prompts.EXTRACTION
     #: Lecture d'une page de programme, qui porte plusieurs sorties.
@@ -127,6 +132,9 @@ class Config:
             # sinon le modèle tente des recherches qui échouent.
             max_searches=self.max_searches,
         )
+
+    def render_classify(self, digest: str) -> str:
+        return Template(self.classify_prompt).safe_substitute(digest=digest)
 
     def render_select(self, page: str, links: str) -> str:
         return Template(self.select_prompt).safe_substitute(
@@ -280,10 +288,12 @@ def config_from_api(raw: dict[str, Any]) -> Config:
             default_category=str(raw.get("defaultCategory") or defaults.default_category),
             postal_prefixes=_split(raw.get("postalPrefixes"), defaults.postal_prefixes),
             blocked_domains=_split(raw.get("blockedDomains"), defaults.blocked_domains),
+            classify_model=str(raw.get("classifyModel", defaults.classify_model)),
             search_model=str(raw.get("searchModel") or defaults.search_model),
             select_model=str(raw.get("selectModel") or defaults.select_model),
             extraction_model=str(raw.get("extractionModel") or defaults.extraction_model),
             search_prompt=prompt("searchPrompt", defaults.search_prompt),
+            classify_prompt=prompt("classifyPrompt", defaults.classify_prompt),
             select_prompt=prompt("selectPrompt", defaults.select_prompt),
             extraction_prompt=prompt("extractionPrompt", defaults.extraction_prompt),
             extraction_multi_prompt=prompt(
@@ -370,6 +380,7 @@ def describe(config: Config) -> dict[str, Any]:
         "max_searches": config.max_searches,
         "max_agendas": config.max_agendas,
         "provider": config.provider,
+        "classify_model": config.classify_model,
         "search_model": config.search_model,
         "select_model": config.select_model,
         "extraction_model": config.extraction_model,

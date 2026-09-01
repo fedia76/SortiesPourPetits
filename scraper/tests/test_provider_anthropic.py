@@ -217,6 +217,41 @@ def test_reponse_de_memoire_sans_aucune_recherche_est_rejetee():
     assert "aucune recherche lancée" in stream.getvalue()
 
 
+def test_la_reconnaissance_ne_recoit_quun_condense(log):
+    """Le plus petit des quatre appels : un condensé, aucun outil, une étiquette."""
+    condense = "URL : https://agenda.fr/a\nLiens exploitables : 12, dont 12 voisinent une date."
+    server = FakeApiServer(
+        [message([text_block({"nature": "agenda", "pourquoi": "douze liens datés"})])]
+    )
+    try:
+        nature, motif = provider_for(server).classify(
+            condense, Config(name="t", theme="x"), log
+        )
+    finally:
+        server.close()
+
+    assert (nature, motif) == ("agenda", "douze liens datés")
+    body = server.requests[0]
+    assert "tools" not in body, "aucun outil : aucune boucle serveur possible"
+    assert body["model"] == "claude-haiku-4-5"
+    assert condense in body["messages"][0]["content"]
+    # Trois étiquettes et rien d'autre : le modèle ne peut pas écrire d'URL.
+    schema = body["output_config"]["format"]["schema"]
+    assert schema["properties"]["nature"]["enum"] == ["agenda", "sortie", "inconnu"]
+    assert set(schema["properties"]) == {"nature", "pourquoi"}
+
+
+def test_une_reconnaissance_illisible_retombe_sur_inconnu(log):
+    """Une réponse tronquée ne doit pas devenir un verdict inventé."""
+    server = FakeApiServer([message([text_block({"nature": "peut-être", "pourquoi": ""})])])
+    try:
+        nature, motif = provider_for(server).classify("URL : x", Config(name="t", theme="x"), log)
+    finally:
+        server.close()
+    assert nature == "inconnu"
+    assert "peut-être" in motif
+
+
 def test_la_selection_ne_rend_que_des_numeros(log):
     """Le modèle choisit par index : il ne peut pas inventer d'URL, et sa
     réponse tient en quelques jetons."""
