@@ -836,6 +836,13 @@ pip install -e ".[dev]"
 python -m pytest
 ```
 
+Ils tournent aussi en intégration continue, sur toute branche et toute pull
+request (`.github/workflows/verifier.yml`), avec le typecheck du front et la
+compilation de l'API. Le workflow de déploiement compilait déjà le front, donc
+il typecheckait — mais seulement sur `main`, c'est-à-dire une fois qu'il est
+trop tard : une erreur de type y cassait la mise en production plutôt qu'une
+branche. Et les tests du scraper ne tournaient nulle part.
+
 Aucun test n'appelle le réseau : le fournisseur Claude est branché sur un
 serveur HTTP local qui enregistre les requêtes, ce qui verrouille la forme de
 ce qui est envoyé (outils serveur, format structuré, reprise après

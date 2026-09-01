@@ -148,6 +148,10 @@ class ExtractedEvent:
 
 
 #: Tarif d'une recherche web : 10 $ les 1000.
+#: Ce que coûte une recherche web, par défaut. C'est le tarif de l'outil
+#: serveur d'Anthropic ; un moteur ordinaire facture bien moins, et pose donc
+#: son propre prix. D'où un montant **porté** par l'usage plutôt que dérivé
+#: d'un compteur : deux fournisseurs ne facturent pas au même tarif.
 SEARCH_PRICE_USD = 0.01
 
 
@@ -158,19 +162,19 @@ class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
     web_searches: int = 0
-    #: Coût des jetons. Les recherches web se facturent à part (voir total_usd).
+    #: Coût des jetons. Les recherches se facturent à part.
     cost_usd: float = 0.0
+    #: Coût des recherches, au tarif du moteur qui les a lancées. Porté et non
+    #: calculé : Anthropic facture dix dollars les mille, un moteur ordinaire
+    #: bien moins, et un run peut mêler les deux.
+    search_cost_usd: float = 0.0
 
     def add(self, other: "Usage") -> None:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.web_searches += other.web_searches
         self.cost_usd += other.cost_usd
-
-    @property
-    def search_cost_usd(self) -> float:
-        """10 $ les 1000 recherches, facturés en plus des jetons."""
-        return self.web_searches * SEARCH_PRICE_USD
+        self.search_cost_usd += other.search_cost_usd
 
     @property
     def total_usd(self) -> float:

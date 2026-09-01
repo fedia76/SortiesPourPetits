@@ -1,0 +1,68 @@
+name: Vérification
+
+# Le déploiement compile le front, donc il typecheck — mais seulement sur
+# `main`, et donc seulement une fois qu'il est trop tard : une erreur de type
+# y casse la mise en production au lieu de casser une branche. Et les tests du
+# scraper, eux, ne tournaient nulle part.
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  scraper:
+    name: Tests du scraper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Installer
+        working-directory: scraper
+        run: pip install -e ".[dev]"
+      - name: Tests
+        working-directory: scraper
+        run: python -m pytest -q
+
+  front:
+    name: Types et compilation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Types du front
+        working-directory: client
+        run: |
+          npm ci
+          npm run typecheck
+      - name: Compilation de l'API
+        working-directory: server
+        run: |
+          npm ci
+          npm run build
+
+  # Ce job-ci appelle le vrai service et consomme des crédits : il ne part
+  # jamais tout seul. On le lance à la main quand on veut confronter le
+  # fournisseur à la forme réellement rendue par Serper — ce qu'aucune suite
+  # de tests hors ligne ne peut faire.
+  serper:
+    name: Forme réelle des réponses Serper (manuel)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Installer
+        working-directory: scraper
+        run: pip install -e .
+      - name: Interroger Serper
+        working-directory: scraper
+        env:
+          SERPER_API_KEY: ${{ secrets.SERPER }}
+        run: python -m tools.serper_shape "spectacle jeune public Paris septembre"

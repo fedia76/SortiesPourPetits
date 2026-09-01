@@ -193,7 +193,7 @@ def standard():
 
 def run_job(api, monkeypatch, provider, fetcher, runs_dir, payload=None):
     """Joue `worker.execute` avec un fournisseur et un serveur web simulés."""
-    monkeypatch.setattr(worker, "get_provider", lambda config, api_key=None: provider)
+    monkeypatch.setattr(worker, "get_provider", lambda config, api_key=None, serper_key=None: provider)
     monkeypatch.setattr(
         worker,
         "run_pipeline",
@@ -206,7 +206,7 @@ def run_job(api, monkeypatch, provider, fetcher, runs_dir, payload=None):
     # Le registre du classifieur s'accumule d'un run à l'autre : un test ne
     # doit surtout pas écrire dans celui du dépôt.
     monkeypatch.setattr(worker, "LEDGER_DIR", runs_dir)
-    env = type("Env", (), {"anthropic_key": "clé"})()
+    env = type("Env", (), {"anthropic_key": "clé", "serper_key": None})()
     worker.execute(payload or job(), api, env, runs_dir=runs_dir, quiet=True)
 
 
@@ -244,9 +244,9 @@ def test_un_plantage_imprevu_clot_quand_meme_lexecution(tmp_path, monkeypatch):
     """Sans clôture, la console resterait bloquée sur « En cours »."""
     api = ScraperApi()
     monkeypatch.setattr(
-        worker, "get_provider", lambda config, api_key=None: (_ for _ in ()).throw(RuntimeError("boum"))
+        worker, "get_provider", lambda config, api_key=None, serper_key=None: (_ for _ in ()).throw(RuntimeError("boum"))
     )
-    env = type("Env", (), {"anthropic_key": "clé"})()
+    env = type("Env", (), {"anthropic_key": "clé", "serper_key": None})()
     worker.execute(job(), api, env, runs_dir=tmp_path, quiet=True)
 
     run_id, status, counters = api.finished[0]
@@ -283,7 +283,12 @@ def test_compteurs_du_resume():
         skipped_irrelevant=1,
         skipped_invalid=0,
         errors=1,
-        usage=Usage(input_tokens=1000, output_tokens=50, web_searches=2, cost_usd=0.01),
+        # Le coût des recherches est **porté**, non dérivé du compteur : deux
+        # moteurs ne facturent pas au même tarif, et un run peut mêler les deux.
+        usage=Usage(
+            input_tokens=1000, output_tokens=50, web_searches=2,
+            cost_usd=0.01, search_cost_usd=0.02,
+        ),
     )
     counters = worker.counters(summary)
     assert counters["skipped"] == 3  # vues + bloquées + hors sujet + inexploitables

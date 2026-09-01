@@ -21,7 +21,7 @@ from typing import Any
 from ..config import Config
 from ..harvest import Link
 from ..journal import RunLog
-from ..models import ExtractedEvent, FoundPage, Usage
+from ..models import SEARCH_PRICE_USD, ExtractedEvent, FoundPage, Usage
 from ..store import normalize_url
 from .base import ProviderError
 
@@ -479,6 +479,7 @@ class AnthropicProvider:
         step.input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
         step.output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
         step.cost_usd = _token_cost(model, step)
+        step.search_cost_usd = step.web_searches * SEARCH_PRICE_USD
         self.usage.add(step)
         log.event("usage", op=op, model=model, **step.as_dict())
         return response

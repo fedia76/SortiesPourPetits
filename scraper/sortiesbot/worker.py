@@ -142,7 +142,7 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
     # de débogage affiche, étage par étage.
     journal = RemoteJournal(api, run_id)
     try:
-        provider = get_provider(config, api_key=env.anthropic_key)
+        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
         with open_log(runs_dir, config.name, quiet, sink=journal.add) as log:
             if log.path and not quiet:
                 print(f"  journal : {log.path}", flush=True)

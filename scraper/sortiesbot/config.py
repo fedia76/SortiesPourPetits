@@ -359,6 +359,8 @@ class Environment:
     api_url: str
     api_key: str | None
     anthropic_key: str | None
+    #: Clé du moteur de recherche, quand la configuration en nomme un.
+    serper_key: str | None = None
 
     @classmethod
     def from_env(cls) -> "Environment":
@@ -366,6 +368,7 @@ class Environment:
             api_url=os.environ.get("SPP_API_URL", "http://localhost:3000").rstrip("/"),
             api_key=os.environ.get("SPP_API_KEY") or None,
             anthropic_key=os.environ.get("ANTHROPIC_API_KEY") or None,
+            serper_key=os.environ.get("SERPER_API_KEY") or None,
         )
 
 
