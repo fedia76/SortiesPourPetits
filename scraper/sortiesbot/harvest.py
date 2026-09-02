@@ -16,6 +16,12 @@ Le HTML sert aussi à ce que le texte seul ne dit pas : les dates JSON-LD
 (`json_ld_dates`) et l'illustration de la page (`main_image`). Le modèle ne
 reçoit que du texte — il ne peut donc pas connaître l'URL d'une image, et
 lui en demander une revenait à lui demander de l'inventer.
+
+Et ce que les liens *sortants* disent, enfin : `outbound_links` et
+`json_ld_urls` sont l'exact complément de `links_of`, qui les écarte tous.
+Sur un agenda, un lien qui sort du site est du bruit ; sur la fiche d'un
+agrégateur, c'est le seul endroit où figure la page de l'organisateur. C'est
+la matière première de l'étage attribution.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
@@ -493,3 +500,141 @@ def page_text(html: str, limit: int = 8000) -> str:
         tag.decompose()
     text = " ".join(soup.get_text(" ", strip=True).split())
     return text[:limit]
+
+
+# ═════════════════════════════════════ ce qui mène ailleurs qu'à cette page
+
+#: Un lien sortant dont le texte est plus court n'apprend rien. Bien plus bas
+#: que `MIN_TEXT` : « Site officiel » fait treize caractères, et c'est
+#: exactement le lien qu'on cherche.
+MIN_OUTBOUND_TEXT = 4
+
+#: Hôtes qui ne sont jamais la source d'une information : réseaux sociaux,
+#: plateformes de billetterie, régies publicitaires, raccourcisseurs. Un lien
+#: vers eux est un lien sortant comme un autre, mais ce n'est pas *la page de
+#: l'organisateur* — et c'est celle-là qu'on cherche.
+NEVER_SOURCE = (
+    "facebook.com", "instagram.com", "x.com", "twitter.com", "tiktok.com",
+    "youtube.com", "youtu.be", "linkedin.com", "pinterest.fr", "pinterest.com",
+    "whatsapp.com", "snapchat.com", "google.com", "google.fr", "goo.gl",
+    "bit.ly", "doubleclick.net", "googletagmanager.com", "addtoany.com",
+    "billetweb.fr", "weezevent.com", "helloasso.com", "eventbrite.fr",
+    "eventbrite.com", "fnacspectacles.com", "ticketmaster.fr", "digitick.com",
+    "mapado.com", "wordpress.org", "apple.com", "play.google.com",
+)
+
+
+def host_of(url: str) -> str:
+    """Hôte d'une URL, sans `www.`. Chaîne vide si l'URL n'en a pas."""
+    host = urlsplit(url).netloc.lower().split(":")[0]
+    return host[4:] if host.startswith("www.") else host
+
+
+def same_site(a: str, b: str) -> bool:
+    """Deux URLs du même site, `blog.musee.fr` et `musee.fr` compris.
+
+    On compare les deux derniers segments plutôt que l'hôte entier : un site
+    qui sert ses fiches depuis un sous-domaine reste le même éditeur, et le
+    but ici est de reconnaître « on est encore chez soi ».
+    """
+    ha, hb = host_of(a), host_of(b)
+    if not ha or not hb:
+        return False
+    return ha == hb or ha.endswith(f".{hb}") or hb.endswith(f".{ha}")
+
+
+def in_domains(url: str, domains: Iterable[str]) -> bool:
+    """L'hôte de l'URL est-il l'un de ces domaines, ou l'un de leurs sous-domaines ?"""
+    host = host_of(url)
+    if not host:
+        return False
+    return any(
+        host == d or host.endswith(f".{d}")
+        for d in (str(x).strip().lower().removeprefix("www.") for x in domains)
+        if d
+    )
+
+
+def outbound_links(html: str, page_url: str, limit: int = 60) -> list[Link]:
+    """Les liens qui **sortent** du site, avec le texte qui les porte.
+
+    L'exact complément de `links_of`, qui les écarte tous : sur un agenda, un
+    lien sortant est du bruit — un partenaire, un réseau social. Sur la fiche
+    d'un agrégateur, c'est au contraire le seul endroit où figure la page de
+    l'organisateur, et donc tout ce qu'on cherche ici.
+
+    On ne juge pas encore lequel est le bon : on retire seulement ce qui n'est
+    certainement pas une source — réseaux sociaux, billetteries, traceurs.
+    """
+    soup = _soup(html)
+    found: dict[str, Link] = {}
+
+    for anchor in soup.find_all("a", href=True):
+        href = anchor["href"].strip()
+        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+            continue
+        url = urljoin(page_url, href).split("#")[0]
+        if not url.startswith(("http://", "https://")):
+            continue
+        if same_site(url, page_url) or in_domains(url, NEVER_SOURCE) or url in found:
+            continue
+
+        text = " ".join(anchor.get_text(" ", strip=True).split())
+        # Le texte peut être vide (un logo, une icône) : le lien reste un
+        # candidat, c'est le domaine du lieu qui le désignera peut-être.
+        if 0 < len(text) < MIN_OUTBOUND_TEXT:
+            continue
+
+        found[url] = Link(text=text[:150], url=url, context=_context_of(anchor, text))
+        if len(found) >= limit:
+            break
+
+    return list(found.values())
+
+
+#: Champs d'un objet JSON-LD qui portent l'adresse canonique de la chose
+#: décrite. `url` en premier : c'est celui que schema.org définit comme tel.
+_LD_URL_FIELDS = ("url", "mainEntityOfPage", "sameAs")
+
+
+def json_ld_urls(html: str, page_url: str) -> list[str]:
+    """Les URLs qu'un `schema.org/Event` déclare, dans l'ordre de confiance.
+
+    Le pendant de `json_ld_dates`, et la même raison d'y croire : un site qui
+    remplit son JSON-LD le fait pour Google Événements, donc il y met la vraie
+    adresse de la fiche — souvent celle de l'organisateur, quand c'est un
+    agrégateur qui republie.
+
+    Les URLs du site courant sont écartées : une page qui se déclare elle-même
+    ne nous apprend rien, et c'est le cas le plus fréquent.
+    """
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def keep(value: object) -> None:
+        if not isinstance(value, str):
+            return
+        url = value.strip()
+        if not url.startswith(("http://", "https://")):
+            return
+        url = url.split("#")[0]
+        if url in seen or same_site(url, page_url) or in_domains(url, NEVER_SOURCE):
+            return
+        seen.add(url)
+        urls.append(url)
+
+    for block in _ld_blocks(html):
+        for node in _walk(block):
+            if not _is_event(node):
+                continue
+            for field_name in _LD_URL_FIELDS:
+                value = node.get(field_name)
+                for item in value if isinstance(value, list) else [value]:
+                    keep(item)
+            # `offers.url` mène à la billetterie, qui est parfois hébergée par
+            # l'organisateur lui-même. Après les autres : c'est le moins sûr.
+            offers = node.get("offers")
+            for offer in offers if isinstance(offers, list) else [offers]:
+                if isinstance(offer, dict):
+                    keep(offer.get("url"))
+    return urls

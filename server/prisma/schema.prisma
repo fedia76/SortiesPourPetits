@@ -88,7 +88,22 @@ model Event {
   id              Int         @id @default(autoincrement())
   title           String
   description     String      @db.Text
+  /// Le **meilleur lien connu** pour cette sortie : la page de l'organisateur
+  /// quand on a su la trouver, la page où elle a été repérée sinon. C'est
+  /// celui que la fiche montre, et il n'a jamais changé de rôle — de sorte
+  /// qu'aucun lecteur de ce champ n'a eu à apprendre les deux suivants.
   sourceUrl       String?
+  /// La page où la recherche automatique a trouvé la sortie, quand elle
+  /// diffère de `sourceUrl` — typiquement un agrégateur qui republiait
+  /// l'information d'un musée. Vide pour une proposition de visiteur, et vide
+  /// aussi quand la page lue était déjà la bonne : ce champ ne se remplit que
+  /// s'il apprend quelque chose.
+  foundOnUrl      String?
+  /// Ce qui a désigné `sourceUrl` : `json_ld`, `venue_domain`, `page_link`,
+  /// `search` (l'étage attribution du scraper, du plus sûr au moins sûr) ou
+  /// `manuel` quand un humain l'a saisi ou corrigé. Le modérateur voit ainsi
+  /// quelle confiance accorder au lien qu'on lui propose.
+  sourceUrlSignal String?
   isFree          Boolean     @default(false)
   price           Decimal?    @db.Decimal(8, 2)
   photoUrl        String?
@@ -184,6 +199,14 @@ model ScraperConfig {
   postalPrefixes  String @default("75,77,78,91,92,93,94,95")
   /// Domaines écartés d'office, séparés par des virgules.
   blockedDomains  String @default("") @db.Text
+  /// Sites qui republient sans être la source, séparés par des virgules. On
+  /// les lit — ce sont de bons agendas — mais leur URL n'est jamais celle
+  /// qu'on propose : l'étage attribution remonte à l'organisateur. Vide :
+  /// la liste par défaut du scraper s'applique.
+  aggregatorDomains String @default("") @db.Text
+  /// Autorise l'attribution à *chercher* la page de l'organisateur quand la
+  /// page lue ne la porte pas. Son seul appel payant, ~0,001 $ la fiche.
+  sourceSearch      Boolean @default(true)
 
   /// Qui lance les recherches : « anthropic » (outil serveur) ou « serper »
   /// (Google). Le modèle reste derrière dans les deux cas pour le reste.

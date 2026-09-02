@@ -39,6 +39,7 @@ cp .env.example .env        # puis renseignez les clés
 | `ANTHROPIC_API_KEY` | clé de l'API Claude |
 | `SPP_API_URL` | URL du site (défaut `http://localhost:3000`) |
 | `SPP_API_KEY` | clé `spp_…` créée depuis la page « Clés d'API » du site |
+| `SERPER_API_KEY` | facultative — le moteur de recherche, pour les configurations en `provider: serper` **et** pour le repli de l'attribution, quel que soit le fournisseur |
 
 La clé du site hérite du rôle de son compte : rattachez-la à un compte dont les
 propositions doivent passer par la modération.
@@ -123,9 +124,9 @@ Chaque run écrit deux fichiers dans `runs/` :
 > (le document long, avec le détail du coût). Index et statut de ces documents
 > dans [`docs/`](../docs/README.md).
 
-### Les sept étages, et où ils sont dans le code
+### Les huit étages, et où ils sont dans le code
 
-Le pipeline a toujours eu six étages, mais ils ne vivaient que dans cette
+Le pipeline a longtemps eu six étages, mais ils ne vivaient que dans cette
 documentation : le code les enchaînait sans les nommer, dans trois fonctions
 qui en portaient deux chacune. Ils ont désormais **une classe et un fichier
 par brique**, leur vocabulaire commun dans
@@ -137,13 +138,13 @@ par brique**, leur vocabulaire commun dans
 | 1 | Découverte | modèle | des requêtes web | les URL qu'elles ont remontées | `stages/discovery.py` — `Discovery` |
 | 2 | Reconnaissance | **mixte** | une URL trouvée | sa nature : agenda, sortie ou programme, et l'adresse retenue | `stages/identification.py` — `Identification` |
 | 3 | Dépouillement | Python | URL d'agenda | liens et leur contexte | `stages/harvest.py` — `Harvest` |
-
 | 4 | Sélection | modèle | liens numérotés | numéros retenus | `stages/selection.py` — `Selection` |
 | 5 | Lecture | Python | URL de page | texte, dates JSON-LD, image | `stages/reading.py` — `Reading` |
 | 6 | Extraction | modèle | texte de la page | fiche(s) JSON | `stages/extraction.py` — `Extraction` |
-| 7 | Publication | Python | fiche JSON | sortie en attente de modération | `stages/publication.py` — `Publication` |
+| 7 | Attribution | **mixte** | une fiche et la page qui la portait | l'URL de la source, vérifiée | `stages/attribution.py` — `Attribution` |
+| 8 | Publication | Python | fiche JSON | sortie en attente de modération | `stages/publication.py` — `Publication` |
 
-La **reconnaissance** est arrivée en dernier, d'un constat : la découverte
+La **reconnaissance** est arrivée avant-dernière, d'un constat : la découverte
 classait les pages parce que le fournisseur savait le faire au passage, pas
 parce que c'était sa place. La nature d'une page est une propriété de la page,
 pas de la façon dont on l'a trouvée. En la sortant de là, la découverte se
@@ -151,12 +152,13 @@ réduit à « des requêtes entrent, des URL sortent » — le seul contrat qu'u
 moteur de recherche ordinaire sait honorer, et donc la condition pour en
 brancher un autre un jour.
 
-Elle est le seul étage **mixte** : gratuite tant qu'un signal certain tranche,
-facturée quand ils se taisent tous.
+Elle est **mixte** : gratuite tant qu'un signal certain tranche, facturée
+quand ils se taisent tous. L'attribution, arrivée après, l'est pour la même
+raison — voir « [Remonter à la source](#remonter-à-la-source) ».
 
 Aucune brique ne sait ce qui vient avant ou après elle : l'ordre n'existe qu'à
 un seul endroit, [`sortiesbot/orchestrator.py`](sortiesbot/orchestrator.py),
-et plus précisément dans une seule méthode, `Run.chain()`. Les six appels s'y
+et plus précisément dans une seule méthode, `Run.chain()`. Les huit appels s'y
 suivent de haut en bas, chacun annoncé par son numéro, et leur **indentation
 dit la cardinalité** — ce qui est plus à droite tourne plus souvent :
 
@@ -170,10 +172,11 @@ dit la cardinalité** — ce qui est plus à droite tourne plus souvent :
    puis, pour chaque page retenue :
      5  lecture                            1 fois par page
      6  extraction                         1 fois par page → n fiches
-          7  publication                   1 fois par fiche
+          7  attribution                   1 fois par fiche
+          8  publication                   1 fois par fiche
 ```
 
-`chain()` ne contient rien d'autre que ces sept appels et les branchements qui
+`chain()` ne contient rien d'autre que ces huit appels et les branchements qui
 décident de la suite. Ce qui tranche *si* une page est lue — doublons du run,
 plafond de sorties, budget — est en amont, dans `_to_read()` ; l'intendance du
 run — catégories du site, comptes finaux, ouverture et clôture du journal —
@@ -181,7 +184,7 @@ est groupée à part, dans `go()`. Sans ce partage, la chaîne se lisait coupée
 en trois par des décisions qui ne la concernaient pas.
 
 Elles n'ont **pas** de signature commune, et c'est délibéré : ces cardinalités
-diffèrent, et une interface uniforme aurait fait croire à une chaîne de six
+diffèrent, et une interface uniforme aurait fait croire à une chaîne de huit
 maillons identiques. Ce qu'elles partagent — le contexte du run, l'ouverture
 de leur étage au journal — est dans `stages/base.py` (`RunContext`, `Brick`).
 
@@ -248,7 +251,7 @@ Un même événement part vers trois destinations :
   tout ce que le journal racontait mourait sur la sortie standard.
 
 La page de débogage se trouve depuis le détail d'une exécution, bouton
-« Journal détaillé et graphe des étages ». Elle dessine les six briques avec
+« Journal détaillé et graphe des étages ». Elle dessine les huit briques avec
 leurs compteurs, et le journal filtrable en dessous : par étage (en cliquant
 une brique), par type d'événement, par gravité, par page suivie, ou par texte
 libre. Les filtres se composent et se retirent un par un.
@@ -298,6 +301,107 @@ par la recherche n'apparaissait nulle part, sans qu'on sache pourquoi :
 
 Chaque résultat de recherche porte donc son sort, et un agenda jamais ouvert
 garde son nœud dans l'arbre avec le motif.
+
+### Remonter à la source
+
+Une recherche remonte surtout des **agrégateurs** — kidiklik, citizenkid,
+parismômes, familyinparis. C'est normal et c'est même utile : ils indexent
+tout, ils sont bien référencés, ils sortent en tête. Mais un atelier du musée
+Rodin n'est pas une information de kidiklik ; c'est une information du musée
+Rodin, que kidiklik republie. Le parent qui clique veut les horaires du jour,
+la billetterie, l'annulation pour cause de grève — donc la page du musée.
+
+L'étage 7 répond à cette question, une fois par fiche : **existe-t-il une page
+de l'organisateur, et laquelle ?** Il ne touche à rien d'autre.
+
+Deux champs plutôt qu'un, et le partage compte :
+
+| Champ envoyé au site | Ce qu'il porte | Qui le lit |
+|---|---|---|
+| `sourceUrl` | le **meilleur lien connu** — l'organisateur si on l'a trouvé, la page lue sinon | le parent, sur la fiche |
+| `foundOnUrl` | la page réellement lue, quand elle diffère | le modérateur, la console |
+| `sourceUrlSignal` | ce qui a désigné le premier | le modérateur, pour la confiance |
+
+`sourceUrl` **ne change pas de rôle**, et c'est ce qui a rendu ce chantier
+petit côté site : aucun de ses lecteurs — la fiche, le formulaire, un futur
+export — n'a eu à apprendre un second champ. Une sortie déjà en base garde un
+lien qui reste vrai, simplement moins bon que ce qu'on sait faire depuis.
+
+#### La cascade
+
+La même que celle de `classify.py`, et pour la même raison : chaque signal
+gratuit qui tranche est un appel payant qu'on ne fait pas.
+
+| # | Signal | Ce qu'il lit | Confiance | Coût |
+|---|---|---|---|---|
+| 1 | **JSON-LD** | `Event.url`, `sameAs`, `offers.url` de la page lue | certain | nul |
+| 2 | **Domaine du lieu** | « Musée Rodin » ↔ `musee-rodin.fr` dans les liens sortants | certain | nul |
+| 3 | **Texte du lien** | « site officiel », « réserver », « en savoir plus » | probable | nul |
+| 4 | **Le moteur** | une requête Serper, titre + lieu | probable | ~0,001 $ |
+
+Les trois premiers lisent le HTML que le `Fetcher` garde déjà depuis la
+lecture : ni un octet de réseau, ni un jeton. Ils s'appuient sur
+`outbound_links` et `json_ld_urls`, exacts **compléments** de `links_of` — qui
+écarte tous les liens sortants, parce que sur un agenda ce sont des
+partenaires et de la publicité. Sur la fiche d'un agrégateur, c'est au
+contraire le seul endroit où figure l'organisateur : ce qui est du bruit pour
+le dépouillement est ici le signal.
+
+Le quatrième est le seul appel payant de l'étage, et le seul qu'on puisse
+couper (`source_search: false`, ou la case de la console). Il n'est atteint que
+lorsque la page ne cite tout simplement pas sa source, ce qui arrive
+constamment. Sa requête est le **titre et le lieu**, pas « site officiel » : on
+cherche cette page-là, et l'ajouter ferait remonter la racine d'un site qui ne
+parle de rien.
+
+Le moteur du repli est **indépendant du fournisseur de la recherche** : une
+configuration qui cherche avec `anthropic` remonte quand même à la source, dès
+lors que `SERPER_API_KEY` est dans l'environnement. C'est ce qui a fait sortir
+la mécanique HTTP de `serper_provider.py` vers `providers/serper_client.py` —
+deux appelants, deux politiques, un seul client.
+
+#### La validation, qui n'est pas optionnelle
+
+Aucun des quatre signaux ne prouve quoi que ce soit. Un lien « réserver » mène
+souvent à l'accueil d'une billetterie ; un résultat de moteur peut être le bon
+site et la mauvaise saison. Une source fausse est **pire** qu'une source
+absente : elle a l'air d'une réponse, le modérateur la croit, et le parent
+tombe sur un spectacle qui n'existe plus.
+
+La page candidate est donc **ouverte et lue** avant d'être retenue, et elle
+doit parler de cette sortie :
+
+* son **titre** s'y retrouve, à 60 % de ses mots significatifs — un titre est
+  presque toujours reformulé d'un site à l'autre, exiger la phrase exacte
+  reviendrait à ne jamais rien valider ;
+* à défaut, son **lieu et une de ses dates** : c'est la preuve du programme de
+  festival, qui ne nomme pas chaque atelier comme l'agrégateur.
+
+Ce qui ne passe pas est journalisé avec l'URL écartée et le signal qui l'avait
+proposée, puis jeté. `SourceLink.found` n'est vrai que si `checked` l'est :
+la règle est portée par l'objet, pas par la discipline de l'appelant.
+
+Les chercheurs **proposent**, la vérification **dispose** : chacun rend toutes
+les candidates qu'il voit, et c'est l'épreuve qui tranche. Sans ça, un premier
+lien plausible mais faux ferait perdre le bon, qui était deux lignes plus bas.
+Quatre pages ouvertes au plus, tous signaux confondus — au-delà, on paie en
+secondes de politesse ce qu'on ne trouvera pas.
+
+#### Ce que cet étage ne fait pas
+
+Il ne demande **jamais une URL au modèle**. C'est la règle que la publication
+applique déjà à la photo — « une URL de sa part est au mieux une devinette » —
+et elle vaut ici davantage : une URL inventée qui répond en 200 est
+indétectable. Toute adresse qui sort de là a été lue dans un HTML ou rendue
+par un moteur.
+
+Il ne touche pas non plus à la **mémoire** : `store` reste indexé sur la page
+lue, qui est celle qu'un prochain run retrouvera. Indexer sur la source
+attribuée serait la meilleure clé de déduplication — le même atelier trouvé
+via kidiklik *et* via citizenkid est une seule sortie, ce que
+`event_key(page_url, title)` ne peut pas voir — mais cela se décidera sur des
+chiffres, quand le registre en aura assez. Le sujet `attribute` s'y accumule
+dès maintenant, avec le signal, la candidate et son verdict.
 
 ### Le classifieur en observation
 
@@ -829,8 +933,9 @@ Le remplacement a lieu à deux étages, et les deux comptent :
 
 * à la **reconnaissance** (2), parce qu'un agenda anglais ne mène qu'à des
   fiches anglaises : corriger la racine corrige toute la branche ;
-* à la **lecture** (5), parce que c'est l'adresse retenue là qui est proposée
-  au site — et parce qu'un lien peut avoir échappé au premier passage.
+* à la **lecture** (5), parce que c'est l'adresse retenue là qui devient la
+  provenance (`foundOnUrl`) — et parce qu'un lien peut avoir échappé au
+  premier passage.
 
 Les deux filtres de la lecture — domaine bloqué, page déjà vue — se rejouent
 sur l'adresse retenue : c'est elle qui sera mémorisée, sans quoi une sortie

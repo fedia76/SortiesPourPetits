@@ -28,7 +28,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from sortiesbot.config import Config  # noqa: E402
 from sortiesbot.journal import RunLog  # noqa: E402
-from sortiesbot.providers.serper_provider import ENDPOINT, SerperProvider  # noqa: E402
+from sortiesbot.providers.serper_client import ENDPOINT  # noqa: E402
+from sortiesbot.providers.serper_provider import SerperProvider  # noqa: E402
 
 
 def main(argv: list[str]) -> int:

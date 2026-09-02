@@ -1,10 +1,18 @@
-"""Étage 6 — une fiche devient une proposition, ou est écartée en le disant.
+"""Étage 8 — une fiche devient une proposition, ou est écartée en le disant.
 
-Le plus long des six, et le plus délicat : géocodage, dates réelles, tarif,
-illustration, puis soumission. C'est aussi le seul qui tourne une fois par
-**fiche** et non par page — une page de programme en porte vingt, et chacune
-mérite sa propre brique dans le graphe. C'est ce qui permet de voir laquelle
-des vingt sorties d'un festival a échoué au géocodage.
+Le plus long des huit, et le plus délicat : géocodage, dates réelles, tarif,
+illustration, puis soumission. Il tourne une fois par **fiche** et non par
+page — une page de programme en porte vingt, et chacune mérite sa propre
+brique dans le graphe. C'est ce qui permet de voir laquelle des vingt sorties
+d'un festival a échoué au géocodage.
+
+Deux URLs le traversent, et il ne les confond pas. La page **lue** est celle
+que le pipeline a ouverte ; la **source** est celle que l'étage 7 a remontée
+et vérifiée, quand la première n'était qu'un agrégateur. Le site reçoit la
+meilleure des deux en `sourceUrl` — c'est elle que le parent ouvrira — et
+l'autre en `foundOnUrl`, pour le modérateur qui veut savoir d'où ça vient. La
+mémoire, elle, continue de s'indexer sur la page lue : c'est elle qu'un
+prochain run retrouvera.
 
 Ce qui ne peut pas être déterminé part avec une valeur convenue plutôt que de
 faire perdre la sortie : adresse non géocodée en (0, 0), tarif introuvable à
@@ -18,7 +26,7 @@ import unicodedata
 
 from .. import geocode as geocoding
 from ..api import ApiError
-from ..models import Candidate, ExtractedEvent
+from ..models import Candidate, ExtractedEvent, SourceLink
 from ..payload import UNKNOWN_PRICE, OutOfPeriod, Rejected, build_payload
 from ..photo import PhotoError, download
 from ..schedule import Schedule, resolve as resolve_schedule
@@ -70,26 +78,36 @@ class Publication(Brick):
     stage = Stage.PUBLISH
 
     def run(
-        self, extracted: ExtractedEvent, candidate: Candidate, page: PageContent
+        self,
+        extracted: ExtractedEvent,
+        candidate: Candidate,
+        page: PageContent,
+        source: SourceLink | None = None,
     ) -> None:
-        """Publie une fiche, ou l'écarte en journalisant pourquoi."""
+        """Publie une fiche, ou l'écarte en journalisant pourquoi.
+
+        `source` est ce que l'étage 7 a trouvé. Absente ou non vérifiée, la
+        sortie part avec la page lue — l'état d'avant cet étage, qui reste un
+        état correct.
+        """
         with self.opened(url=page.url, title=extracted.title) as st:
-            self._publish(extracted, candidate, page, st)
+            self._publish(extracted, candidate, page, source or SourceLink(), st)
 
     def _publish(
         self,
         extracted: ExtractedEvent,
         candidate: Candidate,
         page: PageContent,
+        source: SourceLink,
         st,
     ) -> None:
         config, log, store = self.config, self.log, self.ctx.store
         summary = self.summary
         # L'adresse de la page **lue**, qui n'est pas toujours celle qu'on
         # avait repérée : la lecture a pu lui préférer sa version française.
-        # C'est celle-là qu'on mémorise et qu'on propose au site, sans quoi la
-        # sortie partirait avec un lien dont le contenu n'est pas celui d'où
-        # elle a été tirée.
+        # C'est elle qu'on mémorise, qu'on journalise et qui devient la
+        # provenance (`foundOnUrl`) — sans quoi la sortie porterait un lien
+        # dont le contenu n'est pas celui d'où elle a été tirée.
         url = page.url
     
         # Sur une page de programme, l'unité mémorisable n'est pas la page mais
@@ -151,14 +169,22 @@ class Publication(Brick):
         if not geo.located:
             summary.ungeocoded += 1
     
+        # Le meilleur lien connu passe devant, et la page lue devient la
+        # provenance. Sans source vérifiée, les deux se confondent : `foundOnUrl`
+        # reste vide plutôt que de répéter `sourceUrl` pour rien.
+        public_url = source.url if source.found else url
+        found_on = url if source.found else ""
+
         try:
             category_id = resolve_category(extracted.category, self.ctx.categories, config.default_category)
             payload = build_payload(
                 extracted,
                 geo.location,
                 category_id,
-                url,
+                public_url,
                 until=None if config.keep_out_of_scope else config.date_to,
+                found_on_url=found_on,
+                source_url_signal=source.signal if source.found else "",
             )
         except OutOfPeriod as err:
             summary.out_of_period += 1
@@ -234,8 +260,13 @@ class Publication(Brick):
     
         record = {
             "payload": payload,
+            # La page lue, telle qu'elle a toujours été relevée ici : c'est ce
+            # qu'on rouvre pour rejuger un dry-run, source attribuée ou non.
             "source_url": url,
             "found_on": candidate.source,
+            "official_url": source.url if source.found else "",
+            "official_signal": source.signal if source.found else "",
+            "official_detail": source.detail,
             "photo_url": photo_url,
             "located": geo.located,
             "schedule": schedule.as_dict(),

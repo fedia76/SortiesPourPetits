@@ -99,11 +99,33 @@ export interface Similarity {
   distanceKm?: number;
 }
 
+/**
+ * Ce qui a désigné le lien source d'une sortie. Les quatre premiers sont les
+ * signaux de l'étage attribution du scraper, du plus sûr au moins sûr ; le
+ * dernier dit qu'un humain l'a saisi ou corrigé.
+ */
+export const SOURCE_SIGNAL_LABELS: Record<string, string> = {
+  json_ld: 'déclaré par la page',
+  venue_domain: 'domaine du lieu',
+  page_link: 'lien « site officiel »',
+  search: 'trouvé par recherche',
+  manuel: 'saisi à la main',
+};
+
 export interface EventItem {
   id: number;
   title: string;
   description: string;
+  /** Le meilleur lien connu : la page de l'organisateur, ou celle où on l'a lue. */
   sourceUrl: string | null;
+  /**
+   * La page où la recherche automatique a repéré la sortie, quand ce n'est pas
+   * celle qu'on affiche — un agrégateur qui republiait un musée. Provenance :
+   * elle ne s'affiche qu'aux modérateurs.
+   */
+  foundOnUrl?: string | null;
+  /** Ce qui a désigné `sourceUrl` — voir `SOURCE_SIGNAL_LABELS`. */
+  sourceUrlSignal?: string | null;
   isFree: boolean;
   price: number | null;
   photoUrl: string | null;
@@ -212,6 +234,10 @@ export interface ScraperConfig {
   defaultCategory: string;
   postalPrefixes: string;
   blockedDomains: string;
+  /** Sites qui republient sans être la source. Vide : la liste du scraper. */
+  aggregatorDomains: string;
+  /** Autorise l'attribution à chercher la page de l'organisateur (payant). */
+  sourceSearch: boolean;
   /** Qui lance les recherches : l'outil serveur du modèle, ou Google. */
   provider: 'anthropic' | 'serper';
   /** Pages suivantes d'un agenda, suivies tant que la moisson est maigre. */

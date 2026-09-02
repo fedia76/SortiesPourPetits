@@ -197,10 +197,11 @@ def run_job(api, monkeypatch, provider, fetcher, runs_dir, payload=None):
     monkeypatch.setattr(
         worker,
         "run_pipeline",
-        lambda config, prov, store, spp, log, submit=False, ledger=None: __import__(
-            "sortiesbot.orchestrator", fromlist=["run"]
-        ).run(
-            config, prov, store, spp, log, submit=submit, fetcher=fetcher, ledger=ledger
+        lambda config, prov, store, spp, log, submit=False, ledger=None, engine=None: (
+            __import__("sortiesbot.orchestrator", fromlist=["run"]).run(
+                config, prov, store, spp, log,
+                submit=submit, fetcher=fetcher, ledger=ledger, engine=engine,
+            )
         ),
     )
     # Le registre du classifieur s'accumule d'un run à l'autre : un test ne

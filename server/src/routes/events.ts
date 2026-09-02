@@ -219,11 +219,23 @@ eventsRouter.post('/', requireAuth, photoUpload.single('photo'), async (req, res
   const venue = await upsertVenue(input.venue);
   const photoUrl = req.file ? await savePhoto(req.file.buffer) : null;
 
+  // La provenance et le signal ne sont crédibles que d'un programme. Un
+  // formulaire ne sait pas d'où il tient son lien : le laisser annoncer
+  // « déclaré par la page » ferait passer une saisie pour une trouvaille
+  // vérifiée, exactement la confusion que ces champs existent pour éviter.
+  const fromProgram = req.viaApiKey === true;
+
   const event = await prisma.event.create({
     data: {
       title: input.title,
       description: input.description,
       sourceUrl: input.sourceUrl ?? null,
+      foundOnUrl: fromProgram ? input.foundOnUrl ?? null : null,
+      sourceUrlSignal: fromProgram
+        ? input.sourceUrlSignal ?? null
+        : input.sourceUrl
+          ? 'manuel'
+          : null,
       isFree: input.isFree,
       price: input.isFree ? null : input.price,
       photoUrl,
@@ -277,12 +289,26 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
     photoUrl = await savePhoto(req.file.buffer);
   }
 
+  // Changer le lien reprend la main sur ce que le scraper avait déduit : le
+  // signal ne décrit plus rien de vrai, et le garder ferait passer une saisie
+  // pour une trouvaille vérifiée. Le laisser tel quel si l'URL n'a pas bougé,
+  // en revanche, préserve ce qu'on savait d'elle — on peut corriger un titre
+  // sans effacer la provenance du lien.
+  //
+  // `foundOnUrl` ne bouge jamais ici : d'où la sortie *est arrivée* est un
+  // fait, pas une préférence, et rien de ce qu'on corrige sur la fiche ne le
+  // réécrit.
+  const sourceUrl = input.sourceUrl ?? null;
+  const sourceUrlSignal =
+    sourceUrl === existing.sourceUrl ? existing.sourceUrlSignal : sourceUrl && 'manuel';
+
   const event = await prisma.event.update({
     where: { id },
     data: {
       title: input.title,
       description: input.description,
-      sourceUrl: input.sourceUrl ?? null,
+      sourceUrl,
+      sourceUrlSignal,
       isFree: input.isFree,
       price: input.isFree ? null : input.price,
       photoUrl,
