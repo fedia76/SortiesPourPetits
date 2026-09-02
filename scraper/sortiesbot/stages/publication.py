@@ -90,7 +90,7 @@ class Publication(Brick):
         sortie part avec la page lue — l'état d'avant cet étage, qui reste un
         état correct.
         """
-        with self.opened(url=candidate.url, title=extracted.title) as st:
+        with self.opened(url=page.url, title=extracted.title) as st:
             self._publish(extracted, candidate, page, source or SourceLink(), st)
 
     def _publish(
@@ -103,7 +103,12 @@ class Publication(Brick):
     ) -> None:
         config, log, store = self.config, self.log, self.ctx.store
         summary = self.summary
-        url = candidate.url
+        # L'adresse de la page **lue**, qui n'est pas toujours celle qu'on
+        # avait repérée : la lecture a pu lui préférer sa version française.
+        # C'est elle qu'on mémorise, qu'on journalise et qui devient la
+        # provenance (`foundOnUrl`) — sans quoi la sortie porterait un lien
+        # dont le contenu n'est pas celui d'où elle a été tirée.
+        url = page.url
     
         # Sur une page de programme, l'unité mémorisable n'est pas la page mais
         # chacune de ses sorties : sinon un programme lu une fois ne serait plus

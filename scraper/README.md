@@ -136,7 +136,7 @@ par brique**, leur vocabulaire commun dans
 | # | Étage | Qui travaille | Reçoit | Rend | Où |
 |---|---|---|---|---|---|
 | 1 | Découverte | modèle | des requêtes web | les URL qu'elles ont remontées | `stages/discovery.py` — `Discovery` |
-| 2 | Reconnaissance | **mixte** | une URL trouvée | sa nature : agenda, sortie ou programme | `stages/identification.py` — `Identification` |
+| 2 | Reconnaissance | **mixte** | une URL trouvée | sa nature : agenda, sortie ou programme, et l'adresse retenue | `stages/identification.py` — `Identification` |
 | 3 | Dépouillement | Python | URL d'agenda | liens et leur contexte | `stages/harvest.py` — `Harvest` |
 | 4 | Sélection | modèle | liens numérotés | numéros retenus | `stages/selection.py` — `Selection` |
 | 5 | Lecture | Python | URL de page | texte, dates JSON-LD, image | `stages/reading.py` — `Reading` |
@@ -897,6 +897,61 @@ relisable, et seules les sorties déjà proposées sont sautées.
 Puisque le scraper télécharge lui-même, il assume ce qu'Anthropic assumait :
 `robots.txt` est lu et respecté, un `User-Agent` identifie le robot et renvoie
 vers le site, et une seconde sépare deux requêtes vers le même hôte.
+
+### La version française d'une page
+
+Un moteur remonte volontiers l'adresse anglaise d'un site pourtant
+francophone : le musée, le théâtre ou l'office de tourisme publie les deux, et
+c'est parfois `/en/` qui est le mieux indexé. La sortie proposée était alors
+correcte, mais son lien menait à une page anglaise alors que la française
+existait juste à côté.
+
+Le problème a deux moitiés, et les deux se règlent sans le modèle.
+
+**Même adresse, deux versions.** Beaucoup de sites servent la page dans la
+langue que le visiteur demande. Le `Fetcher` la demande donc :
+`Accept-Language: fr-FR,fr;q=0.9,en;q=0.3`. Sans cet en-tête, un robot est
+souvent servi en anglais par défaut.
+
+**Une adresse par langue.** C'est le rôle de
+[`sortiesbot/language.py`](sortiesbot/language.py). Trois signaux, du plus
+fiable au moins sûr :
+
+1. `<link rel="alternate" hreflang="fr">` — la traduction déclarée par le site
+   lui-même, donc la réponse de celui qui la connaît ;
+2. l'adresse — `/en/`, `/en-GB/`, `en.exemple.fr`, `?lang=en` se transposent ;
+3. la langue du texte, quelques mots outils suffisant à séparer le français de
+   l'anglais.
+
+Le troisième ne fabrique jamais d'adresse : il **vérifie** un candidat proposé
+par les deux premiers. Une transposition n'est retenue que si la page obtenue
+répond *et* est réellement en français — beaucoup de sites répondent à `/fr/`
+en servant l'anglais quand la traduction n'existe pas, et changer d'adresse
+pour le même contenu ne tromperait que nous.
+
+Le remplacement a lieu à trois étages, et les trois comptent :
+
+* à la **reconnaissance** (2), parce qu'un agenda anglais ne mène qu'à des
+  fiches anglaises : corriger la racine corrige toute la branche ;
+* à la **lecture** (5), parce que c'est l'adresse retenue là qui devient la
+  provenance (`foundOnUrl`) — et parce qu'un lien peut avoir échappé au
+  premier passage ;
+* à l'**attribution** (7), parce que c'est de là que sort le lien réellement
+  publié quand une source est trouvée. L'organisateur publie souvent en deux
+  langues, et un `sameAs` ou un résultat de moteur ramasse volontiers son
+  `/en/`. La bascule y a lieu **avant** la vérification : la page contrôlée
+  doit être celle qui sera publiée, et le contrôle porte justement sur un
+  titre et des dates écrits en français.
+
+Les deux filtres de la lecture — domaine bloqué, page déjà vue — se rejouent
+sur l'adresse retenue : c'est elle qui sera mémorisée, sans quoi une sortie
+déjà proposée reviendrait à chaque run par sa porte anglaise.
+
+Rien de tout cela ne coûte une requête sur une page française : la question ne
+se pose que si la page se déclare dans une autre langue, si son adresse
+l'annonce, ou si le site déclare une traduction française. Une page anglaise
+sans jumelle est lue quand même — mieux vaut une sortie en anglais que pas de
+sortie — et le journal le dit (`no_french`).
 
 ### Champs laissés à la modération
 

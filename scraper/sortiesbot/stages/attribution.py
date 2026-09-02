@@ -45,6 +45,15 @@ Le contrôle est du Python sur du texte, donc gratuit ; le téléchargement pass
 par le `Fetcher` du run, donc respecte `robots.txt` et le délai par hôte comme
 partout ailleurs.
 
+## La langue de la source
+
+L'organisateur publie souvent en deux langues, et la cascade ramasse volontiers
+son `/en/` — un `sameAs` anglais, un résultat de moteur. La page candidate est
+donc échangée contre sa jumelle française quand le site en déclare une (voir
+[`language.py`](../language.py)), **avant** la vérification : la page contrôlée
+doit être celle qui sera publiée, et le contrôle ci-dessous porte justement sur
+un titre et des dates écrits en français.
+
 ## Ce que cette brique ne fait pas
 
 Elle ne demande **jamais une URL au modèle**. C'est la règle que la publication
@@ -69,6 +78,7 @@ from ..harvest import (
     page_text,
     same_site,
 )
+from ..language import french_version
 from ..models import (
     SIGNAL_JSON_LD,
     SIGNAL_PAGE_LINK,
@@ -402,6 +412,18 @@ class Attribution(Brick):
             )
             return SourceLink(detail=f"source candidate injoignable ({err})")
 
+        # L'organisateur publie souvent en deux langues, et c'est parfois sa
+        # page anglaise que la cascade a ramassée — un `sameAs` vers `/en/`, un
+        # résultat de moteur. On bascule AVANT de vérifier : la page contrôlée
+        # doit être celle qui sera publiée, et le contrôle porte justement sur
+        # un titre et des dates écrits en français.
+        #
+        # Une traduction déclarée peut vivre ailleurs (`fr.exemple.org`) : les
+        # quatre refus valent pour elle comme pour toute autre candidate, sinon
+        # la langue rouvrirait une porte que cet étage vient de fermer.
+        autre, traduite = french_version(source.url, html, self.ctx.fetcher, self.log)
+        url, html = (autre, traduite) if self._usable(autre, page.url) else (source.url, html)
+
         text = fold(page_text(html, limit=CHECK_CHARS))
         why = self._matches(text, extracted, page)
         if not why:
@@ -409,7 +431,7 @@ class Attribution(Brick):
                 "attribution",
                 url=page.url,
                 status="candidate écartée",
-                candidate=source.url,
+                candidate=url,
                 signal=source.signal,
                 reason="la page ne parle pas de cette sortie",
             )
@@ -419,13 +441,13 @@ class Attribution(Brick):
             "attribution",
             url=page.url,
             status="source retenue",
-            candidate=source.url,
+            candidate=url,
             signal=source.signal,
             detail=source.detail,
             checked=why,
         )
         return SourceLink(
-            url=source.url,
+            url=url,
             signal=source.signal,
             detail=f"{source.detail} — vérifié : {why}",
             checked=True,

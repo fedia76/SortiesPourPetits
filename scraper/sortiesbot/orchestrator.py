@@ -208,9 +208,12 @@ class Run:
             # liens venaient de quelle page ? ».
             with self.log.trail(agenda=source.url):
                 # ── ÉTAGE 2/8 · Reconnaissance ──── 1 fois par URL ─────────
-                nature = self.identification.run(source)
-                if nature is None:
+                reconnue = self.identification.run(source)
+                if reconnue is None:
                     continue  # injoignable : rien à en tirer, rien à conclure.
+                # L'adresse a pu changer : une page anglaise dont le site
+                # déclare la version française est remplacée par celle-ci.
+                nature, source = reconnue
                 if nature in (SORTIE, PROGRAMME):
                     # Elle saute le dépouillement et le tri : c'est la page
                     # qu'on cherchait, pas une liste qui y mène. Un programme

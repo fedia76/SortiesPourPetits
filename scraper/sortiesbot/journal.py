@@ -57,6 +57,12 @@ _CONSOLE = {
         else f"  ↺ aucun lien retenu, la page est relue comme une sortie : {f.get('url')}"
     ),
     "seed": lambda f: f"  ⌖ point de départ : {f.get('url')}",
+    "french": lambda f: (
+        f"  ⇄ version française : {f.get('was')} → {f.get('url')}"
+    ),
+    "no_french": lambda f: (
+        f"  ⚑ page non francophone, aucune version française trouvée : {f.get('url')}"
+    ),
     "agenda_planned": lambda f: f"  ▦ agenda à dépouiller : {f.get('title')} — {f.get('url')}",
     "programme": lambda f: (
         f"  ▤ programme dépouillé : {f.get('found')} sortie(s) relevée(s) "
