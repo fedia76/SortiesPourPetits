@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/auth';
 import type { EventItem } from '../types';
 import {
   SETTING_LABELS,
+  SOURCE_SIGNAL_LABELS,
   STATUS_LABELS,
   ageLabel,
   dayLabel,
@@ -50,6 +51,36 @@ const incompleteHint = computed(() => {
     !hasPrice(event.value) ? 'le tarif' : '',
   ].filter(Boolean);
   return missing.length ? `Complétez d’abord ${missing.join(' et ')}.` : '';
+});
+
+/** `musee-rodin.fr` plutôt qu'une URL de deux cents caractères. */
+function hostLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * D'où vient la proposition, quand ce n'est pas la page qu'on affiche.
+ *
+ * Réservée aux modérateurs, et c'est le point de tout ce dispositif : le
+ * visiteur veut le musée, pas l'agrégateur qui l'a republié. Le modérateur,
+ * lui, a besoin des deux — il vérifie que le scraper a remonté la bonne
+ * source, et le signal lui dit quelle confiance y accorder.
+ */
+const provenance = computed(() => {
+  const e = event.value;
+  if (!e || !auth.isModerator || !e.foundOnUrl || e.foundOnUrl === e.sourceUrl) return null;
+  return { url: e.foundOnUrl, host: hostLabel(e.foundOnUrl) };
+});
+
+/** Ce qui a désigné le lien affiché. Vide pour les sorties d'avant l'attribution. */
+const sourceSignal = computed(() => {
+  const signal = event.value?.sourceUrlSignal;
+  if (!signal || !auth.isModerator) return '';
+  return SOURCE_SIGNAL_LABELS[signal] ?? signal;
 });
 
 const moderating = ref(false);
@@ -237,7 +268,23 @@ onMounted(async () => {
           </div>
           <div v-if="event.sourceUrl">
             <dt>Source</dt>
-            <dd><a :href="event.sourceUrl" target="_blank" rel="noopener">Voir l'événement ↗</a></dd>
+            <dd>
+              <a :href="event.sourceUrl" target="_blank" rel="noopener">
+                {{ hostLabel(event.sourceUrl) }} ↗
+              </a>
+              <span v-if="sourceSignal" class="signal">{{ sourceSignal }}</span>
+            </dd>
+          </div>
+          <!-- Provenance : la page que la recherche automatique a réellement
+               lue, quand ce n'est pas celle qu'on montre. Un modérateur juge
+               d'un coup d'œil si le lien remonté est le bon. -->
+          <div v-if="provenance">
+            <dt>Repérée sur</dt>
+            <dd>
+              <a :href="provenance.url" target="_blank" rel="noopener">
+                {{ provenance.host }} ↗
+              </a>
+            </dd>
           </div>
         </aside>
       </div>
@@ -257,5 +304,13 @@ onMounted(async () => {
 .moderation .incomplete {
   margin: 0;
   color: var(--danger);
+}
+
+/* Le signal ne se lit qu'après le lien : c'est une nuance de confiance, pas
+   une information de premier plan. */
+.signal {
+  display: block;
+  font-size: 0.85em;
+  opacity: 0.75;
 }
 </style>

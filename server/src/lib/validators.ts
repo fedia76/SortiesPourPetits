@@ -34,9 +34,37 @@ export const eventInputSchema = z
   .object({
     title: z.string().trim().min(3, 'Titre trop court').max(150),
     description: z.string().trim().min(10, 'Description trop courte').max(10_000),
+    /**
+     * Le meilleur lien connu pour cette sortie : la page de l'organisateur
+     * quand le scraper a su la trouver, la page où elle a été repérée sinon.
+     * C'est celui que la fiche affiche — son rôle n'a pas changé depuis que le
+     * scraper sait remonter à la source, et c'est ce qui a évité d'apprendre
+     * deux champs à tous ses lecteurs.
+     */
     sourceUrl: z.preprocess(
       emptyToNull,
       z.string().trim().url('URL invalide').max(500).nullable().optional(),
+    ),
+    /**
+     * La page où la sortie a été repérée, quand ce n'est pas celle qu'on
+     * montre — un agrégateur qui republiait l'information d'un musée. C'est de
+     * la provenance : elle sert au modérateur et au débogage, jamais au
+     * visiteur. Absente d'un formulaire, renseignée par le scraper.
+     */
+    foundOnUrl: z.preprocess(
+      emptyToNull,
+      z.string().trim().url('URL invalide').max(500).nullable().optional(),
+    ),
+    /**
+     * Ce qui a désigné `sourceUrl` — un des signaux de l'étage attribution du
+     * scraper, ou « manuel ». Le serveur ne vérifie pas la valeur contre une
+     * liste : ce champ est un renseignement affiché au modérateur, pas une
+     * décision, et figer les noms ici obligerait à redéployer le site pour
+     * ajouter un signal au scraper.
+     */
+    sourceUrlSignal: z.preprocess(
+      emptyToNull,
+      z.string().trim().max(40).nullable().optional(),
     ),
     isFree: z.boolean(),
     // La borne basse est négative pour laisser passer UNKNOWN_PRICE, le tarif
@@ -234,6 +262,13 @@ export const scraperConfigSchema = z.object({
   defaultCategory: z.string().trim().min(2).max(50).optional(),
   postalPrefixes: z.string().trim().max(200).optional(),
   blockedDomains: z.string().trim().max(2000).optional(),
+  // Sites qui republient sans être la source. Vide : la liste intégrée au
+  // scraper s'applique — la vider ne désactive donc pas l'attribution, elle
+  // la ramène à son défaut.
+  aggregatorDomains: z.string().trim().max(2000).optional(),
+  // Le seul appel payant de l'attribution, et donc le seul qu'on puisse
+  // couper. Les signaux gratuits, eux, tournent toujours.
+  sourceSearch: z.boolean().optional(),
   provider: z.enum(SCRAPER_PROVIDERS).optional(),
   // Seul modèle qu'on puisse vider : sans lui, la reconnaissance s'en tient
   // aux signaux gratuits et laisse la page partir en agenda.

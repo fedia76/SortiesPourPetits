@@ -1,12 +1,12 @@
 """L'enchaînement d'un run : qui appelle qui, et combien de fois.
 
-Les sept briques vivent dans `stages/`, une par fichier, et aucune ne sait ce
+Les huit briques vivent dans `stages/`, une par fichier, et aucune ne sait ce
 qui vient avant ou après elle. Ce module est le seul endroit où l'ordre
 existe, et c'est délibéré : la question « qu'est-ce qui s'exécute, dans quel
 ordre, combien de fois ? » se répond ici, en une lecture, sans ouvrir une
 brique.
 
-La réponse tient dans une seule méthode, `Run.chain()`, où les sept appels se
+La réponse tient dans une seule méthode, `Run.chain()`, où les huit appels se
 suivent de haut en bas, à leur profondeur d'imbrication :
 
     1  découverte                              1 fois par run
@@ -18,7 +18,8 @@ suivent de haut en bas, à leur profondeur d'imbrication :
        puis, pour chaque page retenue :
          5  lecture                            1 fois par page
          6  extraction                         1 fois par page → n fiches
-              7  publication                   1 fois par fiche
+              7  attribution                   1 fois par fiche
+              8  publication                   1 fois par fiche
 
 Rien d'autre n'est dans `chain()` : ce qui décide *si* une page est lue
 (doublons, plafonds, budget) est en amont dans `_to_read()`, ce qui décide de
@@ -29,8 +30,13 @@ fichier : la chaîne doit se lire sans être coupée par autre chose qu'elle.
 
 Les cardinalités changent à chaque flèche, et c'est pourquoi les briques n'ont
 pas de signature commune : une interface uniforme aurait fait croire à une
-chaîne de six maillons identiques, alors que la découverte tourne une fois et
+chaîne de huit maillons identiques, alors que la découverte tourne une fois et
 la publication vingt.
+
+Les étages 7 et 8 partagent la dernière cardinalité, et c'est délibéré :
+l'attribution répond à « quelle est la source de *cette* sortie ? », question
+qui n'a de sens qu'une fois la fiche remplie — une page de programme porte
+vingt sorties chez vingt organisateurs.
 
 Le partage du travail, lui, ne change jamais : Python fait ce qui est
 mécanique, le modèle fait ce qui demande du jugement, et aucun appel ne boucle.
@@ -64,7 +70,9 @@ from dataclasses import replace
 from .classify import PROGRAMME, SORTIE
 from .models import Candidate, ExtractedEvent, FoundPage
 from .providers.base import Provider, ProviderError
+from .providers.serper_client import SerperClient
 from .stages import ORDER, describe as describe_stages
+from .stages.attribution import Attribution
 from .stages.base import Brick, PageContent, RunContext, RunResult
 from .stages.discovery import Discovery
 from .stages.extraction import Extraction
@@ -85,11 +93,17 @@ def run(
     submit: bool = False,
     fetcher: Fetcher | None = None,
     ledger: Ledger | None = None,
+    engine: SerperClient | None = None,
 ) -> RunResult:
     """Joue un run complet et rend ce qu'il a produit.
 
     C'est l'unique porte d'entrée du scraper : le worker, la ligne de commande
     et les tests passent tous par ici.
+
+    `engine` est le moteur du repli de l'attribution. Il est **indépendant du
+    fournisseur** : une configuration qui cherche avec `anthropic` doit quand
+    même pouvoir remonter à la source, et c'est la clé Serper de
+    l'environnement qui le décide, pas la configuration de la recherche.
     """
     ctx = RunContext(
         config=config,
@@ -101,31 +115,32 @@ def run(
         submit=submit,
         ledger=ledger or Ledger(),
     )
-    return Run(ctx).go()
+    return Run(ctx, engine=engine).go()
 
 
 class Run:
-    """Une exécution. Tient les six briques et l'ordre dans lequel elles vont.
+    """Une exécution. Tient les huit briques et l'ordre dans lequel elles vont.
 
     Les briques sont construites une fois pour toutes : elles ne portent aucun
     état propre, seulement le contexte du run, et les instancier à chaque tour
     de boucle n'aurait rien dit de plus.
     """
 
-    def __init__(self, ctx: RunContext) -> None:
+    def __init__(self, ctx: RunContext, engine: SerperClient | None = None) -> None:
         self.ctx = ctx
         self.log = ctx.log
         self.config = ctx.config
         self.summary = ctx.summary
 
-        # Les sept briques, déclarées dans l'ordre où `chain()` les appelle.
+        # Les huit briques, déclarées dans l'ordre où `chain()` les appelle.
         self.discovery = Discovery(ctx)          # 1
         self.identification = Identification(ctx)  # 2
         self.harvest = Harvest(ctx)              # 3
         self.selection = Selection(ctx)          # 4
         self.reading = Reading(ctx)              # 5
         self.extraction = Extraction(ctx)        # 6
-        self.publication = Publication(ctx)      # 7
+        self.attribution = Attribution(ctx, engine=engine)  # 7
+        self.publication = Publication(ctx)      # 8
 
         # Le même ordre, mais parcourable — et vérifié identique à celui du
         # vocabulaire. La console dessine son graphe d'après `stages.ORDER` :
@@ -138,6 +153,7 @@ class Run:
             self.selection,
             self.reading,
             self.extraction,
+            self.attribution,
             self.publication,
         )
         assert tuple(brick.stage for brick in self.bricks) == ORDER
@@ -172,7 +188,7 @@ class Run:
     # ═══════════════════════════════════════════════════════════ la chaîne
 
     def chain(self) -> None:
-        """Les six étages, dans l'ordre et à leur profondeur d'imbrication.
+        """Les huit étages, dans l'ordre et à leur profondeur d'imbrication.
 
         Seul endroit du projet où l'ordre du pipeline est écrit. Chaque appel
         de brique est précédé de son numéro ; ce qui le suit ne fait que
@@ -185,13 +201,13 @@ class Run:
         """
         trouvees: list[Candidate] = []
 
-        # ── ÉTAGE 1/7 · Découverte ─────────────────── 1 fois par run ──────
+        # ── ÉTAGE 1/8 · Découverte ─────────────────── 1 fois par run ──────
         for source in self.discovery.run():
             # Tout ce qui se journalise dans cette piste descend de cette
             # page : c'est ce qui permet à la console de répondre à « quels
             # liens venaient de quelle page ? ».
             with self.log.trail(agenda=source.url):
-                # ── ÉTAGE 2/7 · Reconnaissance ──── 1 fois par URL ─────────
+                # ── ÉTAGE 2/8 · Reconnaissance ──── 1 fois par URL ─────────
                 nature = self.identification.run(source)
                 if nature is None:
                     continue  # injoignable : rien à en tirer, rien à conclure.
@@ -202,7 +218,7 @@ class Run:
                     trouvees.append(self._direct(source, multiple=nature == PROGRAMME))
                     continue
 
-                # ── ÉTAGE 3/7 · Dépouillement ───── 1 fois par agenda ──────
+                # ── ÉTAGE 3/8 · Dépouillement ───── 1 fois par agenda ──────
                 links = self.harvest.run(source.url)
                 if links is None:
                     continue  # injoignable : rien à en tirer, rien à conclure.
@@ -212,7 +228,7 @@ class Run:
                     trouvees.append(self._itself(source.url))
                     continue
 
-                # ── ÉTAGE 4/7 · Sélection ───────── 1 fois par agenda ──────
+                # ── ÉTAGE 4/8 · Sélection ───────── 1 fois par agenda ──────
                 kept = self.selection.run(source.url, links)
                 if kept is None:
                     continue  # le modèle n'a pas répondu : on n'invente rien.
@@ -230,12 +246,12 @@ class Run:
         # plafonds, budget — pour que la chaîne n'ait pas à s'en occuper.
         for candidate in self._to_read(trouvees):
             with self.log.trail(page=candidate.url, agenda=candidate.source):
-                # ── ÉTAGE 5/7 · Lecture ───────────── 1 fois par page ──────
+                # ── ÉTAGE 5/8 · Lecture ───────────── 1 fois par page ──────
                 page = self.reading.run(candidate)
                 if page is None:
                     continue  # écartée : la brique a journalisé le motif.
 
-                # ── ÉTAGE 6/7 · Extraction ────────── 1 fois par page ──────
+                # ── ÉTAGE 6/8 · Extraction ────────── 1 fois par page ──────
                 #    Une page de spectacle rend une fiche, un programme vingt.
                 fiches = self.extraction.run(page, candidate)
                 candidate, fiches = self._requalified(candidate, page, fiches)
@@ -247,8 +263,13 @@ class Run:
                         )
                         break
 
-                    # ── ÉTAGE 7/7 · Publication ──── 1 fois par fiche ──────
-                    self.publication.run(extracted, candidate, page)
+                    # ── ÉTAGE 7/8 · Attribution ─── 1 fois par fiche ──────
+                    #    La page lue est peut-être un agrégateur : d'où vient
+                    #    vraiment cette sortie ?
+                    source = self.attribution.run(extracted, candidate, page)
+
+                    # ── ÉTAGE 8/8 · Publication ──── 1 fois par fiche ──────
+                    self.publication.run(extracted, candidate, page, source)
 
     # ═════════════════════════════════════════ ce qui entre dans la chaîne
 
@@ -403,10 +424,10 @@ class Run:
     # ═══════════════════════════════════ l'intendance, autour de la chaîne
 
     def _start(self) -> None:
-        """Annonce le run et le graphe de ses six étages.
+        """Annonce le run et le graphe de ses huit étages.
 
         Le graphe part avec le premier événement : la console peut dessiner
-        les six briques avant même que la première ait produit quoi que ce
+        les huit briques avant même que la première ait produit quoi que ce
         soit.
         """
         self.log.event(

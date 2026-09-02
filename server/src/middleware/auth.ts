@@ -15,6 +15,15 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
+      /**
+       * L'appelant est un programme (clé d'API), pas un navigateur.
+       *
+       * Le rôle ne suffit pas à le dire — le scraper agit avec le compte d'un
+       * humain, et cet humain peut aussi remplir le formulaire. Certains champs
+       * ne sont crédibles que dans un sens : un formulaire ne sait pas d'où il
+       * tient un lien, un scraper si.
+       */
+      viaApiKey?: boolean;
     }
   }
 }
@@ -63,6 +72,7 @@ export async function attachUser(req: Request, res: Response, next: NextFunction
         return;
       }
       req.user = { id: apiKey.user.id, role: apiKey.user.role };
+      req.viaApiKey = true;
       // Trace d'usage, sans retarder la requête.
       prisma.apiKey
         .update({ where: { id: apiKey.id }, data: { lastUsedAt: new Date() } })

@@ -20,6 +20,7 @@ from .harvest import Fetcher
 from .journal import RunLog, run_log_path
 from .ledger import Ledger, ledger_path
 from .orchestrator import run
+from .providers.serper_client import client_or_none
 from .providers.base import ProviderError, get_provider
 from .store import SeenStore
 
@@ -127,6 +128,9 @@ def main(argv: list[str] | None = None) -> int:
         result = run(
             config, provider, store, api, log,
             submit=args.submit, fetcher=fetcher, ledger=ledger,
+            # Le moteur du repli de l'attribution : présent dès qu'une clé
+            # Serper l'est, quel que soit le fournisseur de la recherche.
+            engine=client_or_none(env.serper_key),
         )
 
     output = log_path.with_suffix(".json")

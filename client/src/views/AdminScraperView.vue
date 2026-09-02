@@ -43,6 +43,8 @@ function blank() {
     defaultCategory: 'Non classé',
     postalPrefixes: '75,77,78,91,92,93,94,95',
     blockedDomains: '',
+    aggregatorDomains: '',
+    sourceSearch: true,
     provider: 'anthropic' as 'anthropic' | 'serper',
     queries: '',
     classifyModel: 'claude-haiku-4-5',
@@ -408,6 +410,36 @@ onUnmounted(() => clearInterval(timer));
             <label for="s-blocked">Domaines bloqués</label>
             <input id="s-blocked" v-model="form.blockedDomains" type="text" maxlength="2000" />
             <span class="hint">Séparés par des virgules. Laissez vide pour la liste par défaut.</span>
+          </div>
+
+          <div class="field">
+            <label for="s-aggregators">Agrégateurs</label>
+            <input
+              id="s-aggregators"
+              v-model="form.aggregatorDomains"
+              type="text"
+              maxlength="2000"
+            />
+            <span class="hint">
+              Sites qui republient sans être la source — kidiklik, citizenkid, parismômes.
+              On les lit quand même : ce sont de bons agendas. Mais quand une sortie vient
+              de là, le scraper remonte à la page de l'organisateur et c'est elle qu'il
+              propose. Séparés par des virgules ; vide pour la liste par défaut.
+            </span>
+          </div>
+
+          <div class="field">
+            <label class="checkbox">
+              <input v-model="form.sourceSearch" type="checkbox" />
+              Chercher la source quand la page ne la donne pas
+            </label>
+            <span class="hint">
+              L'attribution lit d'abord la page — données déclarées, domaine du lieu, lien
+              « site officiel » : c'est gratuit et ça suffit le plus souvent. Décochez pour
+              en rester là. Coché, une requête Google (~0,001 $) est lancée pour les sorties
+              dont la page ne cite pas sa source ; la page trouvée est vérifiée avant d'être
+              retenue, dans les deux cas.
+            </span>
           </div>
 
           <div v-if="!cibleUnSite" class="field">

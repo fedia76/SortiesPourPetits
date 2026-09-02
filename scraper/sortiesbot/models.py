@@ -40,6 +40,42 @@ class Candidate:
 
 
 
+#: Les signaux de l'attribution, du plus sûr au moins sûr. L'ordre est celui
+#: de la cascade, et il voyage jusqu'au site : le modérateur voit d'où sort le
+#: lien qu'on lui propose, ce qui n'est pas la même confiance selon la ligne.
+SIGNAL_JSON_LD = "json_ld"
+SIGNAL_VENUE_DOMAIN = "venue_domain"
+SIGNAL_PAGE_LINK = "page_link"
+SIGNAL_SEARCH = "search"
+
+
+@dataclass(frozen=True)
+class SourceLink:
+    """La page qui fait autorité sur une sortie, quand on a su la trouver.
+
+    Trois champs, et le troisième est le plus important : `checked` dit que la
+    page a été **ouverte et reconnue**, pas seulement devinée. Sans lui, ce
+    serait une URL plausible — et une source fausse est pire qu'une source
+    absente, parce qu'elle a l'air d'une réponse.
+
+    `SourceLink()` vide est le cas normal quand la page lue est déjà celle de
+    l'organisateur : il n'y avait rien à remonter.
+    """
+
+    url: str = ""
+    #: Lequel des quatre signaux a désigné cette page.
+    signal: str = ""
+    #: Ce qui a décidé, en une poignée de mots, pour le journal et le registre.
+    detail: str = ""
+    #: La page a été téléchargée et parle bien de cette sortie.
+    checked: bool = False
+
+    @property
+    def found(self) -> bool:
+        """Une source n'existe que vérifiée. C'est toute la règle de l'étage."""
+        return bool(self.url) and self.checked
+
+
 @dataclass(frozen=True)
 class Location:
     """Position obtenue auprès du géocodeur."""

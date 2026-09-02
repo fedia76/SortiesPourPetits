@@ -31,6 +31,7 @@ from .journal import RemoteJournal, RunLog, run_log_path
 from .ledger import Ledger, ledger_path
 from .models import Summary
 from .orchestrator import run as run_pipeline
+from .providers.serper_client import client_or_none
 from .providers.base import ProviderError, get_provider
 from .store import RemoteStore
 
@@ -151,7 +152,11 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
             # que le site peut oublier.
             with Ledger(ledger_path(LEDGER_DIR, run_id), run=str(run_id)) as ledger:
                 result = run_pipeline(
-                    config, provider, store, api, log, submit=submit, ledger=ledger
+                    config, provider, store, api, log, submit=submit, ledger=ledger,
+                    # Le moteur du repli de l'attribution : présent dès qu'une
+                    # clé Serper l'est, quel que soit le fournisseur de la
+                    # recherche que la console a choisi.
+                    engine=client_or_none(env.serper_key),
                 )
         summary = result.summary
         status, error = "DONE", None

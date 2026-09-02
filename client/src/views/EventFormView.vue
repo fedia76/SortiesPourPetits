@@ -12,6 +12,14 @@ const router = useRouter();
 
 const editId = computed(() => (route.name === 'edit-event' ? Number(route.params.id) : null));
 
+/**
+ * La page où la recherche automatique avait repéré la sortie, quand ce n'est
+ * pas celle qu'on propose. Affichée, jamais modifiable : c'est un fait sur la
+ * façon dont la sortie est arrivée ici, pas un champ de la fiche. Corriger le
+ * lien source au-dessus ne réécrit pas d'où il vient.
+ */
+const foundOn = ref('');
+
 const form = reactive({
   title: '',
   description: '',
@@ -175,6 +183,7 @@ onMounted(async () => {
   form.title = event.title;
   form.description = event.description;
   form.sourceUrl = event.sourceUrl ?? '';
+  foundOn.value = event.foundOnUrl ?? '';
   form.isFree = event.isFree;
   // Tarif indéterminé (import) : on repart vide pour forcer la saisie.
   form.price = hasPrice(event) ? event.price ?? '' : '';
@@ -373,6 +382,19 @@ onMounted(async () => {
           type="url"
           placeholder="https://…"
         />
+        <p class="hint">
+          De préférence la page de l'organisateur — le musée, le théâtre, la
+          mairie — plutôt qu'un agenda qui la republie : c'est là que les
+          horaires et les annulations sont à jour.
+        </p>
+        <!-- Provenance d'une proposition automatique. Elle explique au
+             modérateur pourquoi le lien ci-dessus n'est pas celui de la page
+             lue, et lui donne de quoi vérifier en un clic. -->
+        <p v-if="foundOn && foundOn !== form.sourceUrl" class="hint">
+          Repérée sur
+          <a :href="foundOn" target="_blank" rel="noopener">{{ foundOn }}</a> par la
+          recherche automatique.
+        </p>
       </div>
 
       <h2>Le lieu</h2>
