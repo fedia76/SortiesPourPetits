@@ -5,6 +5,7 @@ import { hasRole, requireAuth } from '../middleware/auth';
 import { deletePhoto, photoUpload, savePhoto } from '../lib/upload';
 import { hasCoordinates } from '../lib/incomplete';
 import { eventInputSchema, searchSchema } from '../lib/validators';
+import { dateFilter } from '../lib/dateWindow';
 
 export const eventsRouter = Router();
 
@@ -43,34 +44,6 @@ function serializeEvent(event: EventWithRelations, distanceKm?: number) {
       lng: Number(event.venue.lng),
     },
     distanceKm: distanceKm === undefined ? undefined : Math.round(distanceKm * 10) / 10,
-  };
-}
-
-/**
- * Une sortie tombe-t-elle dans la fenêtre demandée ?
- *
- * Trois cas, et c'est le deuxième qui a motivé la table `EventDate` : un
- * spectacle joué tous les dimanches de juillet et août ressortait un jeudi,
- * parce que seule sa période était connue.
- *
- * 1. permanente : toujours ;
- * 2. jours de représentation connus : il en faut un dans la fenêtre ;
- * 3. aucun jour enregistré : la période vaut pour tous ses jours, comme avant.
- */
-function dateFilter(from: string, to?: string): Prisma.EventWhereInput {
-  const day = { gte: new Date(from), ...(to ? { lte: new Date(to) } : {}) };
-  const overlapsRange: Prisma.EventWhereInput = {
-    AND: [
-      { dateEnd: { gte: new Date(from) } },
-      ...(to ? [{ dateStart: { lte: new Date(to) } }] : []),
-    ],
-  };
-  return {
-    OR: [
-      { isPermanent: true },
-      { dates: { some: { day } } },
-      { AND: [{ dates: { none: {} } }, overlapsRange] },
-    ],
   };
 }
 

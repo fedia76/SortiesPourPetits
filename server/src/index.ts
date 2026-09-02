@@ -10,6 +10,7 @@ import { adminRouter } from './routes/admin';
 import { categoriesRouter } from './routes/categories';
 import { scraperRouter } from './routes/scraper';
 import { apiKeysRouter } from './routes/apiKeys';
+import { siteRouter } from './routes/site';
 
 const app = express();
 
@@ -51,6 +52,11 @@ app.use('/api/scraper', scraperRouter);
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
+
+// Le site, en dernier : tout ce qui n'est pas une route d'API est une page à
+// servir — pré-rendue pour les moteurs, puis reprise par Vue dans le
+// navigateur. Ce routeur porte aussi robots.txt et sitemap.xml.
+app.use(siteRouter);
 
 // Gestion d'erreur centralisée (multer, JSON malformé, erreurs inattendues…)
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
