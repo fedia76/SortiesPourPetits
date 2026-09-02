@@ -12,7 +12,8 @@ import {
   priceLabel,
   shortAgeLabel,
 } from './labels';
-import { findPublicEvent, listPublicEvents, type PublicEvent } from './query';
+import { findArea, findPublicEvent, listAreas, listPublicEvents, type PublicEvent } from './query';
+import type { Area } from '@prisma/client';
 import { isPrivatePath } from './routes';
 
 /**
@@ -31,7 +32,7 @@ import { isPrivatePath } from './routes';
 const PAGE_SIZE = 12;
 
 const HOME_DESCRIPTION =
-  'Des idées de sorties avec des enfants en Île-de-France : spectacles, parcs, ' +
+  'Des idées de sorties avec des enfants partout en France : spectacles, parcs, ' +
   'musées et ateliers, proposés par des parents et vérifiés par une équipe de modération.';
 
 /** Le numéro de page demandé, ramené à quelque chose de sensé. */
@@ -71,9 +72,9 @@ function eventCard(event: PublicEvent, from: string): string {
  * `<a href>`, une liste paginée par un bouton s'arrête à sa première page, et
  * tout ce qu'elle contenait au-delà reste introuvable.
  */
-function pagination(page: number, totalPages: number): string {
+function pagination(page: number, totalPages: number, path = '/'): string {
   if (totalPages <= 1) return '';
-  const href = (n: number) => (n === 1 ? '/' : `/?page=${n}`);
+  const href = (n: number) => (n === 1 ? path : `${path}?page=${n}`);
   const previous =
     page > 1 ? `<a class="btn ghost small" href="${href(page - 1)}">← Précédent</a>` : '';
   const next =
@@ -90,7 +91,10 @@ async function homePage(
   page: number,
 ): Promise<{ meta: PageMeta; body: string; status: number }> {
   const from = today();
-  const { events, total } = await listPublicEvents(page, PAGE_SIZE);
+  const [{ events, total }, areas] = await Promise.all([
+    listPublicEvents(page, PAGE_SIZE),
+    listAreas(),
+  ]);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const list = events.length
@@ -103,10 +107,11 @@ async function homePage(
     <div class="hero-banner">
       <h1>Où sort-on avec les enfants ce week-end ?</h1>
       <p>
-        Des idées de sorties en Île-de-France, proposées par des parents et
+        Des idées de sorties partout en France, proposées par des parents et
         vérifiées par notre équipe de modération.
       </p>
     </div>
+    ${areaLinks(areas)}
     ${list}
     ${pagination(page, totalPages)}
   </div>`;
@@ -118,11 +123,101 @@ async function homePage(
     // en essaiera mille.
     status: page > 1 && events.length === 0 ? 404 : 200,
     meta: {
-      title: `Sorties avec les enfants en Île-de-France${suffix} — ${SITE_NAME}`,
+      title: `Sorties avec les enfants${suffix} — ${SITE_NAME}`,
       description: HOME_DESCRIPTION,
       path: page > 1 ? `/?page=${page}` : '/',
       noindex: page > 1 && events.length === 0,
       jsonLd: [websiteJsonLd(base), itemListJsonLd(base, events, (page - 1) * PAGE_SIZE)],
+    },
+    body,
+  };
+}
+
+/**
+ * Les zones, en liens.
+ *
+ * Une page de zone n'est atteignable que si quelque chose y mène : sans ce
+ * bloc, `/sorties/nancy` n'existerait que dans le sitemap, et un sitemap
+ * signale une page, il ne lui donne pas de poids. `except` évite qu'une zone
+ * pointe vers elle-même.
+ */
+function areaLinks(areas: Area[], except?: string): string {
+  const others = areas.filter((a) => a.slug !== except);
+  if (!others.length) return '';
+  const links = others
+    .map((a) => `<a class="badge" href="/sorties/${escapeHtml(a.slug)}">${escapeHtml(a.name)}</a>`)
+    .join('\n        ');
+  return `<nav class="areas">
+        <h2>Où cherchez-vous ?</h2>
+        <div class="badges">
+        ${links}
+        </div>
+      </nav>`;
+}
+
+/**
+ * La page d'une zone : « Le Havre : où sortir avec les enfants ? »
+ *
+ * C'est la page qui répond à la requête réellement tapée. Personne ne cherche
+ * « sortie enfant » tout court — on cherche « sortie enfant Nancy », et jusqu'ici
+ * le site n'avait aucune page à opposer à cette question : l'accueil parlait
+ * d'Île-de-France, et une fiche isolée ne parle que d'elle.
+ *
+ * Le titre place le nom de la zone en tête, et sans préposition : « à Nancy »,
+ * « au Havre », « en Île-de-France » ne se déduisent pas d'un nom, et une
+ * préposition fausse dans un titre se voit dans les résultats de recherche.
+ */
+async function areaPage(
+  base: string,
+  area: Area,
+  page: number,
+): Promise<{ meta: PageMeta; body: string; status: number }> {
+  const from = today();
+  const [{ events, total }, areas] = await Promise.all([
+    listPublicEvents(page, PAGE_SIZE, area),
+    listAreas(),
+  ]);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const path = `/sorties/${area.slug}`;
+
+  const list = events.length
+    ? `<div class="event-grid">
+      ${events.map((e) => eventCard(e, from)).join('\n      ')}
+    </div>`
+    : `<div class="empty"><p>Aucune sortie n'est programmée dans cette zone pour le moment. 🧸</p>
+      <p><a href="/proposer">Proposez la vôtre</a> ou <a href="/">voyez les autres régions</a>.</p></div>`;
+
+  const body = `<div class="container page">
+    <div class="hero-banner">
+      <h1>${escapeHtml(area.name)} : où sortir avec les enfants ?</h1>
+      <p>${escapeHtml(area.intro)}</p>
+    </div>
+    ${list}
+    ${pagination(page, totalPages, path)}
+    ${areaLinks(areas, area.slug)}
+  </div>`;
+
+  const suffix = page > 1 ? ` — page ${page}` : '';
+  return {
+    // Une zone vide reste une page valide : elle est annoncée dans le menu, elle
+    // se remplira. C'est seulement au-delà de la dernière page qu'il n'y a rien.
+    status: page > 1 && events.length === 0 ? 404 : 200,
+    meta: {
+      title: `${area.name} : sorties avec les enfants${suffix} — ${SITE_NAME}`,
+      description: truncate(area.intro),
+      path: page > 1 ? `${path}?page=${page}` : path,
+      noindex: page > 1 && events.length === 0,
+      jsonLd: [
+        itemListJsonLd(base, events, (page - 1) * PAGE_SIZE),
+        {
+          '@context': 'https://schema.org',
+          '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: 'Sorties', item: `${base}/` },
+            { '@type': 'ListItem', position: 2, name: area.name, item: `${base}${path}` },
+          ],
+        },
+      ],
     },
     body,
   };
@@ -233,7 +328,7 @@ function notFoundPage(): { meta: PageMeta; body: string } {
     },
     body: `<div class="container page">
     <h1>Page introuvable</h1>
-    <p>Cette sortie n'existe pas, ou elle n'est plus publiée.</p>
+    <p>Cette page n'existe pas, ou elle n'est plus publiée.</p>
     <p><a href="/">Retour aux sorties</a></p>
   </div>`,
   };
@@ -253,6 +348,8 @@ function privatePage(path: string): { meta: PageMeta; body: string } {
 }
 
 const EVENT_PATH = /^\/sorties\/(\d+)\/?$/;
+/** Même espace d'adresses que les fiches, d'où le slug non numérique imposé. */
+const AREA_PATH = /^\/sorties\/([a-z0-9][a-z0-9-]*)\/?$/;
 
 /** Le document à servir pour un chemin donné. */
 export async function renderPage(
@@ -274,6 +371,16 @@ export async function renderPage(
     const event = await findPublicEvent(Number(eventMatch[1]));
     if (event) {
       page = eventPage(base, event);
+    } else {
+      page = notFoundPage();
+      status = 404;
+    }
+  } else if (AREA_PATH.test(pathname)) {
+    const area = await findArea(AREA_PATH.exec(pathname)![1]);
+    if (area) {
+      const rendered = await areaPage(base, area, pageOf(query.page));
+      page = rendered;
+      status = rendered.status;
     } else {
       page = notFoundPage();
       status = 404;

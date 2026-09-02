@@ -1,7 +1,8 @@
 # SortiesPourPetits 🎈
 
-Des idées de sorties avec des enfants en Île-de-France, proposées par la
-communauté et validées par une équipe de modération.
+Des idées de sorties avec des enfants, proposées par la communauté et validées
+par une équipe de modération. Quatre zones ouvertes à ce jour : Île-de-France,
+Le Havre, Niort et Nancy.
 
 ## Stack
 
@@ -179,10 +180,28 @@ n'est indexable) et `PUBLIC_BASE_URL` (l'adresse publique exacte, qui sert à
 écrire les liens canoniques et le sitemap). Voir
 [`server/.env.example`](server/.env.example).
 
+### Les pages de zone
+
+Personne ne cherche « sortie enfant » tout court : on cherche « sortie enfant
+Nancy ». Chaque zone a donc **sa page** — `/sorties/nancy` — avec son titre, son
+texte de présentation et ses sorties, pré-rendue comme le reste. C'est elle
+qu'un moteur peut proposer, là où l'accueil ne répond à personne en particulier
+et où une fiche isolée ne parle que d'elle-même.
+
+Une zone se définit par des **préfixes de code postal** (`75,77,78,91,92,93,94,95`
+pour l'Île-de-France, `766,767` pour le bassin havrais) : une sortie en fait
+partie si le code postal de son lieu commence par l'un d'eux. Rien n'est stocké
+sur les sorties, redessiner une zone revient à modifier une liste, et c'est le
+mécanisme que les recherches automatiques utilisaient déjà. Les zones se gèrent
+depuis **Administration → Zones**, sans déploiement.
+
+Les zones sont liées depuis l'accueil et entre elles, et listées en tête du
+sitemap : un sitemap signale une page, ce sont les liens qui lui donnent du
+poids.
+
 Ce qui reste à faire pour aller plus loin est d'ordre éditorial : des pages par
-ville, par catégorie ou par tranche d'âge — l'API sait déjà filtrer là-dessus,
-il leur manque des adresses à elles — et une image de partage par défaut pour
-l'accueil.
+catégorie à l'intérieur d'une zone (`/sorties/nancy/spectacles`), et une image
+de partage par défaut pour l'accueil.
 
 ## Production
 

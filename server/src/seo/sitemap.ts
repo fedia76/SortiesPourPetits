@@ -8,7 +8,11 @@ import { escapeHtml } from './html';
  * suit la pagination y arriverait, mais lentement et sans garantie. Le sitemap
  * les donne d'un coup, avec la date de chacune.
  */
-export function sitemapXml(base: string, events: { id: number; createdAt: Date }[]): string {
+export function sitemapXml(
+  base: string,
+  events: { id: number; createdAt: Date }[],
+  areaSlugs: string[] = [],
+): string {
   const day = (d: Date) => d.toISOString().slice(0, 10);
   const urls = [
     `  <url>
@@ -16,6 +20,15 @@ export function sitemapXml(base: string, events: { id: number; createdAt: Date }
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>`,
+    // Les zones passent avant les fiches : ce sont elles qu'on veut voir
+    // classées, et une fiche de spectacle disparaît quand le spectacle est joué.
+    ...areaSlugs.map(
+      (slug) => `  <url>
+    <loc>${escapeHtml(`${base}/sorties/${slug}`)}</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>`,
+    ),
     ...events.map(
       (e) => `  <url>
     <loc>${escapeHtml(`${base}/sorties/${e.id}`)}</loc>

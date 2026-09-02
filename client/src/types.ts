@@ -14,6 +14,24 @@ export interface Category {
   name: string;
 }
 
+/**
+ * Une zone géographique ouverte sur le site.
+ *
+ * Elle ne se rattache à aucune sortie : elle décrit un ensemble de préfixes de
+ * code postal, et une sortie en fait partie si le code postal de son lieu
+ * commence par l'un d'eux. Redessiner une zone n'a donc rien à migrer.
+ */
+export interface Area {
+  id: number;
+  slug: string;
+  name: string;
+  postalPrefixes: string;
+  intro: string;
+  position: number;
+  /** Sorties à venir dans la zone — renseigné par la liste publique. */
+  eventCount?: number;
+}
+
 export interface Venue {
   id: number;
   name: string;

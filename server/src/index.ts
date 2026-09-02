@@ -8,6 +8,7 @@ import { eventsRouter } from './routes/events';
 import { moderationRouter } from './routes/moderation';
 import { adminRouter } from './routes/admin';
 import { categoriesRouter } from './routes/categories';
+import { areasRouter } from './routes/areas';
 import { scraperRouter } from './routes/scraper';
 import { apiKeysRouter } from './routes/apiKeys';
 import { siteRouter } from './routes/site';
@@ -46,6 +47,7 @@ app.use('/api/events', eventsRouter);
 app.use('/api/moderation', moderationRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/categories', categoriesRouter);
+app.use('/api/areas', areasRouter);
 app.use('/api/keys', apiKeysRouter);
 app.use('/api/scraper', scraperRouter);
 
