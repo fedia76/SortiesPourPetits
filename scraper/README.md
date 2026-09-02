@@ -929,13 +929,19 @@ répond *et* est réellement en français — beaucoup de sites répondent à `/
 en servant l'anglais quand la traduction n'existe pas, et changer d'adresse
 pour le même contenu ne tromperait que nous.
 
-Le remplacement a lieu à deux étages, et les deux comptent :
+Le remplacement a lieu à trois étages, et les trois comptent :
 
 * à la **reconnaissance** (2), parce qu'un agenda anglais ne mène qu'à des
   fiches anglaises : corriger la racine corrige toute la branche ;
 * à la **lecture** (5), parce que c'est l'adresse retenue là qui devient la
   provenance (`foundOnUrl`) — et parce qu'un lien peut avoir échappé au
-  premier passage.
+  premier passage ;
+* à l'**attribution** (7), parce que c'est de là que sort le lien réellement
+  publié quand une source est trouvée. L'organisateur publie souvent en deux
+  langues, et un `sameAs` ou un résultat de moteur ramasse volontiers son
+  `/en/`. La bascule y a lieu **avant** la vérification : la page contrôlée
+  doit être celle qui sera publiée, et le contrôle porte justement sur un
+  titre et des dates écrits en français.
 
 Les deux filtres de la lecture — domaine bloqué, page déjà vue — se rejouent
 sur l'adresse retenue : c'est elle qui sera mémorisée, sans quoi une sortie

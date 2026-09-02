@@ -280,6 +280,40 @@ def test_la_sortie_est_proposee_avec_son_lien_francais(log):
     assert api.created[0]["sourceUrl"] == FR_URL
 
 
+def test_la_source_de_l_organisateur_est_retenue_en_francais():
+    """L'étage 7 remonte à l'organisateur : encore faut-il sa page française.
+
+    Le musée publie en deux langues, et c'est son `/en/` que l'agrégateur
+    pointe. La bascule a lieu avant la vérification — la page contrôlée doit
+    être celle qui sera publiée, et le contrôle porte sur un titre français.
+    """
+    from test_attribution import KIDIKLIK, FakeEngine, attribuer, kidiklik_html
+
+    musee_en = "https://www.musee-rodin.fr/en/agenda/family-modelling-workshop"
+    musee_fr = "https://www.musee-rodin.fr/fr/agenda/atelier-modelage-en-famille"
+    head = f'<link rel="alternate" hreflang="fr" href="{musee_fr}">'
+
+    source = attribuer(
+        {
+            KIDIKLIK: kidiklik_html(
+                liens=f'<a href="{musee_en}">Réserver sur le site officiel</a>'
+            ),
+            musee_en: page(
+                "<h1>Family modelling workshop</h1>" + CORPS_EN, lang="en", head=head
+            ),
+            musee_fr: page(
+                "<h1>Atelier modelage en famille</h1>"
+                "<p>Un atelier de modelage pour les enfants, au musée Rodin.</p>",
+                lang="fr",
+            ),
+        },
+        engine=FakeEngine(results=[]),
+    )
+
+    assert source.found
+    assert source.url == musee_fr
+
+
 def test_la_page_francaise_nest_pas_relue_par_sa_porte_anglaise(log):
     """La mémoire retient l'adresse française — celle qu'on a lue et proposée.
 
