@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
+import { setPageSeo } from '../lib/seo';
 import { useAuthStore } from '../stores/auth';
 import type { EventItem } from '../types';
 import {
@@ -93,12 +94,33 @@ async function remove() {
   router.push('/mes-sorties');
 }
 
+/**
+ * Le titre et la description de la fiche, une fois la sortie chargée.
+ *
+ * Le serveur les a déjà écrits pour la sortie demandée à l'ouverture du site ;
+ * ici, on couvre le cas où on arrive sur la fiche par un clic, sans que le
+ * document ait été rechargé. Une sortie qui n'est pas encore publique reste
+ * hors des moteurs : c'est ce que dit `noindex`, et c'est déjà ce que dit le
+ * 404 du serveur.
+ */
+function applySeo(item: EventItem) {
+  const description = item.description.replace(/\s+/g, ' ').trim();
+  setPageSeo({
+    title: `${item.title} à ${item.venue.city}`,
+    description: description.length > 160 ? `${description.slice(0, 159).trimEnd()}…` : description,
+    path: `/sorties/${item.id}`,
+    noindex: item.status !== 'APPROVED',
+  });
+}
+
 onMounted(async () => {
   try {
     const data = await api.get<{ event: EventItem }>(`/api/events/${route.params.id}`);
     event.value = data.event;
+    applySeo(data.event);
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erreur';
+    setPageSeo({ title: 'Sortie introuvable', noindex: true });
   }
 });
 </script>

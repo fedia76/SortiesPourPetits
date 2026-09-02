@@ -137,6 +137,49 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | GET | `/api/admin/users` | admin | Liste des utilisateurs |
 | PATCH | `/api/admin/users/:id/role` | admin | Changer un rôle |
 
+## Référencement
+
+Le site est une application Vue : sans rien de plus, un moteur reçoit un
+document vide, le même pour toutes les adresses, et ne trouve les sorties que
+s'il exécute le JavaScript — ce que Google fait, tard et sans garantie. Les
+fiches, elles, restaient hors d'atteinte : la liste se paginait par un bouton,
+donc douze sorties étaient liées et pas une de plus.
+
+L'API sert donc elle-même les pages publiques et les **pré-rend**
+(`server/src/seo/`) : le document initial porte déjà le contenu de la page, ses
+liens, son titre, sa description et ses données structurées. Vue s'y monte
+ensuite et reprend la main. Tout le monde reçoit le même HTML — reconnaître les
+robots pour leur en servir un autre n'est ni fiable ni recommandé.
+
+Ce que cela donne, page par page :
+
+| | Accueil (`/`, `/?page=N`) | Fiche (`/sorties/:id`) |
+|---|---|---|
+| Titre, description | propres à la page | titre de la sortie + sa ville |
+| Contenu pré-rendu | les douze vignettes, en liens | la fiche entière |
+| Données structurées | `WebSite`, `ItemList` | `Event` daté, ou `Place` si la sortie est permanente, + fil d'Ariane |
+| Absente ou non approuvée | — | **404**, et non plus « 200, page vide » |
+
+- **`/sitemap.xml`** liste l'accueil et toutes les sorties approuvées à venir.
+  C'est le seul canal de découverte fiable pour un catalogue qui se compte en
+  milliers de fiches.
+- **`/robots.txt`** ouvre le site et ferme ce qui demande un compte. Hors
+  production, il interdit tout : une préproduction indexée coûte des mois.
+- **La page est dans l'adresse** (`/?page=2`) : c'est ce qui rend les sorties
+  au-delà de la première page atteignables, par un moteur comme par un lien
+  partagé.
+- Les sorties **passées** sortent du sitemap, mais leur page reste servie.
+
+Deux variables décident, côté serveur : `NODE_ENV=production` (sans elle, rien
+n'est indexable) et `PUBLIC_BASE_URL` (l'adresse publique exacte, qui sert à
+écrire les liens canoniques et le sitemap). Voir
+[`server/.env.example`](server/.env.example).
+
+Ce qui reste à faire pour aller plus loin est d'ordre éditorial : des pages par
+ville, par catégorie ou par tranche d'âge — l'API sait déjà filtrer là-dessus,
+il leur manque des adresses à elles — et une image de partage par défaut pour
+l'accueil.
+
 ## Production
 
 ```bash
@@ -144,8 +187,11 @@ cd server && npm run build && npm start   # API compilée
 cd client && npm run build                # fichiers statiques dans client/dist
 ```
 
-Servez `client/dist` derrière un reverse proxy (nginx, Caddy…) qui route
-`/api` et `/uploads` vers l'API Node.
+L'API sert le front compilé : elle attend `client/dist` déposé dans un dossier
+`client/` à côté d'elle (`CLIENT_DIR` pour une autre disposition). Le reverse
+proxy garde les fichiers versionnés de `/assets/*` et lui passe tout le reste —
+`/api`, `/uploads`, et les pages, qu'elle pré-rend. Voir
+[`deploy/Caddyfile`](deploy/Caddyfile).
 
 Déploiement automatisé sur un VPS via GitHub Actions : voir
 [`deploy/README.md`](deploy/README.md) (setup serveur en une fois) et

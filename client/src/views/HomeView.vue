@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import EventCard from '../components/EventCard.vue';
 import AddressPicker from '../components/AddressPicker.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
+import { setPageSeo } from '../lib/seo';
 import type { Category, EventItem, Setting } from '../types';
+
+const route = useRoute();
+const router = useRouter();
 
 const events = ref<EventItem[]>([]);
 const total = ref(0);
@@ -32,8 +37,38 @@ const filters = reactive({
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)));
 const geoActive = computed(() => filters.lat !== null && filters.lng !== null);
 
-async function search(goToPage = 1) {
-  page.value = goToPage;
+/**
+ * La page courante vit dans l'adresse.
+ *
+ * Elle ne s'y trouvait pas, et c'est ce qui rendait le catalogue invisible :
+ * un robot ouvre l'accueil, y lit douze liens, et n'a aucun moyen d'atteindre
+ * les suivants — « page 2 » n'était qu'un bouton. Une page, une adresse : le
+ * serveur peut la pré-rendre, le sitemap la désigner, et un lien vers une
+ * page de résultats se partage.
+ */
+function pageFromUrl(): number {
+  const raw = Number(route.query.page);
+  return Number.isInteger(raw) && raw >= 1 ? raw : 1;
+}
+
+/** Change de page en passant par l'adresse ; le `watch` ci-dessous recharge. */
+function goToPage(n: number) {
+  router.push({ query: { ...route.query, page: n > 1 ? String(n) : undefined } });
+}
+
+/**
+ * Une recherche relancée repart de la première page — un filtre plus étroit
+ * n'a aucune raison de s'ouvrir sur la troisième. Quand l'adresse en désigne
+ * une autre, c'est elle qu'on corrige : le `watch` fera la recherche, et la
+ * page affichée restera celle que l'adresse annonce.
+ */
+function applyFilters() {
+  if (pageFromUrl() > 1) goToPage(1);
+  else search(1);
+}
+
+async function search(goTo = 1) {
+  page.value = goTo;
   loading.value = true;
   error.value = '';
   const params = new URLSearchParams();
@@ -69,14 +104,14 @@ async function search(goToPage = 1) {
 function onAddressSelect(s: GeoSuggestion) {
   filters.lat = s.lat;
   filters.lng = s.lng;
-  search();
+  applyFilters();
 }
 
 function clearGeo() {
   filters.lat = null;
   filters.lng = null;
   filters.address = '';
-  search();
+  applyFilters();
 }
 
 const geolocating = ref(false);
@@ -90,7 +125,7 @@ function useMyPosition() {
       filters.lng = pos.coords.longitude;
       filters.address = 'Ma position';
       geolocating.value = false;
-      search();
+      applyFilters();
     },
     () => {
       geolocating.value = false;
@@ -99,10 +134,24 @@ function useMyPosition() {
   );
 }
 
+// Un retour arrière, un lien partagé ou un lien suivi depuis la page
+// pré-rendue changent l'adresse sans remonter la vue : c'est elle qui commande.
+watch(() => route.query.page, () => search(pageFromUrl()));
+
 onMounted(async () => {
+  setPageSeo({
+    title:
+      pageFromUrl() > 1
+        ? `Sorties avec les enfants en Île-de-France — page ${pageFromUrl()}`
+        : 'Sorties avec les enfants en Île-de-France',
+    description:
+      'Des idées de sorties avec des enfants en Île-de-France : spectacles, parcs, ' +
+      'musées et ateliers, proposés par des parents et vérifiés par une équipe de modération.',
+    path: '/',
+  });
   const { categories: cats } = await api.get<{ categories: Category[] }>('/api/categories');
   categories.value = cats;
-  search();
+  search(pageFromUrl());
 });
 </script>
 
@@ -116,7 +165,7 @@ onMounted(async () => {
       </p>
     </div>
 
-    <form class="filters card" @submit.prevent="search()">
+    <form class="filters card" @submit.prevent="applyFilters()">
       <div class="row">
         <div class="field" style="flex: 2">
           <label for="f-q">Recherche</label>
@@ -215,9 +264,11 @@ onMounted(async () => {
     </div>
 
     <nav v-if="totalPages > 1" class="pagination">
-      <button class="btn ghost small" :disabled="page <= 1" @click="search(page - 1)">← Précédent</button>
+      <button class="btn ghost small" :disabled="page <= 1" @click="goToPage(page - 1)">← Précédent</button>
       <span class="muted">Page {{ page }} / {{ totalPages }}</span>
-      <button class="btn ghost small" :disabled="page >= totalPages" @click="search(page + 1)">Suivant →</button>
+      <button class="btn ghost small" :disabled="page >= totalPages" @click="goToPage(page + 1)">
+        Suivant →
+      </button>
     </nav>
   </div>
 </template>

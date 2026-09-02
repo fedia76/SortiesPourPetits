@@ -82,6 +82,16 @@ Caddy n'obtiendra un certificat que lorsque le DNS du domaine pointera
 réellement vers l'IP du VPS (à faire chez votre registrar — une entrée `A`
 vers l'IP du VPS, en `A` et en `AAAA` si IPv6).
 
+Choisissez **une** forme du domaine, avec ou sans `www`, et faites rediriger
+l'autre : le bloc commenté en fin de `Caddyfile` est là pour ça. Deux adresses
+qui servent le même site, ce sont deux fois les mêmes pages pour un moteur de
+recherche, et c'est la première chose que Search Console reproche.
+
+Caddy ne sert plus lui-même les pages : il garde les fichiers du build
+(`/assets/*`) et passe tout le reste à l'API, qui les pré-rend. C'est ce qui
+donne à chaque sortie son titre, sa description et ses données structurées —
+voir la section « Référencement » du [README](../README.md).
+
 ## 5. Pare-feu
 
 ```bash
@@ -166,8 +176,22 @@ Puis, sur le VPS :
 ```bash
 cd /opt/sortiespourpetits/server
 cp .env.example .env
-nano .env   # DATABASE_URL, JWT_SECRET, NODE_ENV=production, ADMIN_EMAIL, ADMIN_PASSWORD_HASH...
+nano .env   # DATABASE_URL, JWT_SECRET, NODE_ENV=production, PUBLIC_BASE_URL, ADMIN_EMAIL, ADMIN_PASSWORD_HASH...
 ```
+
+Deux variables commandent le référencement, et le site n'est pas indexable
+tant qu'elles ne sont pas justes :
+
+- `NODE_ENV=production` — sans elle, `robots.txt` interdit tout le site et
+  chaque page part en `noindex`. C'est voulu : une préproduction indexée se
+  répare en semaines.
+- `PUBLIC_BASE_URL=https://votre-domaine.fr` — l'adresse publique exacte, celle
+  que vous déclarerez dans Search Console, sans barre finale. Elle sert à écrire
+  les adresses canoniques et le sitemap.
+
+Une fois le site en ligne, `https://votre-domaine.fr/robots.txt` doit annoncer
+`Allow: /` et le sitemap ; s'il répond `Disallow: /`, c'est que `NODE_ENV`
+n'est pas passé en production.
 
 Une fois cette étape terminée, vous pouvez supprimer `deploy_key` /
 `deploy_key.pub` de votre poste local si vous le souhaitez : GitHub Actions

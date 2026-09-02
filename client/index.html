@@ -3,14 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <!--
+      Ce bloc est remplacé en entier par le serveur (server/src/seo/) : chaque
+      page publique arrive avec son titre, sa description, son adresse
+      canonique et ses données structurées. Ce qui suit est ce que voit le
+      développement, où le front est servi par Vite sans passer par l'API.
+    -->
+    <!--seo:head-->
+    <title>SortiesPourPetits — sorties enfants en Île-de-France</title>
     <meta
       name="description"
       content="SortiesPourPetits — des idées de sorties avec des enfants en Île-de-France"
     />
-    <title>SortiesPourPetits — sorties enfants en Île-de-France</title>
+    <!--/seo:head-->
   </head>
   <body>
-    <div id="app"></div>
+    <!--
+      Le serveur écrit la page dans ce marqueur. Vue s'y monte ensuite et la
+      remplace : le visiteur voit le contenu avant que le script n'ait fini de
+      charger, et un moteur le trouve même s'il n'exécute rien.
+    -->
+    <div id="app"><!--seo:body--></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

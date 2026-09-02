@@ -1,15 +1,34 @@
 votre-domaine.fr {
-	handle /api/* {
-		reverse_proxy localhost:3000
+	encode zstd gzip
+
+	# Les fichiers du build portent un hash dans leur nom : ils ne changent
+	# jamais sans changer d'adresse, donc ils se gardent un an et n'ont aucune
+	# raison de traverser Node.
+	handle /assets/* {
+		root * /opt/sortiespourpetits/client
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
 	}
 
 	handle /uploads/* {
 		reverse_proxy localhost:3000
 	}
 
+	# Tout le reste passe par l'API — les appels d'API comme les pages.
+	#
+	# Le front était servi ici en `try_files … /index.html` : toute adresse
+	# renvoyait le même document, donc le même titre, et une adresse inventée
+	# répondait « 200 ». C'est l'API qui pré-rend désormais les pages publiques,
+	# sert robots.txt et sitemap.xml, et répond 404 quand il le faut.
 	handle {
-		root * /opt/sortiespourpetits/client
-		try_files {path} /index.html
-		file_server
+		reverse_proxy localhost:3000
 	}
 }
+
+# À décommenter une fois le domaine choisi : une seule adresse doit répondre,
+# l'autre doit rediriger. Deux domaines qui servent le même site, ce sont deux
+# fois les mêmes pages aux yeux d'un moteur.
+#
+# www.votre-domaine.fr {
+# 	redir https://votre-domaine.fr{uri} permanent
+# }
