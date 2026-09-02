@@ -27,6 +27,32 @@ export const categorySchema = z.object({
   name: z.string().trim().min(2, 'Nom trop court').max(50, 'Nom trop long'),
 });
 
+/**
+ * Une zone géographique (`model Area`).
+ *
+ * Le slug est refusé s'il ne tient qu'en chiffres : il partage son espace
+ * d'adresses avec les fiches — `/sorties/le-havre` et `/sorties/204` — et une
+ * zone nommée « 75 » masquerait la sortie numéro 75.
+ */
+export const areaSchema = z.object({
+  slug: z
+    .string()
+    .trim()
+    .min(2, 'Identifiant trop court')
+    .max(60, 'Identifiant trop long')
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Minuscules, chiffres et tirets uniquement')
+    .refine((v) => !/^\d+$/.test(v), 'Un identifiant tout en chiffres se confondrait avec une sortie'),
+  name: z.string().trim().min(2, 'Nom trop court').max(80, 'Nom trop long'),
+  postalPrefixes: z
+    .string()
+    .trim()
+    .min(1, 'Indiquez au moins un préfixe de code postal')
+    .max(200)
+    .regex(/^\d{1,5}(?:\s*,\s*\d{1,5})*$/, 'Préfixes attendus : des nombres séparés par des virgules'),
+  intro: z.string().trim().min(1, 'Un texte de présentation est attendu').max(2000),
+  position: z.coerce.number().int().min(0).max(999).default(0),
+});
+
 const dateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
 const emptyToNull = (v: unknown) => (v === '' ? null : v);
 
@@ -136,6 +162,8 @@ export const searchSchema = z.object({
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   setting: z.enum(['INDOOR', 'OUTDOOR', 'BOTH']).optional(),
   categoryId: z.coerce.number().int().positive().optional(),
+  /** Zone géographique, par son identifiant d'adresse : « le-havre ». */
+  area: z.string().trim().max(60).optional(),
   lat: z.coerce.number().min(-90).max(90).optional(),
   lng: z.coerce.number().min(-180).max(180).optional(),
   radiusKm: z.coerce.number().min(0.1).max(300).optional(),

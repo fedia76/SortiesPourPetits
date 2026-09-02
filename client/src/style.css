@@ -544,3 +544,30 @@ th {
   font-size: 0.88rem;
   margin-top: 2rem;
 }
+
+/*
+ * Le choix de zone — sur l'accueil et au bas d'une page de zone.
+ *
+ * Ce sont des liens déguisés en étiquettes : ils doivent se voir comme
+ * cliquables, sinon le maillage entre régions ne sert qu'aux moteurs.
+ */
+.areas {
+  margin: 1.5rem 0;
+}
+
+.areas h2 {
+  font-size: 1rem;
+  margin: 0 0 0.6rem;
+}
+
+a.badge {
+  text-decoration: none;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.85rem;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+a.badge:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}

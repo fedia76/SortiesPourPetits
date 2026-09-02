@@ -17,6 +17,13 @@ const router = createRouter({
       name: 'event',
       component: () => import('../views/EventDetailView.vue'),
     },
+    // Après la fiche, et volontairement : les chiffres désignent une sortie,
+    // le reste une zone. Le serveur applique la même règle.
+    {
+      path: '/sorties/:slug([a-z0-9][a-z0-9-]*)',
+      name: 'area',
+      component: () => import('../views/AreaView.vue'),
+    },
     {
       path: '/connexion',
       name: 'login',
@@ -120,6 +127,12 @@ const router = createRouter({
       name: 'admin-categories',
       component: () => import('../views/AdminCategoriesView.vue'),
       meta: { title: 'Catégories', noindex: true, requiresAuth: true, requiresAdmin: true },
+    },
+    {
+      path: '/admin/zones',
+      name: 'admin-areas',
+      component: () => import('../views/AdminAreasView.vue'),
+      meta: { title: 'Zones', noindex: true, requiresAuth: true, requiresAdmin: true },
     },
     // Une adresse inconnue affichait l'accueil, par redirection : le visiteur
     // n'y comprenait rien, et le serveur, lui, répond 404 sur cette adresse.

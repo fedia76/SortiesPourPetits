@@ -70,6 +70,32 @@ model Category {
   events Event[]
 }
 
+/// Une zone géographique ouverte sur le site : l'Île-de-France, Le Havre…
+///
+/// Elle existe d'abord pour les visiteurs et les moteurs de recherche. Personne
+/// ne cherche « sortie enfant » tout court — on cherche « sortie enfant Nancy »,
+/// et il faut une page qui réponde exactement à cette question, avec son propre
+/// titre et son propre texte.
+///
+/// L'appartenance se décide sur le code postal du lieu, par préfixes : c'est le
+/// mécanisme que les recherches automatiques utilisent déjà (`postalPrefixes`),
+/// il ne dépend d'aucun géocodage, et redessiner une zone revient à modifier
+/// une liste.
+model Area {
+  id             Int      @id @default(autoincrement())
+  /// Ce qui apparaît dans l'adresse : « ile-de-france ».
+  slug           String   @unique
+  name           String   @unique
+  /// Préfixes de code postal séparés par des virgules : « 75,77,78,91 ».
+  postalPrefixes String
+  /// Texte de présentation, affiché en tête de page et repris en description.
+  /// C'est ce qui distingue la page d'une simple liste filtrée.
+  intro          String   @db.Text
+  /// Ordre d'affichage dans les menus et les listes.
+  position       Int      @default(0)
+  createdAt      DateTime @default(now())
+}
+
 model Venue {
   id         Int     @id @default(autoincrement())
   name       String
@@ -82,6 +108,7 @@ model Venue {
   events Event[]
 
   @@index([lat, lng])
+  @@index([postalCode])
 }
 
 model Event {
@@ -194,16 +221,16 @@ model ScraperConfig {
   maxCostUsd        Decimal @default(1.00) @db.Decimal(6, 2)
   keepOutOfScope    Boolean @default(true)
 
-  defaultCategory String @default("Non classé")
+  defaultCategory   String  @default("Non classé")
   /// Préfixes de codes postaux visés, séparés par des virgules.
-  postalPrefixes  String @default("75,77,78,91,92,93,94,95")
+  postalPrefixes    String  @default("75,77,78,91,92,93,94,95")
   /// Domaines écartés d'office, séparés par des virgules.
-  blockedDomains  String @default("") @db.Text
+  blockedDomains    String  @default("") @db.Text
   /// Sites qui republient sans être la source, séparés par des virgules. On
   /// les lit — ce sont de bons agendas — mais leur URL n'est jamais celle
   /// qu'on propose : l'étage attribution remonte à l'organisateur. Vide :
   /// la liste par défaut du scraper s'applique.
-  aggregatorDomains String @default("") @db.Text
+  aggregatorDomains String  @default("") @db.Text
   /// Autorise l'attribution à *chercher* la page de l'organisateur quand la
   /// page lue ne la porte pas. Son seul appel payant, ~0,001 $ la fiche.
   sourceSearch      Boolean @default(true)
@@ -219,14 +246,14 @@ model ScraperConfig {
   extractionModel String @default("claude-haiku-4-5")
 
   /// Requêtes imposées, une par ligne. Vide : le modèle les formule.
-  queries         String? @db.Text
+  queries String? @db.Text
 
   /// Prompts personnalisés ; vides, le scraper utilise les siens.
-  queriesPrompt    String? @db.Text
-  classifyPrompt   String? @db.Text
-  searchPrompt     String? @db.Text
-  selectPrompt     String? @db.Text
-  extractionPrompt String? @db.Text
+  queriesPrompt         String? @db.Text
+  classifyPrompt        String? @db.Text
+  searchPrompt          String? @db.Text
+  selectPrompt          String? @db.Text
+  extractionPrompt      String? @db.Text
   /// Lecture d'une page de programme, qui porte plusieurs sorties (mode « site »).
   extractionMultiPrompt String? @db.Text
 

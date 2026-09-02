@@ -6,6 +6,7 @@ import { deletePhoto, photoUpload, savePhoto } from '../lib/upload';
 import { hasCoordinates } from '../lib/incomplete';
 import { eventInputSchema, searchSchema } from '../lib/validators';
 import { dateFilter } from '../lib/dateWindow';
+import { areaFilter } from '../lib/areas';
 
 export const eventsRouter = Router();
 
@@ -95,6 +96,17 @@ eventsRouter.get('/', async (req, res) => {
     // Un cadre non renseigné satisfait n'importe quelle recherche de cadre.
     const settingMatch: Setting[] = f.setting === 'BOTH' ? ['BOTH'] : [f.setting, 'BOTH'];
     and.push({ OR: [{ setting: null }, { setting: { in: settingMatch } }] });
+  }
+  // La zone se résout ici plutôt que dans le schéma : c'est une lecture en
+  // base, et une zone inconnue doit répondre « aucun résultat » — pas « toutes
+  // les sorties de France », ce qui arriverait si on ignorait le filtre.
+  if (f.area) {
+    const area = await prisma.area.findUnique({ where: { slug: f.area } });
+    if (!area) {
+      res.json({ events: [], total: 0, page: f.page, pageSize: f.pageSize });
+      return;
+    }
+    and.push(areaFilter(area.postalPrefixes));
   }
   if (f.categoryId !== undefined) {
     where.categoryId = f.categoryId;

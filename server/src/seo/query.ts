@@ -1,5 +1,6 @@
-import { Prisma } from '@prisma/client';
+import { Area, Prisma } from '@prisma/client';
 import { prisma } from '../db';
+import { areaFilter } from '../lib/areas';
 import { dateFilter, today } from '../lib/dateWindow';
 
 /**
@@ -112,12 +113,28 @@ export async function findPublicEvent(id: number): Promise<PublicEvent | null> {
  */
 const PUBLIC_ORDER = { dateStart: 'asc' } as const;
 
-/** Une page de l'accueil, dans le même ordre que ce que l'application affiche. */
+/** Les zones ouvertes, dans leur ordre d'affichage. */
+export function listAreas(): Promise<Area[]> {
+  return prisma.area.findMany({ orderBy: [{ position: 'asc' }, { name: 'asc' }] });
+}
+
+export function findArea(slug: string): Promise<Area | null> {
+  return prisma.area.findUnique({ where: { slug } });
+}
+
+/**
+ * Une page de sorties, dans le même ordre que ce que l'application affiche.
+ * Restreinte à une zone quand on en passe une.
+ */
 export async function listPublicEvents(
   page: number,
   pageSize: number,
+  area?: Area | null,
 ): Promise<{ events: PublicEvent[]; total: number }> {
-  const where: Prisma.EventWhereInput = { status: 'APPROVED', AND: [dateFilter(today())] };
+  const where: Prisma.EventWhereInput = {
+    status: 'APPROVED',
+    AND: [dateFilter(today()), ...(area ? [areaFilter(area.postalPrefixes)] : [])],
+  };
   const [rows, total] = await Promise.all([
     prisma.event.findMany({
       where,

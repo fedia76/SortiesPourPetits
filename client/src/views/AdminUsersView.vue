@@ -49,6 +49,7 @@ onMounted(load);
     <nav class="row" style="gap: 1rem; margin-bottom: 1rem">
       <RouterLink to="/admin">Utilisateurs</RouterLink>
       <RouterLink to="/admin/categories">Catégories</RouterLink>
+      <RouterLink to="/admin/zones">Zones</RouterLink>
     </nav>
     <p v-if="error" class="error">{{ error }}</p>
 

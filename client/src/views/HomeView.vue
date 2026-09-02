@@ -6,7 +6,7 @@ import AddressPicker from '../components/AddressPicker.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
 import { setPageSeo } from '../lib/seo';
-import type { Category, EventItem, Setting } from '../types';
+import type { Area, Category, EventItem, Setting } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -18,6 +18,7 @@ const pageSize = 12;
 const loading = ref(false);
 const error = ref('');
 const categories = ref<Category[]>([]);
+const areas = ref<Area[]>([]);
 
 const filters = reactive({
   q: '',
@@ -142,15 +143,19 @@ onMounted(async () => {
   setPageSeo({
     title:
       pageFromUrl() > 1
-        ? `Sorties avec les enfants en Île-de-France — page ${pageFromUrl()}`
-        : 'Sorties avec les enfants en Île-de-France',
+        ? `Sorties avec les enfants — page ${pageFromUrl()}`
+        : 'Sorties avec les enfants',
     description:
-      'Des idées de sorties avec des enfants en Île-de-France : spectacles, parcs, ' +
+      'Des idées de sorties avec des enfants partout en France : spectacles, parcs, ' +
       'musées et ateliers, proposés par des parents et vérifiés par une équipe de modération.',
     path: '/',
   });
-  const { categories: cats } = await api.get<{ categories: Category[] }>('/api/categories');
+  const [{ categories: cats }, { areas: zones }] = await Promise.all([
+    api.get<{ categories: Category[] }>('/api/categories'),
+    api.get<{ areas: Area[] }>('/api/areas'),
+  ]);
   categories.value = cats;
+  areas.value = zones;
   search(pageFromUrl());
 });
 </script>
@@ -160,10 +165,23 @@ onMounted(async () => {
     <div class="hero-banner">
       <h1>Où sort-on avec les enfants ce week-end ?</h1>
       <p>
-        Des idées de sorties en Île-de-France, proposées par des parents et
+        Des idées de sorties partout en France, proposées par des parents et
         vérifiées par notre équipe de modération.
       </p>
     </div>
+
+    <!--
+      Les zones, en liens : c'est ce qui les fait exister pour un moteur, et ce
+      qui évite à un visiteur de Nancy de filtrer à la main un catalogue national.
+    -->
+    <nav v-if="areas.length" class="areas">
+      <h2>Où cherchez-vous ?</h2>
+      <div class="badges">
+        <RouterLink v-for="a in areas" :key="a.slug" class="badge" :to="`/sorties/${a.slug}`">
+          {{ a.name }}<span v-if="a.eventCount" class="muted"> · {{ a.eventCount }}</span>
+        </RouterLink>
+      </div>
+    </nav>
 
     <form class="filters card" @submit.prevent="applyFilters()">
       <div class="row">

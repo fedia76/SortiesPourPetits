@@ -20,7 +20,7 @@ onMounted(() => {
   -->
   <div class="container page">
     <h1>Page introuvable</h1>
-    <p>Cette sortie n'existe pas, ou elle n'est plus publiée.</p>
+    <p>Cette page n'existe pas, ou elle n'est plus publiée.</p>
     <p><RouterLink to="/">Retour aux sorties</RouterLink></p>
   </div>
 </template>

@@ -41,7 +41,7 @@ async function logout() {
     </main>
 
     <footer class="site-footer">
-      SortiesPourPetits — des idées de sorties avec des enfants en Île-de-France 🎈
+      SortiesPourPetits — des idées de sorties avec des enfants, partout en France 🎈
     </footer>
   </v-app>
 </template>

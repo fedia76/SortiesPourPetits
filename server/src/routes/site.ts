@@ -5,7 +5,7 @@ import { cached } from '../seo/cache';
 import { renderDocument } from '../seo/html';
 import { baseUrl } from '../seo/meta';
 import { pageOf, renderPage } from '../seo/pages';
-import { listSitemapEvents } from '../seo/query';
+import { listAreas, listSitemapEvents } from '../seo/query';
 import { EDIT_SUFFIX, PRIVATE_PREFIXES } from '../seo/routes';
 import { sitemapXml } from '../seo/sitemap';
 
@@ -59,9 +59,10 @@ siteRouter.get('/robots.txt', (req, res) => {
 siteRouter.get('/sitemap.xml', async (req, res, next) => {
   try {
     const base = baseUrl(req);
-    const xml = await cached(`sitemap:${base}`, SITEMAP_TTL_MS, async () =>
-      sitemapXml(base, await listSitemapEvents()),
-    );
+    const xml = await cached(`sitemap:${base}`, SITEMAP_TTL_MS, async () => {
+      const [events, areas] = await Promise.all([listSitemapEvents(), listAreas()]);
+      return sitemapXml(base, events, areas.map((a) => a.slug));
+    });
     res.type('application/xml; charset=utf-8').send(xml);
   } catch (err) {
     next(err);
