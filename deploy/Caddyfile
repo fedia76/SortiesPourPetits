@@ -1,4 +1,4 @@
-votre-domaine.fr {
+sortiespourpetits.fr {
 	encode zstd gzip
 
 	# Les fichiers du build portent un hash dans leur nom : ils ne changent
@@ -29,6 +29,6 @@ votre-domaine.fr {
 # l'autre doit rediriger. Deux domaines qui servent le même site, ce sont deux
 # fois les mêmes pages aux yeux d'un moteur.
 #
-# www.votre-domaine.fr {
-# 	redir https://votre-domaine.fr{uri} permanent
-# }
+ www.sortiespourpetits.fr {
+ 	redir https://sortiespourpetits.fr{uri} permanent
+ }
