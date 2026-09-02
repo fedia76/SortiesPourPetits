@@ -15,6 +15,13 @@ un appel au modèle sur le seul condensé de la page quand tout se tait. Les
 quatre premiers signaux ne coûtent rien ; le cinquième coûte quelques centaines
 de jetons, jamais la page entière — celle-là, l'extraction la paie déjà.
 
+C'est aussi ici que se règle la langue. Une page qui se déclare anglaise, ou
+dont l'adresse l'annonce (`/en/`), est échangée contre sa jumelle française
+quand le site en déclare une : voir [`language.py`](../language.py). Le faire
+à cet étage plutôt qu'à la lecture n'est pas indifférent — un agenda anglais
+ne mène qu'à des fiches anglaises, alors que le même agenda en français mène
+aux fiches françaises. Corriger la racine corrige la branche.
+
 Une page qu'on ne sait pas reconnaître part **en agenda**, et c'est délibéré :
 l'erreur n'est pas symétrique. Prendre une sortie pour un agenda coûte un appel
 de sélection et se rattrape tout seul — le dépouillement ne donne rien, et
@@ -27,8 +34,11 @@ corpus : de quoi, un jour, entraîner de quoi se passer du cinquième signal.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ..classify import AGENDA, INCONNU, PROGRAMME, SORTIE, Digest, Verdict, classify, digest
 from ..harvest import FetchError, links_of
+from ..language import french_version
 from ..models import FoundPage
 from ..providers.base import ProviderError
 from . import Stage
@@ -38,11 +48,17 @@ from .base import Brick
 class Identification(Brick):
     stage = Stage.IDENTIFY
 
-    def run(self, source: FoundPage) -> str | None:
-        """Rend « agenda », « sortie » ou « programme ». `None` si injoignable.
+    def run(self, source: FoundPage) -> tuple[str, FoundPage] | None:
+        """Rend la nature de la page et l'adresse retenue. `None` si injoignable.
 
-        `None` n'est pas un verdict : c'est l'absence de question posée. Une
-        page qu'on n'a pas pu lire ne va nulle part.
+        La nature vaut « agenda », « sortie » ou « programme ». `None` n'est
+        pas un verdict : c'est l'absence de question posée, une page qu'on n'a
+        pas pu lire ne va nulle part.
+
+        L'adresse rendue n'est pas toujours celle qu'on a reçue : c'est le
+        premier étage qui tient le HTML, donc le premier qui peut constater
+        qu'une page anglaise a une jumelle française — et c'est celle-là qu'il
+        faut dépouiller, puisque ses liens mèneront eux aussi au français.
         """
         url = source.url
         with self.opened(url=url, title=source.title) as st:
@@ -52,6 +68,9 @@ class Identification(Brick):
                 self.log.error("identify", str(err), url=url)
                 st.produced(f"injoignable : {err}")
                 return None
+
+            url, html = french_version(url, html, self.ctx.fetcher, self.log)
+            source = source if url == source.url else replace(source, url=url)
 
             liens = links_of(html, url)
             verdict = classify(html, url, links=len(liens))
@@ -70,7 +89,7 @@ class Identification(Brick):
                 nature=nature,
                 signal=verdict.signal,
             )
-            return nature
+            return nature, source
 
     # ------------------------------------------------------------ le recours
 

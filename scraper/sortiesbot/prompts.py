@@ -106,7 +106,9 @@ correspondant à la recherche, à la zone et à la période. Au plus $max_links.
 - les liens de navigation, de catégorie ou de pagination ;
 - les sorties dont le contexte indique clairement une date hors période ;
 - les sorties manifestement hors zone ;
-- ce qui ne correspond pas au thème demandé.
+- ce qui ne correspond pas au thème demandé ;
+- la version anglaise d'une page qui figure aussi en français dans la liste
+  (`/en/…`, `?lang=en`) : c'est le lien français qu'il faut retenir.
 
 Dans le doute sur une date ou un lieu que le contexte n'indique pas, retiens
 le lien : la page sera lue ensuite et pourra encore être écartée.

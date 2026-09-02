@@ -39,6 +39,13 @@ USER_AGENT = (
     "recherche de sorties familiales)"
 )
 
+#: La langue qu'on demande. Beaucoup de sites servent deux versions à la même
+#: adresse et tranchent sur cet en-tête : sans lui, c'est souvent l'anglais qui
+#: arrive, alors qu'une version française existe. C'est la moitié gratuite du
+#: problème ; l'autre — les sites qui ont une adresse par langue — est traitée
+#: dans `language.py`.
+ACCEPT_LANGUAGE = "fr-FR,fr;q=0.9,en;q=0.3"
+
 TIMEOUT = 20
 #: Délai minimum entre deux requêtes vers le même hôte.
 CRAWL_DELAY = 1.0
@@ -93,6 +100,7 @@ class Fetcher:
     ):
         self.session = session or requests.Session()
         self.session.headers["User-Agent"] = USER_AGENT
+        self.session.headers["Accept-Language"] = ACCEPT_LANGUAGE
         self._robots: dict[str, RobotFileParser | None] = {}
         self._last_call: dict[str, float] = {}
         #: Dossier où déposer chaque page téléchargée. Sert à constituer des

@@ -73,7 +73,7 @@ class Publication(Brick):
         self, extracted: ExtractedEvent, candidate: Candidate, page: PageContent
     ) -> None:
         """Publie une fiche, ou l'écarte en journalisant pourquoi."""
-        with self.opened(url=candidate.url, title=extracted.title) as st:
+        with self.opened(url=page.url, title=extracted.title) as st:
             self._publish(extracted, candidate, page, st)
 
     def _publish(
@@ -85,7 +85,12 @@ class Publication(Brick):
     ) -> None:
         config, log, store = self.config, self.log, self.ctx.store
         summary = self.summary
-        url = candidate.url
+        # L'adresse de la page **lue**, qui n'est pas toujours celle qu'on
+        # avait repérée : la lecture a pu lui préférer sa version française.
+        # C'est celle-là qu'on mémorise et qu'on propose au site, sans quoi la
+        # sortie partirait avec un lien dont le contenu n'est pas celui d'où
+        # elle a été tirée.
+        url = page.url
     
         # Sur une page de programme, l'unité mémorisable n'est pas la page mais
         # chacune de ses sorties : sinon un programme lu une fois ne serait plus
