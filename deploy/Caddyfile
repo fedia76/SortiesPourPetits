@@ -25,10 +25,7 @@ sortiespourpetits.fr {
 	}
 }
 
-# À décommenter une fois le domaine choisi : une seule adresse doit répondre,
-# l'autre doit rediriger. Deux domaines qui servent le même site, ce sont deux
-# fois les mêmes pages aux yeux d'un moteur.
-#
- www.sortiespourpetits.fr {
- 	redir https://sortiespourpetits.fr{uri} permanent
- }
+
+www.sortiespourpetits.fr {
+	redir https://sortiespourpetits.fr{uri} permanent
+}
