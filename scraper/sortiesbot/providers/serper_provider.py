@@ -27,6 +27,13 @@ Une requête par appel : la documentation publique ne garantit pas qu'un envoi
 groupé soit accepté, et six requêtes de plus ne valent pas un pari sur une
 forme non vérifiée.
 
+La mécanique HTTP elle-même — poster, lire, facturer — est dans
+`serper_client.py`, parce qu'un second appelant en a eu besoin : l'étage
+attribution cherche la page officielle d'une sortie, et il doit pouvoir le
+faire même quand la configuration tourne avec le fournisseur `anthropic`. Ce
+qui reste ici est la seule chose que le moteur ne sait pas faire tout seul :
+tourner des résultats en pages à reconnaître.
+
 ## Ce que le service rend vraiment
 
 Vérifié le 1er septembre 2026 contre le service, par
@@ -45,35 +52,15 @@ puisqu'elle ne compte jamais dessus.
 
 from __future__ import annotations
 
-import json
 from typing import Any
-from urllib.parse import urlsplit
-
-import requests
 
 from ..config import Config
-from ..harvest import Link
+from ..harvest import Link, in_domains
 from ..journal import RunLog
 from ..models import ExtractedEvent, FoundPage, Usage
 from ..store import normalize_url
 from .base import Provider, ProviderError
-
-ENDPOINT = "https://google.serper.dev/search"
-
-TIMEOUT = 30
-
-#: Tarif du palier d'entrée : 50 $ les 50 000 crédits.
-PRICE_PER_CREDIT_USD = 0.001
-
-#: Ce qu'une requête consomme quand la réponse ne le dit pas. Elle le dit
-#: presque toujours — voir `_charge` — et c'est mieux ainsi : combien coûte un
-#: appel est une question à laquelle le service répond, pas nous.
-CREDITS_FALLBACK = 1
-
-#: Résultats demandés par requête. Dix tiennent dans un crédit, et la
-#: reconnaissance télécharge chacun d'eux : en demander cent reviendrait à
-#: promettre cent téléchargements et cent secondes de politesse.
-RESULTS_PER_QUERY = 10
+from .serper_client import RESULTS_PER_QUERY, SerperClient
 
 
 class SerperProvider:
@@ -82,14 +69,11 @@ class SerperProvider:
     name = "serper"
 
     def __init__(self, model: Provider, api_key: str | None = None, session: Any = None):
-        if not api_key:
-            raise ProviderError(
-                "SERPER_API_KEY est requis pour le fournisseur « serper » "
-                "(voir .env.example)"
-            )
         self._model = model
-        self._key = api_key
-        self._session = session or requests.Session()
+        # Sans clé, `SerperClient` refuse de se construire : une configuration
+        # qui nomme ce fournisseur et n'a pas de clé doit échouer tout de
+        # suite, pas au premier run.
+        self._client = SerperClient(api_key, session=session)
 
     @property
     def usage(self) -> Usage:
@@ -140,50 +124,15 @@ class SerperProvider:
         return list(found.values())
 
     def _ask(self, query: str, config: Config) -> list[dict[str, Any]]:
-        """Une requête, ses résultats organiques. Lève `ProviderError` sinon."""
-        payload = {
-            "q": query,
-            "gl": "fr",
-            "hl": "fr",
-            "num": RESULTS_PER_QUERY,
-        }
-        try:
-            response = self._session.post(
-                ENDPOINT,
-                headers={"X-API-KEY": self._key, "Content-Type": "application/json"},
-                data=json.dumps(payload),
-                timeout=TIMEOUT,
-            )
-        except requests.RequestException as err:
-            raise ProviderError(f"moteur injoignable ({err.__class__.__name__})") from err
-
-        if response.status_code == 403:
-            raise ProviderError("clé Serper refusée (403)")
-        if response.status_code == 429:
-            raise ProviderError("quota Serper dépassé (429)")
-        if response.status_code >= 400:
-            raise ProviderError(f"moteur en erreur (HTTP {response.status_code})")
-
-        try:
-            data = response.json()
-        except ValueError as err:
-            raise ProviderError("réponse du moteur illisible") from err
-
-        self._charge(data.get("credits"))
-        organic = data.get("organic")
-        return [r for r in organic if isinstance(r, dict)] if isinstance(organic, list) else []
-
-    def _charge(self, credits: Any) -> None:
-        """Impute la requête au compteur du run, au tarif du moteur.
+        """Une requête, ses résultats organiques, et sa facture au compteur.
 
         Le nombre de crédits est **lu dans la réponse** plutôt que déduit du
-        nombre de résultats demandés : le service le dit, et une règle de
-        notre cru finirait par diverger de sa grille. Le repli ne sert que si
-        le champ venait à disparaître.
+        nombre de résultats demandés : le service le dit, et une règle de notre
+        cru finirait par diverger de sa grille.
         """
-        self.usage.web_searches += 1
-        consommes = credits if isinstance(credits, int) and credits > 0 else CREDITS_FALLBACK
-        self.usage.search_cost_usd += consommes * PRICE_PER_CREDIT_USD
+        reply = self._client.ask(query, num=RESULTS_PER_QUERY)
+        reply.bill(self.usage)
+        return reply.results
 
     @staticmethod
     def _blocked(url: str, config: Config) -> bool:
@@ -191,11 +140,9 @@ class SerperProvider:
 
         L'outil serveur d'Anthropic prenait la liste en paramètre. Serper ne le
         propose pas, et un `-site:` par domaine dans la requête la rallongerait
-        sans garantie. Trois lignes de Python font le même travail.
+        sans garantie. Une ligne de Python fait le même travail.
         """
-        host = urlsplit(url).netloc.lower()
-        host = host[4:] if host.startswith("www.") else host
-        return any(host == d or host.endswith(f".{d}") for d in config.blocked_domains)
+        return in_domains(url, config.blocked_domains)
 
     # ---------------------------- les quatre autres appels restent au modèle
 

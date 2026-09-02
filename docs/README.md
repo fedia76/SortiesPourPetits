@@ -28,7 +28,14 @@ par Anthropic. Deux conséquences :
 * le **verdict** sur le modèle maison est une recommandation, pas une décision
   prise. Rien n'a été implémenté dans ce sens.
 
-En revanche, la description du pipeline est tenue à jour avec le code : le
-tableau des six étages du [README du scraper](../scraper/README.md) et le
-vocabulaire de `sortiesbot/stages/__init__.py` en sont la source, et la console
-d'administration dessine son graphe à partir du même vocabulaire.
+Le **nombre d'étages** a bougé depuis, et ces deux planches dessinent encore
+les six briques d'alors. Deux se sont ajoutées après : la *reconnaissance*
+(étage 2), qui constate la nature d'une page sur son HTML, et l'*attribution*
+(étage 7), qui remonte d'un agrégateur à la page de l'organisateur. Ce que les
+planches disent des six autres reste juste.
+
+La description du pipeline, elle, est tenue à jour avec le code : le tableau
+des huit étages du [README du scraper](../scraper/README.md) et le vocabulaire
+de `sortiesbot/stages/__init__.py` en sont la source, et la console
+d'administration dessine son graphe à partir du même vocabulaire — c'est ce
+qui garantit qu'elle, au moins, ne peut pas dater.

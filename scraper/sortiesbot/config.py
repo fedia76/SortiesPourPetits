@@ -47,6 +47,30 @@ MODES = (MODE_SEARCH, MODE_SITE)
 #: Qui lance les recherches. Le modèle reste derrière dans les deux cas.
 PROVIDERS = ("anthropic", "serper")
 
+#: Sites qui **republient** l'information sans en être la source. On les lit
+#: volontiers — ce sont d'excellents agendas, c'est même pour ça qu'ils
+#: remontent en tête des recherches — mais leur URL n'est jamais celle qu'on
+#: propose au parent : derrière chaque fiche il y a un musée, un théâtre, une
+#: mairie, et c'est sa page qui fait autorité. Distincte de
+#: `DEFAULT_BLOCKED_DOMAINS`, qui, elle, empêche de lire.
+DEFAULT_AGGREGATOR_DOMAINS = [
+    "kidiklik.fr",
+    "citizenkid.com",
+    "parismomes.fr",
+    "familyinparis.fr",
+    "sortiraparis.com",
+    "parisetudiant.com",
+    "unjourdeplusaparis.com",
+    "offi.fr",
+    "timeout.fr",
+    "lylo.fr",
+    "petitfute.com",
+    "tripadvisor.fr",
+    "infolocale.fr",
+    "wherevent.com",
+    "agendaculturel.fr",
+]
+
 DEFAULT_BLOCKED_DOMAINS = [
     # Pages non lisibles ou sans contenu exploitable.
     "facebook.com",
@@ -99,6 +123,17 @@ class Config:
     #: si `keep_out_of_scope` est désactivé.
     postal_prefixes: list[str] = field(default_factory=lambda: list(IDF_POSTAL_PREFIXES))
     blocked_domains: list[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_DOMAINS))
+    #: Sites dont l'URL ne peut jamais servir de source (voir la constante).
+    #: Les vider ne désactive pas l'attribution : une fiche d'organisateur qui
+    #: renvoie chez lui reste préférable, d'où qu'elle vienne.
+    aggregator_domains: list[str] = field(
+        default_factory=lambda: list(DEFAULT_AGGREGATOR_DOMAINS)
+    )
+    #: Autorise l'étage attribution à **chercher** la page officielle quand la
+    #: page lue ne la porte pas. C'est le seul appel payant de cet étage
+    #: (~0,001 $ la fiche) et le seul qui puisse être coupé : les signaux
+    #: gratuits, eux, tournent toujours.
+    source_search: bool = True
     provider: str = "anthropic"
     #: Chacun des trois appels est borné : Haiku suffit partout.
     #: Modèle qui tranche la nature d'une page quand les signaux certains se
@@ -330,6 +365,10 @@ def config_from_api(raw: dict[str, Any]) -> Config:
             default_category=str(raw.get("defaultCategory") or defaults.default_category),
             postal_prefixes=_split(raw.get("postalPrefixes"), defaults.postal_prefixes),
             blocked_domains=_split(raw.get("blockedDomains"), defaults.blocked_domains),
+            aggregator_domains=_split(
+                raw.get("aggregatorDomains"), defaults.aggregator_domains
+            ),
+            source_search=bool(raw.get("sourceSearch", defaults.source_search)),
             provider=str(raw.get("provider") or defaults.provider).strip().lower(),
             queries=_lines(raw.get("queries")),
             classify_model=str(raw.get("classifyModel", defaults.classify_model)),
@@ -429,6 +468,8 @@ def describe(config: Config) -> dict[str, Any]:
         "max_agendas": config.max_agendas,
         "max_next_pages": config.max_next_pages,
         "provider": config.provider,
+        "aggregator_domains": list(config.aggregator_domains),
+        "source_search": config.source_search,
         "queries": list(config.queries),
         "classify_model": config.classify_model,
         "search_model": config.search_model,

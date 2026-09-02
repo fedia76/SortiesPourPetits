@@ -152,12 +152,15 @@ def test_le_journal_distant_tronque_ce_qui_ferait_refuser_le_paquet():
 
 
 def test_le_graphe_part_avec_le_premier_evenement():
-    """`run_start` porte les six étages : la console dessine sans rien deviner."""
+    """`run_start` porte les huit étages : la console dessine sans rien deviner."""
     from sortiesbot.journal import _wire
     from sortiesbot.stages import describe
 
     entry = _wire({"seq": 1, "kind": "run_start", "level": "info", "stages": describe()})
-    assert [s["number"] for s in entry["data"]["stages"]] == [1, 2, 3, 4, 5, 6, 7]
+    assert [s["number"] for s in entry["data"]["stages"]] == [1, 2, 3, 4, 5, 6, 7, 8]
+    # L'attribution est la septième, entre l'extraction et la publication : sa
+    # place dans le graphe est ce que la console dessine.
+    assert [s["label"] for s in entry["data"]["stages"]][6:] == ["Attribution", "Publication"]
 
 
 def test_la_filiation_descend_sur_toute_la_piste():

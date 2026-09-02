@@ -126,6 +126,12 @@ def _clean_dates(
     return False, start.isoformat(), end.isoformat()
 
 
+def _url_or_none(url: str) -> str | None:
+    """Une URL acceptable pour le site, ou rien. Jamais une chaîne bancale."""
+    url = (url or "").strip()
+    return url[:SOURCE_URL_MAX] if url.startswith("http") else None
+
+
 def build_payload(
     event: ExtractedEvent,
     location: Location,
@@ -133,8 +139,23 @@ def build_payload(
     source_url: str,
     today: date | None = None,
     until: date | None = None,
+    found_on_url: str = "",
+    source_url_signal: str = "",
 ) -> dict[str, Any]:
-    """Corps prêt pour l'API, ou `Rejected` avec le motif."""
+    """Corps prêt pour l'API, ou `Rejected` avec le motif.
+
+    `source_url` est le **meilleur lien connu** — la page de l'organisateur
+    quand l'étage attribution l'a trouvée et vérifiée, la page lue sinon.
+    C'est celui que la fiche montre au parent, et c'est pourquoi il garde le
+    nom qu'il a toujours eu : rien, côté site, n'a besoin d'apprendre un
+    second champ pour continuer à marcher.
+
+    `found_on_url` est la page que le scraper a réellement lue, quand elle
+    diffère. C'est de la provenance : elle sert au modérateur, qui veut savoir
+    d'où sort une proposition, et au débogage. `source_url_signal` dit lequel
+    des signaux de la cascade a désigné la source, donc quelle confiance lui
+    accorder.
+    """
     today = today or date.today()
 
     title = _truncate(event.title, TITLE_MAX)
@@ -172,7 +193,11 @@ def build_payload(
     return {
         "title": title,
         "description": description,
-        "sourceUrl": source_url[:SOURCE_URL_MAX] if source_url.startswith("http") else None,
+        "sourceUrl": _url_or_none(source_url),
+        # Provenance : renseignée seulement quand elle apprend quelque chose,
+        # c'est-à-dire quand la source n'est pas la page qu'on a lue.
+        "foundOnUrl": _url_or_none(found_on_url),
+        "sourceUrlSignal": source_url_signal or None,
         "isFree": bool(event.free),
         "price": None if event.free else round(float(price), 2),  # type: ignore[arg-type]
         "ageMin": age_min,

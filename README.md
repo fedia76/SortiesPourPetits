@@ -20,9 +20,12 @@ communauté et validées par une équipe de modération.
   niveaux — `USER` (propose des sorties), `MODERATOR` (approuve ou refuse),
   `ADMIN` (gère les rôles des utilisateurs).
 - **Sorties** : titre, description, prix ou gratuit, photo, lien vers la
-  source de l'événement (facultatif), tranche d'âge (facultative), dates de
-  début/fin ou événement permanent (facultatives), horaires d'ouverture par
-  jour et cadre intérieur/extérieur/les deux (facultatifs), lieu géolocalisé.
+  source de l'événement (facultatif — et, pour une sortie trouvée par la
+  recherche automatique, celui de l'organisateur plutôt que de l'agenda qui la
+  republiait, voir « Remonter à la source » dans le README du scraper),
+  tranche d'âge (facultative), dates de début/fin ou événement permanent
+  (facultatives), horaires d'ouverture par jour et cadre
+  intérieur/extérieur/les deux (facultatifs), lieu géolocalisé.
   Les jours de représentation se prennent au calendrier, plusieurs d'affilée :
   un spectacle qui se joue quinze fois se saisit en quinze clics.
 - **Modération** : toute proposition passe en attente ; seules les sorties
@@ -48,8 +51,9 @@ communauté et validées par une équipe de modération.
   filtrables par verdict. Les oublier les rend à nouveau lisibles — utile pour
   relire un site qui était en panne, sans réexposer ce qui est déjà proposé.
 - **Débogage d'une exécution** : depuis la page d'une exécution, une vue qui
-  dessine le **graphe des six étages** du scraper — découverte, dépouillement,
-  sélection, lecture, extraction, publication — avec, sur chaque brique, ce
+  dessine le **graphe des huit étages** du scraper — découverte,
+  reconnaissance, dépouillement, sélection, lecture, extraction, attribution,
+  publication — avec, sur chaque brique, ce
   qu'elle reçoit, ce qu'elle rend, ce qu'elle a produit et combien de temps
   elle a pris. Le journal complet est en dessous : chaque requête lancée,
   chaque lien extrait puis retenu, chaque prompt envoyé, chaque jeton
@@ -128,7 +132,7 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | POST / PATCH / DELETE | `/api/categories[/:id]` | admin | Gérer les catégories |
 | GET | `/api/scraper/stats` | modérateur | Statistiques du scraping (`configId`, `days`) |
 | GET | `/api/scraper/runs/:id/logs` | modérateur | Journal détaillé d'une exécution (`stage`, `kind`, `level`, `url`, `q`, `after`, `limit`) |
-| GET | `/api/scraper/runs/:id/graph` | modérateur | Les six étages du pipeline, avec ce que chacun a produit |
+| GET | `/api/scraper/runs/:id/graph` | modérateur | Les huit étages du pipeline, avec ce que chacun a produit |
 | GET | `/api/scraper/runs/:id/tree` | modérateur | L'arbre du run : requête → agenda → liens → sorties |
 | DELETE | `/api/scraper/runs/:id/logs` | modérateur | Oublier le journal détaillé (les compteurs restent) |
 | GET | `/api/scraper/memory` | modérateur | Mémoire des pages analysées (`q`, `decision`, `page`) |
