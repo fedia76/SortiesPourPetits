@@ -78,6 +78,21 @@ Une exécution est close **quoi qu'il arrive**, y compris sur un plantage :
 sans clôture elle resterait « En cours » dans la console, et bloquerait toute
 nouvelle exécution de la même configuration.
 
+Encore faut-il que le site réponde. Il ne répond pas toujours — un
+déploiement le redémarre — et une clôture perdue ne se rattrapait pas : la
+ligne restait « En cours » pour toujours. Deux filets, désormais :
+
+- le worker **réessaie sa clôture** trois fois, à deux, quatre puis huit
+  secondes d'intervalle ; c'est la durée d'un redémarrage de l'API ;
+- le site **ferme d'office** une exécution dont il n'a plus aucune trace —
+  ni journal, ni page — depuis trente minutes. Le seuil est large parce qu'un
+  appel au modèle peut rester muet un quart d'heure ; une demi-heure de
+  silence complet, elle, ne s'explique par aucun travail en cours. Le ménage
+  se fait au passage du worker et au moment de lancer une recherche.
+
+Ces deux filets ne se remplacent pas : le premier garde les compteurs et le
+verdict du run, le second ne sait que constater le décès.
+
 ### En ligne de commande
 
 ```bash

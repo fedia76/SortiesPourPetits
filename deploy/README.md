@@ -293,13 +293,18 @@ journalctl -u sortiespourpetits-scraper -f     # ce qu'il fait en direct
 Il lui faut les deux clés (`CLAUDE_KEY` **et** `SPP_API_KEY`) : il refuse de
 démarrer sans, et le journal le dit. Une exécution qui reste « En file » dans
 la console veut généralement dire que le worker est arrêté ; une exécution
-bloquée sur « En cours » se débloque avec le bouton « Annuler ».
+bloquée sur « En cours » se ferme d'elle-même au bout de trente minutes sans
+la moindre trace — le bouton « Annuler » ne sert plus qu'à ne pas attendre.
 
 Un arrêt (`systemctl stop`, ou un redémarrage de déploiement) laisse
 l'exécution en cours aller au bout : le worker attrape le signal, finit ce
 qu'il a commencé et ne prend plus de travail. Au-delà de dix minutes systemd
-le tue quand même ; l'exécution reste alors « En cours » dans la console, et
-le bouton « Annuler » la débloque.
+le tue quand même : l'exécution passe alors « En cours » sans personne
+derrière, et le site la ferme d'office une demi-heure plus tard.
+
+Un déploiement pendant une recherche lui coûte en revanche les appels qui
+tombent au moment où l'API redémarre — une sortie non soumise, au pire. Le
+worker rejoue les connexions refusées, mais pas ce qui était déjà parti.
 
 ### Lancer une recherche à la main
 
