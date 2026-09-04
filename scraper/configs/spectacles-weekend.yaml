@@ -37,6 +37,14 @@ keep_out_of_scope: true
 # Un géocodage hors de ces départements est traité comme un échec.
 postal_prefixes: ["75", "77", "78", "91", "92", "93", "94", "95"]
 
+# Lire les agrégateurs — kidiklik, citizenkid, sortiraparis — puis remonter à
+# la page de l'organisateur, qui est celle qu'on propose. Passer à true pour
+# ne pas les lire du tout : ils rejoignent alors les domaines écartés, ce qui
+# revient à se priver des agendas les mieux fournis. Depuis la console, la
+# liste est commune à toutes les recherches (« Recherche auto → Agrégateurs »)
+# et seule cette case se règle recherche par recherche.
+block_aggregators: false
+
 # Domaines écartés d'office (pages illisibles ou sans contenu exploitable).
 blocked_domains:
   - facebook.com

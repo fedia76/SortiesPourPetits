@@ -188,7 +188,19 @@ onUnmounted(() => clearInterval(timer));
 
       <div class="stats">
         <div class="stat"><b>{{ run.candidates }}</b><span>pages candidates</span></div>
-        <div class="stat"><b>{{ run.pages }}</b><span>pages lues</span></div>
+        <div class="stat">
+          <b>{{ run.pages - run.nextPages }}</b>
+          <span>agendas dépouillés</span>
+        </div>
+        <!-- Une pagination suivie n'ouvre pas un agenda de plus : elle coûte
+             des pages, pas des sources. Les deux compteurs le disent. -->
+        <div class="stat">
+          <b>{{ run.pages }}</b>
+          <span>
+            pages téléchargées
+            <template v-if="run.nextPages">— dont {{ run.nextPages }} suivante(s)</template>
+          </span>
+        </div>
         <div class="stat"><b>{{ run.retained }}</b><span>sorties retenues</span></div>
         <div class="stat"><b>{{ run.submitted }}</b><span>proposées</span></div>
         <div class="stat"><b>{{ run.duplicates }}</b><span>doublons</span></div>

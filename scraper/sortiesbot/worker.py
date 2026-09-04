@@ -100,6 +100,7 @@ def counters(summary: Summary) -> dict[str, Any]:
     return {
         "candidates": summary.candidates,
         "pages": summary.pages,
+        "nextPages": summary.next_pages,
         "retained": summary.retained,
         "submitted": summary.submitted,
         "duplicates": summary.duplicates,

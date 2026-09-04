@@ -42,8 +42,7 @@ function blank() {
     keepOutOfScope: true,
     defaultCategory: 'Non classé',
     postalPrefixes: '75,77,78,91,92,93,94,95',
-    blockedDomains: '',
-    aggregatorDomains: '',
+    blockAggregators: false,
     sourceSearch: true,
     provider: 'anthropic' as 'anthropic' | 'serper',
     queries: '',
@@ -224,6 +223,7 @@ onUnmounted(() => clearInterval(timer));
     <h1>Recherche automatique</h1>
     <nav class="row" style="gap: 1rem; margin-bottom: 1rem">
       <RouterLink to="/admin/scraper">Recherches et exécutions</RouterLink>
+      <RouterLink to="/admin/scraper/agregateurs">Agrégateurs</RouterLink>
       <RouterLink to="/admin/scraper/stats">Statistiques</RouterLink>
       <RouterLink to="/admin/scraper/memoire">Mémoire</RouterLink>
     </nav>
@@ -407,24 +407,19 @@ onUnmounted(() => clearInterval(timer));
           </div>
 
           <div class="field">
-            <label for="s-blocked">Domaines bloqués</label>
-            <input id="s-blocked" v-model="form.blockedDomains" type="text" maxlength="2000" />
-            <span class="hint">Séparés par des virgules. Laissez vide pour la liste par défaut.</span>
-          </div>
-
-          <div class="field">
-            <label for="s-aggregators">Agrégateurs</label>
-            <input
-              id="s-aggregators"
-              v-model="form.aggregatorDomains"
-              type="text"
-              maxlength="2000"
-            />
+            <label class="checkbox">
+              <input v-model="form.blockAggregators" type="checkbox" />
+              Ne pas lire les agrégateurs
+            </label>
             <span class="hint">
-              Sites qui republient sans être la source — kidiklik, citizenkid, parismômes.
-              On les lit quand même : ce sont de bons agendas. Mais quand une sortie vient
-              de là, le scraper remonte à la page de l'organisateur et c'est elle qu'il
-              propose. Séparés par des virgules ; vide pour la liste par défaut.
+              Les agrégateurs — kidiklik, citizenkid, parismômes — republient sans être la
+              source. Décoché (le cas normal), on les lit : ce sont de bons agendas, et le
+              scraper remonte ensuite à la page de l'organisateur, qui est celle qu'il
+              propose. Coché, ils sont écartés comme les réseaux sociaux : la recherche les
+              exclut et aucune de leurs pages n'est ouverte — c'est renoncer aux agendas les
+              mieux fournis du web francophone, à réserver aux recherches qui veulent du
+              premier ressort. La liste est commune à toutes les recherches :
+              <RouterLink to="/admin/scraper/agregateurs">elle se tient ici</RouterLink>.
             </span>
           </div>
 

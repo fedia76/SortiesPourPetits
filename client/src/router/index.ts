@@ -78,6 +78,17 @@ const router = createRouter({
       },
     },
     {
+      path: '/admin/scraper/agregateurs',
+      name: 'admin-scraper-aggregators',
+      component: () => import('../views/AdminAggregatorsView.vue'),
+      meta: {
+        title: 'Agrégateurs',
+        noindex: true,
+        requiresAuth: true,
+        requiresModerator: true,
+      },
+    },
+    {
       path: '/admin/scraper/stats',
       name: 'admin-scraper-stats',
       component: () => import('../views/AdminScraperStatsView.vue'),

@@ -68,7 +68,17 @@ _CONSOLE = {
         f"  ▤ programme dépouillé : {f.get('found')} sortie(s) relevée(s) "
         f"sur {f.get('chars')} caractères"
     ),
-    "harvested": lambda f: f"  🔗 {f.get('links')} lien(s) extrait(s) : {f.get('url')}",
+    "harvested": lambda f: (
+        f"  🔗 {f.get('links')} lien(s) extrait(s) : {f.get('url')}"
+        if not f.get("new")
+        else f"  🔗 {f.get('new')} lien(s) de plus ({f.get('links')} en tout) "
+        f"page {f.get('page_no')} : {f.get('url')}"
+    ),
+    # Une page suivante n'est pas un agenda de plus : c'est le même, plus loin.
+    "next_page": lambda f: (
+        f"  ⇢ page {f.get('page_no')} du même agenda "
+        f"({f.get('links')} lien(s) jusqu'ici, plafond {f.get('budget')}) : {f.get('url')}"
+    ),
     "link": lambda f: f"     · [{f.get('index')}] {f.get('text')} → {f.get('url')}",
     "link_kept": lambda f: (
         f"     ✔ retenu : {f.get('text')}"
@@ -94,7 +104,8 @@ _CONSOLE = {
     ),
     "nothing_found": lambda f: (
         "  ∅ aucun candidat retenu — "
-        f"{f.get('searches')} recherche(s), {f.get('pages')} agenda(s) dépouillé(s)"
+        f"{f.get('searches')} recherche(s), {f.get('agendas')} agenda(s) dépouillé(s)"
+        + (f" ({f.get('next_pages')} page(s) suivante(s))" if f.get("next_pages") else "")
     ),
     "search_result": lambda f: f"     · {f.get('url')}",
     "candidate": lambda f: f"  ★ candidat : {f.get('title')} — {f.get('url')}",

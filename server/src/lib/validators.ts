@@ -289,11 +289,9 @@ export const scraperConfigSchema = z.object({
   keepOutOfScope: z.boolean().optional(),
   defaultCategory: z.string().trim().min(2).max(50).optional(),
   postalPrefixes: z.string().trim().max(200).optional(),
-  blockedDomains: z.string().trim().max(2000).optional(),
-  // Sites qui republient sans être la source. Vide : la liste intégrée au
-  // scraper s'applique — la vider ne désactive donc pas l'attribution, elle
-  // la ramène à son défaut.
-  aggregatorDomains: z.string().trim().max(2000).optional(),
+  // La liste des agrégateurs est commune au site (voir `aggregatorSchema`) :
+  // une recherche ne la porte plus, elle décide seulement de les lire ou non.
+  blockAggregators: z.boolean().optional(),
   // Le seul appel payant de l'attribution, et donc le seul qu'on puisse
   // couper. Les signaux gratuits, eux, tournent toujours.
   sourceSearch: z.boolean().optional(),
@@ -314,6 +312,37 @@ export const scraperConfigSchema = z.object({
 });
 
 export const scraperConfigUpdateSchema = scraperConfigSchema.partial();
+
+/**
+ * Un agrégateur de la liste commune.
+ *
+ * Le domaine est normalisé ici et nulle part ailleurs : on colle volontiers
+ * une URL entière depuis la barre d'adresse, et « https://www.kidiklik.fr/
+ * paris/ » doit devenir « kidiklik.fr » sans que personne ait à le savoir.
+ * Sans cette normalisation, deux lignes décriraient le même site et l'une des
+ * deux ne servirait jamais — le scraper compare des hôtes, pas des adresses.
+ */
+export const aggregatorSchema = z.object({
+  domain: z
+    .string()
+    .trim()
+    .min(3, 'Domaine trop court')
+    .max(190)
+    .transform((value) =>
+      value
+        .toLowerCase()
+        .replace(/^[a-z]+:\/\//, '')
+        .replace(/^www\./, '')
+        .replace(/[/?#].*$/, '')
+        .replace(/\.$/, ''),
+    )
+    .refine((value) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(value), 'Domaine invalide'),
+  label: z.string().trim().max(80).optional(),
+  enabled: z.boolean().optional(),
+  note: z.string().trim().max(1000).optional(),
+});
+
+export const aggregatorUpdateSchema = aggregatorSchema.partial();
 
 /**
  * Ce qui lie le mode au reste de la configuration, vérifié sur la ligne
@@ -412,6 +441,8 @@ export const scraperFinishSchema = z.object({
   error: z.string().trim().max(2000).optional(),
   candidates: z.number().int().min(0).optional(),
   pages: z.number().int().min(0).optional(),
+  // Celles des pages qui n'étaient pas la première d'un agenda.
+  nextPages: z.number().int().min(0).optional(),
   retained: z.number().int().min(0).optional(),
   submitted: z.number().int().min(0).optional(),
   duplicates: z.number().int().min(0).optional(),

@@ -99,6 +99,7 @@ function decisionLabel(decision: string) {
     <h1>Recherche automatique — statistiques</h1>
     <nav class="row" style="gap: 1rem; margin-bottom: 1rem">
       <RouterLink to="/admin/scraper">Recherches et exécutions</RouterLink>
+      <RouterLink to="/admin/scraper/agregateurs">Agrégateurs</RouterLink>
       <RouterLink to="/admin/scraper/stats">Statistiques</RouterLink>
       <RouterLink to="/admin/scraper/memoire">Mémoire</RouterLink>
     </nav>
@@ -136,8 +137,15 @@ function decisionLabel(decision: string) {
           <span class="label">exécution(s)</span>
         </div>
         <div class="card tile">
-          <span class="value">{{ stats.totals.pages }}</span>
-          <span class="label">agendas dépouillés</span>
+          <span class="value">{{ stats.totals.agendas }}</span>
+          <!-- Un agenda paginé compte pour un : ses pages suivantes coûtent des
+               téléchargements, elles n'ajoutent pas une source. -->
+          <span class="label">
+            agendas dépouillés
+            <template v-if="stats.totals.nextPages">
+              ({{ stats.totals.pages }} pages, dont {{ stats.totals.nextPages }} suivantes)
+            </template>
+          </span>
         </div>
         <div class="card tile">
           <span class="value">{{ stats.totals.submitted }}</span>

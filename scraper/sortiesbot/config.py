@@ -126,9 +126,19 @@ class Config:
     #: Sites dont l'URL ne peut jamais servir de source (voir la constante).
     #: Les vider ne désactive pas l'attribution : une fiche d'organisateur qui
     #: renvoie chez lui reste préférable, d'où qu'elle vienne.
+    #:
+    #: Côté site, cette liste n'appartient plus à une recherche : elle est
+    #: commune, tenue dans la page « Agrégateurs » de la console, et le serveur
+    #: l'envoie ici telle qu'elle est au moment du run.
     aggregator_domains: list[str] = field(
         default_factory=lambda: list(DEFAULT_AGGREGATOR_DOMAINS)
     )
+    #: Ne pas seulement remonter à la source depuis un agrégateur : ne pas le
+    #: lire du tout. Les agrégateurs rejoignent alors `blocked_domains`, donc
+    #: la recherche les exclut et le dépouillement les refuse. À réserver aux
+    #: recherches qui veulent du premier ressort — c'est aussi renoncer aux
+    #: meilleurs agendas du web francophone.
+    block_aggregators: bool = False
     #: Autorise l'étage attribution à **chercher** la page officielle quand la
     #: page lue ne la porte pas. C'est le seul appel payant de cet étage
     #: (~0,001 $ la fiche) et le seul qui puisse être coupé : les signaux
@@ -286,7 +296,24 @@ def validated(config: Config) -> Config:
             raise ConfigError(f"URL de départ invalide : « {url} » (http:// ou https:// attendu)")
     if config.mode == MODE_SITE and not urls:
         raise ConfigError("le mode « site » réclame au moins une URL de départ (seed_urls)")
-    return replace(config, seed_urls=urls)
+    return replace(config, seed_urls=urls, blocked_domains=_blocked(config))
+
+
+def _blocked(config: Config) -> list[str]:
+    """Les domaines qu'on refuse de lire, agrégateurs compris s'il le faut.
+
+    La case « bloquer les agrégateurs » ne tient pas une seconde liste : elle
+    verse la liste commune dans celle des domaines bloqués, une fois pour
+    toutes, au chargement. Les quatre endroits qui refusent une page — la
+    recherche, le dépouillement, la lecture, l'attribution — continuent de ne
+    connaître que `blocked_domains`, et le réglage n'a pas eu à s'y répandre.
+
+    Idempotent : recharger une configuration déjà fusionnée ne la duplique pas.
+    """
+    blocked = list(config.blocked_domains)
+    if config.block_aggregators:
+        blocked += [d for d in config.aggregator_domains if d not in blocked]
+    return blocked
 
 
 def _lines(value: Any) -> list[str]:
@@ -364,9 +391,22 @@ def config_from_api(raw: dict[str, Any]) -> Config:
             keep_out_of_scope=bool(raw.get("keepOutOfScope", defaults.keep_out_of_scope)),
             default_category=str(raw.get("defaultCategory") or defaults.default_category),
             postal_prefixes=_split(raw.get("postalPrefixes"), defaults.postal_prefixes),
-            blocked_domains=_split(raw.get("blockedDomains"), defaults.blocked_domains),
-            aggregator_domains=_split(
-                raw.get("aggregatorDomains"), defaults.aggregator_domains
+            # Pas de `blockedDomains` : les pages illisibles (réseaux sociaux)
+            # sont un fait du web, pas un réglage de recherche, et restent
+            # celles du scraper. Ce qu'une recherche décide, c'est d'y ajouter
+            # ou non les agrégateurs — d'où la case ci-dessous.
+            #
+            # `aggregatorDomains` présent fait foi, même vide : c'est le site
+            # qui tient la liste, et l'avoir vidée exprès ne doit pas
+            # ressusciter celle du scraper. Absent (un appel qui l'ignore) :
+            # le défaut intégré, comme avant.
+            aggregator_domains=(
+                _split(raw["aggregatorDomains"], [])
+                if "aggregatorDomains" in raw
+                else list(defaults.aggregator_domains)
+            ),
+            block_aggregators=bool(
+                raw.get("blockAggregators", defaults.block_aggregators)
             ),
             source_search=bool(raw.get("sourceSearch", defaults.source_search)),
             provider=str(raw.get("provider") or defaults.provider).strip().lower(),
@@ -469,6 +509,8 @@ def describe(config: Config) -> dict[str, Any]:
         "max_next_pages": config.max_next_pages,
         "provider": config.provider,
         "aggregator_domains": list(config.aggregator_domains),
+        "block_aggregators": config.block_aggregators,
+        "blocked_domains": list(config.blocked_domains),
         "source_search": config.source_search,
         "queries": list(config.queries),
         "classify_model": config.classify_model,

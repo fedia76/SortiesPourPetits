@@ -52,14 +52,23 @@ class Harvest(Brick):
 
             links = links_of(html, url)
             self.summary.pages += 1
-            self.log.event("harvested", url=url, links=len(links), chars=len(html))
+            self.log.event("harvested", url=url, page_no=1, links=len(links), chars=len(html))
 
-            pages = 1 + self._follow(html, url, links)
+            suivies = self._follow(html, url, links)
             st.produced(
                 f"{len(links)} lien(s) extrait(s)"
-                + (f" sur {pages} pages" if pages > 1 else ""),
+                + (
+                    f" sur {1 + suivies} page(s) : la première et "
+                    f"{suivies} page(s) suivante(s)"
+                    if suivies
+                    else " sur la seule première page"
+                ),
                 links=len(links),
-                pages=pages,
+                # `pages` compte les pages téléchargées, `next_pages` celles qui
+                # ne sont pas la première : un agenda paginé reste **un** agenda,
+                # et la console doit pouvoir le dire.
+                pages=1 + suivies,
+                next_pages=suivies,
             )
             return links
 
@@ -82,7 +91,16 @@ class Harvest(Brick):
             suivante = next_page(html, url)
             if not suivante or suivante in vues:
                 break
-            self.log.event("next_page", url=suivante, page=suivies + 2, links=len(links))
+            self.log.event(
+                "next_page",
+                url=suivante,
+                # `page_no` est un rang, pas une piste : la clé `page` du
+                # journal porte une URL, et confondre les deux brouillerait
+                # l'arbre de la console.
+                page_no=suivies + 2,
+                links=len(links),
+                budget=self.config.max_next_pages,
+            )
             try:
                 html = self.ctx.fetcher.get_html(suivante)
             except FetchError as err:
@@ -93,9 +111,21 @@ class Harvest(Brick):
             url = suivante
             suivies += 1
             self.summary.pages += 1
+            self.summary.next_pages += 1
+            gagnes = 0
             for link in links_of(html, suivante):
                 if link.url not in vues:
                     vues.add(link.url)
                     links.append(link)
-            self.log.event("harvested", url=suivante, links=len(links), chars=len(html))
+                    gagnes += 1
+            # `links` est le cumul, `new` ce que cette page-là a apporté : sans
+            # les deux, on ne sait pas si la page suivante valait sa requête.
+            self.log.event(
+                "harvested",
+                url=suivante,
+                page_no=suivies + 1,
+                links=len(links),
+                new=gagnes,
+                chars=len(html),
+            )
         return suivies

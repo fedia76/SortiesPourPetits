@@ -266,7 +266,16 @@ const STAGE_TOTALS: Record<string, (t: Record<string, number>) => string> = {
     ]
       .filter(Boolean)
       .join(' · '),
-  harvest: (t) => `${t.links ?? 0} lien(s) extrait(s) au total`,
+  harvest: (t) =>
+    [
+      `${t.links ?? 0} lien(s) extrait(s) au total`,
+      // Les pages suivantes se lisent ici, et nulle part ailleurs : sans
+      // elles, un agenda paginé passait pour trois agendas.
+      t.pages ? `${t.pages} page(s) téléchargée(s)` : '',
+      t.next_pages ? `dont ${t.next_pages} page(s) suivante(s)` : '',
+    ]
+      .filter(Boolean)
+      .join(' · '),
   select: (t) => `${t.kept ?? 0} lien(s) retenu(s) sur ${t.among ?? 0}`,
   read: (t) => `${(t.chars ?? 0).toLocaleString('fr-FR')} caractères lus au total`,
   extract: (t) => `${t.fiches ?? 0} fiche(s) extraite(s)`,
@@ -428,7 +437,16 @@ function summary(log: ScraperRunLog): string {
     case 'seed':
       return s('url') || s('title');
     case 'harvested':
-      return `${s('links')} lien(s) sur ${s('chars')} caractères`;
+      // Une page suivante dit deux choses : ce qu'elle a apporté, et le cumul
+      // de l'agenda. La première seule laisserait croire à un second agenda.
+      return d.new === undefined
+        ? `${s('links')} lien(s) sur ${s('chars')} caractères`
+        : `page ${s('page_no')} : ${s('new')} lien(s) de plus, ${s('links')} en tout`;
+    case 'next_page':
+      return (
+        `page ${s('page_no')} du même agenda — ${s('links')} lien(s) jusqu'ici, ` +
+        `plafond ${s('budget')}`
+      );
     case 'link':
       return `[${s('index')}] ${s('text')}`;
     case 'link_kept':
@@ -720,7 +738,12 @@ function clip(text: string, max = 22) {
                       <button class="fold" @click="toggleLinks(a, 'link')">
                         {{ branchLinks[`link:${a.url}`] ? '▾' : '▸' }}
                       </button>
-                      <span>{{ a.links }} lien(s) extrait(s)</span>
+                      <span>
+                        {{ a.links }} lien(s) extrait(s)
+                        <span v-if="a.fetched > 1" class="muted small">
+                          sur {{ a.fetched }} pages — pagination suivie, un seul agenda
+                        </span>
+                      </span>
                       <button class="btn tiny ghost" @click="inspect({ agenda: a.url, kind: 'link' })">
                         au journal
                       </button>

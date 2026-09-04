@@ -422,6 +422,10 @@ class Run:
                 "nothing_found",
                 searches=self.ctx.provider.usage.web_searches,
                 pages=self.summary.pages,
+                # Distinguer les deux évite un contresens : dix pages lues sur
+                # trois agendas ne dit pas la même chose que dix agendas muets.
+                agendas=self.summary.agendas,
+                next_pages=self.summary.next_pages,
             )
 
     # ═══════════════════════════════════ l'intendance, autour de la chaîne
