@@ -490,10 +490,30 @@ trois questions (`server/src/lib/scraperAttribution.ts`) :
 | le rendement de chaque signal — ouvertes, retenues, écartées, injoignables | quel signal propose sans jamais tenir. Le plafond de quatre candidates est commun : un mauvais signal ne coûte pas que du temps, il fait perdre les suivantes |
 | les motifs d'abandon, groupés | la phrase exacte que la brique a rendue — « aucun résultat vérifiable pour … », « recherche de source désactivée », « budget atteint » |
 
-S'y ajoutent les deux listes qu'on relit à l'œil : les candidates ouvertes puis
+S'y ajoutent les listes qu'on relit à l'œil : les candidates ouvertes puis
 écartées, avec le signal qui les avait proposées, et les sources retenues, avec
 ce qui les a vérifiées. Chaque ligne ouvre le journal filtré sur la piste de sa
 page.
+
+Et surtout **le rendement du moteur**, qui manquait. Les résultats refusés par
+le tamis — un autre agrégateur, un réseau social, le site de la page lue — ne
+laissaient aucune trace : `_by_search` passait au suivant sans rien dire. Une
+recherche où le moteur n'avait rien trouvé et une recherche où il avait tout
+rendu et tout fait refuser s'affichaient donc à l'identique, c'est-à-dire pas
+du tout. Ce sont pourtant deux pannes opposées : la première tient à la
+requête, la seconde au tamis.
+
+Deux événements comblent ce trou, et eux seuls suffisent à trancher :
+
+| Événement | Ce qu'il porte | Ce qu'il permet de dire |
+|---|---|---|
+| `moteur interrogé` | le nombre de résultats rendus | zéro alors qu'une requête est partie : l'organisateur n'a probablement pas de page à lui |
+| `résultat écarté` | l'URL et le motif du refus — « agrégateur (infolocale.fr) », « domaine bloqué », « déjà le site de la page lue » | quatre résultats, quatre agrégateurs : le web ne connaît que des republications |
+
+Le refus est journalisé **au moteur seulement**, pas dans les trois signaux
+gratuits : sur la fiche d'un agrégateur, ceux-ci passent au tamis des dizaines
+de liens sortants dont on sait d'avance qu'ils seront refusés, et les
+journaliser noierait le reste.
 
 Rien n'est calculé par le scraper pour cette page : tout est relu du journal
 tel qu'il est déjà écrit — les événements `attribution`, et le `stage_end` de

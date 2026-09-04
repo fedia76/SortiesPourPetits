@@ -61,6 +61,10 @@ const STATUS_OUTSIDE = 'page déjà à la source';
 const STATUS_KEPT = 'source retenue';
 const STATUS_REJECTED = 'candidate écartée';
 const STATUS_UNREACHABLE = 'candidate injoignable';
+/** Le moteur a répondu — l'événement porte le nombre de résultats rendus. */
+const STATUS_ENGINE = 'moteur interrogé';
+/** Un résultat refusé au tamis, sans être ouvert : agrégateur, domaine bloqué… */
+const STATUS_DISCARDED = 'résultat écarté';
 
 /** Ce qu'un signal a proposé, et ce que l'épreuve en a fait. */
 export interface AttributionSignalTally {
@@ -73,6 +77,23 @@ export interface AttributionSignalTally {
   rejected: number;
   /** Ouvertes sans succès : robots.txt, 404, délai. */
   unreachable: number;
+}
+
+/**
+ * Un résultat du moteur refusé **sans être ouvert**.
+ *
+ * Distinct d'une candidate écartée, et la distinction est tout l'intérêt :
+ * celle-ci n'a rien coûté — ni téléchargement, ni seconde de politesse — et
+ * elle dit quelque chose d'autre. Une sortie dont l'organisateur n'a pas de
+ * site et une cascade trop sévère se ressemblent exactement, vues du seul
+ * résultat ; vues de ces motifs, non.
+ */
+export interface AttributionDiscard {
+  candidate: string;
+  /** « agrégateur (citizenkid.com) », « domaine bloqué », « déjà le site… ». */
+  reason: string;
+  page: string;
+  seq: number;
 }
 
 /** Une candidate ouverte puis jetée — avec de quoi aller la regarder. */
@@ -123,6 +144,14 @@ export interface Attribution {
   opened: number;
   /** Requêtes au moteur : le seul appel payant de l'étage. */
   queries: number;
+  /**
+   * Résultats rendus par le moteur, toutes requêtes confondues. Zéro alors que
+   * `queries` ne l'est pas veut dire que le moteur n'a rien trouvé — ce qui ne
+   * se soigne pas du tout comme un moteur bavard dont tout est refusé.
+   */
+  engineResults: number;
+  /** Résultats refusés au tamis, sans être ouverts. */
+  discarded: number;
   /** Avertissements et erreurs journalisés dans l'étage. */
   alerts: number;
   /**
@@ -133,6 +162,7 @@ export interface Attribution {
   bySignal: AttributionSignalTally[];
   giveUps: AttributionGiveUp[];
   drops: AttributionDrop[];
+  discards: AttributionDiscard[];
   keeps: AttributionKeep[];
   /** Vrai si les listes ont été coupées — les compteurs, eux, sont entiers. */
   truncated: boolean;
@@ -156,6 +186,7 @@ function parse(raw: string | null): Data {
 }
 
 const str = (d: Data, k: string) => (typeof d[k] === 'string' ? (d[k] as string) : '');
+const num = (d: Data, k: string) => (typeof d[k] === 'number' ? (d[k] as number) : 0);
 
 /**
  * Le motif d'abandon, rendu groupable.
@@ -181,12 +212,15 @@ export function buildAttribution(rows: LogRow[]): Attribution {
   const tallies = new Map<string, AttributionSignalTally>();
   const giveUps = new Map<string, number>();
   const drops: AttributionDrop[] = [];
+  const discards: AttributionDiscard[] = [];
   const keeps: AttributionKeep[] = [];
 
   let fiches = 0;
   let outside = 0;
   let kept = 0;
   let queries = 0;
+  let engineResults = 0;
+  let discarded = 0;
   let alerts = 0;
   let unknown = 0;
   let truncated = false;
@@ -235,6 +269,26 @@ export function buildAttribution(rows: LogRow[]): Attribution {
               source: str(d, 'candidate'),
               signal,
               detail: str(d, 'detail'),
+              seq: row.seq,
+            });
+          } else {
+            truncated = true;
+          }
+          break;
+        }
+        if (status === STATUS_ENGINE) {
+          engineResults += num(d, 'results');
+          break;
+        }
+        if (status === STATUS_DISCARDED) {
+          // Jamais ouvert : ce refus ne compte pas dans les candidates, qui
+          // mesurent ce que la cascade a fait télécharger.
+          discarded += 1;
+          if (discards.length < ATTRIBUTION_MAX_ROWS) {
+            discards.push({
+              candidate: str(d, 'candidate'),
+              reason: str(d, 'reason'),
+              page: current?.page ?? row.url ?? '',
               seq: row.seq,
             });
           } else {
@@ -318,6 +372,8 @@ export function buildAttribution(rows: LogRow[]): Attribution {
     kept,
     opened: ordered.reduce((sum, s) => sum + s.opened, 0),
     queries,
+    engineResults,
+    discarded,
     alerts,
     unknown,
     bySignal: ordered,
@@ -325,6 +381,7 @@ export function buildAttribution(rows: LogRow[]): Attribution {
       .map(([reason, count]) => ({ reason, count }))
       .sort((a, b) => b.count - a.count),
     drops,
+    discards,
     keeps,
     truncated,
   };

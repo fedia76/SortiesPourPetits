@@ -406,6 +406,77 @@ def test_le_journal_dit_ce_qui_a_ete_ecarte(log):
     assert ecartees[0]["signal"] == "venue_domain"
 
 
+def test_le_journal_compte_ce_que_le_moteur_a_rendu(log):
+    """Zéro résultat et cinq résultats tous refusés doivent se distinguer.
+
+    C'est le cas qui a motivé cet événement : les deux se soldent par une
+    sortie sans source, et se corrigent à deux endroits opposés — élargir la
+    requête d'un côté, revoir le tamis de l'autre.
+    """
+    journal, events = log
+    attribuer({KIDIKLIK: kidiklik_html()}, engine=FakeEngine(results=[]), log=journal)
+
+    interroge = [
+        e for e in events
+        if e.get("kind") == "attribution" and e.get("status") == "moteur interrogé"
+    ]
+    assert len(interroge) == 1
+    assert interroge[0]["results"] == 0
+
+
+def test_le_journal_dit_pourquoi_un_resultat_est_refuse_sans_etre_ouvert(log):
+    """Le motif du refus, résultat par résultat — le diagnostic est cette liste.
+
+    Un organisateur sans site et une cascade trop sévère se ressemblent
+    exactement, vues du seul résultat. Vues de ces motifs, non.
+    """
+    journal, events = log
+    source = attribuer(
+        {KIDIKLIK: kidiklik_html()},
+        engine=FakeEngine(
+            results=[
+                {"link": "https://www.citizenkid.com/atelier-modelage"},   # agrégateur
+                {"link": "https://www.facebook.com/museerodin"},           # bloqué
+                {"link": f"{KIDIKLIK}?utm_source=x"},                      # déjà chez soi
+                {"link": "pas-une-url"},
+            ]
+        ),
+        log=journal,
+    )
+    assert not source.found
+
+    ecartes = [
+        e for e in events
+        if e.get("kind") == "attribution" and e.get("status") == "résultat écarté"
+    ]
+    assert [e["candidate"] for e in ecartes] == [
+        "https://www.citizenkid.com/atelier-modelage",
+        "https://www.facebook.com/museerodin",
+        f"{KIDIKLIK}?utm_source=x",
+        "pas-une-url",
+    ]
+    motifs = [e["reason"] for e in ecartes]
+    assert "agrégateur" in motifs[0] and "citizenkid.com" in motifs[0]
+    assert "bloqué" in motifs[1]
+    assert "page lue" in motifs[2]
+    assert "adresse web" in motifs[3]
+    # Aucune n'a été téléchargée : un refus au tamis ne coûte rien, et ne doit
+    # pas se confondre avec une candidate ouverte puis jetée.
+    assert not any(e.get("status") == "candidate écartée" for e in events)
+
+
+def test_un_resultat_exploitable_nest_pas_journalise_comme_ecarte(log):
+    """Le journal ne dit « écarté » que de ce qui l'a été."""
+    journal, events = log
+    source = attribuer(
+        {KIDIKLIK: kidiklik_html(), MUSEE: MUSEE_HTML},
+        engine=FakeEngine(results=[{"link": MUSEE}]),
+        log=journal,
+    )
+    assert source.found
+    assert not any(e.get("status") == "résultat écarté" for e in events)
+
+
 def test_une_source_non_verifiee_ne_passe_jamais_a_la_publication():
     """La règle, énoncée sur l'objet lui-même : `found` exige `checked`."""
     assert not SourceLink(url=MUSEE, signal="search").found
