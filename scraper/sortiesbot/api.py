@@ -13,8 +13,44 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 _TIMEOUT = 30
+
+#: Reprises sur un échec de **connexion**, et rien d'autre. Le site redémarre
+#: en quelques secondes à chaque déploiement (`deploy.yml` relance l'API), et
+#: un run en cours perdait une sortie pour ça : la connexion refusée est la
+#: seule erreur dont on sait avec certitude que la requête n'est jamais
+#: arrivée, donc la seule qu'on puisse rejouer sans risque.
+#:
+#: Ni lecture ni statut, volontairement : une requête partie a pu être
+#: exécutée par le site avant que la réponse se perde, et `POST /api/events`
+#: n'est pas idempotent — la rejouer créerait un doublon en modération.
+_CONNECT_RETRIES = 3
+#: Attente avant chaque reprise : 0,5 s, 1 s, 2 s — le temps d'un redémarrage.
+_BACKOFF = 0.5
+
+
+def retrying_session() -> requests.Session:
+    """Une session qui encaisse un redémarrage de l'API sans perdre l'appel."""
+    session = requests.Session()
+    adapter = HTTPAdapter(
+        max_retries=Retry(
+            total=_CONNECT_RETRIES,
+            connect=_CONNECT_RETRIES,
+            read=0,
+            status=0,
+            redirect=0,
+            backoff_factor=_BACKOFF,
+            # `None` vaut « toutes les méthodes » : POST compris, puisque
+            # seule l'ouverture de la connexion est rejouée.
+            allowed_methods=None,
+        )
+    )
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 
 class ApiError(RuntimeError):
@@ -35,7 +71,7 @@ class SppApi:
     def __init__(self, base_url: str, api_key: str | None = None, session: Any = None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
-        self.session = session or requests.Session()
+        self.session = session or retrying_session()
 
     def _headers(self, authenticated: bool) -> dict[str, str]:
         if not authenticated:

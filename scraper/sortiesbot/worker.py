@@ -47,6 +47,14 @@ LEDGER_DIR = ROOT / "state"
 #: demi-minute de latence au démarrage ne se voit pas dans la console.
 POLL_SECONDS = 30
 
+#: Attentes avant chaque nouvelle tentative de clôture. C'est le seul appel du
+#: worker qu'on ne peut pas perdre : sans lui l'exécution reste « En cours »
+#: dans la console et bloque toute nouvelle exécution de la configuration,
+#: jusqu'à une annulation à la main. Les reprises de connexion de la session
+#: (`api.retrying_session`) couvrent la seconde ; celles-ci couvrent la minute
+#: — le temps qu'une API redémarrée réponde à nouveau.
+FINISH_DELAYS = (2, 4, 8)
+
 _stop = False
 
 
@@ -119,6 +127,45 @@ def counters(summary: Summary) -> dict[str, Any]:
     }
 
 
+def finish(
+    api: SppApi,
+    run_id: int,
+    status: str,
+    payload: dict[str, Any],
+    quiet: bool,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Clôt l'exécution, et insiste : c'est ce qu'on ne peut pas perdre.
+
+    Une clôture perdue ne se rattrape pas — personne ne repasse fermer un run,
+    et la configuration reste bloquée. Un déploiement du site suffisait à en
+    arriver là : l'API redémarre, la clôture tombe sur une connexion refusée,
+    le worker enchaîne. On réessaie donc, de plus en plus loin.
+
+    Rend vrai si le site a pris la clôture. Faux, le worker continue de toute
+    façon : le run suivant ne doit pas payer l'échec du précédent, et le
+    serveur ferme d'office les exécutions dont il n'a plus de nouvelles.
+    """
+    last: Exception | None = None
+    for attempt, delay in enumerate((0.0, *FINISH_DELAYS)):
+        if delay:
+            sleep(delay)
+        try:
+            api.finish_run(run_id, status, **payload)
+            if attempt and not quiet:
+                print(f"  clôture obtenue au {attempt + 1}e essai.", flush=True)
+            return True
+        except ApiError as err:
+            last = err
+    print(
+        f"Clôture impossible de l'exécution #{run_id} après {len(FINISH_DELAYS) + 1} "
+        f"essais : {last}. Le serveur la fermera d'office.",
+        file=sys.stderr,
+        flush=True,
+    )
+    return False
+
+
 def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, quiet: bool) -> None:
     """Joue une exécution réclamée au site, et la clôt quoi qu'il arrive.
 
@@ -142,7 +189,9 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
     try:
         config = config_from_api(job.get("config") or {})
     except ConfigError as err:
-        api.finish_run(run_id, "FAILED", error=str(err))
+        # Même exigence qu'à la sortie normale : une configuration illisible
+        # n'est pas une raison pour laisser la ligne « En cours » à vie.
+        finish(api, run_id, "FAILED", {"error": str(err)}, quiet)
         return
 
     if not quiet:
@@ -207,12 +256,7 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
         payload = counters(summary)
         if error:
             payload["error"] = error[:2000]
-        try:
-            api.finish_run(run_id, status, **payload)
-        except ApiError as err:
-            # Sans clôture, la console reste sur « En cours » : c'est visible,
-            # et le bouton « Annuler » permet de débloquer la configuration.
-            print(f"Clôture impossible de l'exécution #{run_id} : {err}", file=sys.stderr, flush=True)
+        finish(api, run_id, status, payload, quiet)
         if not quiet:
             done = "terminée" if status == "DONE" else f"en échec ({error})"
             print(f"■ Exécution #{run_id} {done} — {payload['costUsd']} $", flush=True)

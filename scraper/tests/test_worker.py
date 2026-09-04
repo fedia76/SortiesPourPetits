@@ -328,3 +328,73 @@ def test_compteurs_du_resume():
     assert counters["duplicates"] == 1
     assert counters["webSearches"] == 2
     assert counters["costUsd"] == pytest.approx(0.03)  # jetons + 2 recherches
+
+
+# --------------------------------------------------- clôture et coupures réseau
+# Un déploiement du site redémarre l'API (deploy.yml) : les appels du worker en
+# cours tombent sur une connexion refusée. C'est arrivé, et l'exécution #23 est
+# restée « En cours » pour toujours — la clôture, elle, n'était pas réessayée.
+
+
+class ApiCapricieuse(ScraperApi):
+    """Refuse les `pannes` premières clôtures, accepte la suivante."""
+
+    def __init__(self, pannes: int, **kwargs):
+        super().__init__(**kwargs)
+        self.pannes = pannes
+        self.essais = 0
+
+    def finish_run(self, run_id, status, **counters):
+        self.essais += 1
+        if self.essais <= self.pannes:
+            raise ApiError("API injoignable : ConnectionError")
+        super().finish_run(run_id, status, **counters)
+
+
+def test_la_cloture_insiste_quand_lapi_redemarre():
+    api = ApiCapricieuse(pannes=2)
+    attentes: list[float] = []
+
+    assert worker.finish(api, 42, "DONE", {"costUsd": 0.0}, quiet=True, sleep=attentes.append)
+
+    assert api.essais == 3
+    assert api.finished == [(42, "DONE", {"costUsd": 0.0})]
+    # Les attentes s'espacent : le temps qu'une API redémarrée réponde.
+    assert attentes == [2, 4]
+
+
+def test_une_cloture_definitivement_impossible_ne_leve_pas():
+    """Le run suivant ne doit pas payer l'échec du précédent."""
+    api = ApiCapricieuse(pannes=99)
+
+    assert worker.finish(api, 42, "DONE", {}, quiet=True, sleep=lambda _: None) is False
+
+    assert api.essais == len(worker.FINISH_DELAYS) + 1
+    assert api.finished == []
+
+
+def test_lexecution_reessaie_sa_cloture(tmp_path, monkeypatch, geocodeur_simule):
+    """La ténacité doit être dans le chemin réel, pas seulement dans `finish`."""
+    monkeypatch.setattr(worker, "FINISH_DELAYS", (0, 0, 0))
+    provider, fetcher = standard()
+    api = ApiCapricieuse(pannes=1)
+    run_job(api, monkeypatch, provider, fetcher, tmp_path)
+
+    assert api.essais == 2
+    assert api.finished[0][:2] == (42, "DONE")
+
+
+def test_la_session_rejoue_la_connexion_mais_jamais_la_lecture():
+    """Une connexion refusée n'est jamais arrivée au site : la rejouer est sûr.
+
+    Une lecture interrompue, non : la requête a pu être exécutée, et
+    `POST /api/events` créerait alors une seconde proposition en modération.
+    """
+    from sortiesbot.api import retrying_session
+
+    retry = retrying_session().get_adapter("https://exemple.fr").max_retries
+    assert retry.connect == 3
+    assert retry.read == 0
+    assert retry.status == 0
+    # `None` vaut « toutes les méthodes » : le POST du worker en profite.
+    assert retry.allowed_methods is None
