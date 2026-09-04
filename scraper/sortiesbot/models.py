@@ -232,8 +232,14 @@ class Summary:
     """Compteurs d'un run, repris tels quels par la console d'administration."""
 
     candidates: int = 0
-    #: Pages d'agenda téléchargées et dépouillées (gratuit).
+    #: Pages d'agenda téléchargées et dépouillées (gratuit). Les pages
+    #: suivantes d'un agenda paginé y comptent : ce sont bien des pages lues.
     pages: int = 0
+    #: Celles de ces pages qui n'étaient pas la première d'un agenda. La
+    #: différence `pages - next_pages` donne le nombre d'**agendas** : suivre
+    #: une pagination n'ouvre pas un agenda de plus, et ne consomme donc rien
+    #: du plafond `max_agendas`.
+    next_pages: int = 0
     retained: int = 0
     skipped_seen: int = 0
     skipped_blocked: int = 0
@@ -256,10 +262,17 @@ class Summary:
     stopped_on_budget: bool = False
     usage: Usage = field(default_factory=Usage)
 
+    @property
+    def agendas(self) -> int:
+        """Agendas dépouillés — les pages suivantes ne comptent pas double."""
+        return self.pages - self.next_pages
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "candidates": self.candidates,
             "pages": self.pages,
+            "next_pages": self.next_pages,
+            "agendas": self.agendas,
             "retained": self.retained,
             "skipped_seen": self.skipped_seen,
             "skipped_blocked": self.skipped_blocked,

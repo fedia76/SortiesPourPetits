@@ -194,6 +194,39 @@ model EventDate {
   @@index([day])
 }
 
+/// Un **agrégateur** : un grand agenda qui republie — kidiklik, citizenkid,
+/// sortiraparis…
+///
+/// Ce sont d'excellents points d'entrée — ils indexent tout et sortent en tête
+/// des recherches — mais un atelier du musée Rodin est une information du
+/// musée Rodin. Le scraper les lit, puis remonte à la page de l'organisateur,
+/// et c'est celle-là qu'il propose.
+///
+/// La liste est **commune à toutes les recherches** : une même page vaut la
+/// même chose quelle que soit la recherche qui l'a trouvée, et la régler
+/// recherche par recherche revenait à la recopier à chaque fois — donc à
+/// l'oublier quelque part. Chaque recherche décide seulement, par une case à
+/// cocher, si elle les lit ou les refuse.
+model Aggregator {
+  id      Int     @id @default(autoincrement())
+  /// Le domaine, sans `www.` ni schéma : `kidiklik.fr`. Les sous-domaines en
+  /// relèvent aussi — le scraper compare la fin de l'hôte.
+  domain  String  @unique
+  /// Nom lisible, pour la console. Vide : le domaine fait office de nom.
+  label   String  @default("")
+  /// Faux : le site cesse d'être tenu pour un agrégateur. Ses pages peuvent
+  /// alors servir de source à une sortie, et une recherche qui bloque les
+  /// agrégateurs ne le bloquera pas. La ligne est conservée : on saura
+  /// pourquoi elle avait été écrite.
+  enabled Boolean @default(true)
+  /// Ce qu'on a constaté sur ce site — utile au prochain qui se demandera
+  /// pourquoi il est là, ou pourquoi il a été désactivé.
+  note    String  @default("") @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model ScraperConfig {
   id      Int     @id @default(autoincrement())
   name    String  @unique
@@ -221,19 +254,17 @@ model ScraperConfig {
   maxCostUsd        Decimal @default(1.00) @db.Decimal(6, 2)
   keepOutOfScope    Boolean @default(true)
 
-  defaultCategory   String  @default("Non classé")
+  defaultCategory  String  @default("Non classé")
   /// Préfixes de codes postaux visés, séparés par des virgules.
-  postalPrefixes    String  @default("75,77,78,91,92,93,94,95")
-  /// Domaines écartés d'office, séparés par des virgules.
-  blockedDomains    String  @default("") @db.Text
-  /// Sites qui republient sans être la source, séparés par des virgules. On
-  /// les lit — ce sont de bons agendas — mais leur URL n'est jamais celle
-  /// qu'on propose : l'étage attribution remonte à l'organisateur. Vide :
-  /// la liste par défaut du scraper s'applique.
-  aggregatorDomains String  @default("") @db.Text
+  postalPrefixes   String  @default("75,77,78,91,92,93,94,95")
+  /// Ne pas seulement remonter à la source depuis un agrégateur : refuser de
+  /// le lire. La liste, elle, est commune au site (`Aggregator`) et ne se
+  /// règle plus recherche par recherche. Les pages illisibles (réseaux
+  /// sociaux) restent écartées dans tous les cas, par le scraper.
+  blockAggregators Boolean @default(false)
   /// Autorise l'attribution à *chercher* la page de l'organisateur quand la
   /// page lue ne la porte pas. Son seul appel payant, ~0,001 $ la fiche.
-  sourceSearch      Boolean @default(true)
+  sourceSearch     Boolean @default(true)
 
   /// Qui lance les recherches : « anthropic » (outil serveur) ou « serper »
   /// (Google). Le modèle reste derrière dans les deux cas pour le reste.
@@ -277,7 +308,12 @@ model ScraperRun {
   error      String?   @db.Text
 
   candidates Int @default(0)
+  /// Pages d'agenda téléchargées, pages suivantes comprises.
   pages      Int @default(0)
+  /// Celles qui n'étaient pas la première page d'un agenda. `pages -
+  /// nextPages` donne le nombre d'agendas : suivre une pagination n'ouvre pas
+  /// un agenda de plus, et ne consomme rien du plafond `maxAgendas`.
+  nextPages  Int @default(0)
   retained   Int @default(0)
   submitted  Int @default(0)
   duplicates Int @default(0)

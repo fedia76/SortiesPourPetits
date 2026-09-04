@@ -210,6 +210,27 @@ On ne suit que `rel="next"`. Reconstruire « page 2 » à partir d'une suite de
 liens numérotés reviendrait à **inventer une URL**, ce qu'on s'interdit partout
 ailleurs — et une page qui se déclare sa propre suite ferait tourner en rond.
 
+**Une page suivante n'est pas un agenda de plus.** C'est le même agenda, plus
+loin : elle ne consomme rien du plafond `max_agendas`, qui compte des sources,
+et elle ne crée pas de branche dans l'arbre de la console. Elle coûte un
+téléchargement, et c'est tout ce qu'elle est. Deux compteurs le disent plutôt
+qu'un :
+
+| Compteur | Ce qu'il compte | Où il se lit |
+|---|---|---|
+| `pages` | pages téléchargées, suivantes comprises | « pages téléchargées » sur l'exécution |
+| `next_pages` | celles qui n'étaient pas la première d'un agenda | « dont N suivante(s) » |
+| `agendas` (la différence) | agendas réellement ouverts | « agendas dépouillés », et les statistiques |
+
+Et le journal l'annonce, ligne par ligne, parce qu'une dépense qu'on ne voit
+pas est une dépense qu'on ne règle pas :
+
+| Événement | Ce qu'il dit |
+|---|---|
+| `next_page` | l'URL de la page suivante, son rang, les liens déjà récoltés et le plafond en vigueur — donc *pourquoi* elle est demandée |
+| `harvested` (rang > 1) | ce que cette page-là a réellement apporté (`new`) et le cumul de l'agenda |
+| `stage_end` du dépouillement | « N lien(s) extrait(s) sur 3 page(s) : la première et 2 page(s) suivante(s) » |
+
 ### Chercher avec Google plutôt qu'avec le modèle
 
 Depuis la console : **Recherche auto** → une configuration → *Moteur de
@@ -313,6 +334,35 @@ la billetterie, l'annulation pour cause de grève — donc la page du musée.
 
 L'étage 7 répond à cette question, une fois par fiche : **existe-t-il une page
 de l'organisateur, et laquelle ?** Il ne touche à rien d'autre.
+
+#### Une liste commune, et non un champ par recherche
+
+La liste des agrégateurs a été, un temps, un champ libre de chaque
+configuration. C'était une erreur de niveau : kidiklik republie, que la
+recherche qui l'a trouvé cherche des spectacles ou des ateliers de vacances.
+Recopier la même quinzaine de domaines dans chaque recherche, c'était se
+garantir qu'un jour l'une d'elles serait oubliée — et qu'une sortie sortirait
+avec l'adresse de l'agrégateur pour seule source, sans que personne sache
+pourquoi.
+
+Elle vit donc dans la table `Aggregator`, tenue depuis **Recherche auto →
+Agrégateurs**, et le serveur la joint à la configuration qu'il envoie au
+worker. Le scraper, lui, n'a pas changé de contrat : il reçoit toujours
+`aggregatorDomains`, et ignore d'où la liste vient. Une ligne décochée reste
+en base — on saura qu'elle avait été écrite, et pourquoi elle ne s'applique
+plus.
+
+Chaque recherche ne garde qu'une décision, une case à cocher :
+`block_aggregators`. Décochée (le défaut), les agrégateurs sont lus, puis
+l'étage 7 remonte à l'organisateur. Cochée, ils rejoignent les domaines
+bloqués : la recherche les exclut et aucune de leurs pages n'est ouverte.
+C'est renoncer aux agendas les mieux fournis du web francophone — à réserver
+aux recherches qui veulent du premier ressort.
+
+Les **domaines bloqués**, eux, ne se règlent plus du tout par recherche.
+Facebook, Instagram, TikTok sont illisibles pour tout le monde : c'est un fait
+du web, pas une préférence, et la liste appartient au scraper
+(`DEFAULT_BLOCKED_DOMAINS`).
 
 Deux champs plutôt qu'un, et le partage compte :
 

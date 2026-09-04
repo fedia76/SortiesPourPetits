@@ -5,6 +5,8 @@ import { deletePhoto } from '../lib/upload';
 import { TREE_MAX_ROWS, buildTree } from '../lib/scraperTree';
 import { requireRole } from '../middleware/auth';
 import {
+  aggregatorSchema,
+  aggregatorUpdateSchema,
   checkScraperMode,
   scraperConfigSchema,
   scraperConfigUpdateSchema,
@@ -130,6 +132,96 @@ scraperRouter.delete('/configs/:id', async (req, res) => {
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
       res.status(404).json({ error: 'Configuration introuvable' });
+      return;
+    }
+    throw e;
+  }
+});
+
+// -------------------------------------------------------------- agrégateurs
+
+/**
+ * La liste des agrégateurs, commune à toutes les recherches.
+ *
+ * Elle a longtemps été un champ libre par recherche, recopié d'une
+ * configuration à l'autre. C'était une erreur de niveau : kidiklik republie,
+ * que la recherche qui l'a trouvé cherche des spectacles ou des ateliers. La
+ * liste appartient donc au site, et une recherche ne garde qu'une décision —
+ * lire ces sites (le cas normal), ou les refuser.
+ */
+scraperRouter.get('/aggregators', async (_req, res) => {
+  const aggregators = await prisma.aggregator.findMany({
+    orderBy: [{ enabled: 'desc' }, { domain: 'asc' }],
+  });
+  // Combien de recherches refusent de les lire : sans ce compte, la page ne
+  // dirait pas ce qu'elle promet — lesquels sont réellement pris en compte.
+  const [configs, blocking] = await Promise.all([
+    prisma.scraperConfig.count(),
+    prisma.scraperConfig.count({ where: { blockAggregators: true } }),
+  ]);
+  res.json({ aggregators, configs, blocking });
+});
+
+scraperRouter.post('/aggregators', async (req, res) => {
+  const parsed = aggregatorSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  try {
+    const aggregator = await prisma.aggregator.create({ data: parsed.data });
+    res.status(201).json({ aggregator });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      res.status(409).json({ error: 'Ce domaine est déjà dans la liste' });
+      return;
+    }
+    throw e;
+  }
+});
+
+scraperRouter.patch('/aggregators/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const parsed = aggregatorUpdateSchema.safeParse(req.body);
+  if (!Number.isInteger(id) || !parsed.success) {
+    res.status(400).json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
+    return;
+  }
+  try {
+    const aggregator = await prisma.aggregator.update({ where: { id }, data: parsed.data });
+    res.json({ aggregator });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
+      res.status(404).json({ error: 'Agrégateur introuvable' });
+      return;
+    }
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      res.status(409).json({ error: 'Ce domaine est déjà dans la liste' });
+      return;
+    }
+    throw e;
+  }
+});
+
+/**
+ * Supprimer, ou décocher ?
+ *
+ * Décocher garde la trace : on saura que le site avait été jugé agrégateur, et
+ * pourquoi il ne l'est plus. La suppression est là pour les fautes de frappe —
+ * elle ne touche à rien d'autre, aucune sortie n'appartient à un agrégateur.
+ */
+scraperRouter.delete('/aggregators/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  try {
+    await prisma.aggregator.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
+      res.status(404).json({ error: 'Agrégateur introuvable' });
       return;
     }
     throw e;
@@ -354,6 +446,7 @@ scraperRouter.get('/stats', async (req, res) => {
       _sum: {
         candidates: true,
         pages: true,
+        nextPages: true,
         retained: true,
         submitted: true,
         costUsd: true,
@@ -444,6 +537,10 @@ scraperRouter.get('/stats', async (req, res) => {
       runs: runs._count._all,
       candidates: runs._sum.candidates ?? 0,
       pages: runs._sum.pages ?? 0,
+      // Les agendas ouverts, pages suivantes déduites : une pagination suivie
+      // coûte des pages, elle n'ajoute pas une source.
+      agendas: (runs._sum.pages ?? 0) - (runs._sum.nextPages ?? 0),
+      nextPages: runs._sum.nextPages ?? 0,
       retained: runs._sum.retained ?? 0,
       submitted: runs._sum.submitted ?? 0,
       costUsd: Number(runs._sum.costUsd ?? 0),
@@ -505,8 +602,24 @@ scraperRouter.post('/next', async (_req, res) => {
     res.json({ run: null });
     return;
   }
+  // La liste des agrégateurs n'appartient plus à la recherche : elle est
+  // commune, et c'est ici qu'elle rejoint la configuration envoyée au worker.
+  // Le scraper garde le même contrat qu'avant — une liste de domaines et une
+  // case à cocher — sans avoir à savoir d'où elle vient.
+  const aggregators = await prisma.aggregator.findMany({
+    where: { enabled: true },
+    orderBy: { domain: 'asc' },
+    select: { domain: true },
+  });
   res.json({
-    run: { ...serializeRun(queued), status: 'RUNNING', config: serializeConfig(queued.config) },
+    run: {
+      ...serializeRun(queued),
+      status: 'RUNNING',
+      config: {
+        ...serializeConfig(queued.config),
+        aggregatorDomains: aggregators.map((a) => a.domain).join(','),
+      },
+    },
   });
 });
 

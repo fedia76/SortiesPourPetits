@@ -115,6 +115,7 @@ async function purge(scope: 'all' | 'decision') {
     <h1>Recherche automatique — mémoire</h1>
     <nav class="row" style="gap: 1rem; margin-bottom: 1rem">
       <RouterLink to="/admin/scraper">Recherches et exécutions</RouterLink>
+      <RouterLink to="/admin/scraper/agregateurs">Agrégateurs</RouterLink>
       <RouterLink to="/admin/scraper/stats">Statistiques</RouterLink>
       <RouterLink to="/admin/scraper/memoire">Mémoire</RouterLink>
     </nav>

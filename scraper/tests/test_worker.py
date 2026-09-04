@@ -46,7 +46,7 @@ API_CONFIG = {
     "keepOutOfScope": False,
     "defaultCategory": "Non classé",
     "postalPrefixes": "75, 92 ,",
-    "blockedDomains": "facebook.com,instagram.com",
+    "aggregatorDomains": "kidiklik.fr, sortiraparis.com",
     "searchModel": "claude-haiku-4-5",
     "selectModel": "claude-sonnet-5",
     "extractionModel": "claude-haiku-4-5",
@@ -102,7 +102,39 @@ def test_configuration_du_site_est_traduite():
     assert config.select_model == "claude-sonnet-5"
     # Les listes arrivent en texte séparé par des virgules.
     assert config.postal_prefixes == ["75", "92"]
-    assert config.blocked_domains == ["facebook.com", "instagram.com"]
+    # La liste d'agrégateurs est commune au site : le serveur l'envoie telle
+    # qu'elle est, la recherche ne la porte plus.
+    assert config.aggregator_domains == ["kidiklik.fr", "sortiraparis.com"]
+
+
+def test_une_liste_dagregateurs_videe_ne_ressuscite_pas_celle_du_scraper():
+    """Le site tient la liste : la vider est une décision, pas un oubli."""
+    config = config_from_api({**API_CONFIG, "aggregatorDomains": ""})
+    assert config.aggregator_domains == []
+
+
+def test_les_domaines_bloques_ne_sont_plus_un_reglage_de_recherche():
+    """Un réseau social est illisible partout : c'est un fait, pas un choix."""
+    config = config_from_api(API_CONFIG)
+    assert config.blocked_domains == Config(name="x", theme="y").blocked_domains
+    assert config.block_aggregators is False
+
+
+def test_la_case_a_cocher_verse_les_agregateurs_dans_les_domaines_bloques():
+    config = config_from_api({**API_CONFIG, "blockAggregators": True})
+    assert config.block_aggregators is True
+    assert "kidiklik.fr" in config.blocked_domains
+    assert "sortiraparis.com" in config.blocked_domains
+    # Les domaines illisibles restent : la case ajoute, elle ne remplace pas.
+    assert "facebook.com" in config.blocked_domains
+
+
+def test_bloquer_deux_fois_les_agregateurs_ne_les_duplique_pas():
+    """`validated` repasse sur une configuration déjà fusionnée sans l'enfler."""
+    from sortiesbot.config import validated
+
+    config = validated(validated(config_from_api({**API_CONFIG, "blockAggregators": True})))
+    assert config.blocked_domains.count("kidiklik.fr") == 1
 
 
 def test_prompt_vide_veut_dire_celui_du_scraper():

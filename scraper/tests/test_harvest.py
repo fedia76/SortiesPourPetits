@@ -383,6 +383,57 @@ def test_une_page_suivante_injoignable_narrete_pas_le_reste(log_muet):
     assert len(links) == 3, "on garde ce que la première page a donné"
 
 
+# ══════════════════════════ ce que la console doit pouvoir lire d'un run
+
+
+def test_une_page_suivante_nest_pas_un_agenda_de_plus(log_muet):
+    """La question posée par la console : deux pages, un seul agenda.
+
+    `pages` compte ce qui a été téléchargé, `agendas` ce qui a été ouvert. Sans
+    la distinction, un agenda paginé se lisait comme trois sources — et le
+    plafond `max_agendas`, lui, n'en a jamais compté qu'une.
+    """
+    pages = {
+        "https://x.fr/agenda/": agenda(3, "/agenda/2"),
+        "https://x.fr/agenda/2": agenda(4, "/agenda/3"),
+        "https://x.fr/agenda/3": agenda(5),
+    }
+    brique = _brique(pages, log_muet, max_next_pages=2)
+    brique.run("https://x.fr/agenda/")
+
+    resume = brique.summary
+    assert (resume.pages, resume.next_pages, resume.agendas) == (3, 2, 1)
+
+
+def test_le_journal_annonce_chaque_page_suivante(log_muet):
+    """« Je n'ai pas vu cette info » : elle doit être dans le journal."""
+    pages = {
+        "https://x.fr/agenda/": agenda(3, "/agenda/2"),
+        "https://x.fr/agenda/2": agenda(4),
+    }
+    vus = []
+    log_muet.sink = vus.append
+    brique = _brique(pages, log_muet, max_next_pages=2)
+    brique.run("https://x.fr/agenda/")
+
+    suivantes = [e for e in vus if e["kind"] == "next_page"]
+    assert len(suivantes) == 1
+    assert suivantes[0]["url"] == "https://x.fr/agenda/2"
+    assert suivantes[0]["page_no"] == 2
+    assert suivantes[0]["budget"] == 2
+    # La filiation rattache la page suivante à son agenda : la console sait
+    # ainsi les regrouper sans les confondre.
+    assert suivantes[0]["agenda"] == "https://x.fr/agenda/"
+
+    moissons = [e for e in vus if e["kind"] == "harvested"]
+    assert [e["page_no"] for e in moissons] == [1, 2]
+    assert moissons[1]["new"] == 4, "ce que la page suivante a réellement ajouté"
+
+    fin = [e for e in vus if e["kind"] == "stage_end"][-1]
+    assert fin["pages"] == 2 and fin["next_pages"] == 1
+    assert "page(s) suivante(s)" in fin["produced"]
+
+
 def _brique(pages, log, **conf):
     """Un `Harvest` branché sur un serveur simulé."""
     import sys

@@ -251,9 +251,12 @@ export interface ScraperConfig {
   keepOutOfScope: boolean;
   defaultCategory: string;
   postalPrefixes: string;
-  blockedDomains: string;
-  /** Sites qui republient sans être la source. Vide : la liste du scraper. */
-  aggregatorDomains: string;
+  /**
+   * Refuser de lire les agrégateurs, au lieu de simplement remonter à la
+   * source depuis leurs fiches. La liste, elle, est commune au site — voir
+   * `Aggregator` et la page « Agrégateurs » de la console.
+   */
+  blockAggregators: boolean;
   /** Autorise l'attribution à chercher la page de l'organisateur (payant). */
   sourceSearch: boolean;
   /** Qui lance les recherches : l'outil serveur du modèle, ou Google. */
@@ -289,7 +292,10 @@ export interface ScraperRun {
   purgedAt: string | null;
   error: string | null;
   candidates: number;
+  /** Pages d'agenda téléchargées, pages suivantes comprises. */
   pages: number;
+  /** Celles qui n'étaient pas la première page d'un agenda. */
+  nextPages: number;
   retained: number;
   submitted: number;
   duplicates: number;
@@ -384,6 +390,12 @@ export interface ScraperTreeAgenda {
   /** Ce que le modèle dit avoir écarté, en une phrase. */
   droppedReason: string;
   links: number;
+  /**
+   * Pages de l'agenda téléchargées : 1, ou davantage s'il se pagine et que le
+   * dépouillement a suivi. À ne pas confondre avec `pages`, qui sont les
+   * sorties qu'il a données.
+   */
+  fetched: number;
   kept: number;
   seconds: number;
   errors: number;
@@ -427,6 +439,25 @@ export const LOG_LEVEL_LABELS: Record<ScraperLogLevel, string> = {
 };
 
 /** Rendu court d'un événement, par type. Miroir de `journal._CONSOLE`. */
+/**
+ * Un agrégateur : un grand agenda qui republie l'information d'autrui.
+ *
+ * La liste est commune à toutes les recherches — elle se tient dans
+ * « Recherche auto → Agrégateurs » — et chaque recherche décide seulement de
+ * lire ces sites ou de les refuser.
+ */
+export interface Aggregator {
+  id: number;
+  /** Le domaine seul, sans `www.` : `kidiklik.fr`. Sous-domaines compris. */
+  domain: string;
+  label: string;
+  /** Faux : le site n'est plus tenu pour un agrégateur, la ligne reste. */
+  enabled: boolean;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export const LOG_KIND_LABELS: Record<string, string> = {
   run_start: 'Démarrage',
   run_end: 'Fin du run',
@@ -438,6 +469,7 @@ export const LOG_KIND_LABELS: Record<string, string> = {
   seed: 'Point de départ',
   fetching: 'Téléchargement',
   harvested: 'Liens extraits',
+  next_page: "Page suivante de l'agenda",
   link: 'Lien proposé au tri',
   link_kept: 'Lien retenu',
   selected: 'Tri terminé',
@@ -525,7 +557,11 @@ export interface ScraperStats {
   totals: {
     runs: number;
     candidates: number;
+    /** Pages d'agenda téléchargées, pages suivantes comprises. */
     pages: number;
+    /** Agendas ouverts : `pages` moins les pages suivantes. */
+    agendas: number;
+    nextPages: number;
     retained: number;
     submitted: number;
     costUsd: number;
