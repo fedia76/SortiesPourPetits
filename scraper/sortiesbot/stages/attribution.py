@@ -351,9 +351,41 @@ class Attribution(Brick):
             return SourceLink(detail=f"moteur indisponible ({err})")
         reply.bill(self.ctx.provider.usage)
 
+        # Ce que le moteur a rendu, avant tout tamis. C'est le seul événement
+        # qui distingue « il n'a rien trouvé » de « il a tout rendu, et tout
+        # était un agrégateur » : sans lui, un moteur muet et un moteur bavard
+        # laissent la même trace, c'est-à-dire aucune.
+        self.log.event(
+            "attribution",
+            url=page.url,
+            status="moteur interrogé",
+            signal=SIGNAL_SEARCH,
+            query=query,
+            results=len(reply.results),
+        )
+
         for item in reply.results:
             url = str(item.get("link", "") or "").strip()
-            if not self._usable(url, page.url):
+            refus = self._unusable(url, page.url)
+            if refus:
+                # Écarté sans être ouvert : ni téléchargement, ni seconde de
+                # politesse. On le journalise quand même, parce que la liste
+                # des refus *est* le diagnostic — une sortie dont l'organisateur
+                # n'a pas de site et une cascade trop sévère se ressemblent
+                # exactement, vues du résultat.
+                #
+                # Les trois signaux gratuits, eux, se taisent : sur la fiche
+                # d'un agrégateur, ils passent au tamis des dizaines de liens
+                # sortants dont on sait d'avance qu'ils seront refusés, et les
+                # journaliser noierait le reste.
+                self.log.event(
+                    "attribution",
+                    url=page.url,
+                    status="résultat écarté",
+                    candidate=url or "(sans adresse)",
+                    signal=SIGNAL_SEARCH,
+                    reason=refus,
+                )
                 continue
             found = SourceLink(
                 url=url,
@@ -495,16 +527,29 @@ class Attribution(Brick):
     def _is_aggregator(self, url: str) -> bool:
         return in_domains(url, self.config.aggregator_domains)
 
-    def _usable(self, url: str, page_url: str) -> bool:
-        """Une URL peut-elle être *la* source ?
+    def _unusable(self, url: str, page_url: str) -> str:
+        """Pourquoi cette URL ne peut pas être *la* source. Vide si elle le peut.
 
         Quatre refus, tous pour la même raison : ce ne serait pas une source.
         Le site courant (on n'a pas bougé), un autre agrégateur (on a changé de
         republication), un domaine bloqué (on ne le lit pas), et l'URL qui n'en
         est pas une.
+
+        Le motif est rendu plutôt qu'un simple « non » parce qu'il est la seule
+        chose qui distingue « le moteur n'a rien trouvé » de « le moteur a
+        rendu cinq agrégateurs ». Les deux se soldent par une sortie sans
+        source, et se corrigent à deux endroits opposés.
         """
         if not url.startswith(("http://", "https://")):
-            return False
-        if same_site(url, page_url) or self._is_aggregator(url):
-            return False
-        return not in_domains(url, self.config.blocked_domains)
+            return "ce n'est pas une adresse web"
+        if same_site(url, page_url):
+            return "déjà le site de la page lue"
+        if self._is_aggregator(url):
+            return f"agrégateur ({host_of(url)})"
+        if in_domains(url, self.config.blocked_domains):
+            return f"domaine bloqué ({host_of(url)})"
+        return ""
+
+    def _usable(self, url: str, page_url: str) -> bool:
+        """Cette URL peut-elle être la source ? Voir `_unusable` pour le motif."""
+        return not self._unusable(url, page_url)

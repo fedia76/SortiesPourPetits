@@ -138,7 +138,7 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | GET | `/api/scraper/runs/:id/logs` | modérateur | Journal détaillé d'une exécution (`stage`, `kind`, `level`, `url`, `q`, `after`, `limit`) |
 | GET | `/api/scraper/runs/:id/graph` | modérateur | Les huit étages du pipeline, avec ce que chacun a produit |
 | GET | `/api/scraper/runs/:id/tree` | modérateur | L'arbre du run : requête → agenda → liens → sorties |
-| GET | `/api/scraper/runs/:id/attribution` | modérateur | La mesure de l'étage 7 : où l'attribution trouve, et où elle perd |
+| GET | `/api/scraper/runs/:id/attribution` | modérateur | La mesure de l'étage 7 : ce que le moteur a rendu, ce que le tamis a refusé, où l'attribution perd |
 | POST | `/api/scraper/events/:id/source` | modérateur | Chercher la source d'une sortie : l'étage 7 rejoué seul |
 | GET | `/api/scraper/events/:id/source` | modérateur | L'état de la dernière recherche de source de cette sortie |
 | DELETE | `/api/scraper/runs/:id/logs` | modérateur | Oublier le journal détaillé (les compteurs restent) |

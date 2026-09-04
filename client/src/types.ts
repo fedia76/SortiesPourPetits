@@ -450,6 +450,18 @@ export interface ScraperAttributionSignal {
   unreachable: number;
 }
 
+/**
+ * Un résultat du moteur refusé **sans être ouvert** — agrégateur, domaine
+ * bloqué, même site. Distinct d'une candidate écartée, et c'est la
+ * distinction qui compte : celle-ci n'a rien coûté, et elle dit autre chose.
+ */
+export interface ScraperAttributionDiscard {
+  candidate: string;
+  reason: string;
+  page: string;
+  seq: number;
+}
+
 export interface ScraperAttributionDrop {
   candidate: string;
   page: string;
@@ -481,12 +493,21 @@ export interface ScraperAttribution {
   opened: number;
   /** Requêtes au moteur : le seul appel payant de l'étage. */
   queries: number;
+  /**
+   * Résultats rendus par le moteur, toutes requêtes confondues. Zéro alors
+   * que `queries` ne l'est pas : le moteur n'a rien trouvé — ce qui ne se
+   * soigne pas comme un moteur bavard dont tout est refusé.
+   */
+  engineResults: number;
+  /** Résultats refusés au tamis, sans être ouverts. */
+  discarded: number;
   alerts: number;
   /** Statuts que cette page ne sait plus lire — un renommage côté scraper. */
   unknown: number;
   bySignal: ScraperAttributionSignal[];
   giveUps: { reason: string; count: number }[];
   drops: ScraperAttributionDrop[];
+  discards: ScraperAttributionDiscard[];
   keeps: ScraperAttributionKeep[];
   truncated: boolean;
 }

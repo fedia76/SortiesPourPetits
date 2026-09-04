@@ -540,6 +540,7 @@ function summary(log: ScraperRunLog): string {
       // Le verdict d'abord : c'est ce qu'on lit sans déplier. La candidate
       // ensuite, abrégée, puis le signal qui l'avait proposée.
       const parts = [s('status')];
+      if (d.results !== undefined) parts.push(`${s('results')} résultat(s)`);
       if (d.candidate) parts.push(short(String(d.candidate)));
       if (d.signal) parts.push(`[${s('signal')}]`);
       if (d.reason) parts.push(`— ${s('reason')}`);
@@ -940,7 +941,12 @@ function clip(text: string, max = 22) {
             <div class="tile">
               <b>{{ attribution.opened }}</b>
               <span>candidate(s) ouverte(s) et lue(s)</span>
-              <em>dont {{ attribution.queries }} après une requête au moteur</em>
+              <em v-if="attribution.queries">
+                {{ attribution.queries }} requête(s) au moteur →
+                {{ attribution.engineResults }} résultat(s),
+                {{ attribution.discarded }} refusé(s) au tamis
+              </em>
+              <em v-else>aucune requête au moteur</em>
             </div>
             <div class="tile" :class="attribution.kept ? 'ok' : 'ko'">
               <b>{{ attribution.kept }}</b>
@@ -1015,6 +1021,43 @@ function clip(text: string, max = 22) {
               l'étage.
             </template>
           </p>
+
+          <!-- Le moteur : ce qu'il a rendu, et ce que le tamis en a fait.
+               Sans ces deux nombres, « rien trouvé » et « tout refusé » se
+               ressemblent — et ils se corrigent à deux endroits opposés. -->
+          <template v-if="attribution.queries">
+            <h3>Ce que le moteur a rendu</h3>
+            <p v-if="!attribution.engineResults" class="why-not">
+              <b>Le moteur n'a rendu aucun résultat</b> sur
+              {{ attribution.queries }} requête(s). Ce n'est donc pas le tamis
+              qui a bloqué : c'est la requête — titre, lieu et ville — qui ne
+              trouve rien. Une sortie dont l'organisateur n'a pas de page à lui
+              donne exactement ça.
+            </p>
+            <p v-else class="muted small">
+              {{ attribution.engineResults }} résultat(s) rendu(s),
+              {{ attribution.discarded }} refusé(s) sans être ouvert(s),
+              {{ attribution.engineResults - attribution.discarded }} ouvert(s)
+              et vérifié(s). Un refus au tamis ne coûte rien — ni
+              téléchargement, ni seconde de politesse — mais il dit pourquoi la
+              recherche est repartie les mains vides.
+            </p>
+
+            <ul v-if="attribution.discards.length" class="tree">
+              <li
+                v-for="r of attribution.discards"
+                :key="`${r.seq}:${r.candidate}`"
+                class="leaf"
+              >
+                <span class="dot off" aria-hidden="true"></span>
+                <span class="muted small">{{ short(r.candidate, 48) }}</span>
+                <span class="fate">{{ r.reason }}</span>
+                <button class="btn tiny ghost" @click="inspect({ page: r.page })">
+                  sa piste
+                </button>
+              </li>
+            </ul>
+          </template>
 
           <!-- Les motifs, tels que la brique les a écrits : c'est la phrase
                qu'on ira relire dans `stages/attribution.py`. -->
