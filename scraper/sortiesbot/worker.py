@@ -31,6 +31,7 @@ from .journal import RemoteJournal, RunLog, run_log_path
 from .ledger import Ledger, ledger_path
 from .models import Summary
 from .orchestrator import run as run_pipeline
+from .orchestrator import run_source
 from .providers.serper_client import client_or_none
 from .providers.base import ProviderError, get_provider
 from .store import RemoteStore
@@ -124,9 +125,17 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
     Le site l'a déjà passée en RUNNING : la laisser sans clôture la figerait
     dans la console, et bloquerait toute nouvelle exécution de la même
     configuration. D'où le `finally` — même sur une erreur imprévue.
+
+    Deux sortes d'exécution passent par ici, et c'est le site qui les
+    distingue : une exécution qui porte une **sortie** est une recherche de
+    source — l'étage 7 rejoué seul, sur une fiche déjà publiée — et tout le
+    reste est le pipeline entier. Elles partagent tout ce qui les entoure : le
+    journal renvoyé au site, le registre, la clôture, les compteurs. Seule la
+    ligne qui joue change, et elle est visible à l'œil nu ci-dessous.
     """
     run_id = int(job["id"])
     submit = bool(job.get("submit"))
+    event = job.get("event") or None
     status, error = "FAILED", "Interrompu avant la fin"
     summary = Summary()
 
@@ -137,7 +146,8 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
         return
 
     if not quiet:
-        print(f"▶ Exécution #{run_id} — « {config.name} »", flush=True)
+        quoi = f"source de « {event.get('title')} »" if event else f"« {config.name} »"
+        print(f"▶ Exécution #{run_id} — {quoi}", flush=True)
 
     store = RemoteStore(api, run_id)
     # Le journal détaillé part au site au fil de l'eau : c'est lui que la page
@@ -152,14 +162,32 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
             # vraiment le registre du classifieur, à côté des journaux de run
             # que le site peut oublier.
             with Ledger(ledger_path(LEDGER_DIR, run_id), run=str(run_id)) as ledger:
-                result = run_pipeline(
-                    config, provider, store, api, log, submit=submit, ledger=ledger,
-                    # Le moteur du repli de l'attribution : présent dès qu'une
-                    # clé Serper l'est, quel que soit le fournisseur de la
-                    # recherche que la console a choisi.
-                    engine=client_or_none(env.serper_key),
-                )
-        summary = result.summary
+                # Le moteur du repli de l'attribution : présent dès qu'une clé
+                # Serper l'est, quel que soit le fournisseur de la recherche
+                # que la console a choisi.
+                engine = client_or_none(env.serper_key)
+                if event is None:
+                    summary = run_pipeline(
+                        config, provider, store, api, log, submit=submit,
+                        ledger=ledger, engine=engine,
+                    ).summary
+                else:
+                    found = run_source(
+                        config, provider, store, api, log, event,
+                        ledger=ledger, engine=engine,
+                    )
+                    summary = found.summary
+                    # Le rapport fait partie du travail : une recherche qui
+                    # trouve sans le dire n'a rien fait. S'il échoue, le run
+                    # est en échec — et la fiche garde le lien qu'elle avait.
+                    api.report_source(
+                        run_id,
+                        url=found.source.url,
+                        signal=found.source.signal,
+                        detail=found.source.detail,
+                        checked=found.source.checked,
+                        found_on=str(event.get("pageUrl") or ""),
+                    )
         status, error = "DONE", None
     except ProviderError as err:
         error = str(err)

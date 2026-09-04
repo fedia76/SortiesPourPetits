@@ -39,11 +39,19 @@ type ModeratedEvent = Prisma.EventGetPayload<{ include: typeof MODERATION_INCLUD
 function serializeEvent(event: ModeratedEvent, similarity?: SimilarityScore) {
   const { scraperItems, ...rest } = event;
   const from = scraperItems[0]?.run;
+  // Une recherche de source ne propose aucune sortie — elle rejoue l'étage 7
+  // sur une fiche existante — donc elle n'a jamais d'item, et la recherche
+  // rattachée à un item porte toujours sa configuration. Le second test est
+  // là pour le type, pas pour un cas connu.
+  const origin =
+    from?.config && from.configId !== null
+      ? { configId: from.configId, configName: from.config.name }
+      : null;
   return {
     ...rest,
     // `null` pour une sortie proposée par un visiteur : c'est ce que la
     // console affiche, et ce sur quoi le filtre « visiteurs » s'appuie.
-    origin: from ? { configId: from.configId, configName: from.config.name } : null,
+    origin,
     price: event.price === null ? null : Number(event.price),
     dateStart: event.dateStart ? event.dateStart.toISOString().slice(0, 10) : null,
     dateEnd: event.dateEnd ? event.dateEnd.toISOString().slice(0, 10) : null,

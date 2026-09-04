@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { ApiError, api } from '../lib/api';
 import type { ScraperRun } from '../types';
-import { DECISION_LABELS, RUN_STATUS_LABELS } from '../types';
+import { DECISION_LABELS, RUN_STATUS_LABELS, runLabel } from '../types';
 
 const route = useRoute();
 const run = ref<ScraperRun | null>(null);
@@ -171,7 +171,7 @@ onUnmounted(() => clearInterval(timer));
 
     <template v-if="run">
       <h1>
-        {{ run.config?.name ?? 'Exécution' }}
+        {{ runLabel(run) }}
         <span class="badge" :class="`run-${run.status}`">{{ RUN_STATUS_LABELS[run.status] }}</span>
         <span v-if="!run.submit" class="badge">essai</span>
       </h1>

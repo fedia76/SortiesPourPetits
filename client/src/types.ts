@@ -305,9 +305,23 @@ export interface ScraperRun {
   outputTokens: number;
   webSearches: number;
   costUsd: number;
-  config?: { id: number; name: string };
+  /**
+   * La recherche jouée. Absente pour une **recherche de source** : celle-ci
+   * n'explore rien, elle rejoue l'étage 7 sur une sortie déjà en base, et
+   * c'est `event` qui la nomme.
+   */
+  config?: { id: number; name: string } | null;
+  /** La sortie dont on cherchait la source, pour ce genre d'exécution. */
+  event?: { id: number; title: string } | null;
   requestedBy?: { id: number; displayName: string } | null;
   items?: ScraperRunItem[];
+}
+
+/** Ce qu'une exécution a joué, dit en une ligne : c'est son nom dans la console. */
+export function runLabel(run: ScraperRun): string {
+  if (run.config) return run.config.name;
+  if (run.event) return `Source de « ${run.event.title} »`;
+  return 'Exécution';
 }
 
 /**
@@ -414,6 +428,85 @@ export interface ScraperTree {
   truncated: boolean;
 }
 
+/**
+ * La mesure de l'étage 7 — l'attribution — sur une exécution.
+ *
+ * L'étage remonte de la page lue à la page de l'organisateur, puis ouvre
+ * cette page et exige qu'elle parle de la sortie. Le graphe dit combien de
+ * fois il a été traversé ; il ne dit pas **où il perd** — ne rien proposer et
+ * proposer quatre pages fausses sont deux pannes opposées. Assemblé côté
+ * serveur (`lib/scraperAttribution.ts`), relu du journal tel qu'il est écrit :
+ * une exécution d'hier se mesure comme une de demain.
+ */
+export interface ScraperAttributionSignal {
+  signal: string;
+  /** Candidates réellement téléchargées : ce que le signal a coûté. */
+  opened: number;
+  /** Candidates qui ont parlé de la sortie. C'est la seule réussite. */
+  kept: number;
+  /** Ouvertes puis jetées : la page parlait d'autre chose. */
+  rejected: number;
+  /** Ouvertes sans succès : robots.txt, 404, délai. */
+  unreachable: number;
+}
+
+export interface ScraperAttributionDrop {
+  candidate: string;
+  page: string;
+  signal: string;
+  reason: string;
+  unreachable: boolean;
+  seq: number;
+}
+
+export interface ScraperAttributionKeep {
+  page: string;
+  title: string;
+  source: string;
+  signal: string;
+  detail: string;
+  seq: number;
+}
+
+export interface ScraperAttribution {
+  /** Fiches passées par l'étage : un aller-retour de la brique par fiche. */
+  fiches: number;
+  /** Fiches dont la page lue n'était pas un agrégateur : rien à remonter. */
+  outside: number;
+  /** Fiches réellement creusées. */
+  dug: number;
+  /** Fiches reparties avec une source vérifiée. */
+  kept: number;
+  /** Candidates téléchargées, tous signaux confondus. */
+  opened: number;
+  /** Requêtes au moteur : le seul appel payant de l'étage. */
+  queries: number;
+  alerts: number;
+  /** Statuts que cette page ne sait plus lire — un renommage côté scraper. */
+  unknown: number;
+  bySignal: ScraperAttributionSignal[];
+  giveUps: { reason: string; count: number }[];
+  drops: ScraperAttributionDrop[];
+  keeps: ScraperAttributionKeep[];
+  truncated: boolean;
+}
+
+/** Les quatre signaux de la cascade, dits en clair. */
+export const ATTRIBUTION_SIGNAL_LABELS: Record<string, string> = {
+  json_ld: 'JSON-LD de la page',
+  venue_domain: 'Domaine du lieu',
+  page_link: 'Texte du lien',
+  search: 'Moteur (payant)',
+};
+
+/** Ce que chaque signal lit, pour qui n'a pas le code sous les yeux. */
+export const ATTRIBUTION_SIGNAL_HINTS: Record<string, string> = {
+  json_ld: 'ce que la page déclare : Event.url, sameAs, offers.url',
+  venue_domain: '« Musée Rodin » retrouvé dans musee-rodin.fr, parmi les liens sortants',
+  page_link: "un lien qui s'annonce : « site officiel », « réserver », « billetterie »",
+  search: 'une requête au moteur — titre et lieu — quand la page ne porte pas le lien',
+};
+
 export type ScraperLogLevel = 'info' | 'warn' | 'error';
 
 /** Une ligne du journal détaillé d'une exécution. */
@@ -475,6 +568,7 @@ export const LOG_KIND_LABELS: Record<string, string> = {
   selected: 'Tri terminé',
   fallback: 'Repli',
   candidate: 'Page candidate',
+  attribution: 'Attribution de la source',
   page: 'Page lue',
   prompt: 'Prompt envoyé',
   usage: 'Jetons consommés',

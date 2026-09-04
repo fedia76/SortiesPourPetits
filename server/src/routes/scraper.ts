@@ -2,6 +2,7 @@ import { Prisma, Role } from '@prisma/client';
 import { Router } from 'express';
 import { prisma } from '../db';
 import { deletePhoto } from '../lib/upload';
+import { ATTRIBUTE_STAGE, buildAttribution } from '../lib/scraperAttribution';
 import { TREE_MAX_ROWS, buildTree } from '../lib/scraperTree';
 import { requireRole } from '../middleware/auth';
 import {
@@ -18,6 +19,7 @@ import {
   scraperMemorySchema,
   scraperRunSchema,
   scraperSeenSchema,
+  scraperSourceSchema,
   scraperStatsSchema,
 } from '../lib/validators';
 
@@ -264,6 +266,9 @@ scraperRouter.get('/runs', async (_req, res) => {
     take: 50,
     include: {
       config: { select: { id: true, name: true } },
+      // Une recherche de source n'a pas de configuration : c'est la sortie
+      // qu'elle porte qui la nomme, faute de quoi la ligne serait sans titre.
+      event: { select: { id: true, title: true } },
       requestedBy: { select: { id: true, displayName: true } },
     },
   });
@@ -280,6 +285,7 @@ scraperRouter.get('/runs/:id', async (req, res) => {
     where: { id },
     include: {
       config: { select: { id: true, name: true } },
+      event: { select: { id: true, title: true } },
       requestedBy: { select: { id: true, displayName: true } },
       items: { orderBy: { at: 'asc' }, take: 500 },
     },
@@ -515,10 +521,15 @@ scraperRouter.get('/stats', async (req, res) => {
     `,
 
     // Le tableau par recherche ne dépend pas du périmètre choisi : c'est lui
-    // qui sert à comparer les configurations entre elles.
+    // qui sert à comparer les configurations entre elles. Les recherches de
+    // source en sont exclues : elles n'ont pas de configuration, et les ranger
+    // sous une colonne vide ferait une ligne qui ne compare rien.
     prisma.scraperRun.groupBy({
       by: ['configId'],
-      where: since === null ? {} : { queuedAt: { gte: since } },
+      where: {
+        configId: { not: null },
+        ...(since === null ? {} : { queuedAt: { gte: since } }),
+      },
       _count: { _all: true },
       _sum: { retained: true, submitted: true, pages: true, costUsd: true },
     }),
@@ -563,6 +574,9 @@ scraperRouter.get('/stats', async (req, res) => {
     decisions: byDecision.map((d) => ({ decision: d.decision, count: d._count._all })),
     statuses: Object.fromEntries(statuses.map((s) => [s.status, count(s.events)])),
     configs: perConfig
+      // La requête écarte déjà les exécutions sans configuration ; ce filtre
+      // le redit au type, qui ne lit pas les clauses `where`.
+      .filter((c): c is typeof c & { configId: number } => c.configId !== null)
       .map((c) => ({
         id: c.configId,
         name: names.get(c.configId) ?? `Recherche #${c.configId}`,
@@ -576,6 +590,103 @@ scraperRouter.get('/stats', async (req, res) => {
   });
 });
 
+// ------------------------------------------------- recherche de source
+
+/**
+ * Le budget d'une recherche de source, et le reste de ce que l'étage 7 lit.
+ *
+ * Ce n'est pas une `ScraperConfig` : une recherche de source n'explore rien,
+ * elle n'a donc ni thème, ni zone, ni période, et lui inventer une ligne en
+ * base l'aurait fait apparaître dans la console avec un bouton « Lancer » qui
+ * n'aurait rien voulu dire. Le worker, lui, attend une configuration — on la
+ * lui fabrique ici, réduite à ce que l'attribution regarde vraiment.
+ *
+ * Le plafond est celui d'une requête au moteur, pas celui d'un run : cet étage
+ * ne fait qu'un appel payant, à un millième de dollar.
+ */
+const SOURCE_CONFIG = {
+  name: 'Recherche de source',
+  theme: "l'étage 7 rejoué seul, sur une sortie déjà en base",
+  maxCostUsd: 0.05,
+  sourceSearch: true,
+  blockAggregators: false,
+} as const;
+
+/** La page dont on part : celle qui a été lue, pas celle qu'on montre. */
+function pageRead(event: { sourceUrl: string | null; foundOnUrl: string | null }): string {
+  // `foundOnUrl` n'est renseigné que lorsqu'une attribution a déjà eu lieu :
+  // c'est alors l'agrégateur, et c'est de lui qu'il faut repartir. Sans lui,
+  // `sourceUrl` est la seule page connue — et si elle est déjà celle de
+  // l'organisateur, l'étage le dira en une ligne, sans rien dépenser.
+  return event.foundOnUrl || event.sourceUrl || '';
+}
+
+/** La dernière recherche de source demandée sur cette sortie, s'il y en a une. */
+async function lastHunt(eventId: number) {
+  return prisma.scraperRun.findFirst({
+    where: { eventId },
+    orderBy: { queuedAt: 'desc' },
+    include: { requestedBy: { select: { id: true, displayName: true } } },
+  });
+}
+
+/**
+ * Met en file la recherche de source d'une sortie : l'étage 7, et lui seul.
+ *
+ * Le scraper ne remonte à l'organisateur qu'au fil d'une recherche. Une sortie
+ * déjà en base dont le lien pointe sur un agrégateur restait donc comme ça
+ * pour toujours, et le modérateur qui le voyait n'avait rien d'autre à faire
+ * que de chercher à la main. Ce bouton rejoue la cascade sur cette fiche-là.
+ */
+scraperRouter.post('/events/:id/source', async (req, res) => {
+  const eventId = Number(req.params.id);
+  if (!Number.isInteger(eventId)) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    select: { id: true, sourceUrl: true, foundOnUrl: true },
+  });
+  if (!event) {
+    res.status(404).json({ error: 'Sortie introuvable' });
+    return;
+  }
+  if (!pageRead(event)) {
+    // Sans page de départ il n'y a rien à remonter : l'étage 7 part d'une page
+    // lue, il ne cherche pas une sortie dont on ne connaît aucune adresse.
+    res.status(409).json({ error: "Cette sortie n'a aucun lien : il n'y a rien à remonter" });
+    return;
+  }
+  const pending = await prisma.scraperRun.findFirst({
+    where: { eventId, status: { in: ['QUEUED', 'RUNNING'] } },
+  });
+  if (pending) {
+    res.status(409).json({ error: 'Une recherche de source est déjà en cours pour cette sortie' });
+    return;
+  }
+  const run = await prisma.scraperRun.create({
+    data: { eventId, submit: false, requestedById: req.user!.id },
+  });
+  res.status(201).json({ run: serializeRun(run) });
+});
+
+/**
+ * L'état de la dernière recherche de source d'une sortie.
+ *
+ * C'est ce que la fiche interroge en attendant : le worker passe toutes les
+ * trente secondes, et une exécution finie doit se voir sans recharger la page.
+ */
+scraperRouter.get('/events/:id/source', async (req, res) => {
+  const eventId = Number(req.params.id);
+  if (!Number.isInteger(eventId)) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const run = await lastHunt(eventId);
+  res.json({ run: run ? serializeRun(run) : null });
+});
+
 // ------------------------------------------------------------------ worker
 
 /**
@@ -587,7 +698,16 @@ scraperRouter.post('/next', async (_req, res) => {
   const queued = await prisma.scraperRun.findFirst({
     where: { status: 'QUEUED' },
     orderBy: { queuedAt: 'asc' },
-    include: { config: true },
+    include: {
+      config: true,
+      event: {
+        select: {
+          id: true, title: true, sourceUrl: true, foundOnUrl: true,
+          dateStart: true, dateEnd: true,
+          venue: { select: { name: true, city: true } },
+        },
+      },
+    },
   });
   if (!queued) {
     res.json({ run: null });
@@ -605,20 +725,63 @@ scraperRouter.post('/next', async (_req, res) => {
   // La liste des agrégateurs n'appartient plus à la recherche : elle est
   // commune, et c'est ici qu'elle rejoint la configuration envoyée au worker.
   // Le scraper garde le même contrat qu'avant — une liste de domaines et une
-  // case à cocher — sans avoir à savoir d'où elle vient.
+  // case à cocher — sans avoir à savoir d'où elle vient. Elle vaut pour les
+  // deux sortes d'exécution : c'est elle qui dit ce qu'on remonte, et une
+  // recherche de source ne fait que ça.
   const aggregators = await prisma.aggregator.findMany({
     where: { enabled: true },
     orderBy: { domain: 'asc' },
     select: { domain: true },
   });
+  const aggregatorDomains = aggregators.map((a) => a.domain).join(',');
+
+  // Une exécution qui porte une sortie est une recherche de source : elle
+  // rejoue l'étage 7 sur cette fiche, et rien d'autre. C'est ce champ, et non
+  // un mode de plus dans la configuration, qui le dit — une exécution sans
+  // configuration ne pourrait de toute façon jouer aucune recherche.
+  if (queued.event) {
+    const event = queued.event;
+    res.json({
+      run: {
+        ...serializeRun(queued),
+        status: 'RUNNING',
+        config: { ...SOURCE_CONFIG, aggregatorDomains },
+        event: {
+          id: event.id,
+          title: event.title,
+          venueName: event.venue.name,
+          venueCity: event.venue.city,
+          dateStart: event.dateStart ? event.dateStart.toISOString().slice(0, 10) : '',
+          dateEnd: event.dateEnd ? event.dateEnd.toISOString().slice(0, 10) : '',
+          // La page à relire, décidée ici : le worker n'a pas à connaître la
+          // règle qui distingue le lien montré de la page réellement lue.
+          pageUrl: pageRead(event),
+        },
+      },
+    });
+    return;
+  }
+
+  if (!queued.config) {
+    // Ni configuration ni sortie : la ligne ne décrit aucun travail. Elle est
+    // close plutôt que resservie en boucle au prochain passage du worker.
+    await prisma.scraperRun.update({
+      where: { id: queued.id },
+      data: {
+        status: 'FAILED',
+        error: 'Exécution sans configuration ni sortie',
+        finishedAt: new Date(),
+      },
+    });
+    res.json({ run: null });
+    return;
+  }
+
   res.json({
     run: {
       ...serializeRun(queued),
       status: 'RUNNING',
-      config: {
-        ...serializeConfig(queued.config),
-        aggregatorDomains: aggregators.map((a) => a.domain).join(','),
-      },
+      config: { ...serializeConfig(queued.config), aggregatorDomains },
     },
   });
 });
@@ -978,6 +1141,38 @@ scraperRouter.get('/runs/:id/tree', async (req, res) => {
 });
 
 /**
+ * La mesure de l'étage 7 : où l'attribution trouve, et où elle perd.
+ *
+ * Le graphe dit qu'un étage a été traversé onze fois en douze secondes. Il ne
+ * dit pas si l'attribution est repartie les mains vides parce qu'aucun signal
+ * n'a rien proposé, ou parce qu'elle a ouvert quatre pages qui parlaient
+ * d'autre chose : deux pannes opposées, deux corrections opposées, et le même
+ * silence dans la console. `buildAttribution` range le journal de l'étage
+ * pour que la différence se voie.
+ *
+ * La requête est étroite — le journal d'un run compte un millier de lignes,
+ * l'étage 7 quelques dizaines — et l'index `(runId, stage)` la sert
+ * directement. C'est pourquoi elle a sa route plutôt qu'un champ de plus sur
+ * l'arbre, qui relit tout le journal.
+ */
+scraperRouter.get('/runs/:id/attribution', async (req, res) => {
+  const runId = Number(req.params.id);
+  if (!Number.isInteger(runId)) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const rows = await prisma.scraperRunLog.findMany({
+    where: { runId, stage: ATTRIBUTE_STAGE },
+    orderBy: { seq: 'asc' },
+    select: {
+      seq: true, stage: true, kind: true, level: true,
+      url: true, message: true, data: true,
+    },
+  });
+  res.json(buildAttribution(rows));
+});
+
+/**
  * Oublie le journal détaillé d'une exécution, et lui seul.
  *
  * Ce journal est verbeux par construction : il garde chaque lien soumis au
@@ -1116,6 +1311,49 @@ scraperRouter.post('/runs/:id/finish', async (req, res) => {
     }
     throw e;
   }
+});
+
+/**
+ * Ce que la recherche de source a trouvé, et ce que la sortie en devient.
+ *
+ * Le worker ne touche pas à la fiche : il rapporte, le site décide. C'est la
+ * même séparation que partout ailleurs — le scraper propose, le site range —
+ * et elle compte ici parce qu'une source fausse est pire qu'une source
+ * absente : `checked` est la seule chose qui autorise le remplacement.
+ *
+ * `sourceUrl` ne change pas de rôle : il reste le **meilleur lien connu**. La
+ * page d'où l'on est parti descend dans `foundOnUrl`, qui n'existe que pour
+ * dire au modérateur d'où venait la proposition.
+ */
+scraperRouter.post('/runs/:id/source', async (req, res) => {
+  const id = Number(req.params.id);
+  const parsed = scraperSourceSchema.safeParse(req.body);
+  if (!Number.isInteger(id) || !parsed.success) {
+    res.status(400).json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
+    return;
+  }
+  const run = await prisma.scraperRun.findUnique({ where: { id }, select: { eventId: true } });
+  if (!run || run.eventId === null) {
+    res.status(404).json({ error: 'Aucune recherche de source sous ce numéro' });
+    return;
+  }
+  const { url, signal, detail, checked, foundOn } = parsed.data;
+  if (!checked || !url) {
+    // Rien de vérifié : la fiche garde le lien qu'elle avait. Le journal de
+    // l'exécution, lui, dit ce qui a été essayé et pourquoi c'est tombé.
+    res.json({ ok: true, updated: false });
+    return;
+  }
+  const event = await prisma.event.update({
+    where: { id: run.eventId },
+    data: {
+      sourceUrl: url,
+      foundOnUrl: foundOn ?? null,
+      sourceUrlSignal: signal || null,
+    },
+    select: { id: true, sourceUrl: true, foundOnUrl: true, sourceUrlSignal: true },
+  });
+  res.json({ ok: true, updated: true, event, detail: detail ?? '' });
 });
 
 /**

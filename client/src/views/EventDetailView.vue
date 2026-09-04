@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
 import { setPageSeo } from '../lib/seo';
 import { useAuthStore } from '../stores/auth';
-import type { EventItem } from '../types';
+import type { EventItem, ScraperRun } from '../types';
 import {
   SETTING_LABELS,
   SOURCE_SIGNAL_LABELS,
@@ -83,6 +83,92 @@ const sourceSignal = computed(() => {
   return SOURCE_SIGNAL_LABELS[signal] ?? signal;
 });
 
+// ------------------------------------------- chercher la source à la demande
+
+/**
+ * L'étage 7 du scraper, rejoué sur cette fiche seule.
+ *
+ * Le scraper ne remonte de l'agrégateur à l'organisateur qu'au fil d'une
+ * recherche : une sortie déjà publiée dont le lien pointe sur kidiklik y
+ * restait pour toujours, et le modérateur qui le voyait n'avait qu'à chercher
+ * à la main. Ce bouton met la question en file ; le worker la prend à son
+ * prochain passage, et la fiche se met à jour toute seule.
+ */
+const hunt = ref<ScraperRun | null>(null);
+const hunting = ref(false);
+const huntError = ref('');
+let huntTimer: ReturnType<typeof setInterval> | undefined;
+
+/** Une recherche de source est en file ou en cours : on attend, on la suit. */
+const huntRunning = computed(
+  () => hunt.value?.status === 'QUEUED' || hunt.value?.status === 'RUNNING',
+);
+
+/** Le bouton n'a de sens que sur une fiche qui porte un lien à remonter. */
+const canHunt = computed(() => !!event.value?.sourceUrl && auth.isModerator);
+
+async function loadHunt() {
+  if (!event.value || !auth.isModerator) return;
+  const data = await api.get<{ run: ScraperRun | null }>(
+    `/api/scraper/events/${event.value.id}/source`,
+  );
+  hunt.value = data.run;
+  if (huntRunning.value) watchHunt();
+  else stopWatchingHunt();
+}
+
+/**
+ * Suit l'exécution jusqu'à sa fin. Le worker passe toutes les trente
+ * secondes : on interroge plus souvent que ça, mais pas au point de marteler
+ * l'API pour une réponse qui met une minute à venir.
+ */
+function watchHunt() {
+  if (huntTimer) return;
+  huntTimer = setInterval(async () => {
+    if (!event.value) return;
+    try {
+      const data = await api.get<{ run: ScraperRun | null }>(
+        `/api/scraper/events/${event.value.id}/source`,
+      );
+      hunt.value = data.run;
+      if (!huntRunning.value) {
+        stopWatchingHunt();
+        // La fiche a peut-être changé de lien : c'est le site qui l'a écrit,
+        // on le relit plutôt que de le deviner.
+        const fresh = await api.get<{ event: EventItem }>(`/api/events/${event.value.id}`);
+        event.value = fresh.event;
+      }
+    } catch (e) {
+      stopWatchingHunt();
+      huntError.value = e instanceof Error ? e.message : 'Erreur';
+    }
+  }, 5_000);
+}
+
+function stopWatchingHunt() {
+  clearInterval(huntTimer);
+  huntTimer = undefined;
+}
+
+async function huntSource() {
+  if (!event.value) return;
+  huntError.value = '';
+  hunting.value = true;
+  try {
+    const data = await api.post<{ run: ScraperRun }>(
+      `/api/scraper/events/${event.value.id}/source`,
+    );
+    hunt.value = data.run;
+    watchHunt();
+  } catch (e) {
+    huntError.value = e instanceof Error ? e.message : 'Erreur';
+  } finally {
+    hunting.value = false;
+  }
+}
+
+onUnmounted(stopWatchingHunt);
+
 const moderating = ref(false);
 const moderationError = ref('');
 
@@ -149,6 +235,9 @@ onMounted(async () => {
     const data = await api.get<{ event: EventItem }>(`/api/events/${route.params.id}`);
     event.value = data.event;
     applySeo(data.event);
+    // Une recherche de source lancée puis quittée doit se retrouver au retour :
+    // elle dure une minute, et la page se ferme plus vite que ça.
+    if (canHunt.value) await loadHunt();
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erreur';
     setPageSeo({ title: 'Sortie introuvable', noindex: true });
@@ -273,6 +362,36 @@ onMounted(async () => {
                 {{ hostLabel(event.sourceUrl) }} ↗
               </a>
               <span v-if="sourceSignal" class="signal">{{ sourceSignal }}</span>
+
+              <!-- L'étage 7 du scraper, rejoué sur cette fiche seule. Réservé
+                   au modérateur : c'est lui qui voit qu'un lien pointe sur un
+                   agrégateur, et lui seul peut en changer. -->
+              <template v-if="canHunt">
+                <button
+                  class="btn small ghost hunt"
+                  :disabled="hunting || huntRunning"
+                  @click="huntSource"
+                >
+                  {{ huntRunning ? 'Recherche en cours…' : 'Chercher la source' }}
+                </button>
+                <span v-if="huntError" class="hunt-note error">{{ huntError }}</span>
+                <span v-else-if="huntRunning" class="hunt-note">
+                  En file d'attente : le worker la prendra dans la minute, la
+                  fiche se mettra à jour toute seule.
+                </span>
+                <span v-else-if="hunt?.status === 'FAILED'" class="hunt-note">
+                  Dernière recherche en échec{{ hunt.error ? ` : ${hunt.error}` : '' }}.
+                  <RouterLink :to="`/admin/scraper/runs/${hunt.id}/debug`">
+                    Voir le journal
+                  </RouterLink>
+                </span>
+                <span v-else-if="hunt" class="hunt-note">
+                  Dernière recherche terminée.
+                  <RouterLink :to="`/admin/scraper/runs/${hunt.id}/debug`">
+                    Voir ce qu'elle a essayé
+                  </RouterLink>
+                </span>
+              </template>
             </dd>
           </div>
           <!-- Provenance : la page que la recherche automatique a réellement
@@ -312,5 +431,24 @@ onMounted(async () => {
   display: block;
   font-size: 0.85em;
   opacity: 0.75;
+}
+
+/* Chercher la source est un outil de modération, pas une action de la fiche :
+   il se range sous le lien, discret, à la taille de ce qu'il vaut. */
+.hunt {
+  display: inline-block;
+  margin-top: 0.4rem;
+}
+
+.hunt-note {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.82em;
+  opacity: 0.8;
+}
+
+.hunt-note.error {
+  opacity: 1;
+  color: var(--danger);
 }
 </style>

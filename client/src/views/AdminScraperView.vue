@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { api } from '../lib/api';
 import type { ScraperConfig, ScraperMode, ScraperRun } from '../types';
-import { RUN_STATUS_LABELS } from '../types';
+import { RUN_STATUS_LABELS, runLabel } from '../types';
 
 const configs = ref<ScraperConfig[]>([]);
 const runs = ref<ScraperRun[]>([]);
@@ -591,7 +591,7 @@ onUnmounted(() => clearInterval(timer));
       <tbody>
         <tr v-for="r in runs" :key="r.id">
           <td>
-            <RouterLink :to="`/admin/scraper/runs/${r.id}`">{{ r.config?.name }}</RouterLink>
+            <RouterLink :to="`/admin/scraper/runs/${r.id}`">{{ runLabel(r) }}</RouterLink>
             <span v-if="!r.submit" class="badge">essai</span>
             <span v-if="r.purgedAt" class="badge" title="Sorties et mémoire supprimées">vidée</span>
           </td>

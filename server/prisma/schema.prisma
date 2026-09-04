@@ -164,6 +164,8 @@ model Event {
 
   scraperItems ScraperRunItem[]
   scrapedUrls  ScrapedUrl[]
+  /// Les recherches de source demandées sur cette sortie depuis sa fiche.
+  sourceHunts  ScraperRun[] @relation("SourceHunt")
 
   @@index([status, dateEnd])
   @@index([createdById])
@@ -330,8 +332,21 @@ model ScraperRun {
   /// il dit ce que l'exécution a fait, et ça vaut d'être gardé.
   purgedAt DateTime?
 
-  config   ScraperConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
-  configId Int
+  /// La recherche jouée. Nulle pour une **recherche de source** : celle-ci
+  /// n'explore rien, elle rejoue l'étage 7 sur une sortie déjà en base, et
+  /// n'a donc ni thème, ni zone, ni période à recevoir d'une configuration.
+  config   ScraperConfig? @relation(fields: [configId], references: [id], onDelete: Cascade)
+  configId Int?
+
+  /// La sortie dont on cherche la source, quand un modérateur l'a demandé
+  /// depuis sa fiche. Renseigné exactement quand `configId` ne l'est pas :
+  /// c'est ce champ qui dit au worker de ne jouer que l'attribution.
+  ///
+  /// `SetNull` plutôt que `Cascade` : la sortie peut disparaître, le journal
+  /// de l'exécution reste — il dit ce qui a été cherché, et ça vaut d'être
+  /// gardé même quand la fiche n'existe plus.
+  event   Event? @relation("SourceHunt", fields: [eventId], references: [id], onDelete: SetNull)
+  eventId Int?
 
   requestedBy   User? @relation("ScraperRunRequester", fields: [requestedById], references: [id])
   requestedById Int?
@@ -341,6 +356,7 @@ model ScraperRun {
 
   @@index([status, queuedAt])
   @@index([configId])
+  @@index([eventId])
 }
 
 /// Le journal détaillé d'une exécution, étage par étage.
