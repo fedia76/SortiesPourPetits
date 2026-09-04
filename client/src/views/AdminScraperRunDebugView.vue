@@ -16,6 +16,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ApiError, api } from '../lib/api';
 import type {
+  ScraperAttribution,
   ScraperRun,
   ScraperRunLog,
   ScraperStageNode,
@@ -23,7 +24,14 @@ import type {
   ScraperTreeAgenda,
   ScraperTreePage,
 } from '../types';
-import { AGENDA_STATUS_LABELS, FATE_LABELS, LOG_KIND_LABELS, RUN_STATUS_LABELS } from '../types';
+import {
+  AGENDA_STATUS_LABELS,
+  ATTRIBUTION_SIGNAL_HINTS,
+  ATTRIBUTION_SIGNAL_LABELS,
+  FATE_LABELS,
+  LOG_KIND_LABELS,
+  RUN_STATUS_LABELS,
+} from '../types';
 
 const route = useRoute();
 const runId = computed(() => Number(route.params.id));
@@ -61,8 +69,13 @@ const ACTORS: Record<string, string> = {
 const outside = ref(0);
 const logs = ref<ScraperRunLog[]>([]);
 const tree = ref<ScraperTree | null>(null);
-/** « arbre » répond à « d'où vient-ce ? », « journal » à « que s'est-il passé ? ». */
-const view = ref<'arbre' | 'journal'>('arbre');
+const attribution = ref<ScraperAttribution | null>(null);
+/**
+ * « arbre » répond à « d'où vient-ce ? », « journal » à « que s'est-il
+ * passé ? », « source » à « l'étage 7 a-t-il trouvé, et sinon où a-t-il
+ * perdu ? » — trois questions qu'un même journal plat ne sait pas séparer.
+ */
+const view = ref<'arbre' | 'source' | 'journal'>('arbre');
 const total = ref(0);
 const hasMore = ref(false);
 const loading = ref(true);
@@ -108,6 +121,12 @@ async function loadTree() {
   tree.value = await api.get<ScraperTree>(`/api/scraper/runs/${runId.value}/tree`);
 }
 
+async function loadAttribution() {
+  attribution.value = await api.get<ScraperAttribution>(
+    `/api/scraper/runs/${runId.value}/attribution`,
+  );
+}
+
 async function loadGraph() {
   const res = await api.get<{ stages: ScraperStageNode[]; outside: number }>(
     `/api/scraper/runs/${runId.value}/graph`,
@@ -144,7 +163,7 @@ async function loadMore() {
 
 async function loadAll() {
   try {
-    await Promise.all([loadRun(), loadGraph(), loadTree(), loadLogs()]);
+    await Promise.all([loadRun(), loadGraph(), loadTree(), loadAttribution(), loadLogs()]);
     error.value = '';
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) {
@@ -289,10 +308,51 @@ const STAGE_TOTALS: Record<string, (t: Record<string, number>) => string> = {
 };
 
 function stageTotal(stage: string): string {
+  // L'attribution ne rend aucun compteur numérique à sa sortie d'étage — son
+  // résultat est une URL ou rien. Sa ligne vient donc de la mesure, qui sait
+  // compter les deux.
+  if (stage === 'attribute') {
+    const a = attribution.value;
+    if (!a || !a.fiches) return '';
+    return `${a.kept} source(s) sur ${a.dug} creusée(s)`;
+  }
   const t = tree.value?.totals?.[stage];
   if (!t) return '';
   return STAGE_TOTALS[stage]?.(t) ?? '';
 }
+
+// ---------------------------------------------------- la mesure de l'étage 7
+
+function signalLabel(signal: string) {
+  return ATTRIBUTION_SIGNAL_LABELS[signal] ?? signal;
+}
+
+function signalHint(signal: string) {
+  return ATTRIBUTION_SIGNAL_HINTS[signal] ?? '';
+}
+
+/**
+ * Une part, arrondie à l'entier. Un dénominateur nul rend un tiret plutôt
+ * qu'un « 0 % » : zéro sur zéro n'est pas un échec, c'est une absence.
+ */
+function pct(part: number, whole: number): string {
+  if (!whole) return '—';
+  return `${Math.round((part / whole) * 100)} %`;
+}
+
+/** La ligne « Total » du tableau des signaux : les colonnes s'additionnent. */
+const signalTotal = computed(() => {
+  const rows = attribution.value?.bySignal ?? [];
+  return rows.reduce(
+    (sum, r) => ({
+      opened: sum.opened + r.opened,
+      kept: sum.kept + r.kept,
+      rejected: sum.rejected + r.rejected,
+      unreachable: sum.unreachable + r.unreachable,
+    }),
+    { opened: 0, kept: 0, rejected: 0, unreachable: 0 },
+  );
+});
 
 /** Ponctue un motif venu du scraper : deux phrases doivent se séparer. */
 function sentence(text: string) {
@@ -475,6 +535,15 @@ function summary(log: ScraperRunLog): string {
     case 'candidate':
     case 'direct':
       return s('title') || s('url');
+    case 'attribution': {
+      // Le verdict d'abord : c'est ce qu'on lit sans déplier. La candidate
+      // ensuite, abrégée, puis le signal qui l'avait proposée.
+      const parts = [s('status')];
+      if (d.candidate) parts.push(short(String(d.candidate)));
+      if (d.signal) parts.push(`[${s('signal')}]`);
+      if (d.reason) parts.push(`— ${s('reason')}`);
+      return parts.join(' ');
+    }
     case 'incomplete':
       return `${s('field')} — ${s('title')}`;
     case 'programme':
@@ -656,6 +725,12 @@ function clip(text: string, max = 22) {
           Arbre — d'où vient chaque sortie
         </button>
         <button
+          class="tab" :class="{ on: view === 'source' }" role="tab"
+          :aria-selected="view === 'source'" @click="view = 'source'"
+        >
+          Source — ce que l'étage 7 a remonté
+        </button>
+        <button
           class="tab" :class="{ on: view === 'journal' }" role="tab"
           :aria-selected="view === 'journal'" @click="view = 'journal'"
         >
@@ -829,6 +904,181 @@ function clip(text: string, max = 22) {
               </li>
             </ul>
           </template>
+        </template>
+      </template>
+
+      <!-- ---------------------------------------- la mesure de l'étage 7 -->
+      <template v-else-if="view === 'source'">
+        <p v-if="!attribution" class="muted">Chargement…</p>
+        <p v-else-if="!attribution.fiches" class="muted">
+          Cette exécution n'a pas traversé l'étage 7 : soit elle n'a extrait
+          aucune fiche, soit elle est antérieure à cet étage. Rien à mesurer.
+        </p>
+        <template v-else>
+          <h2>Remonter à la source</h2>
+          <p class="muted small">
+            L'étage 7 part de la page qu'on a lue — souvent un agrégateur, qui
+            republie — et cherche la page de l'organisateur : ce que le JSON-LD
+            déclare, le domaine du lieu parmi les liens sortants, un lien qui
+            s'annonce, puis le moteur en dernier recours. Aucune de ces pistes
+            ne prouve rien : la page candidate est <b>ouverte et lue</b>, et
+            elle n'est retenue que si elle parle de cette sortie. Ce tableau dit
+            où l'étage trouve, et surtout où il perd.
+          </p>
+
+          <div class="funnel">
+            <div class="tile">
+              <b>{{ attribution.fiches }}</b>
+              <span>fiche(s) passées par l'étage</span>
+            </div>
+            <div class="tile">
+              <b>{{ attribution.dug }}</b>
+              <span>sur un agrégateur, donc creusées</span>
+              <em>{{ attribution.outside }} étaient déjà à la source</em>
+            </div>
+            <div class="tile">
+              <b>{{ attribution.opened }}</b>
+              <span>candidate(s) ouverte(s) et lue(s)</span>
+              <em>dont {{ attribution.queries }} après une requête au moteur</em>
+            </div>
+            <div class="tile" :class="attribution.kept ? 'ok' : 'ko'">
+              <b>{{ attribution.kept }}</b>
+              <span>source(s) retenue(s)</span>
+              <em>{{ pct(attribution.kept, attribution.dug) }} des fiches creusées</em>
+            </div>
+          </div>
+
+          <p v-if="attribution.fiches && !attribution.dug" class="why-not">
+            <b>L'étage ne s'est jamais déclenché.</b> Il ne cherche que si la
+            page lue appartient à un domaine de la liste des agrégateurs, tenue
+            dans « Recherche auto → Agrégateurs ». Toutes les pages de ce run
+            lui étaient inconnues : ce n'est pas la cascade qui a échoué, c'est
+            la liste qui ne les couvre pas.
+          </p>
+          <p v-if="attribution.unknown" class="why-not">
+            <b>{{ attribution.unknown }} événement(s) au statut inconnu.</b>
+            Cette page lit les statuts que le scraper écrit ; l'un d'eux a été
+            renommé sans elle, et ces événements ne sont comptés nulle part
+            ci-dessous.
+          </p>
+
+          <!-- Le rendement par signal : c'est lui qui sépare les deux pannes,
+               « rien n'est proposé » et « on ouvre des pages fausses ». -->
+          <h3>Ce que chaque signal a proposé, et ce qu'il en reste</h3>
+          <div class="table-wrap">
+            <table class="tally">
+              <thead>
+                <tr>
+                  <th>Signal</th>
+                  <th class="num">Ouvertes</th>
+                  <th class="num">Retenues</th>
+                  <th class="num">Écartées</th>
+                  <th class="num">Injoignables</th>
+                  <th class="num">Réussite</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="sig of attribution.bySignal" :key="sig.signal">
+                  <th scope="row">
+                    {{ signalLabel(sig.signal) }}
+                    <span v-if="signalHint(sig.signal)" class="muted small hint">
+                      {{ signalHint(sig.signal) }}
+                    </span>
+                  </th>
+                  <td class="num">{{ sig.opened }}</td>
+                  <td class="num strong">{{ sig.kept }}</td>
+                  <td class="num">{{ sig.rejected }}</td>
+                  <td class="num">{{ sig.unreachable }}</td>
+                  <td class="num">{{ pct(sig.kept, sig.opened) }}</td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th scope="row">Tous signaux</th>
+                  <td class="num">{{ signalTotal.opened }}</td>
+                  <td class="num strong">{{ signalTotal.kept }}</td>
+                  <td class="num">{{ signalTotal.rejected }}</td>
+                  <td class="num">{{ signalTotal.unreachable }}</td>
+                  <td class="num">{{ pct(signalTotal.kept, signalTotal.opened) }}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <p class="muted small">
+            « Ouvertes » compte des téléchargements : quatre au plus par fiche,
+            tous signaux confondus. Un signal qui propose beaucoup sans jamais
+            tenir ne coûte pas seulement du temps — il consomme le plafond, et
+            fait perdre les candidates suivantes.
+            <template v-if="attribution.alerts">
+              {{ attribution.alerts }} avertissement(s) journalisé(s) dans
+              l'étage.
+            </template>
+          </p>
+
+          <!-- Les motifs, tels que la brique les a écrits : c'est la phrase
+               qu'on ira relire dans `stages/attribution.py`. -->
+          <h3>Pourquoi les autres sont reparties sans source</h3>
+          <p v-if="!attribution.giveUps.length" class="muted">
+            Aucune fiche creusée n'est repartie les mains vides.
+          </p>
+          <div v-else class="table-wrap">
+            <table class="tally">
+              <thead>
+                <tr><th>Motif rendu par l'étage</th><th class="num">Fiches</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="g of attribution.giveUps" :key="g.reason">
+                  <th scope="row">{{ g.reason }}</th>
+                  <td class="num">{{ g.count }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Candidates ouvertes puis écartées</h3>
+          <p class="muted small">
+            Une page téléchargée qui ne parlait pas de cette sortie. C'est ici
+            qu'on voit si la cascade se trompe de page — ou si la vérification
+            est trop sévère et jette la bonne.
+          </p>
+          <p v-if="!attribution.drops.length" class="muted">Aucune.</p>
+          <ul v-else class="tree">
+            <li v-for="d of attribution.drops" :key="`${d.seq}:${d.candidate}`" class="leaf">
+              <span class="dot" :class="d.unreachable ? 'off' : 'ko'" aria-hidden="true"></span>
+              <a :href="d.candidate" target="_blank" rel="noopener noreferrer">
+                {{ short(d.candidate, 48) }}
+              </a>
+              <span class="fate">{{ signalLabel(d.signal) }}</span>
+              <span class="muted small ctx">{{ d.reason }}</span>
+              <button class="btn tiny ghost" @click="inspect({ page: d.page })">sa piste</button>
+            </li>
+          </ul>
+
+          <h3>Sources retenues</h3>
+          <p class="muted small">
+            Ce qui sera proposé au parent, à la place de l'agrégateur. Une
+            source fausse est pire qu'une source absente : cette liste est
+            faite pour être relue à l'œil.
+          </p>
+          <p v-if="!attribution.keeps.length" class="muted">Aucune.</p>
+          <ul v-else class="tree">
+            <li v-for="k of attribution.keeps" :key="`${k.seq}:${k.source}`" class="leaf">
+              <span class="dot ok" aria-hidden="true"></span>
+              <b>{{ k.title || host(k.page) }}</b>
+              <span class="muted small" aria-hidden="true">→</span>
+              <a :href="k.source" target="_blank" rel="noopener noreferrer">
+                {{ short(k.source, 48) }}
+              </a>
+              <span class="fate ok">{{ signalLabel(k.signal) }}</span>
+              <span class="muted small ctx">{{ k.detail }}</span>
+              <button class="btn tiny ghost" @click="inspect({ page: k.page })">sa piste</button>
+            </li>
+          </ul>
+
+          <p v-if="attribution.truncated" class="muted small">
+            Les listes s'arrêtent aux 200 premières lignes. Les compteurs
+            ci-dessus, eux, portent sur tout le run.
+          </p>
         </template>
       </template>
 
@@ -1337,6 +1587,105 @@ li.leaf .ctx {
 .badge.err {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+/* ------------------------------------------------ la mesure de l'étage 7 */
+
+/* L'entonnoir : quatre nombres dans l'ordre où l'étage les produit. On lit la
+   perte en passant d'une tuile à la suivante, sans avoir à faire la division
+   soi-même — d'où la part rappelée sous la dernière. */
+.funnel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.6rem;
+  margin: 0.9rem 0;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.7rem 0.9rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.tile.ok {
+  border-left-color: var(--ok);
+}
+
+.tile.ko {
+  border-left-color: var(--danger);
+}
+
+.tile b {
+  font: 700 1.5rem/1.1 var(--font-display, system-ui), sans-serif;
+}
+
+.tile span {
+  font-size: 0.85rem;
+}
+
+.tile em {
+  font-size: 0.78rem;
+  font-style: normal;
+  color: var(--ink-soft);
+}
+
+/* Un tableau ne doit pas élargir la page : c'est lui qui défile. */
+.table-wrap {
+  overflow-x: auto;
+  margin: 0.5rem 0 0.8rem;
+}
+
+table.tally {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+table.tally th,
+table.tally td {
+  padding: 0.4rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: baseline;
+}
+
+table.tally thead th {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+table.tally tfoot th,
+table.tally tfoot td {
+  border-bottom: none;
+  border-top: 2px solid var(--line);
+  font-weight: 700;
+}
+
+table.tally .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+table.tally .strong {
+  font-weight: 700;
+  color: var(--ok);
+}
+
+/* Ce que le signal lit : sous son nom, en petit, pour qui n'a pas le code
+   sous les yeux. */
+table.tally .hint {
+  display: block;
+  font-weight: 400;
 }
 
 /* --------------------------------------------------------------- journal */

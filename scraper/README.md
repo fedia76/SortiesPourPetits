@@ -273,9 +273,11 @@ Un même événement part vers trois destinations :
 
 La page de débogage se trouve depuis le détail d'une exécution, bouton
 « Journal détaillé et graphe des étages ». Elle dessine les huit briques avec
-leurs compteurs, et le journal filtrable en dessous : par étage (en cliquant
-une brique), par type d'événement, par gravité, par page suivie, ou par texte
-libre. Les filtres se composent et se retirent un par un.
+leurs compteurs, puis trois onglets : l'**arbre** du run, la **source** —
+c'est-à-dire la mesure de l'étage 7, décrite plus bas — et le journal
+filtrable. Le journal se filtre par étage (en cliquant une brique), par type
+d'événement, par gravité, par page suivie, ou par texte libre. Les filtres se
+composent et se retirent un par un.
 
 Le journal est verbeux : chaque lien soumis au tri y figure, soit près d'un
 millier de lignes par exécution. C'est ce qui le rend utile, et c'est pourquoi
@@ -436,6 +438,33 @@ les candidates qu'il voit, et c'est l'épreuve qui tranche. Sans ça, un premier
 lien plausible mais faux ferait perdre le bon, qui était deux lignes plus bas.
 Quatre pages ouvertes au plus, tous signaux confondus — au-delà, on paie en
 secondes de politesse ce qu'on ne trouvera pas.
+
+#### Où il perd, et comment le voir
+
+Le graphe dit que l'étage a été traversé onze fois en douze secondes. Il ne dit
+pas ce qu'on veut savoir quand il déçoit : **où il perd**. Ne rien proposer et
+proposer quatre pages fausses sont deux pannes opposées, qui se corrigent à
+deux endroits opposés du code — et le journal plat les affiche pareil, quelques
+lignes noyées dans mille.
+
+L'onglet « Source » de la page de débogage range donc le journal de l'étage en
+trois questions (`server/src/lib/scraperAttribution.ts`) :
+
+| Ce qu'il montre | Ce que ça répond |
+|---|---|
+| l'entonnoir — fiches vues, creusées, candidates ouvertes, sources retenues | l'étage s'est-il seulement déclenché ? Il ne creuse que sur un agrégateur **connu**, et un run où « creusées » vaut zéro n'a pas un problème de cascade mais de liste |
+| le rendement de chaque signal — ouvertes, retenues, écartées, injoignables | quel signal propose sans jamais tenir. Le plafond de quatre candidates est commun : un mauvais signal ne coûte pas que du temps, il fait perdre les suivantes |
+| les motifs d'abandon, groupés | la phrase exacte que la brique a rendue — « aucun résultat vérifiable pour … », « recherche de source désactivée », « budget atteint » |
+
+S'y ajoutent les deux listes qu'on relit à l'œil : les candidates ouvertes puis
+écartées, avec le signal qui les avait proposées, et les sources retenues, avec
+ce qui les a vérifiées. Chaque ligne ouvre le journal filtré sur la piste de sa
+page.
+
+Rien n'est calculé par le scraper pour cette page : tout est relu du journal
+tel qu'il est déjà écrit — les événements `attribution`, et le `stage_end` de
+l'étage. Une exécution d'hier se mesure donc comme une de demain, sans avoir
+rien à relancer.
 
 #### Ce que cet étage ne fait pas
 

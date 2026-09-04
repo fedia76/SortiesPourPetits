@@ -2,6 +2,7 @@ import { Prisma, Role } from '@prisma/client';
 import { Router } from 'express';
 import { prisma } from '../db';
 import { deletePhoto } from '../lib/upload';
+import { ATTRIBUTE_STAGE, buildAttribution } from '../lib/scraperAttribution';
 import { TREE_MAX_ROWS, buildTree } from '../lib/scraperTree';
 import { requireRole } from '../middleware/auth';
 import {
@@ -975,6 +976,38 @@ scraperRouter.get('/runs/:id/tree', async (req, res) => {
     take: TREE_MAX_ROWS,
   });
   res.json({ ...buildTree(rows), truncated: rows.length >= TREE_MAX_ROWS });
+});
+
+/**
+ * La mesure de l'étage 7 : où l'attribution trouve, et où elle perd.
+ *
+ * Le graphe dit qu'un étage a été traversé onze fois en douze secondes. Il ne
+ * dit pas si l'attribution est repartie les mains vides parce qu'aucun signal
+ * n'a rien proposé, ou parce qu'elle a ouvert quatre pages qui parlaient
+ * d'autre chose : deux pannes opposées, deux corrections opposées, et le même
+ * silence dans la console. `buildAttribution` range le journal de l'étage
+ * pour que la différence se voie.
+ *
+ * La requête est étroite — le journal d'un run compte un millier de lignes,
+ * l'étage 7 quelques dizaines — et l'index `(runId, stage)` la sert
+ * directement. C'est pourquoi elle a sa route plutôt qu'un champ de plus sur
+ * l'arbre, qui relit tout le journal.
+ */
+scraperRouter.get('/runs/:id/attribution', async (req, res) => {
+  const runId = Number(req.params.id);
+  if (!Number.isInteger(runId)) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const rows = await prisma.scraperRunLog.findMany({
+    where: { runId, stage: ATTRIBUTE_STAGE },
+    orderBy: { seq: 'asc' },
+    select: {
+      seq: true, stage: true, kind: true, level: true,
+      url: true, message: true, data: true,
+    },
+  });
+  res.json(buildAttribution(rows));
 });
 
 /**
