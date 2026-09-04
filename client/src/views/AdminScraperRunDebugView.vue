@@ -31,6 +31,7 @@ import {
   FATE_LABELS,
   LOG_KIND_LABELS,
   RUN_STATUS_LABELS,
+  runLabel,
 } from '../types';
 
 const route = useRoute();
@@ -614,7 +615,7 @@ function clip(text: string, max = 22) {
 
     <template v-if="run">
       <h1>
-        Débogage — {{ run.config?.name ?? 'Exécution' }}
+        Débogage — {{ runLabel(run) }}
         <span class="badge" :class="`run-${run.status}`">{{ RUN_STATUS_LABELS[run.status] }}</span>
       </h1>
       <p class="muted small">

@@ -90,6 +90,28 @@ class SppApi:
             return
         self._post_json(f"/api/scraper/runs/{run_id}/logs", {"entries": entries})
 
+    def report_source(
+        self,
+        run_id: int,
+        url: str,
+        signal: str,
+        detail: str,
+        checked: bool,
+        found_on: str = "",
+    ) -> dict[str, Any]:
+        """Rapporte ce qu'une recherche de source a trouvé. Le site décide.
+
+        Le worker ne touche jamais à la fiche : il dit ce qu'il a lu, et le
+        site range. `checked` est le seul champ qui autorise le remplacement —
+        une URL proposée mais jamais ouverte n'est pas une source.
+        """
+        payload: dict[str, Any] = {"signal": signal, "detail": detail[:500], "checked": checked}
+        if url:
+            payload["url"] = url
+        if found_on:
+            payload["foundOn"] = found_on
+        return self._post_json(f"/api/scraper/runs/{run_id}/source", payload)
+
     def finish_run(self, run_id: int, status: str, **counters: Any) -> None:
         """Clôt l'exécution avec ses compteurs (status : DONE ou FAILED)."""
         self._post_json(f"/api/scraper/runs/{run_id}/finish", {"status": status, **counters})

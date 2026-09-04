@@ -62,13 +62,13 @@ from typing import Iterator
 
 from .api import ApiError, SppApi
 from .config import Config, describe
-from .harvest import Fetcher, Link
+from .harvest import FetchError, Fetcher, Link, json_ld_dates
 from .journal import RunLog
 from .ledger import Ledger
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from .classify import PROGRAMME, SORTIE
-from .models import Candidate, ExtractedEvent, FoundPage
+from .models import Candidate, ExtractedEvent, FoundPage, SourceLink, Summary
 from .providers.base import Provider, ProviderError
 from .providers.serper_client import SerperClient
 from .stages import ORDER, describe as describe_stages
@@ -116,6 +116,96 @@ def run(
         ledger=ledger or Ledger(),
     )
     return Run(ctx, engine=engine).go()
+
+
+@dataclass(frozen=True)
+class SourceResult:
+    """Ce qu'une recherche de source rend : le lien, et ce qu'elle a dépensé."""
+
+    source: SourceLink
+    summary: Summary
+
+
+def run_source(
+    config: Config,
+    provider: Provider,
+    store: Memory,
+    api: SppApi,
+    log: RunLog,
+    event: dict[str, object],
+    fetcher: Fetcher | None = None,
+    ledger: Ledger | None = None,
+    engine: SerperClient | None = None,
+) -> SourceResult:
+    """Rejoue l'**étage 7 seul**, sur une sortie déjà en base.
+
+    Une seconde porte d'entrée, et elle est ici plutôt qu'ailleurs pour la
+    raison qui fait exister ce fichier : c'est le seul endroit qui décide de ce
+    qui s'exécute. Une recherche de source est une chaîne d'un maillon, et
+    l'écrire à côté de celle qui en a huit est la façon la plus courte de dire
+    qu'il n'y a rien d'autre.
+
+    Le scraper ne remonte à l'organisateur qu'au fil d'une recherche : une
+    sortie déjà publiée dont le lien pointe sur un agrégateur restait comme ça
+    pour toujours. Un modérateur peut désormais relancer cette question-là
+    depuis la fiche, et cette fonction est ce qu'il déclenche.
+
+    Rien n'est deviné de la sortie : son titre, son lieu et ses dates viennent
+    du site, et la page de départ aussi. La brique reçoit exactement ce qu'elle
+    recevrait au fil d'un run — d'où le `PageContent` reconstitué, dont seules
+    l'adresse et les dates JSON-LD comptent pour elle.
+    """
+    ctx = RunContext(
+        config=config,
+        provider=provider,
+        store=store,
+        api=api,
+        fetcher=fetcher or Fetcher(),
+        log=log,
+        # Une recherche de source ne propose aucune sortie : elle corrige un
+        # lien sur une fiche qui existe déjà, et c'est le site qui l'écrit.
+        submit=False,
+        ledger=ledger or Ledger(),
+    )
+    page_url = str(event.get("pageUrl") or "")
+    extracted = ExtractedEvent(
+        relevant=True,
+        title=str(event.get("title") or ""),
+        venue_name=str(event.get("venueName") or ""),
+        venue_city=str(event.get("venueCity") or ""),
+        date_start=str(event.get("dateStart") or ""),
+        date_end=str(event.get("dateEnd") or ""),
+    )
+
+    log.event(
+        "run_start",
+        config=describe(config),
+        mode="recherche de source",
+        stages=describe_stages(),
+        url=page_url,
+        title=extracted.title,
+    )
+
+    # Les dates que la page de départ déclare sont la seconde preuve de
+    # l'épreuve de vérité — celle qui sauve un programme de festival, qui ne
+    # nomme pas chaque atelier. Le HTML est mis en cache par le `Fetcher` :
+    # l'étage le relira sans redemander la page au site.
+    dates: list[str] = []
+    try:
+        dates = json_ld_dates(ctx.fetcher.get_html(page_url))
+    except FetchError as err:
+        log.warn("source", f"page de départ illisible : {err}", url=page_url)
+
+    page = PageContent(url=page_url, text="", json_ld_dates=dates, image="")
+    candidate = Candidate(url=page_url, title=extracted.title)
+
+    with log.trail(page=page_url):
+        source = Attribution(ctx, engine=engine).run(extracted, candidate, page)
+
+    summary = ctx.summary
+    summary.usage.add(provider.usage)
+    log.event("run_end", summary=summary.as_dict())
+    return SourceResult(source=source, summary=summary)
 
 
 class Run:

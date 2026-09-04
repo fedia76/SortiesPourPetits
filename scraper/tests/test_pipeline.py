@@ -71,8 +71,11 @@ class FakeFetcher:
     def get_html(self, url: str) -> str:
         # Comme le vrai `Fetcher` : une page lue pendant ce run n'est pas
         # redemandée. Sans ça, les tests affirmeraient un trafic que la
-        # production ne produit pas.
-        if url in self.asked:
+        # production ne produit pas. Le cache ne garde que les **réussites**,
+        # là aussi comme le vrai : une page injoignable redemandée doit lever
+        # une seconde fois, pas rendre un KeyError qui n'existe nulle part en
+        # production.
+        if url in self.pages and url in self.asked:
             return self.pages[url]
         self.asked.append(url)
         if url in self.failing:

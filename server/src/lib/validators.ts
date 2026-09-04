@@ -455,6 +455,31 @@ export const scraperFinishSchema = z.object({
 });
 
 /**
+ * Ce que le worker rapporte d'une **recherche de source** : l'étage 7 rejoué
+ * seul sur une sortie déjà en base.
+ *
+ * `checked` est le seul champ qui décide. Une URL non vérifiée — proposée par
+ * un signal mais jamais ouverte, ou ouverte et parlant d'autre chose — n'est
+ * pas une source : elle est journalisée et jetée, exactement comme au fil
+ * d'une recherche. Une source fausse est pire qu'une source absente.
+ */
+export const scraperSourceSchema = z.object({
+  url: scraperUrl.optional(),
+  /** `json_ld`, `venue_domain`, `page_link`, `search`. Vide si rien trouvé. */
+  signal: z.string().trim().max(40).optional(),
+  /** Ce qui a désigné puis vérifié la page, en une phrase, pour le journal. */
+  detail: z.string().trim().max(500).optional(),
+  /**
+   * La page d'où l'on est parti — l'agrégateur. Elle descend dans
+   * `foundOnUrl` : c'est le worker qui l'a réellement lue, donc c'est lui qui
+   * la dit, plutôt que le site qui la recalculerait sur une fiche peut-être
+   * modifiée entre-temps.
+   */
+  foundOn: scraperUrl.optional(),
+  checked: z.boolean().optional().default(false),
+});
+
+/**
  * Périmètre demandé au tableau de bord du scraping.
  *
  * `configId` absent veut dire « toutes les recherches confondues » : c'est la

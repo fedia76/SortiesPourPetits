@@ -305,9 +305,23 @@ export interface ScraperRun {
   outputTokens: number;
   webSearches: number;
   costUsd: number;
-  config?: { id: number; name: string };
+  /**
+   * La recherche jouée. Absente pour une **recherche de source** : celle-ci
+   * n'explore rien, elle rejoue l'étage 7 sur une sortie déjà en base, et
+   * c'est `event` qui la nomme.
+   */
+  config?: { id: number; name: string } | null;
+  /** La sortie dont on cherchait la source, pour ce genre d'exécution. */
+  event?: { id: number; title: string } | null;
   requestedBy?: { id: number; displayName: string } | null;
   items?: ScraperRunItem[];
+}
+
+/** Ce qu'une exécution a joué, dit en une ligne : c'est son nom dans la console. */
+export function runLabel(run: ScraperRun): string {
+  if (run.config) return run.config.name;
+  if (run.event) return `Source de « ${run.event.title} »`;
+  return 'Exécution';
 }
 
 /**

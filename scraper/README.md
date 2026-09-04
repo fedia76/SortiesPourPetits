@@ -439,6 +439,40 @@ lien plausible mais faux ferait perdre le bon, qui était deux lignes plus bas.
 Quatre pages ouvertes au plus, tous signaux confondus — au-delà, on paie en
 secondes de politesse ce qu'on ne trouvera pas.
 
+#### Le rejouer sur une sortie, à la demande
+
+Cet étage ne tournait qu'au fil d'une recherche. Une sortie déjà publiée dont
+le lien pointe sur kidiklik y restait donc pour toujours : le modérateur qui le
+voyait n'avait rien d'autre à faire que de chercher à la main, et la fiche
+gardait l'agrégateur.
+
+La fiche porte maintenant un bouton **« Chercher la source »**, visible des
+seuls modérateurs, qui met en file une exécution d'un seul étage — le
+septième. Elle part de la page réellement lue (`foundOnUrl`, sinon
+`sourceUrl`), rejoue la cascade et la vérification à l'identique, et le site
+écrit ce qu'elle a rapporté :
+
+* trouvée et **vérifiée** : `sourceUrl` devient la page de l'organisateur, la
+  page de départ descend dans `foundOnUrl`, et `sourceUrlSignal` dit lequel des
+  quatre signaux a tranché ;
+* rien de vérifié : **la fiche ne bouge pas**. Le journal de l'exécution, lui,
+  dit ce qui a été essayé — c'est exactement ce que l'onglet « Source » de la
+  page de débogage montre, pour cette exécution comme pour une autre.
+
+Côté code, c'est une **seconde porte d'entrée** de l'orchestrateur,
+`run_source()`, écrite à côté de `run()` pour la raison qui fait exister ce
+fichier : c'est le seul endroit qui décide de ce qui s'exécute, et une chaîne
+d'un maillon se lit mieux à côté de celle qui en a huit. La brique, elle, est
+la même — un test qui passerait pour la recherche de source et pas pour
+l'étage 7 dirait qu'on a dupliqué la règle.
+
+Côté site, une telle exécution est une `ScraperRun` **sans configuration** :
+elle n'explore rien, elle n'a donc ni thème, ni zone, ni période. C'est la
+sortie qu'elle porte (`eventId`) qui dit au worker de ne jouer que
+l'attribution — un champ, pas un mode de plus. Tout le reste lui est commun
+avec une vraie recherche : le journal renvoyé au fil de l'eau, le graphe des
+étages, la page de débogage, la clôture et les compteurs.
+
 #### Où il perd, et comment le voir
 
 Le graphe dit que l'étage a été traversé onze fois en douze secondes. Il ne dit
