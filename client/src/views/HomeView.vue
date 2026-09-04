@@ -273,6 +273,15 @@ onMounted(async () => {
 
     <p v-if="error" class="error">{{ error }}</p>
 
+    <!-- L'ordre a changé de nature : ce n'est plus la chronologie, c'est une
+         réponse à ce qui a été demandé. Le dire évite de croire à un bug quand
+         une sortie de la semaine prochaine passe devant une de demain. -->
+    <p v-if="events.length" class="muted sorting">
+      {{ total }} sortie(s) — les plus
+      <template v-if="filters.age !== ''">adaptées à {{ filters.age }} ans d'abord,</template>
+      <template v-else>ciblées d'abord,</template>
+      puis les plus courtes et les plus proches.
+    </p>
     <div v-if="events.length" class="event-grid">
       <EventCard v-for="e in events" :key="e.id" :event="e" />
     </div>
@@ -290,3 +299,12 @@ onMounted(async () => {
     </nav>
   </div>
 </template>
+
+<style scoped>
+/* Une ligne au-dessus des résultats, pas un titre : elle explique l'ordre à
+   qui se le demande, sans prendre la place de ce qu'on est venu voir. */
+.sorting {
+  margin: 0 0 0.6rem;
+  font-size: 0.88rem;
+}
+</style>

@@ -7,6 +7,7 @@ import { hasCoordinates } from '../lib/incomplete';
 import { eventInputSchema, searchSchema } from '../lib/validators';
 import { dateFilter } from '../lib/dateWindow';
 import { areaFilter } from '../lib/areas';
+import { rankEvents } from '../lib/relevance';
 
 export const eventsRouter = Router();
 
@@ -134,20 +135,36 @@ eventsRouter.get('/', async (req, res) => {
     where.venueId = { in: [...distanceByVenueId.keys()] };
   }
 
-  const [total, events] = await prisma.$transaction([
-    prisma.event.count({ where }),
-    prisma.event.findMany({
-      where,
-      include: EVENT_INCLUDE,
-      orderBy: { dateStart: 'asc' },
-      skip: (f.page - 1) * f.pageSize,
-      take: f.pageSize,
-    }),
-  ]);
+  // Le classement ne se fait pas en SQL : le score mêle la précision de l'âge,
+  // la brièveté de la période et l'imminence, dont deux dépendent de ce qui a
+  // été demandé (voir `lib/relevance.ts`). On relève donc de quoi classer —
+  // cinq colonnes, pas les fiches — puis on ne charge en entier que la page
+  // demandée. Le compte total tombe du même coup, sans seconde requête.
+  const matches = await prisma.event.findMany({
+    where,
+    select: {
+      id: true,
+      ageMin: true,
+      ageMax: true,
+      isPermanent: true,
+      dateStart: true,
+      dateEnd: true,
+    },
+  });
+  const ordered = rankEvents(matches, { age: f.age, from });
+  const ids = ordered.slice((f.page - 1) * f.pageSize, f.page * f.pageSize);
+
+  // `findMany` rend ce que la base veut ; l'ordre est celui du classement, et
+  // c'est ici qu'on le remet — sans quoi la page s'afficherait par identifiant.
+  const rows = ids.length
+    ? await prisma.event.findMany({ where: { id: { in: ids } }, include: EVENT_INCLUDE })
+    : [];
+  const byId = new Map(rows.map((e) => [e.id, e]));
+  const events = ids.map((id) => byId.get(id)).filter((e): e is EventWithRelations => !!e);
 
   res.json({
     events: events.map((e) => serializeEvent(e, distanceByVenueId?.get(e.venueId))),
-    total,
+    total: ordered.length,
     page: f.page,
     pageSize: f.pageSize,
   });

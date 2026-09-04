@@ -47,7 +47,10 @@ Le Havre, Niort et Nancy.
   pointant la sortie d'origine, motif pré-rempli.
 - **Recherche** : texte, gratuit / prix max, âge de l'enfant, période, cadre,
   et **distance** (rayon en km autour d'une adresse ou de la position du
-  navigateur — formule de Haversine en SQL).
+  navigateur — formule de Haversine en SQL). Les résultats sont **classés par
+  pertinence** et non plus par date : la précision de la tranche d'âge d'abord,
+  la brièveté de la période ensuite, l'imminence en dernier — voir
+  « Classer les résultats » plus bas.
 - **Mémoire du scraper** : les pages déjà analysées sont consultables et
   filtrables par verdict. Les oublier les rend à nouveau lisibles — utile pour
   relire un site qui était en panne, sans réexposer ce qui est déjà proposé.
@@ -144,6 +147,50 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | DELETE | `/api/scraper/runs/:id/data` | modérateur | Supprimer ce qu'une exécution a produit : ses sorties et ce qu'elle a mémorisé (le journal reste) |
 | GET | `/api/admin/users` | admin | Liste des utilisateurs |
 | PATCH | `/api/admin/users/:id/role` | admin | Changer un rôle |
+
+## Classer les résultats
+
+Les résultats étaient rendus par date de début croissante. C'est un ordre
+honnête, mais ce n'est pas une réponse à la question posée : un parent qui
+cherche pour un enfant de quatre ans veut d'abord ce qui est **fait pour lui**,
+et d'abord ce qui **ne repassera pas**.
+
+Trois mesures, dans cet ordre d'importance
+([`server/src/lib/relevance.ts`](server/src/lib/relevance.ts)) :
+
+| Mesure | Ce qu'elle vaut | Poids |
+|---|---|---|
+| **Précision de l'âge** | 1 pour une tranche d'un an, 0 pour « ouvert à tous ». Seule l'étendue compte : « à partir de 4 ans » et « 4 à 16 ans » disent la même chose — la sortie accepte l'enfant sans être pensée pour lui | 6 |
+| **Brièveté** | 1 pour une journée, ½ pour une semaine, 0 pour une sortie permanente | 3 |
+| **Imminence** | 1 pour ce qui a lieu maintenant, ½ dans quinze jours, comptée depuis le début de la fenêtre demandée | 2 |
+
+Le critère d'âge **se tait** quand aucun âge n'a été demandé : le classement se
+joue alors sur la période seule, plutôt que de départager au hasard.
+
+### Pourquoi un score et non trois tris enchaînés
+
+Un tri lexicographique sur la précision de l'âge ferait basculer tout le
+classement pour deux ans d'écart de tranche : « 3 à 5 » passerait devant
+« 3 à 6 » quelles que soient leurs dates, et une sortie ponctuelle de ce
+week-end se retrouverait sous une sortie tout public de l'an prochain.
+
+Les poids disent donc l'ordre d'importance, pas une hiérarchie absolue. Une
+sortie tout public d'un seul jour peut passer devant une sortie très ciblée qui
+dure deux mois — et c'est voulu : **la seconde sera encore là au prochain
+passage, la première non.**
+
+### Où le calcul a lieu
+
+En mémoire, pas en SQL. Le score mêle trois mesures dont deux dépendent de la
+requête ; l'écrire en base reviendrait à recopier ces règles dans un langage où
+personne n'irait les relire. La recherche relève donc cinq colonnes pour toutes
+les sorties qui passent les filtres — pas les fiches — classe, puis ne charge en
+entier que la page demandée. Le compte total tombe du même coup, sans seconde
+requête. C'est déjà ce que fait le filtre de distance, pour la même raison.
+
+Les ex æquo sont départagés par la date puis par l'identifiant. Sans cet ordre
+total, deux pages successives pourraient montrer deux fois la même sortie, ou en
+sauter une.
 
 ## Référencement
 
