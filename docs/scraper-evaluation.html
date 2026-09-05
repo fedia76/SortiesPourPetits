@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Le banc d'essai du scraper</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root {
+  color-scheme: light dark;
+  --sans: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+
+  --paper: #F7F8FA;
+  --box: #FFFFFF;
+  --sunk: #EDF0F4;
+  --line: #DCE1E8;
+  --ink: #101725;
+  --ink-2: #38414F;
+  --muted: #626C7B;
+
+  --c1: #2563EB; --c1s: #EAF0FE;
+  --c2: #0E9F6E; --c2s: #E5F6F0;
+  --c3: #7C3AED; --c3s: #F1EBFE;
+  --c4: #C2410C; --c4s: #FCEDE6;
+  --c5: #0891B2; --c5s: #E4F3F8;
+  --c6: #BE185D; --c6s: #FCE9F1;
+
+  --hub: #131A2B;
+  --hub-ink: #F2F5F9;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #101521; --box: #18202D; --sunk: #141B27;
+    --line: #2A3442; --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
+    --c1: #4A82E8; --c1s: #172234;
+    --c2: #12A87B; --c2s: #10261F;
+    --c3: #9068F0; --c3s: #1D1830;
+    --c4: #D2612F; --c4s: #2A1A12;
+    --c5: #189AB4; --c5s: #10262D;
+    --c6: #DB4F84; --c6s: #2A1520;
+    --hub: #0B111C; --hub-ink: #EAF0F7;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #101521; --box: #18202D; --sunk: #141B27;
+  --line: #2A3442; --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
+  --c1: #4A82E8; --c1s: #172234;
+  --c2: #12A87B; --c2s: #10261F;
+  --c3: #9068F0; --c3s: #1D1830;
+  --c4: #D2612F; --c4s: #2A1A12;
+  --c5: #189AB4; --c5s: #10262D;
+  --c6: #DB4F84; --c6s: #2A1520;
+  --hub: #0B111C; --hub-ink: #EAF0F7;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink-2);
+  font-family: var(--sans); font-size: 15px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+b, strong { color: var(--ink); font-weight: 700; }
+code {
+  font-family: var(--mono); font-size: .87em; background: var(--sunk);
+  border: 1px solid var(--line); border-radius: 4px; padding: 0 .28em; color: var(--ink);
+}
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.sprite symbol { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.wrap { padding: 26px 20px 60px; }
+.poster {
+  max-width: 1300px; margin: 0 auto 26px; background: var(--box);
+  border: 1px solid var(--line); border-radius: 18px; padding: 26px;
+  box-shadow: 0 1px 3px rgba(16,23,37,.06), 0 18px 44px -30px rgba(16,23,37,.35);
+  overflow-x: auto;
+}
+.inner { min-width: 1120px; }
+
+.c1 { --a: var(--c1); --as: var(--c1s); }
+.c2 { --a: var(--c2); --as: var(--c2s); }
+.c3 { --a: var(--c3); --as: var(--c3s); }
+.c4 { --a: var(--c4); --as: var(--c4s); }
+.c5 { --a: var(--c5); --as: var(--c5s); }
+.c6 { --a: var(--c6); --as: var(--c6s); }
+
+/* ---- masthead ---- */
+.head { text-align: center; padding: 4px 10px 18px; }
+.head .kicker { font: 600 11px var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.head h1 { font-size: clamp(1.9rem, 1.2rem + 2vw, 2.6rem); font-weight: 800; letter-spacing: -.022em; color: var(--ink); margin: 0 0 6px; line-height: 1.08; text-wrap: balance; }
+.head p.sub { margin: 0 auto 16px; color: var(--muted); font-size: 1.02rem; font-weight: 500; max-width: 62ch; }
+.chips { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.legendchip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--sunk); border-radius: 999px; padding: 6px 14px 6px 10px; font-size: .82rem; font-weight: 600; color: var(--ink-2); }
+.dot { width: 11px; height: 11px; border-radius: 50%; background: var(--a); flex: none; }
+
+/* ---- deux colonnes : le partage des rôles + la chaîne ---- */
+.split { display: grid; gap: 16px; grid-template-columns: 330px 1fr; align-items: start; }
+
+.hub { background: var(--hub); border-radius: 14px; padding: 18px 20px; color: var(--hub-ink); }
+.hub h2 { margin: 0 0 12px; font-size: 1.05rem; font-weight: 700; text-align: center; letter-spacing: -.01em; color: var(--hub-ink); }
+.hub ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
+.hub li { display: flex; gap: 10px; align-items: flex-start; font-size: .85rem; line-height: 1.35; }
+.hub b { color: var(--hub-ink); font-weight: 800; }
+.hub .n { font: 700 10px var(--mono); background: rgba(255,255,255,.12); border-radius: 6px; padding: 3px 6px; flex: none; min-width: 22px; text-align: center; }
+.hub .n.paid { background: rgba(210,97,47,.34); }
+.hub .n.mix { background: rgba(144,104,240,.32); }
+.hub .note { margin: 14px 0 0; font-size: .8rem; line-height: 1.45; opacity: .8; border-top: 1px solid rgba(255,255,255,.14); padding-top: 11px; }
+
+figure { margin: 0; }
+figure svg { display: block; width: 100%; height: auto; }
+figcaption { margin-top: 9px; font-size: .79rem; color: var(--muted); line-height: 1.45; }
+.frame { background: var(--sunk); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px 14px; }
+
+.d-box rect { stroke-width: 1.8; }
+.d-t { fill: var(--ink); font: 700 13px var(--sans); }
+.d-n { font: 800 12px var(--mono); }
+.d-card { fill: var(--muted); font: 500 11.5px var(--sans); }
+.d-file { fill: var(--muted); font: 400 10.5px var(--mono); }
+.d-note { fill: var(--muted); font: 500 10.5px var(--mono); }
+.d-rail { stroke: var(--muted); stroke-width: 1.6; fill: none; opacity: .55; }
+.d-skip { stroke: var(--c3); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+.d-skiplbl { fill: var(--c3); font: 600 10.5px var(--mono); }
+.d-arrow { fill: var(--muted); }
+.d-sep { stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 3 4; }
+
+/* ---- cartes ---- */
+.grid8 { display: grid; gap: 13px; grid-template-columns: repeat(4, 1fr); margin-top: 18px; }
+.card { border: 2px solid var(--a); background: var(--box); border-radius: 14px; padding: 13px 15px 14px; }
+.card header { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+.card .ico { width: 28px; height: 28px; border-radius: 8px; background: var(--as); color: var(--a); display: grid; place-items: center; flex: none; }
+.card .ico svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.card h3 { margin: 0; font-size: .96rem; font-weight: 700; color: var(--a); letter-spacing: -.01em; line-height: 1.25; }
+.card h3 b { font-weight: 800; color: inherit; }
+.card .io { display: block; font: 500 10.5px var(--mono); color: var(--muted); margin: 0 0 9px; padding-bottom: 8px; border-bottom: 1px dashed var(--line); line-height: 1.55; }
+.card .io span { color: var(--ink-2); }
+.card ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
+.card li { position: relative; padding-left: 13px; font-size: .835rem; line-height: 1.42; color: var(--ink-2); }
+.card li::before { content: ""; position: absolute; left: 0; top: .55em; width: 4px; height: 4px; border-radius: 50%; background: var(--a); opacity: .7; }
+.card .foot { margin: 10px 0 0; padding-top: 8px; border-top: 1px dashed var(--line); font: 400 10.5px var(--mono); color: var(--muted); word-break: break-word; }
+.chip { margin-left: auto; font: 600 9.5px var(--mono); letter-spacing: .07em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; white-space: nowrap; background: var(--as); color: var(--a); }
+
+/* ---- bandes ---- */
+.rowhead { display: flex; align-items: center; gap: 12px; margin: 26px 0 12px; }
+.rowhead h2 { margin: 0; font-size: 1.06rem; font-weight: 700; color: var(--ink); white-space: nowrap; }
+.rowhead .bar { height: 2px; background: var(--line); flex: 1; border-radius: 2px; }
+.rowhead .tagn { font: 700 11px var(--mono); color: var(--box); background: var(--ink); border-radius: 6px; padding: 3px 8px; }
+
+.band { background: var(--sunk); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+.bandgrid { display: grid; gap: 12px; grid-template-columns: repeat(3, 1fr); }
+.bandgrid .card { border-width: 1px; }
+
+.pull { border: 2px solid var(--c3); background: var(--c3s); border-radius: 14px; padding: 16px 18px; margin-top: 14px; }
+.pull h2 { margin: 0 0 8px; font-size: 1rem; font-weight: 700; color: var(--c3); }
+.pull p { margin: 0 0 8px; font-size: .89rem; }
+.pull p:last-child { margin-bottom: 0; }
+
+.posterfoot { max-width: 1300px; margin: 0 auto; font-size: .8rem; color: var(--muted); text-align: center; padding: 0 20px; line-height: 1.55; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+@media (max-width: 760px) { .wrap { padding: 14px 10px 44px; } .poster { padding: 14px; border-radius: 12px; } }
+</style>
+<style>
+/* ---- tableau des briques ---- */
+.tblwrap { overflow-x: auto; }
+table.tbl { width: 100%; border-collapse: collapse; font-size: .845rem; }
+table.tbl th, table.tbl td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; line-height: 1.4; }
+table.tbl thead th { font: 600 10px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); border-bottom: 2px solid var(--line); white-space: nowrap; }
+table.tbl tbody tr:last-child td { border-bottom: none; }
+table.tbl td.br { white-space: nowrap; font-weight: 700; color: var(--a); }
+table.tbl td.br .num { font: 800 11px var(--mono); background: var(--as); color: var(--a); border-radius: 5px; padding: 2px 6px; margin-right: 7px; }
+table.tbl tr.r1 { --a: var(--c4); --as: var(--c4s); }
+table.tbl tr.r2 { --a: var(--c3); --as: var(--c3s); }
+table.tbl tr.r3 { --a: var(--c2); --as: var(--c2s); }
+table.tbl tr.r4 { --a: var(--c4); --as: var(--c4s); }
+table.tbl tr.r5 { --a: var(--c2); --as: var(--c2s); }
+table.tbl tr.r6 { --a: var(--c4); --as: var(--c4s); }
+table.tbl tr.r7 { --a: var(--c3); --as: var(--c3s); }
+table.tbl tr.r8 { --a: var(--c1); --as: var(--c1s); }
+.verdict { font: 600 10.5px var(--mono); border-radius: 999px; padding: 3px 9px; white-space: nowrap; display: inline-block; }
+.verdict.yes { background: var(--c2s); color: var(--c2); }
+.verdict.no { background: var(--c6s); color: var(--c6); }
+.verdict.half { background: var(--c3s); color: var(--c3); }
+.verdict.na { background: var(--sunk); color: var(--muted); }
+
+/* ---- étapes ---- */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(6, 1fr); }
+.step { background: var(--box); border: 1px solid var(--line); border-radius: 12px; padding: 13px 14px; display: flex; gap: 10px; align-items: flex-start; }
+.step.now { border: 2px solid var(--c2); background: var(--c2s); }
+.stepn { font: 800 12px var(--mono); color: var(--box); background: var(--ink); border-radius: 7px; padding: 4px 8px; flex: none; }
+.step.now .stepn { background: var(--c2); }
+.step h4 { margin: 0 0 4px; font-size: .86rem; font-weight: 700; color: var(--ink); line-height: 1.25; }
+.step p { margin: 0 0 7px; font-size: .78rem; line-height: 1.4; color: var(--ink-2); }
+.effort { display: inline-block; font: 500 10px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+
+/* ---- remèdes ---- */
+.cure { display: grid; gap: 12px; grid-template-columns: repeat(5, 1fr); }
+.cure .card { border-width: 1px; }
+.cure .card.first { border-width: 2px; }
+.rank { font: 800 11px var(--mono); background: var(--as); color: var(--a); border-radius: 6px; padding: 3px 7px; flex: none; }
+
+/* ---- règle statistique ---- */
+.stats { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; margin-top: 12px; }
+.stat { background: var(--box); border: 1px solid var(--line); border-left: 3px solid var(--c5); border-radius: 10px; padding: 13px 15px; }
+.stat .k { font: 600 10px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 5px; }
+.stat .v { font-size: .88rem; line-height: 1.45; color: var(--ink-2); }
+.stat .v b { font-variant-numeric: tabular-nums; }
+
+.warnbox { border: 2px solid var(--c6); background: var(--c6s); border-radius: 14px; padding: 16px 18px; }
+.warnbox h2 { margin: 0 0 8px; font-size: 1rem; font-weight: 700; color: var(--c6); }
+.warnbox p { margin: 0 0 8px; font-size: .89rem; }
+.warnbox p:last-child { margin-bottom: 0; }
+.terms { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 11px; }
+.term { font: 600 10.5px var(--mono); background: var(--box); border: 1px solid var(--c6); color: var(--c6); border-radius: 999px; padding: 4px 11px; }
+
+.e-t { fill: var(--ink); font: 700 12.5px var(--sans); }
+.e-s { fill: var(--muted); font: 500 10.5px var(--sans); }
+.e-lbl { fill: var(--muted); font: 600 10px var(--mono); letter-spacing: .09em; }
+.e-line { stroke: var(--muted); stroke-width: 1.7; fill: none; }
+.e-fix { stroke: var(--c2); stroke-width: 2; fill: none; }
+.e-fixlbl { fill: var(--c2); font: 600 11px var(--mono); }
+.e-blindlbl { fill: var(--c6); font: 600 10px var(--mono); letter-spacing: .09em; }
+.e-blindtxt { fill: var(--ink-2); font: 500 11.5px var(--sans); }
+</style>
+
+</head>
+<body>
+
+<svg class="sprite" aria-hidden="true" focusable="false"><defs>
+<symbol id="ic-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2 L20 20"/></symbol>
+<symbol id="ic-eye" viewBox="0 0 24 24"><path d="M2.6 12s3.6-6.2 9.4-6.2S21.4 12 21.4 12s-3.6 6.2-9.4 6.2S2.6 12 2.6 12Z"/><circle cx="12" cy="12" r="2.7"/></symbol>
+<symbol id="ic-list" viewBox="0 0 24 24"><path d="M8.4 6.6 h11.4"/><path d="M8.4 12 h11.4"/><path d="M8.4 17.4 h11.4"/><circle cx="4.6" cy="6.6" r="1.4"/><circle cx="4.6" cy="12" r="1.4"/><circle cx="4.6" cy="17.4" r="1.4"/></symbol>
+<symbol id="ic-filter" viewBox="0 0 24 24"><path d="M3.5 5.5 h17 L14 12.6 V19 l-4 1.4 v-7.8 Z"/></symbol>
+<symbol id="ic-doc" viewBox="0 0 24 24"><path d="M6 3.2 h8 l4.5 4.5 V20.8 H6 Z"/><path d="M14 3.2 V8 h4.5"/><path d="M8.6 12.5 h7"/><path d="M8.6 16 h7"/></symbol>
+<symbol id="ic-form" viewBox="0 0 24 24"><rect x="3.6" y="4.2" width="16.8" height="15.6" rx="2.2"/><path d="M7.2 9 h5.4"/><path d="M7.2 12.5 h9.6"/><path d="M7.2 16 h7"/></symbol>
+<symbol id="ic-anchor" viewBox="0 0 24 24"><circle cx="12" cy="5.2" r="2.2"/><path d="M12 7.4 V20"/><path d="M7.4 11.4 h9.2"/><path d="M4.2 14.6 a7.8 7.8 0 0 0 15.6 0"/></symbol>
+<symbol id="ic-send" viewBox="0 0 24 24"><path d="M20.5 3.6 L3.6 10.4 l6.7 2.8 2.8 6.7 Z"/><path d="M10.3 13.2 L20.5 3.6"/></symbol>
+<symbol id="ic-shield" viewBox="0 0 24 24"><path d="M12 3 l7 2.6 v6.1 c0 4.2-2.9 7.4-7 9.3-4.1-1.9-7-5.1-7-9.3V5.6 Z"/><path d="M8.8 12.1 l2.3 2.3 4.2-4.5"/></symbol>
+<symbol id="ic-db" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7.4" ry="2.9"/><path d="M4.6 6 v12 c0 1.6 3.3 2.9 7.4 2.9 s7.4-1.3 7.4-2.9 V6"/><path d="M4.6 12 c0 1.6 3.3 2.9 7.4 2.9 s7.4-1.3 7.4-2.9"/></symbol>
+<symbol id="ic-gauge" viewBox="0 0 24 24"><path d="M3.6 17.4 a8.8 8.8 0 0 1 16.8 0"/><path d="M12 17.4 L16.2 11"/><circle cx="12" cy="17.4" r="1.5"/></symbol>
+</defs></svg>
+
+<div class="wrap">
+<div class="poster">
+ <div class="inner">
+
+  <div class="head">
+    <p class="kicker">SortiesPourPetits · scraper/sortiesbot · évaluation</p>
+    <h1>Le banc d'essai du scraper</h1>
+    <p class="sub">Ce qu'on mesure sur chacune des huit briques, d'où viennent les étiquettes, et le trou dans les données : le pipeline sait quand il se trompe, il ne sait pas ce qu'il rate.</p>
+    <div class="chips">
+      <span class="legendchip c2"><span class="dot"></span>Mesurable exactement, gratuitement</span>
+      <span class="legendchip c5"><span class="dot"></span>Étiquetage humain, borné</span>
+      <span class="legendchip c6"><span class="dot"></span>Point aveugle — aucune étiquette</span>
+    </div>
+  </div>
+
+  <div class="warnbox">
+    <h2>Le constat qui commande tout le reste</h2>
+    <p><b>Le système a un filet humain sur la précision, et aucun sur le rappel.</b> Une fausse sortie remonte au modérateur, qui la refuse : l'erreur est vue, corrigée, et — c'est le point — <b>étiquetée</b>. Une vraie sortie écartée à l'étage 4 n'est vue par personne, jamais. Elle ne produit même pas une ligne de regret.</p>
+    <p>Conséquence contre-intuitive mais solide : <b>l'effort d'évaluation doit aller majoritairement au rappel</b>, précisément parce que la production s'occupe déjà de la précision. C'est le contraire de l'instinct.</p>
+  </div>
+
+  <div class="frame" style="margin-top:16px">
+    <figure>
+      <svg viewBox="0 0 1080 380" role="img" aria-label="Les liens d'un agenda passent par la sélection. Ceux qui sont retenus sont lus, extraits, envoyés en modération, et le modérateur les approuve ou les refuse — ce verdict est une étiquette humaine. Ceux qui sont écartés tombent dans une zone où personne ne les relit et où aucune étiquette n'est produite. Un tirage au sort de deux pour cent des écartés, réinjecté dans la lecture, est la seule flèche qui fait ressortir une étiquette de cette zone.">
+        <defs>
+          <marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/>
+          </marker>
+          <marker id="a2fix" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--c2)"/>
+          </marker>
+        </defs>
+
+        <text x="36" y="30" class="e-lbl">CE QUI EST OBSERVÉ — ET QUI FINIT PAR RECEVOIR UNE ÉTIQUETTE HUMAINE</text>
+
+        <rect x="36" y="76" width="120" height="56" rx="10" fill="var(--sunk)" stroke="var(--line)" stroke-width="1.6"/>
+        <text x="96" y="100" class="e-t" text-anchor="middle">≈ 200 liens</text>
+        <text x="96" y="118" class="e-s" text-anchor="middle">d'un agenda</text>
+
+        <path class="e-line" marker-end="url(#a2)" d="M 156 104 H 190"/>
+
+        <rect x="196" y="76" width="130" height="56" rx="10" fill="var(--c4s)" stroke="var(--c4)" stroke-width="1.8"/>
+        <text x="261" y="100" class="e-t" text-anchor="middle">4 · Sélection</text>
+        <text x="261" y="118" class="e-s" text-anchor="middle">le modèle trie</text>
+
+        <path class="e-line" marker-end="url(#a2)" d="M 326 104 H 360"/>
+        <text x="346" y="62" class="e-s" text-anchor="middle">retenus</text>
+
+        <rect x="366" y="76" width="170" height="56" rx="10" fill="var(--c2s)" stroke="var(--c2)" stroke-width="1.8"/>
+        <text x="451" y="100" class="e-t" text-anchor="middle">5 Lecture · 6 Extraction</text>
+        <text x="451" y="118" class="e-s" text-anchor="middle">la fiche est remplie</text>
+
+        <path class="e-line" marker-end="url(#a2)" d="M 536 104 H 570"/>
+
+        <rect x="576" y="76" width="140" height="56" rx="10" fill="var(--c1s)" stroke="var(--c1)" stroke-width="1.8"/>
+        <text x="646" y="100" class="e-t" text-anchor="middle">File de</text>
+        <text x="646" y="118" class="e-t" text-anchor="middle">modération</text>
+
+        <path class="e-line" marker-end="url(#a2)" d="M 716 104 H 750"/>
+
+        <rect x="756" y="76" width="125" height="56" rx="10" fill="var(--c1s)" stroke="var(--c1)" stroke-width="1.8"/>
+        <text x="818" y="108" class="e-t" text-anchor="middle">Modérateur</text>
+
+        <path class="e-line" marker-end="url(#a2)" d="M 881 104 H 896 V 82 H 912"/>
+        <path class="e-line" marker-end="url(#a2)" d="M 881 104 H 896 V 126 H 912"/>
+        <text x="920" y="86" class="e-t">approuvé</text>
+        <text x="920" y="130" class="e-t">refusé</text>
+        <text x="920" y="152" class="e-fixlbl">↳ étiquette</text>
+        <text x="934" y="167" class="e-fixlbl">humaine</text>
+
+        <path class="e-line" marker-end="url(#a2)" d="M 261 132 V 240"/>
+        <text x="272" y="192" class="e-s">écartés</text>
+
+        <rect x="196" y="246" width="620" height="80" rx="12" fill="var(--c6s)" stroke="var(--c6)" stroke-width="1.8" stroke-dasharray="7 5"/>
+        <text x="216" y="272" class="e-blindlbl">CE QUI N'EST JAMAIS OBSERVÉ</text>
+        <text x="216" y="296" class="e-blindtxt">Personne ne les relit. Aucune étiquette n'en sort. Une vraie sortie tombée ici</text>
+        <text x="216" y="314" class="e-blindtxt">est perdue sans laisser de trace — et c'est là que vit tout le rappel manquant.</text>
+
+        <path class="e-fix" marker-end="url(#a2fix)" d="M 451 246 V 138"/>
+        <text x="463" y="200" class="e-fixlbl">2 % tirés au sort,</text>
+        <text x="463" y="216" class="e-fixlbl">lus quand même</text>
+
+        <text x="836" y="280" class="e-s">Les X de cette population</text>
+        <text x="836" y="296" class="e-s">sont déjà journalisés</text>
+        <text x="836" y="312" class="e-s">(texte du lien, contexte).</text>
+      </svg>
+      <figcaption>La flèche verte est le seul chemin par lequel une étiquette peut sortir de la zone aveugle — et c'est aussi la seule chose à ajouter au code pour qu'elle existe. Tout le reste du dessin tourne déjà.</figcaption>
+    </figure>
+  </div>
+
+  <div class="rowhead"><span class="tagn">A</span><h2>Ce qu'on évalue, brique par brique</h2><span class="bar"></span></div>
+
+  <div class="tblwrap">
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Brique</th>
+        <th>Unité évaluée</th>
+        <th>D'où vient l'étiquette</th>
+        <th>Ce qu'on mesure</th>
+        <th>Rappel observable&nbsp;?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="r1">
+        <td class="br"><span class="num">1</span>Découverte</td>
+        <td>un jeu de requêtes</td>
+        <td>aucune — l'univers, c'est le web</td>
+        <td>rendement comparatif entre gabarits de requêtes, à zone et période égales ; € par sortie approuvée</td>
+        <td><span class="verdict no">non, et jamais</span></td>
+      </tr>
+      <tr class="r2">
+        <td class="br"><span class="num">2</span>Reconnaissance</td>
+        <td>une page</td>
+        <td>humain, ≈ 5 s par page</td>
+        <td><b>matrice de coûts</b>, pas exactitude ; et la couverture de la cascade gratuite — quelle part elle tranche seule, et sa précision quand elle tranche</td>
+        <td><span class="verdict yes">oui</span></td>
+      </tr>
+      <tr class="r3">
+        <td class="br"><span class="num">3</span>Dépouillement</td>
+        <td>un agenda</td>
+        <td>humain, exhaustif sur la page</td>
+        <td><b>le rappel d'abord</b> : quelle part des fiches réellement liées est ressortie</td>
+        <td><span class="verdict yes">oui</span></td>
+      </tr>
+      <tr class="r4">
+        <td class="br"><span class="num">4</span>Sélection</td>
+        <td>un lien</td>
+        <td>le point aveugle — voir <b>B</b></td>
+        <td>précision et rappel, et le coût d'une sortie manquée</td>
+        <td><span class="verdict no">non, en l'état</span></td>
+      </tr>
+      <tr class="r5">
+        <td class="br"><span class="num">5</span>Lecture</td>
+        <td>une page</td>
+        <td>dérivable du HTML, gratuite</td>
+        <td>assertions exactes : texte non vide, dates JSON-LD trouvées, illustration qui n'est pas le logo du site</td>
+        <td><span class="verdict yes">oui</span></td>
+      </tr>
+      <tr class="r6">
+        <td class="br"><span class="num">6</span>Extraction</td>
+        <td><b>un champ</b>, jamais une fiche</td>
+        <td>humain sur ≈ 100 pages, + la vérification d'ancrage qui, elle, ne coûte rien</td>
+        <td>exactitude champ par champ — une date est juste ou fausse, ça se compte</td>
+        <td><span class="verdict yes">oui</span></td>
+      </tr>
+      <tr class="r7">
+        <td class="br"><span class="num">7</span>Attribution</td>
+        <td>une fiche</td>
+        <td>humain, ou le tamis actuel en approximation</td>
+        <td>ce que le moteur rend, ce que le tamis refuse, où l'attribution perd — la mesure existe déjà</td>
+        <td><span class="verdict half">partiellement</span></td>
+      </tr>
+      <tr class="r8">
+        <td class="br"><span class="num">8</span>Publication</td>
+        <td>une fiche</td>
+        <td>le contrat de l'API</td>
+        <td>des tests unitaires, et rien de plus</td>
+        <td><span class="verdict na">sans objet</span></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="grid8" style="grid-template-columns:repeat(3,1fr)">
+
+    <article class="card c3">
+      <header>
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-gauge"></use></svg></span>
+        <h3>Commencer par les briques gratuites</h3>
+      </header>
+      <ul>
+        <li>L'instinct dit d'attaquer les briques payantes, « là où est l'IA ». C'est l'inverse.</li>
+        <li>Elles sont <b>déterministes</b> : leur évaluation est exacte, reproductible, gratuite à rejouer, et se met en intégration continue le jour même.</li>
+        <li>Elles sont <b>en amont</b> : une sortie que le dépouillement n'a pas vue est perdue pour les cinq étages suivants. Aucun modèle en aval ne la rattrape.</li>
+        <li>Et ce sont elles qui <b>cassent silencieusement</b> — un agenda change de gabarit, le run se termine normalement, juste plus maigre.</li>
+      </ul>
+    </article>
+
+    <article class="card c4">
+      <header>
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-shield"></use></svg></span>
+        <h3>L'exactitude est la mauvaise métrique</h3>
+      </header>
+      <ul>
+        <li>Une confusion agenda → sortie et une confusion sortie → agenda ne valent pas le même prix : la première coûte un appel de sélection, la seconde coûte <b>tous les liens de l'agenda</b>.</li>
+        <li>Donc pas un pourcentage, mais une <b>matrice de coûts en euros</b>, remplie avec les vrais tarifs.</li>
+        <li>C'est déjà la doctrine du code — « une hésitation coûte bien moins qu'une erreur ». Il ne manque que le chiffre.</li>
+      </ul>
+    </article>
+
+    <article class="card c2">
+      <header>
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-anchor"></use></svg></span>
+        <h3>L'ancrage — la vérification sans étiquette</h3>
+      </header>
+      <ul>
+        <li>Toute valeur extraite doit se retrouver dans le texte de la page : un prix, une ville, une date. Ce qui ne s'y retrouve pas est une hallucination — <b>détectée sans le moindre jeu de test</b>.</li>
+        <li>C'est exactement le principe de l'étage 7, généralisé à l'étage 6.</li>
+        <li>Reste <code>description</code>, seul champ non vérifiable mécaniquement : c'est le seul endroit où un juge modèle se justifie — et il faut alors <b>l'étalonner</b> contre ≈ 50 jugements humains. Un juge non calibré est un thermomètre non gradué.</li>
+      </ul>
+    </article>
+
+  </div>
+
+  <div class="rowhead"><span class="tagn">B</span><h2>Le point aveugle, et les cinq façons d'en sortir</h2><span class="bar"></span></div>
+
+  <div class="warnbox">
+    <h2>Ça porte un nom, et ce n'est pas une fatalité</h2>
+    <p>Le résultat n'est observé que pour les liens <b>que la politique a choisis</b>. Le jeu de données dira toujours si une sortie proposée était fausse ; il ne dira jamais qu'une sortie écartée était vraie. Les statisticiens du crédit ont exactement ce problème — ils ne savent jamais si les dossiers refusés auraient remboursé — et ils l'ont nommé, ainsi que son remède.</p>
+    <div class="terms">
+      <span class="term">retour de type bandit</span>
+      <span class="term">biais de sélection</span>
+      <span class="term">inférence sur les refusés</span>
+      <span class="term">reject inference</span>
+    </div>
+  </div>
+
+  <div class="cure" style="margin-top:14px">
+
+    <article class="card c2 first">
+      <header>
+        <span class="rank">①</span>
+        <h3>Le budget d'exploration</h3>
+      </header>
+      <p class="io">le remède, et il se branche <span>maintenant</span></p>
+      <ul>
+        <li>2 % des liens écartés sont lus <b>quand même</b>, extraits, et partent en modération marqués « contrôle ».</li>
+        <li>Le taux de bonnes sorties dans cet échantillon <b>est</b> le rappel manquant, estimé sans biais.</li>
+        <li>Coût : quelques pour cent du budget d'un run. Gain : des étiquettes non biaisées, en continu, pour toujours.</li>
+        <li>Il faut des <b>semaines</b> pour que ça se remplisse — donc ça se branche avant tout le reste, pas après.</li>
+      </ul>
+      <p class="foot">Et c'est déjà la moitié du dispositif d'un bandit : l'exploration payée pour mesurer sert ensuite à décider.</p>
+    </article>
+
+    <article class="card c5">
+      <header>
+        <span class="rank">②</span>
+        <h3>Le vivier commun</h3>
+      </header>
+      <p class="io">pour le corpus gelé</p>
+      <ul>
+        <li>Faire tourner <b>plusieurs variantes</b> sur les mêmes agendas — deux modèles, un prompt volontairement permissif, l'heuristique, et la borne « on garde tout ».</li>
+        <li>Prendre l'<b>union</b> de ce qu'au moins une a retenu, et étiqueter cette union à la main.</li>
+        <li>On mesure alors le rappel relatif au vivier. Biaisé — ce qu'aucune variante n'a proposé reste invisible — mais borné et connu.</li>
+        <li>C'est ainsi qu'on évalue les moteurs de recherche depuis trente ans.</li>
+      </ul>
+    </article>
+
+    <article class="card c5">
+      <header>
+        <span class="rank">③</span>
+        <h3>Le corpus fermé, exhaustif</h3>
+      </header>
+      <p class="io">la seule source de vrai rappel</p>
+      <ul>
+        <li>30 pages d'agenda, et <b>chaque</b> lien étiqueté à la main : ≈ 1 500 jugements. Un week-end pénible, un actif permanent.</li>
+        <li>Petit échantillon, barres d'erreur larges : ça ne départage pas deux prompts.</li>
+        <li>Ça sert de <b>plafond</b> — « la vérité est de 412 sorties, le pipeline en sort 297 ». Ce chiffre-là n'existe aujourd'hui pas du tout.</li>
+      </ul>
+    </article>
+
+    <article class="card c3">
+      <header>
+        <span class="rank">④</span>
+        <h3>Le run-plafond</h3>
+      </header>
+      <p class="io">une fois par trimestre</p>
+      <ul>
+        <li>Un run tous filtres au maximum de permissivité — aucune sélection, on lit tous les liens — sur une petite zone.</li>
+        <li>Cher, mais une seule fois : il donne le dénominateur réel <b>en conditions réelles</b>, donc le rappel en production.</li>
+        <li>À refaire rarement, pour vérifier que rien n'a dérivé.</li>
+      </ul>
+    </article>
+
+    <article class="card c1">
+      <header>
+        <span class="rank">⑤</span>
+        <h3>La sonde déjà en place</h3>
+      </header>
+      <p class="io">gratuite, ce soir</p>
+      <ul>
+        <li>Une sortie <b>proposée par un visiteur et approuvée</b>, dont la zone et la période étaient couvertes par un run qui ne l'a pas trouvée : <b>c'est un raté documenté, avec son URL</b>.</li>
+        <li>Un humain a fait le travail de rappel à ta place, et la trace est gardée — l'origine d'une sortie est déjà distinguée en base.</li>
+        <li>Petite et biaisée, donc pas un taux — mais des <b>cas concrets à autopsier</b> : rejoue le pipeline sur chaque URL et regarde quel étage l'a perdue.</li>
+        <li>Trois autopsies suffisent à dire où est le vrai trou.</li>
+      </ul>
+      <p class="foot">Une requête SQL sur des données qui existent déjà.</p>
+    </article>
+
+  </div>
+
+  <div class="rowhead"><span class="tagn">C</span><h2>La mécanique d'un banc qui sert vraiment</h2><span class="bar"></span></div>
+
+  <div class="band">
+    <div class="bandgrid" style="grid-template-columns:repeat(2,1fr)">
+
+      <article class="card c5">
+        <header>
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-db"></use></svg></span>
+          <h3>Quatre points de montage</h3>
+        </header>
+        <ul>
+          <li><b>Cacher les réponses du modèle</b>, clé = empreinte du modèle, du prompt rendu et de l'entrée. Sans cache, chaque rejeu repaie le corpus entier et tu n'oseras plus le lancer.</li>
+          <li><b>Température 0 n'est pas le déterminisme.</b> Une variante s'évalue en k passes (k = 3 suffit) ; on rapporte la moyenne <i>et</i> l'écart.</li>
+          <li><b>Comparaison appariée, toujours</b> : sur les mêmes items, en comptant ceux où les variantes divergent — jamais deux moyennes indépendantes.</li>
+          <li><b>Le coût et la latence sont des colonnes du tableau</b>, pas une note de bas de page. Une variante qui gagne 2 points pour trois fois le prix perd.</li>
+        </ul>
+        <p class="foot">Le harnais existe déjà à moitié : <code>--save-pages</code> écrit le format du corpus, et les doublures de <code>test_pipeline.py</code> rejouent le pipeline hors ligne.</p>
+      </article>
+
+      <article class="card c5">
+        <header>
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-filter"></use></svg></span>
+          <h3>Ce qu'un corpus de cette taille peut dire — et ne peut pas</h3>
+        </header>
+        <div class="stats">
+          <div class="stat">
+            <span class="k">évaluation indépendante</span>
+            <p class="v">Sur <b>200</b> items, deux variantes doivent différer d'environ <b>8 points</b> pour être distinguables.</p>
+          </div>
+          <div class="stat">
+            <span class="k">évaluation appariée</span>
+            <p class="v">Seuls les items où elles divergent comptent. S'il y en a <b>20</b>, il faut à peu près <b>15 contre 5</b>.</p>
+          </div>
+        </div>
+        <p class="foot" style="border-top:1px dashed var(--line);margin-top:12px">En dessous de ces écarts, tu ne mesures rien. C'est la règle qui t'évitera de conclure « le nouveau prompt gagne 4 points » sur 150 pages : il ne gagne rien, tu as tiré à pile ou face.</p>
+      </article>
+
+    </div>
+  </div>
+
+  <div class="rowhead"><span class="tagn">D</span><h2>Dans quel ordre s'y prendre</h2><span class="bar"></span></div>
+
+  <ol class="steps">
+    <li class="step now">
+      <span class="stepn">0</span>
+      <div>
+        <h4>Le budget d'exploration</h4>
+        <p>Le tirage au sort dans la sélection, et son marquage jusqu'à la file. Rien d'autre ne peut le remplacer, et il met des semaines à se remplir.</p>
+        <span class="effort">1 soirée</span>
+      </div>
+    </li>
+    <li class="step now">
+      <span class="stepn">1</span>
+      <div>
+        <h4>Les ratés documentés</h4>
+        <p>La requête qui croise les propositions de visiteurs approuvées avec ce que les runs ont couvert. Des cas réels, gratuits, dès ce soir.</p>
+        <span class="effort">1 heure</span>
+      </div>
+    </li>
+    <li class="step">
+      <span class="stepn">2</span>
+      <div>
+        <h4>Le harnais, étages 3 et 5</h4>
+        <p>Déterministes, donc assertions exactes sur les fixtures déjà là. C'est le squelette, et la première barrière en intégration continue.</p>
+        <span class="effort">1 soirée</span>
+      </div>
+    </li>
+    <li class="step">
+      <span class="stepn">3</span>
+      <div>
+        <h4>Étage 2, matrice de coûts</h4>
+        <p>300 pages étiquetées. Le premier chiffre sur la cascade gratuite : ce qu'elle tranche seule, et sa précision quand elle tranche.</p>
+        <span class="effort">1 week-end</span>
+      </div>
+    </li>
+    <li class="step">
+      <span class="stepn">4</span>
+      <div>
+        <h4>Étage 6, champ par champ</h4>
+        <p>100 fiches de référence, plus la vérification d'ancrage qui tourne sur tout le corpus sans étiquette.</p>
+        <span class="effort">1 week-end</span>
+      </div>
+    </li>
+    <li class="step">
+      <span class="stepn">5</span>
+      <div>
+        <h4>Étage 4, enfin</h4>
+        <p>Par le vivier commun d'abord, par le budget d'exploration une fois qu'il a rempli. Et c'est là seulement que la distillation devient démontrable.</p>
+        <span class="effort">après</span>
+      </div>
+    </li>
+  </ol>
+
+  <div class="pull" style="border-color:var(--c2);background:var(--c2s)">
+    <h2 style="color:var(--c2)">Le point de bascule</h2>
+    <p>Tant que <b>0</b> n'est pas branché, le système continue de fabriquer un jeu de données qui ne peut structurellement pas répondre à la question qui importe. Une fois branché, il en fabrique un qui le peut — sans qu'il y ait rien d'autre à faire que d'attendre.</p>
+    <p>Et la doctrine du projet s'applique telle quelle : la reconnaissance a été branchée <b>en observation</b> avant d'avoir voix au chapitre. Un banc qui mesure sans rien décider ne peut rien casser.</p>
+  </div>
+
+ </div>
+</div>
+
+<p class="posterfoot">
+  Planche d'analyse, écrite en septembre 2026 à partir du code de l'époque. Les proportions et les ordres de grandeur vieillissent ; la doctrine, elle, est celle du code — mesurer avant de remplacer.<br>
+  Précède : <b>Les huit briques du scraper</b> — ce que chaque brique reçoit, ce qu'elle rend, qui travaille et qui paie.
+</p>
+
+</div>
+</body>
+</html>

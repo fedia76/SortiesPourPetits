@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Les huit briques du scraper</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root {
+  color-scheme: light dark;
+  --sans: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+
+  --paper: #F7F8FA;
+  --box: #FFFFFF;
+  --sunk: #EDF0F4;
+  --line: #DCE1E8;
+  --ink: #101725;
+  --ink-2: #38414F;
+  --muted: #626C7B;
+
+  --c1: #2563EB; --c1s: #EAF0FE;
+  --c2: #0E9F6E; --c2s: #E5F6F0;
+  --c3: #7C3AED; --c3s: #F1EBFE;
+  --c4: #C2410C; --c4s: #FCEDE6;
+  --c5: #0891B2; --c5s: #E4F3F8;
+  --c6: #BE185D; --c6s: #FCE9F1;
+
+  --hub: #131A2B;
+  --hub-ink: #F2F5F9;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #101521; --box: #18202D; --sunk: #141B27;
+    --line: #2A3442; --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
+    --c1: #4A82E8; --c1s: #172234;
+    --c2: #12A87B; --c2s: #10261F;
+    --c3: #9068F0; --c3s: #1D1830;
+    --c4: #D2612F; --c4s: #2A1A12;
+    --c5: #189AB4; --c5s: #10262D;
+    --c6: #DB4F84; --c6s: #2A1520;
+    --hub: #0B111C; --hub-ink: #EAF0F7;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #101521; --box: #18202D; --sunk: #141B27;
+  --line: #2A3442; --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
+  --c1: #4A82E8; --c1s: #172234;
+  --c2: #12A87B; --c2s: #10261F;
+  --c3: #9068F0; --c3s: #1D1830;
+  --c4: #D2612F; --c4s: #2A1A12;
+  --c5: #189AB4; --c5s: #10262D;
+  --c6: #DB4F84; --c6s: #2A1520;
+  --hub: #0B111C; --hub-ink: #EAF0F7;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink-2);
+  font-family: var(--sans); font-size: 15px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+b, strong { color: var(--ink); font-weight: 700; }
+code {
+  font-family: var(--mono); font-size: .87em; background: var(--sunk);
+  border: 1px solid var(--line); border-radius: 4px; padding: 0 .28em; color: var(--ink);
+}
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.sprite symbol { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.wrap { padding: 26px 20px 60px; }
+.poster {
+  max-width: 1300px; margin: 0 auto 26px; background: var(--box);
+  border: 1px solid var(--line); border-radius: 18px; padding: 26px;
+  box-shadow: 0 1px 3px rgba(16,23,37,.06), 0 18px 44px -30px rgba(16,23,37,.35);
+  overflow-x: auto;
+}
+.inner { min-width: 1120px; }
+
+.c1 { --a: var(--c1); --as: var(--c1s); }
+.c2 { --a: var(--c2); --as: var(--c2s); }
+.c3 { --a: var(--c3); --as: var(--c3s); }
+.c4 { --a: var(--c4); --as: var(--c4s); }
+.c5 { --a: var(--c5); --as: var(--c5s); }
+.c6 { --a: var(--c6); --as: var(--c6s); }
+
+/* ---- masthead ---- */
+.head { text-align: center; padding: 4px 10px 18px; }
+.head .kicker { font: 600 11px var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.head h1 { font-size: clamp(1.9rem, 1.2rem + 2vw, 2.6rem); font-weight: 800; letter-spacing: -.022em; color: var(--ink); margin: 0 0 6px; line-height: 1.08; text-wrap: balance; }
+.head p.sub { margin: 0 auto 16px; color: var(--muted); font-size: 1.02rem; font-weight: 500; max-width: 62ch; }
+.chips { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.legendchip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--sunk); border-radius: 999px; padding: 6px 14px 6px 10px; font-size: .82rem; font-weight: 600; color: var(--ink-2); }
+.dot { width: 11px; height: 11px; border-radius: 50%; background: var(--a); flex: none; }
+
+/* ---- deux colonnes : le partage des rôles + la chaîne ---- */
+.split { display: grid; gap: 16px; grid-template-columns: 330px 1fr; align-items: start; }
+
+.hub { background: var(--hub); border-radius: 14px; padding: 18px 20px; color: var(--hub-ink); }
+.hub h2 { margin: 0 0 12px; font-size: 1.05rem; font-weight: 700; text-align: center; letter-spacing: -.01em; color: var(--hub-ink); }
+.hub ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
+.hub li { display: flex; gap: 10px; align-items: flex-start; font-size: .85rem; line-height: 1.35; }
+.hub b { color: var(--hub-ink); font-weight: 800; }
+.hub .n { font: 700 10px var(--mono); background: rgba(255,255,255,.12); border-radius: 6px; padding: 3px 6px; flex: none; min-width: 22px; text-align: center; }
+.hub .n.paid { background: rgba(210,97,47,.34); }
+.hub .n.mix { background: rgba(144,104,240,.32); }
+.hub .note { margin: 14px 0 0; font-size: .8rem; line-height: 1.45; opacity: .8; border-top: 1px solid rgba(255,255,255,.14); padding-top: 11px; }
+
+figure { margin: 0; }
+figure svg { display: block; width: 100%; height: auto; }
+figcaption { margin-top: 9px; font-size: .79rem; color: var(--muted); line-height: 1.45; }
+.frame { background: var(--sunk); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px 14px; }
+
+.d-box rect { stroke-width: 1.8; }
+.d-t { fill: var(--ink); font: 700 13px var(--sans); }
+.d-n { font: 800 12px var(--mono); }
+.d-card { fill: var(--muted); font: 500 11.5px var(--sans); }
+.d-file { fill: var(--muted); font: 400 10.5px var(--mono); }
+.d-note { fill: var(--muted); font: 500 10.5px var(--mono); }
+.d-rail { stroke: var(--muted); stroke-width: 1.6; fill: none; opacity: .55; }
+.d-skip { stroke: var(--c3); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+.d-skiplbl { fill: var(--c3); font: 600 10.5px var(--mono); }
+.d-arrow { fill: var(--muted); }
+.d-sep { stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 3 4; }
+
+/* ---- cartes ---- */
+.grid8 { display: grid; gap: 13px; grid-template-columns: repeat(4, 1fr); margin-top: 18px; }
+.card { border: 2px solid var(--a); background: var(--box); border-radius: 14px; padding: 13px 15px 14px; }
+.card header { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+.card .ico { width: 28px; height: 28px; border-radius: 8px; background: var(--as); color: var(--a); display: grid; place-items: center; flex: none; }
+.card .ico svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.card h3 { margin: 0; font-size: .96rem; font-weight: 700; color: var(--a); letter-spacing: -.01em; line-height: 1.25; }
+.card h3 b { font-weight: 800; color: inherit; }
+.card .io { display: block; font: 500 10.5px var(--mono); color: var(--muted); margin: 0 0 9px; padding-bottom: 8px; border-bottom: 1px dashed var(--line); line-height: 1.55; }
+.card .io span { color: var(--ink-2); }
+.card ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
+.card li { position: relative; padding-left: 13px; font-size: .835rem; line-height: 1.42; color: var(--ink-2); }
+.card li::before { content: ""; position: absolute; left: 0; top: .55em; width: 4px; height: 4px; border-radius: 50%; background: var(--a); opacity: .7; }
+.card .foot { margin: 10px 0 0; padding-top: 8px; border-top: 1px dashed var(--line); font: 400 10.5px var(--mono); color: var(--muted); word-break: break-word; }
+.chip { margin-left: auto; font: 600 9.5px var(--mono); letter-spacing: .07em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; white-space: nowrap; background: var(--as); color: var(--a); }
+
+/* ---- bandes ---- */
+.rowhead { display: flex; align-items: center; gap: 12px; margin: 26px 0 12px; }
+.rowhead h2 { margin: 0; font-size: 1.06rem; font-weight: 700; color: var(--ink); white-space: nowrap; }
+.rowhead .bar { height: 2px; background: var(--line); flex: 1; border-radius: 2px; }
+.rowhead .tagn { font: 700 11px var(--mono); color: var(--box); background: var(--ink); border-radius: 6px; padding: 3px 8px; }
+
+.band { background: var(--sunk); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+.bandgrid { display: grid; gap: 12px; grid-template-columns: repeat(3, 1fr); }
+.bandgrid .card { border-width: 1px; }
+
+.pull { border: 2px solid var(--c3); background: var(--c3s); border-radius: 14px; padding: 16px 18px; margin-top: 14px; }
+.pull h2 { margin: 0 0 8px; font-size: 1rem; font-weight: 700; color: var(--c3); }
+.pull p { margin: 0 0 8px; font-size: .89rem; }
+.pull p:last-child { margin-bottom: 0; }
+
+.posterfoot { max-width: 1300px; margin: 0 auto; font-size: .8rem; color: var(--muted); text-align: center; padding: 0 20px; line-height: 1.55; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+@media (max-width: 760px) { .wrap { padding: 14px 10px 44px; } .poster { padding: 14px; border-radius: 12px; } }
+</style>
+</head>
+<body>
+
+<svg class="sprite" aria-hidden="true" focusable="false"><defs>
+<symbol id="ic-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2 L20 20"/></symbol>
+<symbol id="ic-eye" viewBox="0 0 24 24"><path d="M2.6 12s3.6-6.2 9.4-6.2S21.4 12 21.4 12s-3.6 6.2-9.4 6.2S2.6 12 2.6 12Z"/><circle cx="12" cy="12" r="2.7"/></symbol>
+<symbol id="ic-list" viewBox="0 0 24 24"><path d="M8.4 6.6 h11.4"/><path d="M8.4 12 h11.4"/><path d="M8.4 17.4 h11.4"/><circle cx="4.6" cy="6.6" r="1.4"/><circle cx="4.6" cy="12" r="1.4"/><circle cx="4.6" cy="17.4" r="1.4"/></symbol>
+<symbol id="ic-filter" viewBox="0 0 24 24"><path d="M3.5 5.5 h17 L14 12.6 V19 l-4 1.4 v-7.8 Z"/></symbol>
+<symbol id="ic-doc" viewBox="0 0 24 24"><path d="M6 3.2 h8 l4.5 4.5 V20.8 H6 Z"/><path d="M14 3.2 V8 h4.5"/><path d="M8.6 12.5 h7"/><path d="M8.6 16 h7"/></symbol>
+<symbol id="ic-form" viewBox="0 0 24 24"><rect x="3.6" y="4.2" width="16.8" height="15.6" rx="2.2"/><path d="M7.2 9 h5.4"/><path d="M7.2 12.5 h9.6"/><path d="M7.2 16 h7"/></symbol>
+<symbol id="ic-anchor" viewBox="0 0 24 24"><circle cx="12" cy="5.2" r="2.2"/><path d="M12 7.4 V20"/><path d="M7.4 11.4 h9.2"/><path d="M4.2 14.6 a7.8 7.8 0 0 0 15.6 0"/></symbol>
+<symbol id="ic-send" viewBox="0 0 24 24"><path d="M20.5 3.6 L3.6 10.4 l6.7 2.8 2.8 6.7 Z"/><path d="M10.3 13.2 L20.5 3.6"/></symbol>
+<symbol id="ic-shield" viewBox="0 0 24 24"><path d="M12 3 l7 2.6 v6.1 c0 4.2-2.9 7.4-7 9.3-4.1-1.9-7-5.1-7-9.3V5.6 Z"/><path d="M8.8 12.1 l2.3 2.3 4.2-4.5"/></symbol>
+<symbol id="ic-db" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7.4" ry="2.9"/><path d="M4.6 6 v12 c0 1.6 3.3 2.9 7.4 2.9 s7.4-1.3 7.4-2.9 V6"/><path d="M4.6 12 c0 1.6 3.3 2.9 7.4 2.9 s7.4-1.3 7.4-2.9"/></symbol>
+<symbol id="ic-gauge" viewBox="0 0 24 24"><path d="M3.6 17.4 a8.8 8.8 0 0 1 16.8 0"/><path d="M12 17.4 L16.2 11"/><circle cx="12" cy="17.4" r="1.5"/></symbol>
+</defs></svg>
+
+<div class="wrap">
+<div class="poster">
+ <div class="inner">
+
+  <div class="head">
+    <p class="kicker">SortiesPourPetits · scraper/sortiesbot</p>
+    <h1>Les huit briques du scraper</h1>
+    <p class="sub">Comment une recherche web devient une sortie en attente de modération — ce que chaque brique reçoit, ce qu'elle rend, qui travaille et qui paie.</p>
+    <div class="chips">
+      <span class="legendchip c2"><span class="dot"></span>Python — gratuit</span>
+      <span class="legendchip c4"><span class="dot"></span>Le modèle — facturé</span>
+      <span class="legendchip c3"><span class="dot"></span>Mixte — gratuit tant qu'un signal tranche</span>
+      <span class="legendchip c1"><span class="dot"></span>Le site — API et modération</span>
+    </div>
+  </div>
+
+  <div class="split">
+
+    <div class="hub">
+      <h2>Le partage des rôles</h2>
+      <ul>
+        <li><span class="n paid">1</span><span>Le modèle <b>cherche</b> — il rend des requêtes, jamais des URL</span></li>
+        <li><span class="n mix">2</span><span>Quatre signaux gratuits <b>constatent</b> la nature d'une page</span></li>
+        <li><span class="n">3</span><span>Python <b>télécharge</b> l'agenda et en tire les liens</span></li>
+        <li><span class="n paid">4</span><span>Le modèle <b>trie</b> les liens, en répondant des numéros</span></li>
+        <li><span class="n">5</span><span>Python <b>lit</b> : texte, JSON-LD, illustration</span></li>
+        <li><span class="n paid">6</span><span>Le modèle <b>remplit</b> la fiche, schéma imposé</span></li>
+        <li><span class="n mix">7</span><span>Une cascade <b>remonte</b> à la page de l'organisateur</span></li>
+        <li><span class="n">8</span><span>Python <b>géocode, date, illustre</b> et propose la sortie</span></li>
+      </ul>
+      <p class="note">Trois appels au modèle par page au plus, bornés, sans outil et <b>sans boucle</b>. C'est ce découpage qui rend le coût prévisible — et c'est la raison pour laquelle aucune brique ne sait ce qui vient avant ou après elle.</p>
+    </div>
+
+    <div class="frame">
+      <figure>
+        <svg viewBox="0 0 1080 540" role="img" aria-label="La chaîne des huit briques : l'indentation dit la cardinalité — ce qui est plus à droite tourne plus souvent. La découverte tourne une fois par run, la reconnaissance une fois par URL, le dépouillement et la sélection une fois par agenda, la lecture et l'extraction une fois par page, l'attribution et la publication une fois par fiche.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 9 5 L 0 9 z" class="d-arrow"/>
+            </marker>
+            <marker id="ar3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--c3)"/>
+            </marker>
+          </defs>
+
+          <text x="48" y="16" class="d-note">L'INDENTATION DIT LA CARDINALITÉ — CE QUI EST PLUS À DROITE TOURNE PLUS SOUVENT</text>
+          <text x="620" y="16" class="d-note">COMBIEN DE FOIS</text>
+          <text x="860" y="16" class="d-note">OÙ C'EST</text>
+
+          <!-- rails -->
+          <path class="d-rail" d="M 80 72 V 361"/>
+          <path class="d-rail" d="M 128 126 V 227"/>
+          <path class="d-rail" d="M 128 382 V 469"/>
+
+          <path class="d-rail" d="M 80 105 H 96"/>
+          <path class="d-rail" d="M 128 173 H 144"/>
+          <path class="d-rail" d="M 128 227 H 144"/>
+          <path class="d-rail" d="M 80 307 H 96"/>
+          <path class="d-rail" d="M 80 361 H 96"/>
+          <path class="d-rail" d="M 128 415 H 144"/>
+          <path class="d-rail" d="M 128 469 H 144"/>
+
+          <!-- branche : sortie ou programme saute 3 et 4 -->
+          <path class="d-skip" marker-end="url(#ar3)" d="M 436 105 H 500 V 307 H 440"/>
+          <text x="510" y="196" class="d-skiplbl">sortie ou programme :</text>
+          <text x="510" y="211" class="d-skiplbl">saute 3 et 4</text>
+
+          <!-- 1 -->
+          <g class="d-box"><rect x="48" y="30" width="340" height="42" rx="10" fill="var(--c4s)" stroke="var(--c4)"/></g>
+          <text x="66" y="56" class="d-n" fill="var(--c4)">1</text>
+          <text x="90" y="56" class="d-t">Découverte</text>
+          <text x="620" y="56" class="d-card">1 fois par run</text>
+          <text x="860" y="56" class="d-file">stages/discovery.py</text>
+
+          <!-- 2 -->
+          <g class="d-box"><rect x="96" y="84" width="340" height="42" rx="10" fill="var(--c3s)" stroke="var(--c3)"/></g>
+          <text x="114" y="110" class="d-n" fill="var(--c3)">2</text>
+          <text x="138" y="110" class="d-t">Reconnaissance</text>
+          <text x="620" y="110" class="d-card">1 fois par URL trouvée</text>
+          <text x="860" y="110" class="d-file">stages/identification.py</text>
+
+          <text x="144" y="146" class="d-note">SI LA PAGE EST UN AGENDA</text>
+
+          <!-- 3 -->
+          <g class="d-box"><rect x="144" y="152" width="340" height="42" rx="10" fill="var(--c2s)" stroke="var(--c2)"/></g>
+          <text x="162" y="178" class="d-n" fill="var(--c2)">3</text>
+          <text x="186" y="178" class="d-t">Dépouillement</text>
+          <text x="620" y="178" class="d-card">1 fois par agenda</text>
+          <text x="860" y="178" class="d-file">stages/harvest.py</text>
+
+          <!-- 4 -->
+          <g class="d-box"><rect x="144" y="206" width="340" height="42" rx="10" fill="var(--c4s)" stroke="var(--c4)"/></g>
+          <text x="162" y="232" class="d-n" fill="var(--c4)">4</text>
+          <text x="186" y="232" class="d-t">Sélection</text>
+          <text x="620" y="232" class="d-card">1 fois par agenda</text>
+          <text x="860" y="232" class="d-file">stages/selection.py</text>
+
+          <line x1="48" y1="268" x2="1040" y2="268" class="d-sep"/>
+          <text x="48" y="284" class="d-note">PUIS, POUR CHAQUE PAGE RETENUE</text>
+
+          <!-- 5 -->
+          <g class="d-box"><rect x="96" y="286" width="340" height="42" rx="10" fill="var(--c2s)" stroke="var(--c2)"/></g>
+          <text x="114" y="312" class="d-n" fill="var(--c2)">5</text>
+          <text x="138" y="312" class="d-t">Lecture</text>
+          <text x="620" y="312" class="d-card">1 fois par page</text>
+          <text x="860" y="312" class="d-file">stages/reading.py</text>
+
+          <!-- 6 -->
+          <g class="d-box"><rect x="96" y="340" width="340" height="42" rx="10" fill="var(--c4s)" stroke="var(--c4)"/></g>
+          <text x="114" y="366" class="d-n" fill="var(--c4)">6</text>
+          <text x="138" y="366" class="d-t">Extraction</text>
+          <text x="620" y="366" class="d-card">1 fois par page → n fiches</text>
+          <text x="860" y="366" class="d-file">stages/extraction.py</text>
+
+          <!-- 7 -->
+          <g class="d-box"><rect x="144" y="394" width="340" height="42" rx="10" fill="var(--c3s)" stroke="var(--c3)"/></g>
+          <text x="162" y="420" class="d-n" fill="var(--c3)">7</text>
+          <text x="186" y="420" class="d-t">Attribution</text>
+          <text x="620" y="420" class="d-card">1 fois par fiche</text>
+          <text x="860" y="420" class="d-file">stages/attribution.py</text>
+
+          <!-- 8 -->
+          <g class="d-box"><rect x="144" y="448" width="340" height="42" rx="10" fill="var(--c1s)" stroke="var(--c1)"/></g>
+          <text x="162" y="474" class="d-n" fill="var(--c1)">8</text>
+          <text x="186" y="474" class="d-t">Publication</text>
+          <text x="620" y="474" class="d-card">1 fois par fiche</text>
+          <text x="860" y="474" class="d-file">stages/publication.py</text>
+
+          <path class="d-rail" marker-end="url(#ar)" d="M 314 490 V 516 H 620"/>
+          <text x="632" y="520" class="d-card">→ en attente de modération</text>
+        </svg>
+        <figcaption>L'ordre n'existe qu'à un seul endroit : <code>orchestrator.py</code>, méthode <code>Run.chain()</code>. Les huit appels s'y suivent de haut en bas, et leur indentation dit combien de fois chacun tourne. Une brique de plus à droite, c'est un coût multiplié par tout ce qui précède — c'est là qu'il faut regarder avant d'ajouter quoi que ce soit.</figcaption>
+      </figure>
+    </div>
+
+  </div>
+
+  <div class="rowhead"><span class="tagn">1—4</span><h2>Trouver les pages qui portent une sortie</h2><span class="bar"></span></div>
+
+  <div class="grid8" style="grid-template-columns: repeat(4, 1fr)">
+
+    <article class="card c4">
+      <header>
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-search"></use></svg></span>
+        <h3><b>1.</b> Découverte</h3>
+        <span class="chip">modèle</span>
+      </header>
+      <p class="io">reçoit <span>thème, zone, période</span> → rend <span>des URL</span></p>
+      <ul>
+        <li>Deux modes, jamais mélangés : <b>recherche</b>, où le modèle lance une dizaine de requêtes <code>web_search</code> ; <b>site</b>, où l'adresse est donnée et où aucune recherche n'a lieu.</li>
+        <li>Deux prompts : l'un <i>formule</i> les requêtes, l'autre les <i>lance</i> puis s'arrête net.</li>
+        <li>Le modèle n'écrit aucune URL : elles sont relevées dans le résultat de l'outil.</li>
+        <li>Il ne classe rien non plus — la nature d'une page appartient à la page, pas à la façon dont on l'a trouvée.</li>
+      </ul>
+      <p class="foot">« des requêtes entrent, des URL sortent » — le seul contrat qu'un moteur ordinaire sait honorer, donc la condition pour en brancher un autre un jour.</p>
+    </article>
+
+    <article class="card c3">
+      <header>
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-eye"></use></svg></span>
+        <h3><b>2.</b> Reconnaissance</h3>
+        <span class="chip">mixte</span>
+      </header>
+      <p class="io">reçoit <span>une page</span> → rend <span>agenda · sortie · programme · inconnu</span></p>
+      <ul>
+        <li>Une cascade de quatre signaux <b>gratuits</b>, du plus certain au plus flou : paramètres d'URL (<code>?page=</code>, <code>?filter[]=</code>), pagination <code>rel="next"</code>, JSON-LD, OpenGraph.</li>
+        <li>On compte les <b>titres distincts</b>, pas les objets <code>Event</code> : un spectacle joué douze fois en publie douze.</li>
+        <li>Le modèle n'est appelé que si les quatre se taisent, et sur un condensé — pas sur la page.</li>
+        <li>Biais assumé : <b>dans le doute, agenda.</b> Se tromper dans ce sens coûte un appel ; dans l'autre, tous les liens de la page.</li>
+      </ul>
+      <p class="foot">classify.py · <code>INCONNU</code> est une réponse, pas une panne</p>
+    </article>
+
+    <article class="card c2">
+      <header>
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-list"></use></svg></span>
+        <h3><b>3.</b> Dépouillement</h3>
+        <span class="chip">python</span>
+      </header>
+      <p class="io">reçoit <span>un agenda</span> → rend <span>des liens et leur contexte</span></p>
+      <ul>
+        <li>Chaque lien part avec le texte qui l'entoure sur la page : c'est là que vivent la date et le lieu.</li>
+        <li>La pagination est suivie — <b>mais seulement tant qu'il manque de liens</b>. La deuxième page porte des sorties que la première n'a pas.</li>
+        <li>Le compte de liens est plafonné : au-delà, le compteur sature et ne mesure plus rien.</li>
+      </ul>
+      <p class="foot">harvest.py · aucun jeton consommé</p>
+    </article>
+
+    <article class="card c4">
+      <header>
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-filter"></use></svg></span>
+        <h3><b>4.</b> Sélection</h3>
+        <span class="chip">modèle</span>
+      </header>
+      <p class="io">reçoit <span>des liens numérotés</span> → rend <span>des numéros</span></p>
+      <ul>
+        <li>La liste est <b>numérotée</b> et le modèle répond par des numéros : il ne voit jamais l'occasion d'écrire une URL, donc il ne peut pas en inventer une.</li>
+        <li>Il rend aussi <code>dropped_reason</code> — la phrase qui explique un tri qui ne retient rien.</li>
+        <li><code>[]</code> et <code>None</code> ne disent pas la même chose : le premier est un refus, le second une panne.</li>
+        <li>Le plus gros volume d'appels du pipeline, et le moins cher à l'unité.</li>
+      </ul>
+      <p class="foot">selection.py · tous les liens soumis sont journalisés, retenus ou non</p>
+    </article>
+
+  </div>
+
+  <div class="rowhead"><span class="tagn">5—8</span><h2>Tirer une fiche de la page, et la proposer</h2><span class="bar"></span></div>
+
+  <div class="grid8">
+
+    <article class="card c2">
+      <header>
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-doc"></use></svg></span>
+        <h3><b>5.</b> Lecture</h3>
+        <span class="chip">python</span>
+      </header>
+      <p class="io">reçoit <span>une URL</span> → rend <span>texte, dates JSON-LD, image</span></p>
+      <ul>
+        <li>Le téléchargement respecte <code>robots.txt</code> et un délai par hôte — partout, y compris pour les vérifications de l'étage 7.</li>
+        <li>L'illustration est relevée <b>dans le HTML</b>, jamais devinée.</li>
+        <li>Une page anglaise est échangée contre sa jumelle française quand le site en déclare une.</li>
+      </ul>
+      <p class="foot">reading.py · harvest.py · language.py</p>
+    </article>
+
+    <article class="card c4">
+      <header>
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-form"></use></svg></span>
+        <h3><b>6.</b> Extraction</h3>
+        <span class="chip">modèle</span>
+      </header>
+      <p class="io">reçoit <span>le texte d'une page</span> → rend <span>une fiche, ou plusieurs</span></p>
+      <ul>
+        <li>Le schéma est imposé côté fournisseur : un champ qui n'y figure pas ne <i>peut</i> pas être rempli.</li>
+        <li>Deux gabarits qui s'excluent — une page porte une sortie, ou un programme entier en porte plusieurs.</li>
+        <li><code>relevant: false</code> avec son motif, plutôt qu'une fiche fausse. Mieux vaut une fiche de moins.</li>
+        <li>Les dates sont bornées <i>et</i> détaillées : « jusqu'au 23 octobre » décrit une sortie en cours, pas une sortie de deux jours.</li>
+      </ul>
+      <p class="foot">extraction.py · le schéma vit dans providers/anthropic_provider.py</p>
+    </article>
+
+    <article class="card c3">
+      <header>
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-anchor"></use></svg></span>
+        <h3><b>7.</b> Attribution</h3>
+        <span class="chip">mixte</span>
+      </header>
+      <p class="io">reçoit <span>une fiche et sa page</span> → rend <span>l'URL de l'organisateur</span></p>
+      <ul>
+        <li>Un atelier du musée Rodin n'est pas une information de l'agrégateur qui l'a republié.</li>
+        <li>Cascade : JSON-LD → domaine du lieu → texte du lien → le moteur, en dernier et payant.</li>
+        <li>La page candidate est <b>ouverte et lue</b> avant d'être retenue : une source fausse est pire qu'une source absente.</li>
+        <li>Jamais une URL demandée au modèle — une URL inventée qui répond en 200 est indétectable.</li>
+      </ul>
+      <p class="foot">attribution.py · <code>found</code> n'est vrai que si <code>checked</code> l'est</p>
+    </article>
+
+    <article class="card c1">
+      <header>
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-send"></use></svg></span>
+        <h3><b>8.</b> Publication</h3>
+        <span class="chip">python</span>
+      </header>
+      <p class="io">reçoit <span>une fiche</span> → rend <span>une sortie en attente</span></p>
+      <ul>
+        <li>Géocodage, dates, photo redimensionnée, puis <code>POST /api/events</code> avec une clé d'API — comme n'importe quel programme tiers.</li>
+        <li>Les sorties arrivent <b>en attente de modération</b>, jamais publiées directement.</li>
+        <li>Ce qu'un import n'a pas su déterminer part avec une valeur convenue — adresse <code>(0, 0)</code>, tarif <code>-1</code> — plutôt que de faire perdre la sortie. La modération les signale et bloque l'approbation.</li>
+      </ul>
+      <p class="foot">publication.py · api.py · geocode.py · photo.py</p>
+    </article>
+
+  </div>
+
+  <div class="pull">
+    <h2>La règle qui traverse les huit briques</h2>
+    <p><b>Chaque signal gratuit qui tranche est un appel payant qu'on ne fait pas.</b> C'est la cascade de la reconnaissance, c'est celle de l'attribution, et c'est pourquoi ces deux briques sont dites « mixtes » plutôt que « modèle » : elles ne paient que lorsque le HTML ne suffit plus.</p>
+    <p><b>Et ce qui sort du modèle n'est jamais cru sur parole.</b> Il rend des numéros, pas des URL. La source qu'il désigne est ouverte et relue. L'illustration est relevée dans le HTML. À chaque endroit où une invention serait indétectable, la vérification est en Python — donc gratuite, donc systématique.</p>
+  </div>
+
+  <div class="rowhead"><span class="tagn">↺</span><h2>Ce qui borne un run, et ce qu'il laisse derrière lui</h2><span class="bar"></span></div>
+
+  <div class="band">
+    <div class="bandgrid">
+
+      <article class="card c2">
+        <header>
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-shield"></use></svg></span>
+          <h3>Les garde-fous</h3>
+        </header>
+        <ul>
+          <li>Des plafonds à chaque étage : agendas ouverts, liens retenus par agenda, sorties par run.</li>
+          <li>Le <b>dry-run est le défaut</b> : rien n'est envoyé au site tant qu'on ne le demande pas.</li>
+          <li>Un run est clos <b>quoi qu'il arrive</b>, plantage compris — sans clôture il resterait « en cours » et bloquerait le suivant.</li>
+          <li>Les doublons du run, le budget et le plafond de sorties tranchent <i>avant</i> qu'une page ne soit lue.</li>
+        </ul>
+      </article>
+
+      <article class="card c1">
+        <header>
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-db"></use></svg></span>
+          <h3>La mémoire</h3>
+        </header>
+        <ul>
+          <li><code>ScrapedUrl</code> — les pages déjà analysées, <b>communes à toutes les recherches</b> : ce qui empêche de relire, donc de repayer.</li>
+          <li>Elle évite aussi de reproposer ce qui a déjà été refusé.</li>
+          <li>Elle s'oublie par lot depuis la console — utile pour relire un site qui était en panne.</li>
+        </ul>
+      </article>
+
+      <article class="card c5">
+        <header>
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-gauge"></use></svg></span>
+          <h3>Les traces</h3>
+        </header>
+        <ul>
+          <li>Le <b>journal</b> : chaque requête, chaque lien relevé <i>puis</i> retenu, chaque prompt, chaque jeton. Mille lignes pour un run, filtrables par étage et par page.</li>
+          <li>Le <b>graphe</b> des huit briques et l'<b>arbre</b> requête → agenda → liens → sorties, dessinés depuis le même vocabulaire que le code.</li>
+          <li>Le <b>registre</b>, à part et jamais réécrit : ce qui doit survivre à l'oubli d'un journal.</li>
+        </ul>
+      </article>
+
+    </div>
+  </div>
+
+ </div>
+</div>
+
+<p class="posterfoot">
+  Planche tenue à jour avec le code : le vocabulaire des étages vient de <code>sortiesbot/stages/__init__.py</code>, et la console d'administration dessine son graphe depuis la même source.<br>
+  Suite : <b>Le banc d'essai du scraper</b> — ce qu'on mesure sur chacune de ces briques, et pourquoi le rappel manque à l'appel.
+</p>
+
+</div>
+</body>
+</html>
