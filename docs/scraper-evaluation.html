@@ -208,6 +208,23 @@ table.tbl tr.r8 { --a: var(--c1); --as: var(--c1s); }
 .stat .v { font-size: .88rem; line-height: 1.45; color: var(--ink-2); }
 .stat .v b { font-variant-numeric: tabular-nums; }
 
+.corpus { display: grid; gap: 16px; grid-template-columns: 460px 1fr; align-items: start; background: var(--sunk); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+.tree { margin: 0; font: 400 11.5px/1.75 var(--mono); color: var(--ink-2); background: var(--box); border: 1px solid var(--line); border-radius: 10px; padding: 13px 15px; overflow-x: auto; white-space: pre; }
+.tree .cm { color: var(--muted); }
+.tree .hi { color: var(--c5); font-weight: 600; }
+.corpus h3 { margin: 0 0 8px; font-size: .96rem; font-weight: 700; color: var(--ink); }
+.corpus p { margin: 0 0 9px; font-size: .855rem; line-height: 1.5; }
+.corpus p:last-child { margin-bottom: 0; }
+.layers { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.layers li { display: flex; gap: 9px; align-items: baseline; font-size: .82rem; line-height: 1.4; }
+.layers .bq { font: 700 10px var(--mono); border-radius: 5px; padding: 2px 7px; flex: none; min-width: 62px; text-align: center; background: var(--as); color: var(--a); }
+.layers li.none { --a: var(--muted); --as: var(--sunk); opacity: .82; }
+.layers li.b2 { --a: var(--c3); --as: var(--c3s); }
+.layers li.b3 { --a: var(--c2); --as: var(--c2s); }
+.layers li.b5 { --a: var(--c2); --as: var(--c2s); }
+.layers li.b6 { --a: var(--c4); --as: var(--c4s); }
+.layers li.b7 { --a: var(--c3); --as: var(--c3s); }
+
 .warnbox { border: 2px solid var(--c6); background: var(--c6s); border-radius: 14px; padding: 16px 18px; }
 .warnbox h2 { margin: 0 0 8px; font-size: 1rem; font-weight: 700; color: var(--c6); }
 .warnbox p { margin: 0 0 8px; font-size: .89rem; }
@@ -482,10 +499,11 @@ table.tbl tr.r8 { --a: var(--c1); --as: var(--c1s); }
         <span class="rank">②</span>
         <h3>Le vivier commun</h3>
       </header>
-      <p class="io">pour le corpus gelé</p>
+      <p class="io">beaucoup de pages, peu d'items étiquetés par page</p>
       <ul>
-        <li>Faire tourner <b>plusieurs variantes</b> sur les mêmes agendas — deux modèles, un prompt volontairement permissif, l'heuristique, et la borne « on garde tout ».</li>
-        <li>Prendre l'<b>union</b> de ce qu'au moins une a retenu, et étiqueter cette union à la main.</li>
+        <li>Faire tourner plusieurs variantes <b>réalistes</b> sur les mêmes agendas — deux modèles, un prompt volontairement permissif, l'heuristique.</li>
+        <li>Prendre l'<b>union</b> de ce qu'au moins une a retenu, et étiqueter cette union à la main : quelques centaines de jugements, pas les 6 000 de ③.</li>
+        <li><b>Surtout pas la borne « on garde tout ».</b> Elle contient toutes les autres, donc l'union <i>serait</i> elle : le vivier redeviendrait l'étiquetage exhaustif de ③. Cette borne est le remède ④, pas une variante d'ici.</li>
         <li>On mesure alors le rappel relatif au vivier. Biaisé — ce qu'aucune variante n'a proposé reste invisible — mais borné et connu.</li>
         <li>C'est ainsi qu'on évalue les moteurs de recherche depuis trente ans.</li>
       </ul>
@@ -496,9 +514,11 @@ table.tbl tr.r8 { --a: var(--c1); --as: var(--c1s); }
         <span class="rank">③</span>
         <h3>Le corpus fermé, exhaustif</h3>
       </header>
-      <p class="io">la seule source de vrai rappel</p>
+      <p class="io">peu de pages, tous les items étiquetés</p>
       <ul>
-        <li>30 pages d'agenda, et <b>chaque</b> lien étiqueté à la main : ≈ 1 500 jugements. Un week-end pénible, un actif permanent.</li>
+        <li>L'inverse exact de ② : là où le vivier étiquette peu d'items sur beaucoup de pages, celui-ci les étiquette <b>tous</b> sur peu de pages. Même monnaie, sens opposé — d'où l'intérêt d'avoir les deux.</li>
+        <li>Une dizaine d'agendas, et <b>chaque</b> lien étiqueté à la main : ≈ 1 500 jugements. Un week-end pénible, un actif permanent.</li>
+        <li>Aucun angle mort, lui : rien ne peut échapper à un étiquetage exhaustif. C'est la seule source de <b>vrai</b> rappel.</li>
         <li>Petit échantillon, barres d'erreur larges : ça ne départage pas deux prompts.</li>
         <li>Ça sert de <b>plafond</b> — « la vérité est de 412 sorties, le pipeline en sort 297 ». Ce chiffre-là n'existe aujourd'hui pas du tout.</li>
       </ul>
@@ -535,6 +555,41 @@ table.tbl tr.r8 { --a: var(--c1); --as: var(--c1s); }
   </div>
 
   <div class="rowhead"><span class="tagn">C</span><h2>La mécanique d'un banc qui sert vraiment</h2><span class="bar"></span></div>
+
+  <div class="corpus">
+    <pre class="tree"><span class="cm">scraper/eval/corpus/</span>
+├── <span class="hi">pages.jsonl</span>          <span class="cm">← ce que chaque page est</span>
+├── 001_agenda-departement.html
+├── 002_fiche-spectacle.html
+├── 003_saison-theatre.html
+└── …                    <span class="cm">150 à 300 pages</span>
+
+<span class="cm">une ligne de pages.jsonl :</span>
+{
+  "file": "001_agenda-departement.html",
+  "url":  "https://…",
+  "captured": "2026-09-05",
+  <span class="hi">"kind"</span>: "agenda",
+  <span class="hi">"liens_sortie"</span>: [3, 7, 12, 18, 24],
+  <span class="hi">"fiche"</span>: { "title": …, "date_start": … }
+}</pre>
+    <div>
+      <h3>Le corpus gelé, c'est ce dossier — et rien d'autre</h3>
+      <p>Des pages web réelles, enregistrées telles que le site les a servies ce jour-là, avec un fichier qui dit pour chacune <b>ce qu'elle est</b>. <code>--save-pages</code> écrit déjà exactement ce format, et <code>tests/fixtures/pages/</code> en est un exemplaire miniature.</p>
+      <p><b>« Gelé » parce que le web bouge.</b> Si tu changes une phrase du prompt et que tu relances sur le vrai web, deux choses ont bougé entre les deux mesures : ton prompt, et les pages. Tu ne sais pas laquelle explique l'écart. Figer l'entrée, c'est ne laisser bouger <b>qu'une seule variable</b> — celle que tu testes. Et le rejeu devient gratuit, rapide, hors ligne, insensible à un site en panne.</p>
+      <p>Le HTML est la base commune ; les <b>étiquettes s'ajoutent par couches</b>, une par brique, et pas le même jour. C'est ce qui rend le corpus constructible progressivement plutôt qu'infranchissable :</p>
+      <ul class="layers">
+        <li class="none"><span class="bq">brique 1</span><span>rien — son entrée est le web entier, pas une page. Elle ne s'évalue qu'en conditions réelles.</span></li>
+        <li class="b2"><span class="bq">brique 2</span><span><code>kind</code> — agenda, sortie, programme</span></li>
+        <li class="b3"><span class="bq">briques 3·4</span><span><code>liens_sortie</code> — quels liens mènent vraiment à une sortie</span></li>
+        <li class="b5"><span class="bq">brique 5</span><span>ce que la lecture doit trouver : texte, dates JSON-LD, illustration</span></li>
+        <li class="b6"><span class="bq">brique 6</span><span><code>fiche</code> — la fiche de référence, écrite à la main</span></li>
+        <li class="b7"><span class="bq">brique 7</span><span>l'URL de l'organisateur attendue</span></li>
+        <li class="none"><span class="bq">brique 8</span><span>rien — c'est un contrat d'API, des tests unitaires suffisent.</span></li>
+      </ul>
+      <p style="margin-top:11px;padding-top:10px;border-top:1px dashed var(--line)"><b>Il ne résout pas le point aveugle à lui seul.</b> Il fournit le substrat — les pages, figées. Ce sont ② et ③ qui produisent la couche <code>liens_sortie</code> dont la brique 4 a besoin. C'est là que les deux moitiés de cette planche se rejoignent.</p>
+    </div>
+  </div>
 
   <div class="band">
     <div class="bandgrid" style="grid-template-columns:repeat(2,1fr)">
