@@ -514,6 +514,17 @@ model EvalAgendaPage {
   /// et c'est une réponse : la page a été demandée, pas obtenue.
   error String? @db.Text
 
+  /// Le HTML servi ce jour-là, gzippé sur disque. **C'est ce qui fait du banc
+  /// un corpus gelé** plutôt qu'un instantané : sans lui, rejouer `links_of`
+  /// après l'avoir modifié obligerait à retélécharger, donc à comparer un
+  /// nouveau code à une nouvelle page — et l'écart ne dirait plus lequel des
+  /// deux a bougé.
+  ///
+  /// Nul quand la page était injoignable, ou trop lourde pour être archivée :
+  /// la mesure tient quand même, seul le rejeu hors ligne s'en trouve privé
+  /// pour cette page-là.
+  htmlPath String? @db.VarChar(255)
+
   agenda   EvalAgenda @relation(fields: [agendaId], references: [id], onDelete: Cascade)
   agendaId Int
 

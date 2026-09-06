@@ -81,7 +81,10 @@ Le Havre, Niort et Nancy.
   qu'aucun site ne déclare lesquelles de ses URL sont ses propres fiches. Une
   fois l'extraction validée, le rappel de l'étage 3 sur cet agenda devient
   lisible — et il ne s'affiche pas avant, où il dirait 100 % pour signifier
-  « personne n'a encore regardé ».
+  « personne n'a encore regardé ». Le **HTML de chaque page est gardé**,
+  gzippé : c'est ce qui fait du banc un corpus gelé, et permet de rejouer la
+  mesure hors ligne après avoir modifié `links_of` sans que la page, elle, ait
+  bougé entre-temps.
 - **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
   sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
   une clé d'API. Il sait aussi partir d'une adresse connue — le site d'un
@@ -162,6 +165,7 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | POST | `/api/eval/pages/:pageId/links` | admin | Ajouter un lien que le dépouillement a manqué — c'est la mesure |
 | DELETE | `/api/eval/links/:id` | admin | Retirer un ajout manuel (un lien dépouillé, lui, ne s'efface pas) |
 | POST | `/api/eval/agendas/:id/validate` | admin | Figer la vérité de référence : le rappel devient lisible |
+| GET | `/api/eval/pages/:id/html` | admin | Le HTML gelé d'une page, tel que le site l'a servi ce jour-là |
 | POST | `/api/eval/harvest/next` | modérateur | Le worker réclame le prochain agenda du banc |
 | POST | `/api/eval/harvest/:id/pages` | modérateur | Le worker rend les liens de chaque page |
 | GET | `/api/admin/users` | admin | Liste des utilisateurs |

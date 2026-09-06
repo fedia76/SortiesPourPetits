@@ -17,28 +17,72 @@ s'arrête dès que sa moisson suffit. Demander deux pages ici veut dire « je
 veux la vérité de ces deux pages-là », pas « le pipeline en aurait ouvert
 deux ».
 
-## Pourquoi ça tourne ici et pas côté site
+## Ce qui est partagé avec la production, et ce qui ne l'est pas
 
-Parce que c'est le **vrai** `links_of` qu'il faut interroger. Une extraction
-réécrite en Node donnerait la vérité de cette réécriture, et une vérité de
-référence qui décrit autre chose que le code en production ne mesure rien.
-C'est aussi pourquoi ce module n'a pas le droit de « corriger » quoi que ce
-soit au passage : il appelle la fonction et rapporte, sans filtrer ni
-compléter. Compléter, c'est le travail de l'humain, dans la console.
+Il faut être précis, parce que la distinction porte toute la validité du banc.
+
+**Partagé : la fonction.** `links_of` est importée d'ici telle quelle, avec ses
+seuils et son plafond. C'est elle qu'on mesure, et c'est la raison pour
+laquelle ce module tourne dans le worker plutôt que sur le site : réécrire
+l'extraction en Node aurait donné la vérité de cette réécriture, et une vérité
+de référence qui décrit autre chose que le code en production ne mesure rien.
+
+**Pas partagé : l'orchestration.** `Harvest`, l'étage 3, fait davantage
+qu'appeler `links_of` — il journalise, tient les compteurs du run, dédoublonne
+entre pages, et surtout s'arrête dès que sa moisson suffit. Rien de tout cela
+n'a sa place ici, et la boucle ci-dessous en est une seconde, délibérément plus
+bête. On mesure la fonction, pas la brique.
+
+Ce module n'a par ailleurs pas le droit de « corriger » quoi que ce soit au
+passage : il appelle et rapporte, sans filtrer ni compléter. Compléter est le
+travail de l'humain, dans la console.
 
 ## Ce qui reste partagé avec un run
 
 Le `Fetcher`, donc `robots.txt` et le délai par hôte. Le banc lit de vraies
 pages chez de vrais gens ; il n'a aucune raison d'être moins poli que le
 scraper.
+
+## L'archive
+
+Chaque page part avec son HTML, gzippé. C'est ce qui fait du banc un **corpus
+gelé** plutôt qu'un instantané : sans lui, rejouer la mesure après avoir touché
+à `links_of` obligerait à retélécharger, donc à comparer un nouveau code à une
+nouvelle page — et l'écart ne dirait plus lequel des deux a bougé.
+
+Une page qu'on ne peut pas archiver est rapportée quand même, sans son HTML :
+la mesure est le travail, l'archive est le confort du rejeu, et on ne perd pas
+la première pour avoir manqué la seconde.
 """
 
 from __future__ import annotations
 
+import base64
+import gzip
 from typing import Any
 
 from .classify import next_page
 from .harvest import FetchError, Fetcher, links_of
+
+#: Plafond de l'archive d'une page, en caractères de base64 — le même que celui
+#: du site, qui refuserait au-delà. Un million de caractères font environ 750 ko
+#: compressés, soit plusieurs mégaoctets de HTML : au-delà, la page est
+#: pathologique et part sans son archive plutôt que de faire échouer tout le
+#: compte rendu.
+MAX_HTML_B64 = 1_000_000
+
+
+def _archive(html: str) -> str:
+    """Le HTML gzippé puis encodé en base64, ou une chaîne vide.
+
+    Compressé ici plutôt que sur le site : les octets voyagent six à huit fois
+    plus petits, et le serveur les écrit tels quels sans avoir à les déballer.
+    """
+    try:
+        packed = base64.b64encode(gzip.compress(html.encode("utf-8"), 6)).decode("ascii")
+    except (OSError, MemoryError, UnicodeError):
+        return ""
+    return packed if len(packed) <= MAX_HTML_B64 else ""
 
 
 def harvest_agenda(url: str, pages: int, fetcher: Fetcher | None = None) -> list[dict[str, Any]]:
@@ -78,16 +122,18 @@ def harvest_agenda(url: str, pages: int, fetcher: Fetcher | None = None) -> list
             break
 
         found = links_of(html, current)
-        out.append(
-            {
-                "pageNo": page_no,
-                "url": current,
-                "chars": len(html),
-                "links": [
-                    {"url": link.url, "text": link.text, "context": link.context} for link in found
-                ],
-            }
-        )
+        entry: dict[str, Any] = {
+            "pageNo": page_no,
+            "url": current,
+            "chars": len(html),
+            "links": [
+                {"url": link.url, "text": link.text, "context": link.context} for link in found
+            ],
+        }
+        packed = _archive(html)
+        if packed:
+            entry["html"] = packed
+        out.append(entry)
 
     if not out:
         # Défensif : `pages` est validé côté site, mais un agenda sans la

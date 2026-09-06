@@ -331,7 +331,15 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
           Puis vient le seul geste qui compte :
           <strong>ajouter les liens qu'il a manqués</strong>. Aucun signal gratuit ne peut le dire à
           votre place, parce qu'aucun site ne déclare lesquelles de ses URL sont ses propres fiches.
-          Une fois validée, l'étiquette ne périme plus jamais.
+          Une fois validée, l'étiquette ne périme plus jamais — le HTML de la page est gardé, et la
+          mesure se rejoue sans réseau.
+        </p>
+        <p class="rule">
+          <strong>Ce qu'est un lien manqué :</strong> un lien de la page qui mène à la fiche d'une
+          sortie, et que le dépouillement n'a pas rendu. Rien d'autre — pas un lien de navigation,
+          pas une catégorie, pas une pagination : ceux-là, l'étage 3 a raison de les écarter, c'est
+          même son travail. La question à laquelle vous répondez est
+          <em>« l'étage 4 aurait-il dû voir ce lien ? »</em>
         </p>
       </div>
 
@@ -474,11 +482,27 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
               <span class="page-no">Page {{ page.pageNo }}</span>
               <span class="page-sum" :class="{ bad: !!page.error }">{{ pageSummary(page) }}</span>
               <span v-if="page.chars" class="muted chars">{{ page.chars }} caractères</span>
+              <span class="archive" :class="{ off: !page.archived }">
+                {{ page.archived ? 'page archivée' : 'non archivée' }}
+              </span>
             </button>
 
             <div v-if="openPages.has(page.id)" class="page-body">
               <p class="page-url">
                 <a :href="page.url" target="_blank" rel="noopener noreferrer">{{ page.url }}</a>
+                <a
+                  v-if="page.archived"
+                  class="frozen"
+                  :href="`/api/eval/pages/${page.id}/html`"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >voir le HTML gelé</a
+                >
+              </p>
+              <p v-if="!page.archived && !page.error" class="hint">
+                Le HTML de cette page n'a pas pu être gardé : la mesure ci-dessous reste juste,
+                mais elle ne pourra pas être rejouée hors ligne après une modification de
+                <code>links_of</code>.
               </p>
 
               <ul v-if="page.links.length" class="links">
@@ -539,6 +563,10 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                     </button>
                   </div>
                 </div>
+                <p class="hint">
+                  N'ajoutez qu'un lien qui mène à <strong>la fiche d'une sortie</strong> : un lien
+                  de navigation ou de pagination, l'étage 3 a raison de l'écarter.
+                </p>
                 <p class="hint">
                   Pas de contexte à saisir : le dépouillement, lui, rend le texte qui entoure le
                   lien. En inventer un ferait croire à l'étage 4 qu'il a reçu quelque chose qu'il
@@ -822,6 +850,29 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 .chars {
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
+}
+.archive {
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 5px;
+  padding: 0.1rem 0.4rem;
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.archive.off {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.frozen {
+  margin-left: 0.7rem;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.rule {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 8px 8px 0;
+  padding: 0.7rem 0.9rem;
 }
 .page-body {
   padding: 0.3rem 0 0.8rem;

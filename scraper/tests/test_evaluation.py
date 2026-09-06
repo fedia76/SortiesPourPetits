@@ -182,3 +182,46 @@ def test_un_nombre_de_pages_absurde_en_lit_quand_meme_une(demande: int):
     out = harvest_agenda(AGENDA, demande, fetcher=fetcher)
 
     assert len(out) == 1
+
+
+def test_le_html_part_avec_la_page_et_se_relit():
+    """L'archive : c'est elle qui fait du banc un corpus gelé.
+
+    Sans elle, rejouer la mesure après avoir touché à `links_of` obligerait à
+    retélécharger — donc à comparer un nouveau code à une nouvelle page, et
+    l'écart ne dirait plus lequel des deux a bougé.
+    """
+    import base64
+    import gzip
+
+    html = page(fiche("un", "Spectacle numéro un"))
+    fetcher = FakeFetcher({AGENDA: html})
+
+    out = harvest_agenda(AGENDA, 1, fetcher=fetcher)
+
+    assert gzip.decompress(base64.b64decode(out[0]["html"])).decode("utf-8") == html
+
+
+def test_une_page_injoignable_n_emporte_aucune_archive():
+    fetcher = FakeFetcher({})
+
+    out = harvest_agenda(AGENDA, 1, fetcher=fetcher)
+
+    assert "html" not in out[0]
+
+
+def test_une_page_demesuree_est_rapportee_sans_son_archive(monkeypatch):
+    """La mesure est le travail, l'archive est le confort du rejeu.
+
+    On ne perd pas la première pour avoir manqué la seconde : la page remonte
+    avec ses liens, simplement privée de rejeu hors ligne.
+    """
+    from sortiesbot import evaluation
+
+    monkeypatch.setattr(evaluation, "MAX_HTML_B64", 1)
+    fetcher = FakeFetcher({AGENDA: page(fiche("un", "Spectacle numéro un"))})
+
+    out = harvest_agenda(AGENDA, 1, fetcher=fetcher)
+
+    assert "html" not in out[0]
+    assert len(out[0]["links"]) == 1

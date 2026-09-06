@@ -1,0 +1,16 @@
+-- Archiver le HTML des pages du banc, pour que le corpus soit vraiment gelé.
+--
+-- Sans cette colonne, le banc mesurait `links_of` contre le jugement d'un
+-- humain à un instant donné, et rien de plus : pour rejouer la mesure après
+-- avoir touché à `links_of`, il fallait retélécharger la page. On comparait
+-- alors un nouveau code à une nouvelle page, et l'écart ne disait plus lequel
+-- des deux avait bougé — c'est exactement la confusion que geler l'entrée sert
+-- à éviter.
+--
+-- Le HTML est gzippé sur le disque du serveur, à côté des photos, et la
+-- colonne n'en garde que le chemin. Nul est une valeur légitime : une page
+-- injoignable n'a rien à archiver, et une page démesurée est rapportée sans
+-- son HTML plutôt que de faire échouer tout le compte rendu. La mesure tient
+-- dans les deux cas ; seul le rejeu hors ligne s'en trouve privé pour cette
+-- page-là, et la console le dit.
+ALTER TABLE `EvalAgendaPage` ADD COLUMN `htmlPath` VARCHAR(255) NULL;

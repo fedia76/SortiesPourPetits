@@ -29,8 +29,9 @@
  * à un programme.
  */
 import { Prisma, Role } from '@prisma/client';
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { prisma } from '../db';
+import { deleteEvalPages, readEvalPage, saveEvalPage } from '../lib/evalPages';
 import { requireRole } from '../middleware/auth';
 import {
   evalAgendaSchema,
@@ -52,9 +53,28 @@ const AGENDA_INCLUDE = {
   author: { select: { id: true, displayName: true } },
   agendaPages: {
     orderBy: { pageNo: 'asc' },
+    // `htmlPath` est un chemin sur le disque du serveur : la console n'a pas à
+    // le connaître, seulement à savoir si l'archive existe. Il est donc
+    // remplacé par un booléen à la sérialisation.
     include: { links: { orderBy: [{ source: 'asc' }, { id: 'asc' }] } },
   },
 } satisfies Prisma.EvalAgendaInclude;
+
+/**
+ * Efface les pages archivées d'un agenda, puis rend la main.
+ *
+ * Prisma efface les lignes en cascade, pas les fichiers. Sans cet appel, chaque
+ * analyse relancée laisserait derrière elle un HTML que plus rien ne
+ * référence — et le disque du serveur finirait par se remplir de pages dont
+ * personne ne saurait plus de quel agenda elles venaient.
+ */
+async function forgetArchive(agendaId: number): Promise<void> {
+  const pages = await prisma.evalAgendaPage.findMany({
+    where: { agendaId },
+    select: { htmlPath: true },
+  });
+  await deleteEvalPages(pages.map((p) => p.htmlPath));
+}
 
 /**
  * Le rappel du dépouillement sur cet agenda.
@@ -64,10 +84,15 @@ const AGENDA_INCLUDE = {
  * humain est passé — d'où `null` tant que l'agenda n'est pas validé, plutôt
  * qu'un 100 % flatteur qui ne dirait que « personne n'a encore regardé ».
  */
-function recallOf(agenda: {
-  status: string;
-  agendaPages: { links: { source: string }[] }[];
-}): { harvested: number; manual: number; total: number; recall: number | null } {
+type SerializablePage = { htmlPath: string | null; links: { source: string }[] };
+type SerializableAgenda = { status: string; agendaPages: SerializablePage[] };
+
+function recallOf(agenda: SerializableAgenda): {
+  harvested: number;
+  manual: number;
+  total: number;
+  recall: number | null;
+} {
   let harvested = 0;
   let manual = 0;
   for (const page of agenda.agendaPages) {
@@ -85,8 +110,15 @@ function recallOf(agenda: {
   };
 }
 
-function serialize<T extends Parameters<typeof recallOf>[0]>(agenda: T) {
-  return { ...agenda, stats: recallOf(agenda) };
+function serialize<T extends SerializableAgenda>(agenda: T) {
+  return {
+    ...agenda,
+    agendaPages: agenda.agendaPages.map(({ htmlPath, ...page }) => ({
+      ...page,
+      archived: !!htmlPath,
+    })),
+    stats: recallOf(agenda),
+  };
 }
 
 // ───────────────────────────────────────────────────────────────── console
@@ -182,6 +214,7 @@ evalRouter.post('/agendas/:id(\\d+)/analyze', admin, async (req, res) => {
     res.status(409).json({ error: 'Analyse déjà en cours' });
     return;
   }
+  await forgetArchive(id);
   const agenda = await prisma.$transaction(async (tx) => {
     await tx.evalAgendaPage.deleteMany({ where: { agendaId: id } });
     return tx.evalAgenda.update({
@@ -303,8 +336,34 @@ evalRouter.delete('/agendas/:id(\\d+)', admin, async (req, res) => {
     res.status(404).json({ error: 'Agenda introuvable' });
     return;
   }
+  await forgetArchive(id);
   await prisma.evalAgenda.delete({ where: { id } });
   res.json({ ok: true });
+});
+
+/**
+ * Le HTML gelé d'une page, tel que le site l'a servi ce jour-là.
+ *
+ * C'est ce qui permet de rejouer `links_of` hors ligne après l'avoir modifié,
+ * et de comparer à des étiquettes qui, elles, n'ont pas bougé. Servi en texte
+ * brut plutôt qu'en HTML : cette page n'a pas à s'exécuter dans le navigateur
+ * de la console, on vient la lire.
+ */
+evalRouter.get('/pages/:id(\\d+)/html', admin, async (req, res) => {
+  const page = await prisma.evalAgendaPage.findUnique({
+    where: { id: Number(req.params.id) },
+    select: { htmlPath: true, url: true },
+  });
+  if (!page?.htmlPath) {
+    res.status(404).json({ error: "Cette page n'a pas été archivée" });
+    return;
+  }
+  const html = await readEvalPage(page.htmlPath);
+  if (html === null) {
+    res.status(410).json({ error: "L'archive de cette page a disparu du disque" });
+    return;
+  }
+  res.type('text/plain; charset=utf-8').send(html);
 });
 
 // ────────────────────────────────────────────────────────────────── worker
@@ -344,7 +403,15 @@ evalRouter.post('/harvest/next', async (_req, res) => {
  * laisserait un agenda dont on ne saurait pas dire s'il est complet — et une
  * vérité de référence dont on doute ne sert à rien.
  */
-evalRouter.post('/harvest/:id(\\d+)/pages', async (req, res) => {
+/**
+ * Le corps porte le HTML gzippé de chaque page : bien au-delà des 100 ko que
+ * `express.json()` accepte par défaut, et ce plafond-là a de bonnes raisons
+ * d'exister partout ailleurs. On l'élargit donc pour cette route seule, et pas
+ * pour l'application entière.
+ */
+const harvestBody = express.json({ limit: '12mb' });
+
+evalRouter.post('/harvest/:id(\\d+)/pages', harvestBody, async (req, res) => {
   const parsed = evalHarvestSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -356,9 +423,18 @@ evalRouter.post('/harvest/:id(\\d+)/pages', async (req, res) => {
     res.status(404).json({ error: 'Agenda introuvable' });
     return;
   }
+  // Les fichiers d'abord, hors transaction : ils ne sont pas transactionnels,
+  // et une archive écrite pour une transaction qui échouerait ensuite serait
+  // simplement orpheline — alors qu'une ligne pointant vers un fichier jamais
+  // écrit serait, elle, un mensonge.
+  await forgetArchive(id);
+  const archived = await Promise.all(
+    parsed.data.pages.map((page) => (page.html ? saveEvalPage(page.html) : Promise.resolve(''))),
+  );
+
   await prisma.$transaction(async (tx) => {
     await tx.evalAgendaPage.deleteMany({ where: { agendaId: id } });
-    for (const page of parsed.data.pages) {
+    for (const [index, page] of parsed.data.pages.entries()) {
       // Le worker envoie ce que `links_of` a rendu, donc déjà dédoublonné par
       // URL au sein d'une page. On s'en assure quand même : la contrainte
       // d'unicité ferait échouer tout le compte rendu pour un seul doublon.
@@ -371,6 +447,7 @@ evalRouter.post('/harvest/:id(\\d+)/pages', async (req, res) => {
           url: page.url,
           chars: page.chars,
           error: page.error ?? null,
+          htmlPath: archived[index] || null,
           links: { create: links.map((l) => ({ ...l, source: 'HARVEST' as const })) },
         },
       });

@@ -559,6 +559,17 @@ export const evalLinkSchema = z.object({
 });
 
 /**
+ * Plafond du HTML archivé d'une page, en base64 de gzip.
+ *
+ * Un million de caractères de base64 font environ 750 ko compressés, soit
+ * plusieurs mégaoctets de HTML — bien au-delà de tout agenda réel. Une page
+ * plus grosse que ça est pathologique ; le worker la rapporte alors **sans**
+ * son HTML plutôt que de faire échouer tout le compte rendu. La mesure tient,
+ * seul le rejeu hors ligne s'en trouve privé pour cette page-là.
+ */
+export const EVAL_MAX_HTML_B64 = 1_000_000;
+
+/**
  * Ce que le worker rend d'un agenda : une entrée par page réellement
  * demandée, dans l'ordre de la pagination.
  *
@@ -573,6 +584,14 @@ export const evalHarvestSchema = z.object({
         url: scraperUrl,
         chars: z.number().int().min(0).optional().default(0),
         error: z.string().trim().max(1000).optional(),
+        /**
+         * Le HTML servi, gzippé puis encodé en base64 par le worker.
+         *
+         * Il voyage compressé et sera écrit tel quel : c'est ce qui fait du
+         * banc un corpus gelé. Absent pour une page injoignable, ou trop
+         * lourde pour être archivée.
+         */
+        html: z.string().max(EVAL_MAX_HTML_B64).optional(),
         links: z
           .array(
             z.object({

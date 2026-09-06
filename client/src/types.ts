@@ -739,6 +739,15 @@ export interface EvalAgendaPage {
   /** Taille du HTML servi — un effondrement trahit une liste passée en JavaScript. */
   chars: number;
   error: string | null;
+  /**
+   * Vrai si le HTML de ce jour-là est gardé sur le serveur.
+   *
+   * C'est ce qui permet de rejouer `links_of` hors ligne après l'avoir modifié
+   * et de comparer à des étiquettes qui, elles, n'ont pas bougé. Faux pour une
+   * page injoignable ou démesurée : la mesure tient, seul le rejeu s'en trouve
+   * privé.
+   */
+  archived: boolean;
   links: EvalLink[];
 }
 

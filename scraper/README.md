@@ -731,10 +731,53 @@ scraper — donc `robots.txt` et le délai par hôte — et appelle
 [`evaluation.harvest_agenda()`](sortiesbot/evaluation.py), qui n'est qu'une
 enveloppe autour du **vrai** `links_of`.
 
-C'est le point qui commande tout le reste : refaire l'extraction côté site
-donnerait la vérité d'une réimplémentation, c'est-à-dire aucune vérité. Ce
-module n'a pas non plus le droit de « corriger » quoi que ce soit au passage —
-il appelle la fonction et rapporte. Compléter est le travail de l'humain.
+C'est le point qui commande tout le reste, et il demande d'être précis :
+
+* **la fonction est partagée** avec la production — `links_of` est importée
+  telle quelle, avec ses seuils et son plafond. Refaire l'extraction côté site
+  donnerait la vérité d'une réimplémentation, c'est-à-dire aucune ;
+* **l'orchestration ne l'est pas.** L'étage 3 fait davantage qu'appeler
+  `links_of` : il journalise, tient les compteurs du run, dédoublonne entre
+  pages, et s'arrête dès que sa moisson suffit. Le banc a sa propre boucle,
+  délibérément plus bête. **On mesure la fonction, pas la brique.**
+
+Ce module n'a pas non plus le droit de « corriger » quoi que ce soit au
+passage — il appelle et rapporte. Compléter est le travail de l'humain.
+
+#### Le corpus est gelé, pour de bon
+
+Chaque page part avec son **HTML gzippé**, écrit sur le disque du serveur. Sans
+lui, le banc ne mesurerait `links_of` qu'à un instant donné : rejouer la mesure
+après l'avoir modifié obligerait à retélécharger, donc à comparer un nouveau
+code à une nouvelle page — et l'écart ne dirait plus lequel des deux a bougé.
+
+`GET /api/eval/pages/:id/html` rend cette page telle qu'elle a été servie. Une
+page injoignable ou démesurée est rapportée **sans** son archive : la mesure
+est le travail, l'archive est le confort du rejeu, et on ne perd pas la
+première pour avoir manqué la seconde. La console dit quelles pages ne sont pas
+archivées.
+
+#### Ce qu'est un lien manqué
+
+La question n'est pas « ce lien existe-t-il sur la page ? » mais **« l'étage 4
+aurait-il dû le voir ? »** — donc : un lien qui mène à la fiche d'une sortie et
+que le dépouillement n'a pas rendu. Un lien de navigation, une catégorie, une
+pagination : l'étage 3 a raison de les écarter, c'est même son travail.
+
+Car l'étage 3 n'est pas un pur extracteur, et c'est utile de le savoir avant
+d'étiqueter. `links_of` **filtre déjà** : hors domaine, texte d'ancre de moins
+de quinze caractères, chemins de service, doublons, plafond à deux cents. Le
+partage avec l'étage 4 est celui-ci — l'étage 3 retire ce qui n'est
+*certainement pas* une fiche, gratuitement et par des règles ; l'étage 4 décide
+lesquelles des restantes correspondent au thème, à la zone et à la période, et
+c'est un jugement, donc facturé.
+
+Ce préfiltrage est légitime — il raccourcit la liste soumise au modèle, donc
+l'appel payant. Mais il a sa propre balance : **un lien qu'il écarte n'atteint
+jamais l'étage 4**, et personne ne le saura. Les erreurs de l'étage 4 laissent
+une trace, un `dropped_reason` que la console affiche ; celles de l'étage 3 ne
+laissent rien. C'est précisément ce que ce banc va chiffrer : le filtre du
+dépouillement est-il aussi certain qu'il le croit ?
 
 Puis vient le seul geste qui compte : **ajouter les liens manqués**. Aucun
 signal gratuit ne peut le faire — il n'existe nulle part, dans le HTML, de
