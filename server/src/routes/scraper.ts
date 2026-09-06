@@ -38,6 +38,73 @@ function serializeRun<T extends { costUsd: Prisma.Decimal }>(run: T) {
   return { ...run, costUsd: Number(run.costUsd) };
 }
 
+/**
+ * Silence au-delà duquel une exécution « En cours » est tenue pour morte.
+ *
+ * Large à dessein : un appel au modèle peut rester muet une quinzaine de
+ * minutes (le client Anthropic réessaie deux fois un appel de cinq minutes),
+ * et le journal ne remonte que par paquets. Une demi-heure sans le moindre
+ * signe, en revanche, ne s'explique par aucun travail en cours.
+ */
+const STALE_RUN_MINUTES = 30;
+
+const STALE_RUN_ERROR =
+  `Aucune nouvelle du worker pendant ${STALE_RUN_MINUTES} minutes — ` +
+  'exécution fermée d\'office.';
+
+/**
+ * Ferme les exécutions qu'aucun worker ne viendra clore.
+ *
+ * Le worker clôt son run quoi qu'il arrive… tant qu'il peut joindre le site.
+ * S'il est tué, si le VPS redémarre, ou si l'API était injoignable à cet
+ * instant précis — un déploiement suffit — la ligne reste `RUNNING` pour
+ * toujours, et `POST /configs/:id/run` refuse alors tout nouveau lancement de
+ * la même configuration. Il fallait passer par le bouton « Annuler » pour
+ * s'en sortir, en ayant compris pourquoi : c'est ce que cette fonction évite.
+ *
+ * Le silence se mesure sur la **dernière trace** de l'exécution, pas sur son
+ * démarrage : un run qui parle encore travaille encore, si long soit-il.
+ *
+ * Une fermeture à tort ne coûte rien : le worker, s'il est vivant, clôt son
+ * run normalement à la fin et sa clôture écrase celle-ci, compteurs compris.
+ */
+async function closeStaleRuns(): Promise<number> {
+  const deadline = new Date(Date.now() - STALE_RUN_MINUTES * 60_000);
+  const running = await prisma.scraperRun.findMany({
+    where: { status: 'RUNNING', startedAt: { lt: deadline } },
+    select: { id: true },
+  });
+  let closed = 0;
+  for (const { id } of running) {
+    const [log, item] = await Promise.all([
+      prisma.scraperRunLog.findFirst({
+        where: { runId: id },
+        orderBy: { at: 'desc' },
+        select: { at: true },
+      }),
+      prisma.scraperRunItem.findFirst({
+        where: { runId: id },
+        orderBy: { at: 'desc' },
+        select: { at: true },
+      }),
+    ]);
+    if ((log && log.at > deadline) || (item && item.at > deadline)) continue;
+    // Conditionné au statut : le worker a pu clore son run entre la lecture
+    // et l'écriture, et sa clôture à lui dit la vérité.
+    const { count } = await prisma.scraperRun.updateMany({
+      where: { id, status: 'RUNNING' },
+      data: { status: 'FAILED', error: STALE_RUN_ERROR, finishedAt: new Date() },
+    });
+    if (count) {
+      // Rare et anormal : ça vaut une ligne dans le journal du service, pour
+      // qu'on puisse la relier après coup au redémarrage qui l'a causée.
+      console.warn(`[scraper] exécution #${id} fermée d'office : worker muet.`);
+    }
+    closed += count;
+  }
+  return closed;
+}
+
 // ------------------------------------------------------------ configurations
 
 scraperRouter.get('/configs', async (_req, res) => {
@@ -246,7 +313,10 @@ scraperRouter.post('/configs/:id/run', async (req, res) => {
     return;
   }
   // Une exécution déjà en attente ou en cours suffit : en empiler d'autres ne
-  // ferait que payer plusieurs fois la même recherche.
+  // ferait que payer plusieurs fois la même recherche. Encore faut-il que
+  // celle qui bloque soit vivante — d'où le ménage, ici plutôt qu'ailleurs :
+  // c'est ce clic-ci qu'un run mort empêchait.
+  await closeStaleRuns();
   const pending = await prisma.scraperRun.findFirst({
     where: { configId, status: { in: ['QUEUED', 'RUNNING'] } },
   });
@@ -658,6 +728,7 @@ scraperRouter.post('/events/:id/source', async (req, res) => {
     res.status(409).json({ error: "Cette sortie n'a aucun lien : il n'y a rien à remonter" });
     return;
   }
+  await closeStaleRuns();
   const pending = await prisma.scraperRun.findFirst({
     where: { eventId, status: { in: ['QUEUED', 'RUNNING'] } },
   });
@@ -695,6 +766,9 @@ scraperRouter.get('/events/:id/source', async (req, res) => {
  * pas se disputer la même exécution.
  */
 scraperRouter.post('/next', async (_req, res) => {
+  // Le worker passe toutes les trente secondes : c'est le balayage régulier,
+  // celui qui remet la console d'aplomb sans que personne ait rien à cliquer.
+  await closeStaleRuns();
   const queued = await prisma.scraperRun.findFirst({
     where: { status: 'QUEUED' },
     orderBy: { queuedAt: 'asc' },
