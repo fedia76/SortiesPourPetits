@@ -145,6 +145,16 @@ const router = createRouter({
       component: () => import('../views/AdminAreasView.vue'),
       meta: { title: 'Zones', noindex: true, requiresAuth: true, requiresAdmin: true },
     },
+    // Le banc fabrique la vérité de référence sur laquelle les mesures
+    // s'appuieront : administrateur, et pas modérateur comme le reste de la
+    // console du scraper. Une vérité que plusieurs mains modifient sans se
+    // concerter n'en est plus une.
+    {
+      path: '/admin/evaluation',
+      name: 'admin-eval',
+      component: () => import('../views/AdminEvalView.vue'),
+      meta: { title: "Banc d'évaluation", noindex: true, requiresAuth: true, requiresAdmin: true },
+    },
     // Une adresse inconnue affichait l'accueil, par redirection : le visiteur
     // n'y comprenait rien, et le serveur, lui, répond 404 sur cette adresse.
     {

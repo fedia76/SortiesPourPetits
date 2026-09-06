@@ -27,6 +27,8 @@ from typing import Any, Callable
 
 from .api import ApiError, SppApi
 from .config import ConfigError, Environment, config_from_api, load_dotenv
+from .evaluation import harvest_agenda
+from .harvest import Fetcher
 from .journal import RemoteJournal, RunLog, run_log_path
 from .ledger import Ledger, ledger_path
 from .models import Summary
@@ -218,6 +220,43 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
             print(f"■ Exécution #{run_id} {done} — {payload['costUsd']} $", flush=True)
 
 
+def evaluate(agenda: dict[str, Any], api: SppApi, quiet: bool) -> None:
+    """Dépouille un agenda du banc d'évaluation, et le clôt quoi qu'il arrive.
+
+    Beaucoup plus court qu'`execute`, et ça en dit long sur ce que coûte le
+    pipeline : ici il n'y a ni modèle, ni journal, ni mémoire, ni sortie
+    soumise. Seulement des pages téléchargées et `links_of` appelé dessus.
+
+    Le `finally` a la même raison qu'ailleurs : le site a déjà passé l'agenda
+    en RUNNING, et sans clôture il ne serait plus jamais réclamé.
+    """
+    agenda_id = int(agenda["id"])
+    url = str(agenda["url"])
+    pages = int(agenda.get("pages") or 1)
+    if not quiet:
+        print(f"▶ Banc — agenda #{agenda_id} : {url} ({pages} page(s))", flush=True)
+
+    reported = False
+    try:
+        found = harvest_agenda(url, pages, fetcher=Fetcher())
+        api.report_harvest(agenda_id, found)
+        reported = True
+        if not quiet:
+            total = sum(len(p.get("links") or []) for p in found)
+            print(f"■ Banc — agenda #{agenda_id} : {total} lien(s) sur {len(found)} page(s)", flush=True)
+    except ApiError as err:
+        # Le compte rendu n'est pas passé. Tenter de clore par la même API a
+        # peu de chances d'aboutir, mais rien à casser si elle revient.
+        print(f"Compte rendu impossible pour l'agenda #{agenda_id} : {err}", file=sys.stderr, flush=True)
+    except Exception as err:  # noqa: BLE001 — la trace part dans la console du service
+        traceback.print_exc()
+        if not reported:
+            try:
+                api.fail_harvest(agenda_id, f"{err.__class__.__name__} : {err}")
+            except ApiError as api_err:
+                print(f"Clôture impossible de l'agenda #{agenda_id} : {api_err}", file=sys.stderr, flush=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sortiesbot.worker",
@@ -271,6 +310,22 @@ def main(argv: list[str] | None = None) -> int:
             job = None
         if job:
             execute(job, api, env, runs_dir, args.quiet)
+            if args.once:
+                return 0
+            continue
+
+        # Les recherches d'abord, le banc ensuite : une recherche produit des
+        # sorties que des parents attendent, un agenda du banc attend un humain
+        # qui le relira quand il pourra. À file égale, c'est la recherche qui
+        # passe.
+        try:
+            agenda = api.next_harvest()
+        except ApiError as err:
+            if not args.quiet:
+                print(f"Banc injoignable ({err}) — nouvelle tentative.", file=sys.stderr, flush=True)
+            agenda = None
+        if agenda:
+            evaluate(agenda, api, args.quiet)
             if args.once:
                 return 0
         elif args.once:

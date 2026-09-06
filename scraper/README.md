@@ -74,6 +74,12 @@ recherche avec la configuration que le site lui donne, rend compte page par
 page (`/runs/:id/items`) puis clôt l'exécution avec ses compteurs
 (`/runs/:id/finish`). Il ne décide de rien : tout se règle dans la console.
 
+Il sert aussi une **seconde file**, celle du banc d'évaluation
+(`POST /api/eval/harvest/next`) — voir « [Le banc
+d'évaluation](#le-banc-dévaluation) ». Les recherches passent d'abord : une
+recherche produit des sorties que des parents attendent, un agenda du banc
+attend un humain qui le relira quand il pourra.
+
 Une exécution est close **quoi qu'il arrive**, y compris sur un plantage :
 sans clôture elle resterait « En cours » dans la console, et bloquerait toute
 nouvelle exécution de la même configuration.
@@ -687,6 +693,77 @@ ses liens sans rattrapage.
 Le HTML est téléchargé une fois pour toutes à cet étage : le `Fetcher` garde
 les pages du run et les rend à qui les redemandera, si bien que le
 dépouillement et la lecture ne repassent pas sur le réseau.
+
+### Le banc d'évaluation
+
+Le registre ci-dessus mesure la **reconnaissance** en la laissant tourner. Le
+banc répond à l'autre question, celle qu'aucune observation passive ne peut
+atteindre : **ce que le pipeline a manqué.**
+
+Le déséquilibre est structurel. Une fausse sortie remonte au modérateur, qui la
+refuse — l'erreur est vue, corrigée, et *étiquetée*. Une vraie sortie écartée à
+l'étage 3 ou 4 n'est vue par personne, jamais ; elle ne produit même pas une
+ligne de regret. La précision a le filet de la modération, le rappel n'en a
+aucun.
+
+Le banc s'ouvre donc par le **dépouillement**, et l'ordre n'est pas arbitraire :
+
+* il est **en amont** — un lien que `links_of` n'a pas vu est perdu pour les
+  cinq étages suivants, et aucun modèle en aval ne le rattrape ;
+* il est **déterministe, ce qui ne veut pas dire juste**. `links_of` rend les
+  mêmes liens à chaque fois ; ça ne dit rien de savoir si ce sont les bons. Une
+  fonction peut être fiablement fausse ;
+* et **sa panne se déguise en panne de l'étage 4**. Un agenda dont les liens de
+  fiche ont été perdus rend son menu ; la sélection n'en retient rien, avec un
+  `dropped_reason` parfaitement sensé ; et c'est le prompt de la sélection qu'on
+  ira retoucher pour un bug de sélecteur.
+
+#### Comment ça marche
+
+La console est à `/admin/evaluation`, réservée aux **administrateurs** — le banc
+fabrique la vérité de référence sur laquelle les mesures s'appuieront, et une
+vérité que plusieurs mains modifient sans se concerter n'en est plus une.
+
+On y donne un agenda réel et un nombre de pages. L'agenda part en file ; le
+worker le réclame comme il réclame une exécution
+(`POST /api/eval/harvest/next`), télécharge les pages avec le `Fetcher` du
+scraper — donc `robots.txt` et le délai par hôte — et appelle
+[`evaluation.harvest_agenda()`](sortiesbot/evaluation.py), qui n'est qu'une
+enveloppe autour du **vrai** `links_of`.
+
+C'est le point qui commande tout le reste : refaire l'extraction côté site
+donnerait la vérité d'une réimplémentation, c'est-à-dire aucune vérité. Ce
+module n'a pas non plus le droit de « corriger » quoi que ce soit au passage —
+il appelle la fonction et rapporte. Compléter est le travail de l'humain.
+
+Puis vient le seul geste qui compte : **ajouter les liens manqués**. Aucun
+signal gratuit ne peut le faire — il n'existe nulle part, dans le HTML, de
+déclaration de ce qu'un site considère comme ses propres fiches. Il faut donc un
+humain, une fois ; ensuite l'étiquette ne périme plus jamais, et la mesure se
+rejoue sans réseau ni appel de modèle.
+
+Le rappel de l'étage 3 sur un agenda est alors `dépouillés / total`, et il ne
+s'affiche **qu'une fois l'extraction validée** : avant, il dirait 100 % pour
+signifier « personne n'a encore regardé ».
+
+#### Deux choix qui ne vont pas de soi
+
+**Un nombre de pages fixe**, là où l'étage 3 suit sa pagination *tant qu'il
+manque de liens*. Ce sont deux questions distinctes, et les confondre les
+rendrait toutes deux inexploitables : « ce site a-t-il des liens que je ne sais
+pas voir ? » se répond sur une page fixée, « fallait-il ouvrir la page 3 ? » est
+un arbitrage de budget qui se juge sur un run entier. Le banc mesure
+`links_of`, pas la politique qui l'appelle.
+
+**Pas de dédoublonnage entre pages.** `links_of` travaille page par page, et
+c'est page par page que la vérité s'établit. Fusionner ferait disparaître la
+moitié du travail qu'on cherche à noter — et masquerait le cas le plus
+instructif, celui de la page 2 qui ne rend rien alors que la page 1 va bien.
+
+Relancer une analyse efface aussi les ajouts manuels, et il n'y a pas d'autre
+choix honnête : ils disaient « `links_of` a manqué ceci **sur cette page telle
+qu'elle était** », la page vient d'être retéléchargée, et les garder les
+rattacherait à un HTML qu'ils n'ont jamais décrit.
 
 ### Le registre, et comment le lire
 

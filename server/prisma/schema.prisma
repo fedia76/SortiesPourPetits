@@ -32,6 +32,20 @@ enum ScraperRunStatus {
   FAILED
 }
 
+/// Où en est l'analyse d'un agenda du banc d'évaluation.
+///
+/// Les quatre premiers états sont ceux d'un travail que le worker réclame,
+/// exactement comme une exécution du scraper. `VALIDATED` est le seul que le
+/// worker ne produit jamais : il dit qu'un humain a relu la moisson, l'a
+/// complétée, et que ce qu'elle contient fait désormais **vérité**.
+enum EvalAgendaStatus {
+  QUEUED
+  RUNNING
+  ANALYZED
+  FAILED
+  VALIDATED
+}
+
 model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique
@@ -44,6 +58,7 @@ model User {
   moderatedEvents Event[]      @relation("EventModerator")
   apiKeys         ApiKey[]
   scraperRuns     ScraperRun[] @relation("ScraperRunRequester")
+  evalAgendas     EvalAgenda[] @relation("EvalAgendaAuthor")
 }
 
 /// Clé d'API pour les programmes tiers. La clé en clair n'est jamais stockée :
@@ -435,4 +450,108 @@ model ScrapedUrl {
   eventId Int?
 
   @@index([decision])
+}
+
+// ════════════════════════════════════════════════════════ banc d'évaluation
+
+/// Un agenda du banc d'évaluation : une page réelle dont on veut savoir ce
+/// que le dépouillement (étage 3) **aurait dû** en tirer.
+///
+/// Le principe tient en une phrase : déterminisme n'est pas justesse.
+/// `links_of` rend les mêmes liens à chaque fois, ce qui ne dit rien de
+/// savoir si ce sont les bons. Aucun signal gratuit ne peut répondre — il n'y
+/// a pas, dans le HTML, de déclaration de ce que le site considère comme ses
+/// propres fiches. Il faut donc un humain, une fois, pour compléter la
+/// moisson ; ensuite l'étiquette ne périme plus jamais, et la mesure se
+/// rejoue gratuitement.
+///
+/// L'extraction, elle, passe par le worker Python et par le vrai `links_of`.
+/// La refaire en Node donnerait la vérité d'une réimplémentation, c'est-à-dire
+/// aucune vérité du tout.
+model EvalAgenda {
+  id     Int              @id @default(autoincrement())
+  url    String           @unique @db.VarChar(500)
+  /// Nom lisible pour la console. Vide : l'URL fait office de nom.
+  label  String           @default("")
+  status EvalAgendaStatus @default(QUEUED)
+
+  /// Combien de pages dépouiller, la première comprise. C'est un réglage de
+  /// l'évaluation, pas celui du pipeline : ici on demande un nombre fixe, là
+  /// où l'étage 3 suit sa pagination tant qu'il manque de liens. Ce qu'on
+  /// mesure est `links_of` sur une page donnée, pas la politique qui décide
+  /// d'en ouvrir une de plus.
+  pages Int @default(1)
+
+  error String? @db.Text
+  note  String  @default("") @db.Text
+
+  createdAt   DateTime  @default(now())
+  analyzedAt  DateTime?
+  validatedAt DateTime?
+
+  author      User @relation("EvalAgendaAuthor", fields: [createdById], references: [id])
+  createdById Int
+
+  agendaPages EvalAgendaPage[]
+
+  @@index([status])
+}
+
+/// Une page réellement téléchargée de cet agenda : la première, puis chaque
+/// `rel="next"` suivi. C'est le niveau auquel la console groupe les liens,
+/// parce que c'est le niveau auquel `links_of` travaille — une page, une
+/// moisson.
+model EvalAgendaPage {
+  id     Int    @id @default(autoincrement())
+  /// Rang de la page dans la pagination : 1 pour l'agenda lui-même.
+  pageNo Int
+  url    String @db.VarChar(500)
+
+  /// Taille du HTML servi. Un effondrement d'un run à l'autre est le premier
+  /// signe qu'un site s'est mis à charger sa liste en JavaScript.
+  chars Int     @default(0)
+  /// Renseigné quand la page n'a pas pu être lue. Les liens sont alors vides,
+  /// et c'est une réponse : la page a été demandée, pas obtenue.
+  error String? @db.Text
+
+  agenda   EvalAgenda @relation(fields: [agendaId], references: [id], onDelete: Cascade)
+  agendaId Int
+
+  links EvalLink[]
+
+  @@unique([agendaId, pageNo])
+  @@index([agendaId])
+}
+
+/// Un lien d'une page, tel que le dépouillement l'a rendu — ou tel qu'un
+/// humain l'a ajouté parce que le dépouillement l'avait manqué.
+///
+/// C'est `source` qui porte toute la mesure : le rappel de l'étage 3 sur cette
+/// page est le nombre de `HARVEST` divisé par le total. Un lien `MANUAL` est
+/// un lien que `links_of` aurait dû voir et n'a pas vu.
+model EvalLink {
+  id      Int              @id @default(autoincrement())
+  url     String           @db.VarChar(500)
+  /// Texte de l'ancre, tel que `links_of` le tronque à 150 caractères.
+  text    String           @default("") @db.VarChar(200)
+  /// Le texte qui entoure le lien sur la page — là où vivent la date et le
+  /// lieu. Vide pour un ajout manuel : l'humain donne une URL, pas un
+  /// contexte, et en inventer un fausserait ce que l'étage 4 recevra.
+  context String           @default("") @db.Text
+  source  EvalLinkSource   @default(HARVEST)
+  /// Ce que l'humain a tapé pour justifier un ajout, quand il l'a fait.
+  note    String           @default("") @db.Text
+  addedAt DateTime         @default(now())
+
+  page   EvalAgendaPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  pageId Int
+
+  @@unique([pageId, url])
+  @@index([pageId])
+}
+
+/// D'où vient un lien du banc : de la moisson, ou de la main d'un humain.
+enum EvalLinkSource {
+  HARVEST
+  MANUAL
 }

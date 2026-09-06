@@ -71,6 +71,17 @@ Le Havre, Niort et Nancy.
   de chaque domaine source — avec ce qu'il a réellement donné, et pas
   seulement ce qu'il a coûté à lire — et la part de chaque catégorie, qui dit
   ce qu'aucune recherche ne couvre.
+- **Banc d'évaluation** (`/admin/evaluation`, administrateurs) : un onglet par
+  brique du scraper, et le premier ouvert est le **dépouillement**. On donne un
+  agenda réel et le nombre de pages à ouvrir ; le worker les télécharge et
+  appelle le vrai `links_of` — une extraction réécrite côté site donnerait la
+  vérité d'une réécriture, c'est-à-dire aucune. Les liens s'affichent en arbre,
+  groupés par page, et l'on **ajoute ceux qu'il a manqués**. C'est ce geste qui
+  est la mesure : aucun signal gratuit ne peut le faire à notre place, parce
+  qu'aucun site ne déclare lesquelles de ses URL sont ses propres fiches. Une
+  fois l'extraction validée, le rappel de l'étage 3 sur cet agenda devient
+  lisible — et il ne s'affiche pas avant, où il dirait 100 % pour signifier
+  « personne n'a encore regardé ».
 - **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
   sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
   une clé d'API. Il sait aussi partir d'une adresse connue — le site d'un
@@ -145,6 +156,14 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | GET | `/api/scraper/memory` | modérateur | Mémoire des pages analysées (`q`, `decision`, `page`) |
 | DELETE | `/api/scraper/memory` | modérateur | Oublier des pages (`decision` pour n'en purger qu'un lot) |
 | DELETE | `/api/scraper/runs/:id/data` | modérateur | Supprimer ce qu'une exécution a produit : ses sorties et ce qu'elle a mémorisé (le journal reste) |
+| GET | `/api/eval/agendas` | admin | Le banc d'évaluation : les agendas et ce que le dépouillement en a tiré |
+| POST | `/api/eval/agendas` | admin | Ajouter un agenda au banc et le mettre en file (`url`, `pages`, `label`) |
+| POST | `/api/eval/agendas/:id/analyze` | admin | Relancer le dépouillement (efface la moisson précédente et les ajouts manuels) |
+| POST | `/api/eval/pages/:pageId/links` | admin | Ajouter un lien que le dépouillement a manqué — c'est la mesure |
+| DELETE | `/api/eval/links/:id` | admin | Retirer un ajout manuel (un lien dépouillé, lui, ne s'efface pas) |
+| POST | `/api/eval/agendas/:id/validate` | admin | Figer la vérité de référence : le rappel devient lisible |
+| POST | `/api/eval/harvest/next` | modérateur | Le worker réclame le prochain agenda du banc |
+| POST | `/api/eval/harvest/:id/pages` | modérateur | Le worker rend les liens de chaque page |
 | GET | `/api/admin/users` | admin | Liste des utilisateurs |
 | PATCH | `/api/admin/users/:id/role` | admin | Changer un rôle |
 

@@ -10,6 +10,7 @@ import { adminRouter } from './routes/admin';
 import { categoriesRouter } from './routes/categories';
 import { areasRouter } from './routes/areas';
 import { scraperRouter } from './routes/scraper';
+import { evalRouter } from './routes/eval';
 import { apiKeysRouter } from './routes/apiKeys';
 import { siteRouter } from './routes/site';
 
@@ -50,6 +51,7 @@ app.use('/api/categories', categoriesRouter);
 app.use('/api/areas', areasRouter);
 app.use('/api/keys', apiKeysRouter);
 app.use('/api/scraper', scraperRouter);
+app.use('/api/eval', evalRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });

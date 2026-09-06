@@ -116,6 +116,30 @@ class SppApi:
         """Clôt l'exécution avec ses compteurs (status : DONE ou FAILED)."""
         self._post_json(f"/api/scraper/runs/{run_id}/finish", {"status": status, **counters})
 
+    # --------------------------------------------------- banc d'évaluation
+    # Une seconde file, indépendante de celle des runs : le banc mesure ce que
+    # le pipeline rend, il ne le joue pas. Un agenda du banc n'a ni journal, ni
+    # coût, ni sortie soumise — seulement des liens à comparer plus tard à ce
+    # qu'un humain aura complété.
+
+    def next_harvest(self) -> dict[str, Any] | None:
+        """Réclame le prochain agenda du banc, ou None s'il n'y a rien."""
+        body = self._post_json("/api/eval/harvest/next")
+        return body.get("agenda")
+
+    def report_harvest(self, agenda_id: int, pages: list[dict[str, Any]]) -> None:
+        """Rend ce que le dépouillement a tiré de chaque page de l'agenda."""
+        self._post_json(f"/api/eval/harvest/{agenda_id}/pages", {"pages": pages})
+
+    def fail_harvest(self, agenda_id: int, error: str) -> None:
+        """Clôt un agenda en échec.
+
+        Sans cet appel il resterait « en cours » pour toujours et ne serait
+        plus jamais réclamé — même règle qu'une exécution du scraper, et pour
+        la même raison.
+        """
+        self._post_json(f"/api/eval/harvest/{agenda_id}/fail", {"error": error[:2000]})
+
     def known_urls(self, urls: list[str]) -> set[str]:
         """Parmi ces URLs, celles que le site a déjà vu analyser."""
         if not urls:

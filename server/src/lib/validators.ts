@@ -515,3 +515,82 @@ export const scraperMemoryPurgeSchema = z.object({
 export const scraperSeenSchema = z.object({
   urls: z.array(scraperUrl).min(1).max(500),
 });
+
+// ───────────────────────────────────────────────────────── banc d'évaluation
+
+/**
+ * Combien de pages d'un agenda le banc dépouille, la première comprise.
+ *
+ * Le plafond est bas et c'est voulu : chaque page est un téléchargement réel
+ * chez quelqu'un, et un humain devra ensuite relire ce qu'elle a donné. Une
+ * vérité de référence se construit sur quelques pages qu'on regarde vraiment,
+ * pas sur cinquante qu'on survole.
+ */
+export const EVAL_MAX_PAGES = 10;
+
+/** Un agenda ajouté au banc depuis la console. */
+export const evalAgendaSchema = z.object({
+  url: scraperUrl,
+  label: z.string().trim().max(150).optional().default(''),
+  pages: z.number().int().min(1).max(EVAL_MAX_PAGES).optional().default(1),
+  note: z.string().trim().max(2000).optional().default(''),
+});
+
+/** Ce qu'on peut changer d'un agenda déjà au banc, sans le ressaisir. */
+export const evalAgendaUpdateSchema = z
+  .object({
+    label: z.string().trim().max(150),
+    pages: z.number().int().min(1).max(EVAL_MAX_PAGES),
+    note: z.string().trim().max(2000),
+  })
+  .partial();
+
+/**
+ * Un lien ajouté à la main : celui que le dépouillement a manqué.
+ *
+ * Pas de `context` : l'humain donne une URL, pas le texte qui l'entoure sur la
+ * page. En fabriquer un ferait croire à l'étage 4 qu'il a reçu quelque chose
+ * que le dépouillement ne lui aurait jamais donné.
+ */
+export const evalLinkSchema = z.object({
+  url: scraperUrl,
+  text: z.string().trim().max(200).optional().default(''),
+  note: z.string().trim().max(500).optional().default(''),
+});
+
+/**
+ * Ce que le worker rend d'un agenda : une entrée par page réellement
+ * demandée, dans l'ordre de la pagination.
+ *
+ * Une page en erreur est une réponse — elle a été demandée, pas obtenue — et
+ * porte donc zéro lien plutôt que de manquer du compte rendu.
+ */
+export const evalHarvestSchema = z.object({
+  pages: z
+    .array(
+      z.object({
+        pageNo: z.number().int().min(1).max(EVAL_MAX_PAGES),
+        url: scraperUrl,
+        chars: z.number().int().min(0).optional().default(0),
+        error: z.string().trim().max(1000).optional(),
+        links: z
+          .array(
+            z.object({
+              url: scraperUrl,
+              text: z.string().trim().max(200).optional().default(''),
+              context: z.string().trim().max(1000).optional().default(''),
+            }),
+          )
+          .max(500)
+          .optional()
+          .default([]),
+      }),
+    )
+    .min(1)
+    .max(EVAL_MAX_PAGES),
+});
+
+/** Clôture en échec : le worker n'a rien pu tirer de cet agenda. */
+export const evalFailSchema = z.object({
+  error: z.string().trim().min(1).max(2000),
+});

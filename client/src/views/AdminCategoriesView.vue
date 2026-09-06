@@ -73,6 +73,7 @@ onMounted(load);
       <RouterLink to="/admin">Utilisateurs</RouterLink>
       <RouterLink to="/admin/categories">Catégories</RouterLink>
       <RouterLink to="/admin/zones">Zones</RouterLink>
+      <RouterLink to="/admin/evaluation">Banc d'évaluation</RouterLink>
     </nav>
 
     <p v-if="error" class="error">{{ error }}</p>

@@ -700,3 +700,61 @@ export interface ScraperStats {
     costUsd: number;
   }[];
 }
+
+// ───────────────────────────────────────────────────────── banc d'évaluation
+
+export type EvalAgendaStatus = 'QUEUED' | 'RUNNING' | 'ANALYZED' | 'FAILED' | 'VALIDATED';
+
+export const EVAL_STATUS_LABELS: Record<EvalAgendaStatus, string> = {
+  QUEUED: 'En file',
+  RUNNING: 'Analyse en cours',
+  ANALYZED: 'À relire',
+  FAILED: 'Échec',
+  VALIDATED: 'Validé',
+};
+
+/**
+ * Un lien d'une page du banc.
+ *
+ * `source` porte toute la mesure : `HARVEST` est ce que `links_of` a rendu,
+ * `MANUAL` est ce qu'un humain a dû rattraper — donc, très exactement, ce que
+ * le dépouillement aurait dû voir et n'a pas vu.
+ */
+export interface EvalLink {
+  id: number;
+  url: string;
+  text: string;
+  /** Le texte qui entoure le lien. Vide pour un ajout manuel, et c'est voulu. */
+  context: string;
+  source: 'HARVEST' | 'MANUAL';
+  note: string;
+  addedAt: string;
+}
+
+/** Une page réellement téléchargée : la première de l'agenda, ou un `rel="next"` suivi. */
+export interface EvalAgendaPage {
+  id: number;
+  pageNo: number;
+  url: string;
+  /** Taille du HTML servi — un effondrement trahit une liste passée en JavaScript. */
+  chars: number;
+  error: string | null;
+  links: EvalLink[];
+}
+
+export interface EvalAgenda {
+  id: number;
+  url: string;
+  label: string;
+  status: EvalAgendaStatus;
+  pages: number;
+  error: string | null;
+  note: string;
+  createdAt: string;
+  analyzedAt: string | null;
+  validatedAt: string | null;
+  author: { id: number; displayName: string };
+  agendaPages: EvalAgendaPage[];
+  /** `recall` reste nul tant qu'aucun humain n'a validé : sinon il dirait 100 %. */
+  stats: { harvested: number; manual: number; total: number; recall: number | null };
+}
