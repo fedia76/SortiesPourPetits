@@ -225,6 +225,21 @@ table.tbl tr.r8 { --a: var(--c1); --as: var(--c1s); }
 .layers li.b6 { --a: var(--c4); --as: var(--c4s); }
 .layers li.b7 { --a: var(--c3); --as: var(--c3s); }
 
+.instr { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; margin-top: 14px; }
+table.mini { width: 100%; border-collapse: collapse; font-size: .82rem; }
+table.mini th, table.mini td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; line-height: 1.4; }
+table.mini thead th { font: 600 9.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); border-bottom: 2px solid var(--line); }
+table.mini tbody tr:last-child td { border-bottom: none; }
+table.mini td.who { white-space: nowrap; font: 600 10.5px var(--mono); }
+table.mini td.who.free { color: var(--c2); }
+table.mini td.who.hum { color: var(--c5); }
+table.mini td.name { font-weight: 700; color: var(--ink); white-space: nowrap; }
+.trap { margin-top: 12px; border-left: 3px solid var(--c6); background: var(--c6s); border-radius: 0 10px 10px 0; padding: 12px 14px; font-size: .85rem; line-height: 1.5; }
+.disguise { display: flex; flex-direction: column; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.disguise li { background: var(--box); border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; font-size: .82rem; line-height: 1.45; }
+.disguise code { font-size: .84em; }
+.disguise .sym { font: 700 10px var(--mono); color: var(--c6); display: block; margin-top: 6px; }
+
 .warnbox { border: 2px solid var(--c6); background: var(--c6s); border-radius: 14px; padding: 16px 18px; }
 .warnbox h2 { margin: 0 0 8px; font-size: 1rem; font-weight: 700; color: var(--c6); }
 .warnbox p { margin: 0 0 8px; font-size: .89rem; }
@@ -394,8 +409,8 @@ table.tbl tr.r8 { --a: var(--c1); --as: var(--c1s); }
       <tr class="r5">
         <td class="br"><span class="num">5</span>Lecture</td>
         <td>une page</td>
-        <td>dérivable du HTML, gratuite</td>
-        <td>assertions exactes : texte non vide, dates JSON-LD trouvées, illustration qui n'est pas le logo du site</td>
+        <td>les <b>dates</b> : le JSON-LD, vérité déclarée par le site — gratuite. Le <b>texte</b> et l'<b>image</b> : un humain, 5 s par page</td>
+        <td>les dates rendues contre celles que le site déclare ; et le texte contient-il bien la description, plutôt que le bandeau cookies</td>
         <td><span class="verdict yes">oui</span></td>
       </tr>
       <tr class="r6">
@@ -431,10 +446,11 @@ table.tbl tr.r8 { --a: var(--c1); --as: var(--c1s); }
         <h3>Commencer par les briques gratuites</h3>
       </header>
       <ul>
-        <li>L'instinct dit d'attaquer les briques payantes, « là où est l'IA ». C'est l'inverse.</li>
-        <li>Elles sont <b>déterministes</b> : leur évaluation est exacte, reproductible, gratuite à rejouer, et se met en intégration continue le jour même.</li>
-        <li>Elles sont <b>en amont</b> : une sortie que le dépouillement n'a pas vue est perdue pour les cinq étages suivants. Aucun modèle en aval ne la rattrape.</li>
-        <li>Et ce sont elles qui <b>cassent silencieusement</b> — un agenda change de gabarit, le run se termine normalement, juste plus maigre.</li>
+        <li>L'instinct dit d'attaquer les briques payantes, « là où est l'IA ». C'est l'inverse — mais pas pour la raison qu'on croit.</li>
+        <li><b>Déterministe ne veut pas dire juste.</b> <code>links_of</code> rend les mêmes liens à chaque fois ; ça ne dit rien de savoir si ce sont les bons. Une fonction peut être fiablement fausse.</li>
+        <li>Ces briques demandent donc <b>un humain elles aussi</b> — mais pour <i>vérifier</i>, pas pour <i>juger</i> : « ce texte est-il la description ou le bandeau cookies ? », personne n'en discute. Une dizaine d'agendas, une trentaine de pages : deux heures en tout.</li>
+        <li>Et le même étiquetage sert deux fois : la couche « quels liens mènent à une sortie » est la vérité de la brique 3 <b>et</b> celle de la brique 4.</li>
+        <li>Une fois posée, l'étiquette ne périme jamais : la page est gelée, aucun appel de modèle n'est nécessaire, le contrôle tourne en intégration continue à chaque commit.</li>
       </ul>
     </article>
 
@@ -591,6 +607,37 @@ table.tbl tr.r8 { --a: var(--c1); --as: var(--c1s); }
     </div>
   </div>
 
+  <div class="instr">
+    <div class="frame">
+      <h3 style="margin:0 0 4px;font-size:.96rem;font-weight:700;color:var(--ink)">Trois instruments, pas un</h3>
+      <p style="margin:0 0 11px;font-size:.84rem;color:var(--muted);line-height:1.45"><b>Déterministe ne veut pas dire juste.</b> <code>links_of</code> rend les mêmes liens à chaque fois — ça ne dit rien de savoir si ce sont les bons. Une fonction peut être fiablement fausse.</p>
+      <table class="mini">
+        <thead><tr><th>Instrument</th><th>Humain&nbsp;?</th><th>Répond à</th><th>Ne dit pas</th></tr></thead>
+        <tbody>
+          <tr><td class="name">Propriétés</td><td class="who free">non</td><td>est-ce cohérent&nbsp;? URLs absolues, pas de doublon, sous le plafond</td><td>si c'est <b>complet</b></td></tr>
+          <tr><td class="name">Instantané</td><td class="who free">non</td><td>est-ce que ça fait toujours comme hier&nbsp;?</td><td>si <b>hier était bon</b></td></tr>
+          <tr><td class="name">Vérité de référence</td><td class="who hum">oui, une fois</td><td>est-ce <b>juste</b>&nbsp;?</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <p class="trap"><b>Le piège de l'instantané :</b> il fige le comportement actuel comme référence. Si le dépouillement rate déjà la moitié des fiches aujourd'hui, l'instantané grave ce ratage dans le marbre et répondra « tout va bien » pour toujours. Une suite de tests verte peut certifier un pipeline qui rate 40 % du web.</p>
+    </div>
+
+    <div class="frame">
+      <h3 style="margin:0 0 4px;font-size:.96rem;font-weight:700;color:var(--ink)">Pourquoi les briques gratuites d'abord</h3>
+      <p style="margin:0 0 11px;font-size:.84rem;color:var(--muted);line-height:1.45">Pas parce qu'elles seraient sûres — parce que <b>leurs pannes se déguisent en pannes des briques payantes</b>, et qu'on retouche alors un prompt pour un bug de sélecteur.</p>
+      <ul class="disguise">
+        <li><code>links_of</code> compare <code>netloc != host</code> <b>strictement</b>. Un agenda sur <code>www.exemple.fr</code> dont les cartes pointent vers <code>exemple.fr</code> perd toutes ses fiches ; le menu, lui, est en relatif et passe. La fonction rend quarante liens de navigation, sans lever quoi que ce soit — et <code>same_site()</code> existe dans le même fichier.
+          <span class="sym">se déguise en : « le modèle n'a rien retenu de cet agenda »</span></li>
+        <li><code>MIN_TEXT = 15</code> — « Peter Pan » fait 9 caractères, « Cirque Plume » 12. Un agenda dont les cartes portent des titres courts perd ses fiches une par une.
+          <span class="sym">se déguise en : « ce site ne donne rien »</span></li>
+        <li><code>page_text</code> supprime <code>nav header footer aside form</code>. Beaucoup de gabarits mettent le titre et les dates dans un <code>&lt;header&gt;</code>, et l'encadré pratique — adresse, tarif — dans un <code>&lt;aside&gt;</code> : on retire exactement les deux blocs cherchés. Le texte reste non vide, donc toute assertion de propriété passe.
+          <span class="sym">se déguise en : « l'extraction rend des fiches sans adresse »</span></li>
+        <li><code>page_text</code> tronque à 8 000 caractères. Une page de programme de festival dépasse, et les entrées au-delà sont invisibles.
+          <span class="sym">se déguise en : « l'extraction multi en rate la moitié »</span></li>
+      </ul>
+    </div>
+  </div>
+
   <div class="band">
     <div class="bandgrid" style="grid-template-columns:repeat(2,1fr)">
 
@@ -652,8 +699,8 @@ table.tbl tr.r8 { --a: var(--c1); --as: var(--c1s); }
       <span class="stepn">2</span>
       <div>
         <h4>Le harnais, étages 3 et 5</h4>
-        <p>Déterministes, donc assertions exactes sur les fixtures déjà là. C'est le squelette, et la première barrière en intégration continue.</p>
-        <span class="effort">1 soirée</span>
+        <p>Une dizaine d'agendas et une trentaine de pages étiquetés — de la vérification, pas du jugement. C'est le squelette, et la première barrière en intégration continue.</p>
+        <span class="effort">1 soirée + 2 h</span>
       </div>
     </li>
     <li class="step">
