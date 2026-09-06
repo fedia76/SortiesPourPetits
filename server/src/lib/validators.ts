@@ -546,15 +546,35 @@ export const evalAgendaUpdateSchema = z
   .partial();
 
 /**
- * Un lien ajouté à la main : celui que le dépouillement a manqué.
+ * Les quatre verdicts, et pourquoi quatre.
  *
- * Pas de `context` : l'humain donne une URL, pas le texte qui l'entoure sur la
- * page. En fabriquer un ferait croire à l'étage 4 qu'il a reçu quelque chose
- * que le dépouillement ne lui aurait jamais donné.
+ * Trois ne suffisent pas à décrire ce qu'un agenda contient. `SOUS_AGENDA` est
+ * le cas que personne ne comptait : « voir aussi les sorties en château », une
+ * page à facettes qui porte d'autres sorties sans être la page suivante. Le
+ * dépouillement la rend, la sélection l'écarte parce qu'on lui dit d'écarter
+ * les catégories, et ce qu'elle porte n'est jamais atteint.
+ */
+export const EVAL_VERDICTS = ['SORTIE', 'PAGINATION', 'SOUS_AGENDA', 'AUTRE'] as const;
+
+/** La correction d'un humain sur un lien relevé. */
+export const evalVerdictSchema = z.object({
+  verdict: z.enum(EVAL_VERDICTS),
+  note: z.string().trim().max(500).optional(),
+});
+
+/**
+ * Un lien ajouté à la main : ce que le HTML ne portait pas.
+ *
+ * Le relevé prend déjà tous les `<a href>` de la page ; cette route ne sert
+ * plus qu'au cas résiduel mais réel — une carte rendue en JavaScript, qui
+ * n'existe dans aucune ancre. Pas de `context` : l'humain donne une URL, pas
+ * le texte qui l'entoure, et en fabriquer un ferait croire à l'étage 4 qu'il a
+ * reçu quelque chose que le dépouillement ne lui aurait jamais donné.
  */
 export const evalLinkSchema = z.object({
   url: scraperUrl,
   text: z.string().trim().max(200).optional().default(''),
+  verdict: z.enum(EVAL_VERDICTS).optional().default('SORTIE'),
   note: z.string().trim().max(500).optional().default(''),
 });
 
@@ -585,6 +605,13 @@ export const evalHarvestSchema = z.object({
         chars: z.number().int().min(0).optional().default(0),
         error: z.string().trim().max(1000).optional(),
         /**
+         * Ce que `next_page()` a trouvé sur cette page — donc ce que l'étage 3
+         * saurait suivre. Vide quand la page ne déclare pas de suite, ce qui
+         * est une réponse : comparé aux liens étiquetés « pagination », c'est
+         * ce qui dit qu'un site se pagine d'une façon que le pipeline ignore.
+         */
+        nextUrl: z.union([scraperUrl, z.literal('')]).optional().default(''),
+        /**
          * Le HTML servi, gzippé puis encodé en base64 par le worker.
          *
          * Il voyage compressé et sera écrit tel quel : c'est ce qui fait du
@@ -592,15 +619,25 @@ export const evalHarvestSchema = z.object({
          * lourde pour être archivée.
          */
         html: z.string().max(EVAL_MAX_HTML_B64).optional(),
+        /**
+         * **Tous** les liens de la page, pas seulement la moisson : c'est ce
+         * qui permet de mesurer les deux erreurs. Le plafond est large parce
+         * qu'une page à méga-menu aligne trois cents liens avant d'arriver à
+         * son listing.
+         */
         links: z
           .array(
             z.object({
               url: scraperUrl,
               text: z.string().trim().max(200).optional().default(''),
               context: z.string().trim().max(1000).optional().default(''),
+              /** Le verdict du vrai `links_of` : la précoche. */
+              harvested: z.boolean().optional().default(false),
+              /** Pourquoi il a été écarté. Un libellé, pas une décision. */
+              reason: z.string().trim().max(60).optional().default(''),
             }),
           )
-          .max(500)
+          .max(600)
           .optional()
           .default([]),
       }),

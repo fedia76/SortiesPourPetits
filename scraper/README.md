@@ -757,46 +757,100 @@ est le travail, l'archive est le confort du rejeu, et on ne perd pas la
 première pour avoir manqué la seconde. La console dit quelles pages ne sont pas
 archivées.
 
-#### Ce qu'est un lien manqué
+#### La brique précoche, l'humain corrige
 
-La question n'est pas « ce lien existe-t-il sur la page ? » mais **« l'étage 4
-aurait-il dû le voir ? »** — donc : un lien qui mène à la fiche d'une sortie et
-que le dépouillement n'a pas rendu. Un lien de navigation, une catégorie, une
-pagination : l'étage 3 a raison de les écarter, c'est même son travail.
+Le banc relève **tous** les liens de la page, pas seulement ceux que le
+dépouillement a retenus, et ce que la brique en a fait devient une
+**précoche** : retenu, donc proposé comme « sortie » ; écarté, donc proposé
+comme « autre ». Il ne reste qu'à corriger ce qui est faux, et ce sont ces
+corrections-là qui sont la mesure.
 
-Car l'étage 3 n'est pas un pur extracteur, et c'est utile de le savoir avant
-d'étiqueter. `links_of` **filtre déjà** : hors domaine, texte d'ancre de moins
-de quinze caractères, chemins de service, doublons, plafond à deux cents. Le
-partage avec l'étage 4 est celui-ci — l'étage 3 retire ce qui n'est
-*certainement pas* une fiche, gratuitement et par des règles ; l'étage 4 décide
-lesquelles des restantes correspondent au thème, à la zone et à la période, et
-c'est un jugement, donc facturé.
+Ne montrer que la moisson obligeait à retrouver les manqués soi-même, en
+rouvrant la vraie page : lent, et incomplet par construction — on ne trouve que
+ce qu'on a pensé à chercher. Et surtout ça ne disait rien du contraire.
 
-Ce préfiltrage est légitime — il raccourcit la liste soumise au modèle, donc
-l'appel payant. Mais il a sa propre balance : **un lien qu'il écarte n'atteint
-jamais l'étage 4**, et personne ne le saura. Les erreurs de l'étage 4 laissent
-une trace, un `dropped_reason` que la console affiche ; celles de l'étage 3 ne
-laissent rien. C'est précisément ce que ce banc va chiffrer : le filtre du
-dépouillement est-il aussi certain qu'il le croit ?
+**La précoche vient de la fonction, jamais d'une relecture de ses règles.**
+`evaluation.audit_links()` appelle le vrai `links_of` et se sert de sa réponse ;
+le motif du rejet, lui, est reconstitué à côté. Une erreur dans ce
+raisonnement-là fausserait un libellé, jamais la mesure — et un test le vérifie
+terme à terme.
 
-Puis vient le seul geste qui compte : **ajouter les liens manqués**. Aucun
-signal gratuit ne peut le faire — il n'existe nulle part, dans le HTML, de
-déclaration de ce qu'un site considère comme ses propres fiches. Il faut donc un
-humain, une fois ; ensuite l'étiquette ne périme plus jamais, et la mesure se
-rejoue sans réseau ni appel de modèle.
+#### Les quatre verdicts
 
-Le rappel de l'étage 3 sur un agenda est alors `dépouillés / total`, et il ne
-s'affiche **qu'une fois l'extraction validée** : avant, il dirait 100 % pour
-signifier « personne n'a encore regardé ».
+Il en faut **quatre**, parce que trois ne suffisent pas à décrire ce qu'un
+agenda contient :
+
+| Verdict | Ce que c'est | Ce que le pipeline en fait |
+|---|---|---|
+| **sortie** | mène à la fiche d'un événement | ce que l'étage 4 doit garder |
+| **pagination** | la page 2, 3… du même agenda | suivie, mais seulement en `rel="next"` |
+| **sous-agenda** | une **autre** liste de sorties | **rien** |
+| **autre** | navigation, mentions légales, partage | correctement écarté |
+
+`SOUS_AGENDA` est le cas que personne ne comptait, et il est partout : « voir
+aussi les sorties en château », « les sorties gratuites ». Ces pages à facettes
+portent d'autres sorties sans être la page suivante. Le dépouillement les rend,
+le prompt de sélection lui dit d'écarter « les liens de navigation, de catégorie
+ou de pagination » — donc le modèle les jette, et ce qu'elles portent n'est
+jamais atteint. Le banc ne corrige pas ce trou : il le chiffre, ce qui est le
+premier pas.
+
+#### Les deux erreurs
+
+Le croisement de la précoche et du verdict les donne toutes les deux :
+
+|  | l'humain dit « sortie » | l'humain dit autre chose |
+|---|---|---|
+| **retenu** | juste | **retenu à tort** — un appel payant pour rien |
+| **écarté** | **sortie perdue** | juste |
+
+« Sortie perdue » est la plus chère, précisément parce qu'elle ne coûte rien :
+elle ne consomme aucun jeton, ne produit aucune ligne de journal, et personne
+ne la voit jamais.
+
+Car l'étage 3 n'est pas un pur extracteur. `links_of` **filtre déjà** : hors
+domaine, texte d'ancre de moins de quinze caractères, chemins de service,
+doublons, plafond à deux cents. Le partage avec l'étage 4 est celui-ci —
+l'étage 3 retire ce qui n'est *certainement pas* une fiche, gratuitement et par
+des règles ; l'étage 4 décide lesquelles des restantes correspondent au thème, à
+la zone et à la période, et c'est un jugement, donc facturé.
+
+Ce préfiltrage est légitime — il raccourcit l'appel payant. Mais il a sa propre
+balance, et un lien qu'il écarte n'atteint jamais l'étage 4. Les erreurs de
+l'étage 4 laissent une trace, un `dropped_reason` que la console affiche ;
+celles de l'étage 3 ne laissent rien.
+
+Chaque rejet part d'ailleurs avec **son motif** — « texte trop court », « hors
+domaine », « chemin de service ». Il ne décide de rien : il sert à ranger les
+rejets dans la console, parce que les sorties perdues se concentrent sous deux
+motifs et jamais sous les autres.
+
+Les taux ne s'affichent **qu'une fois l'extraction validée** : avant, ils
+diraient 100 % pour signifier « personne n'a encore regardé ».
+
+#### La pagination, vérifiée plutôt que supposée
+
+Chaque page rapporte aussi ce que `next_page()` y a trouvé. Comparé aux liens
+étiquetés « pagination », ça répond à une question que le pipeline ne pose
+jamais : **ce site se pagine-t-il d'une façon que l'étage 3 sait suivre ?**
+
+Trois cas, et le troisième est celui qu'on cherche :
+
+* `rel="next"` trouvé, et il désigne bien un lien étiqueté pagination —
+  l'étage 3 suivra ;
+* ni `rel="next"` ni lien de pagination — cette page est la dernière ;
+* **des liens de pagination, et aucun `rel="next"`** — le site numérote ses
+  pages sans le déclarer, et l'étage 3 ne suivra jamais cet agenda. Rien
+  ailleurs ne le signale.
 
 #### Deux choix qui ne vont pas de soi
 
-**Un nombre de pages fixe**, là où l'étage 3 suit sa pagination *tant qu'il
-manque de liens*. Ce sont deux questions distinctes, et les confondre les
-rendrait toutes deux inexploitables : « ce site a-t-il des liens que je ne sais
-pas voir ? » se répond sur une page fixée, « fallait-il ouvrir la page 3 ? » est
-un arbitrage de budget qui se juge sur un run entier. Le banc mesure
-`links_of`, pas la politique qui l'appelle.
+**Un nombre de pages fixe**, là où l'étage 3 en suit *tant qu'il manque de
+liens*. Ce sont deux questions distinctes : « ce site a-t-il des liens que je ne
+sais pas voir ? » se répond sur une page fixée, « fallait-il ouvrir la page 3 ? »
+est un arbitrage de budget qui se juge sur un run entier et son coût. Le banc
+répond à la première, et vérifie à part que la pagination est d'une forme
+suivable.
 
 **Pas de dédoublonnage entre pages.** `links_of` travaille page par page, et
 c'est page par page que la vérité s'établit. Fusionner ferait disparaître la

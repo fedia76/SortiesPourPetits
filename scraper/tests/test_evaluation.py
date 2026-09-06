@@ -1,20 +1,26 @@
-"""Le dépouillement du banc, sur des pages figées.
+"""Le relevé du banc, sur des pages figées.
 
 Ce que ces tests protègent n'est pas `links_of` — il a les siens — mais le
-contrat entre le banc et lui : une entrée par page demandée, dans l'ordre,
-sans dédoublonnage d'une page à l'autre, et une page injoignable qui **remonte**
-au lieu de disparaître.
+contrat entre le banc et lui :
 
-Ce dernier point est le seul qui compte vraiment. Le banc sert à mesurer un
-rappel ; une page qu'on laisse tomber en silence fabrique un rappel de 100 %
-sur ce qu'il reste, ce qui est exactement le mensonge qu'on cherche à éviter.
+* **la précoche ne peut pas diverger de la production.** C'est l'invariant
+  central : `harvested` vient de `links_of` lui-même, et un test le vérifie
+  terme à terme. Si les deux divergeaient, le banc mesurerait une
+  réimplémentation, c'est-à-dire rien ;
+* tous les liens remontent, pas seulement la moisson — sinon on ne mesure que
+  le rappel, et jamais le contraire ;
+* une entrée par page demandée, dans l'ordre, sans dédoublonnage entre pages ;
+* une page injoignable **remonte** au lieu de disparaître. Une page escamotée
+  en silence fabrique un rappel de 100 % sur ce qu'il reste, ce qui est
+  exactement le mensonge qu'on cherche à éviter.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from sortiesbot.evaluation import harvest_agenda
+from sortiesbot.evaluation import audit_links, harvest_agenda
+from sortiesbot.harvest import links_of
 from sortiesbot.harvest import FetchError
 
 AGENDA = "https://agenda.exemple.fr/sorties"
@@ -63,12 +69,12 @@ def test_une_seule_page_demandee_une_seule_page_lue():
     assert out[0]["pageNo"] == 1
     assert out[0]["url"] == AGENDA
     assert out[0]["chars"] == len(html)
-    assert {link["url"] for link in out[0]["links"]} == {
+    assert {link["url"] for link in out[0]["links"] if link["harvested"]} == {
         "https://agenda.exemple.fr/fiches/cirque",
         "https://agenda.exemple.fr/fiches/conte",
     }
-    # Le contexte part avec le lien : c'est là que vivent la date et le lieu,
-    # et c'est ce que l'étage 4 recevra.
+    # Le contexte part avec le lien retenu : c'est là que vivent la date et le
+    # lieu, et c'est ce que l'étage 4 recevra.
     assert "3 mai" in out[0]["links"][0]["context"]
 
 
@@ -88,9 +94,13 @@ def test_un_titre_trop_court_ne_ressort_pas_et_c_est_le_sujet_du_banc():
 
     out = harvest_agenda(AGENDA, 1, fetcher=fetcher)
 
-    urls = {link["url"] for link in out[0]["links"]}
-    assert "https://agenda.exemple.fr/fiches/cirque" in urls
-    assert "https://agenda.exemple.fr/fiches/peterpan" not in urls
+    # Les deux liens sont *relevés* — c'est tout l'intérêt du banc — mais un
+    # seul est retenu par la brique, et l'autre porte son motif.
+    par_url = {link["url"]: link for link in out[0]["links"]}
+    assert par_url["https://agenda.exemple.fr/fiches/cirque"]["harvested"] is True
+    manque = par_url["https://agenda.exemple.fr/fiches/peterpan"]
+    assert manque["harvested"] is False
+    assert manque["reason"] == "texte trop court"
 
 
 def test_la_pagination_est_suivie_jusqu_au_nombre_demande():
@@ -224,4 +234,179 @@ def test_une_page_demesuree_est_rapportee_sans_son_archive(monkeypatch):
     out = harvest_agenda(AGENDA, 1, fetcher=fetcher)
 
     assert "html" not in out[0]
-    assert len(out[0]["links"]) == 1
+    assert any(link["harvested"] for link in out[0]["links"])
+
+
+# ═══════════════════════════════════ le relevé : tous les liens, et la précoche
+
+
+#: Les intitulés sont longs à dessein. `_is_boring` teste la longueur du texte
+#: **avant** le chemin : un « Accueil » de sept caractères serait écarté pour
+#: « texte trop court », et le test ne dirait plus rien du motif qu'il vise.
+NAV = (
+    '<nav><a href="/">Retour à la page d\'accueil</a>'
+    '<a href="/mentions-legales">Mentions légales du site</a>'
+    '<a href="https://facebook.com/agenda">Retrouvez-nous sur Facebook</a></nav>'
+)
+
+
+def test_la_precoche_ne_peut_pas_diverger_de_la_production():
+    """L'invariant central du banc, et le seul qui soit non négociable.
+
+    `harvested` vient de `links_of` lui-même, pas d'une relecture de ses règles.
+    Si les deux divergeaient, la console précocherait autre chose que ce que le
+    pipeline fait, et le banc mesurerait une réimplémentation — c'est-à-dire
+    rien du tout.
+    """
+    html = page(
+        NAV
+        + fiche("cirque", "Le cirque des petits")
+        + fiche("peterpan", "Peter Pan")
+        + fiche("conte", "Les contes du soir")
+    )
+
+    releve = audit_links(html, AGENDA)
+
+    assert {link["url"] for link in releve if link["harvested"]} == {
+        link.url for link in links_of(html, AGENDA)
+    }
+
+
+def test_tout_est_releve_pas_seulement_la_moisson():
+    """C'est ce qui permet de mesurer les deux erreurs, pas seulement le rappel."""
+    html = page(NAV + fiche("cirque", "Le cirque des petits"))
+
+    releve = audit_links(html, AGENDA)
+    urls = {link["url"] for link in releve}
+
+    assert "https://agenda.exemple.fr/mentions-legales" in urls
+    assert "https://facebook.com/agenda" in urls
+    assert "https://agenda.exemple.fr/fiches/cirque" in urls
+    assert sum(1 for link in releve if link["harvested"]) == 1
+
+
+def test_chaque_rejet_porte_son_motif():
+    """Les motifs rangent les rejets, et disent où les ratages se cachent.
+
+    Ils ne décident de rien — `links_of` a déjà tranché — mais ils permettent à
+    l'humain de filtrer : les fiches manquées se concentrent sous « texte trop
+    court » et « hors domaine », jamais sous « chemin de service ».
+    """
+    html = page(NAV + fiche("peterpan", "Peter Pan"))
+
+    par_url = {link["url"]: link for link in audit_links(html, AGENDA)}
+
+    assert par_url["https://facebook.com/agenda"]["reason"] == "hors domaine"
+    assert par_url["https://agenda.exemple.fr/fiches/peterpan"]["reason"] == "texte trop court"
+    assert par_url["https://agenda.exemple.fr/"]["reason"] == "racine du site"
+    assert par_url["https://agenda.exemple.fr/mentions-legales"]["reason"] == "chemin de service"
+
+
+def test_les_ancres_pures_ne_sont_pas_relevees():
+    """Elles ne mènent nulle part : il n'y a rien à étiqueter, et les montrer
+    ferait lire deux cents lignes pour rien."""
+    html = page(
+        '<a href="#contenu">Aller au contenu principal</a>'
+        '<a href="mailto:bonjour@exemple.fr">Nous écrire un courriel</a>'
+        '<a href="javascript:void(0)">Ouvrir le menu de navigation</a>'
+        + fiche("cirque", "Le cirque des petits")
+    )
+
+    assert [link["url"] for link in audit_links(html, AGENDA)] == [
+        "https://agenda.exemple.fr/fiches/cirque"
+    ]
+
+
+def test_un_lien_repete_n_est_releve_qu_une_fois():
+    """Le logo, « accueil » : les étiqueter trois fois ne mesurerait rien de plus."""
+    accueil = '<a href="/agenda/tout-le-programme">Tout le programme</a>'
+    html = page(accueil + fiche("cirque", "Le cirque des petits") + accueil)
+
+    urls = [link["url"] for link in audit_links(html, AGENDA)]
+
+    assert urls.count("https://agenda.exemple.fr/agenda/tout-le-programme") == 1
+
+
+def test_le_contexte_n_accompagne_que_les_liens_retenus():
+    """Le contexte est ce que l'étage 4 reçoit ; un lien écarté ne le lui donne
+    jamais. L'afficher pour un rejet ferait croire à un envoi qui n'a pas eu
+    lieu — et remonter les ancêtres de six cents ancres coûterait pour rien."""
+    html = page(NAV + fiche("cirque", "Le cirque des petits"))
+
+    for link in audit_links(html, AGENDA):
+        assert bool(link["context"]) == link["harvested"]
+
+
+def test_la_page_rapporte_ce_que_next_page_a_trouve():
+    """La vérification de la pagination : ce que l'étage 3 saurait suivre.
+
+    Comparé aux liens que l'humain étiquettera « pagination », c'est ce qui dit
+    si un agenda se pagine d'une façon que le pipeline sait suivre — un site qui
+    numérote ses pages sans `rel="next"` n'est jamais suivi, et rien
+    aujourd'hui ne le signale.
+    """
+    p2 = "https://agenda.exemple.fr/sorties?page=2"
+    fetcher = FakeFetcher(
+        {AGENDA: page(fiche("un", "Spectacle numéro un"), next_url=p2), p2: page("")}
+    )
+
+    out = harvest_agenda(AGENDA, 2, fetcher=fetcher)
+
+    assert out[0]["nextUrl"] == p2
+    assert out[1]["nextUrl"] == ""
+
+
+def test_une_pagination_numerotee_sans_rel_next_ne_remonte_rien():
+    """Le cas que le banc existe pour attraper.
+
+    La page offre visiblement une suite ; `next_page` ne la voit pas. L'humain
+    étiquettera ces liens « pagination », et l'écart avec `nextUrl` vide dira
+    que ce site-là n'est jamais paginé par le pipeline.
+    """
+    html = page(
+        '<a href="/sorties?page=2">Page 2 des sorties</a>'
+        '<a href="/sorties?page=3">Page 3 des sorties</a>'
+        + fiche("un", "Spectacle numéro un")
+    )
+    fetcher = FakeFetcher({AGENDA: html})
+
+    out = harvest_agenda(AGENDA, 3, fetcher=fetcher)
+
+    assert out[0]["nextUrl"] == ""
+    assert len(out) == 1
+    # Les liens sont bien relevés : c'est l'humain qui dira que c'en est.
+    assert "https://agenda.exemple.fr/sorties?page=2" in {
+        link["url"] for link in out[0]["links"]
+    }
+
+
+def test_un_sous_agenda_est_releve_comme_les_autres():
+    """La page à facettes — « voir aussi les sorties en château ».
+
+    Le dépouillement la rend, la sélection l'écarte parce qu'on lui dit
+    d'écarter les catégories, et les sorties qu'elle porte ne sont jamais
+    atteintes. Le banc ne corrige pas ça : il le rend visible, ce qui est le
+    premier pas.
+    """
+    html = page(
+        '<a href="/sorties/en-chateau">Voir aussi les sorties en château</a>'
+        + fiche("cirque", "Le cirque des petits")
+    )
+
+    par_url = {link["url"]: link for link in audit_links(html, AGENDA)}
+    facette = par_url["https://agenda.exemple.fr/sorties/en-chateau"]
+
+    # Retenue par le dépouillement, donc précochée « sortie » — et c'est
+    # justement l'erreur que l'humain vient corriger en « sous-agenda ».
+    assert facette["harvested"] is True
+
+
+def test_le_releve_est_plafonne():
+    from sortiesbot.evaluation import MAX_AUDIT_LINKS
+
+    liens = "".join(
+        f'<a href="/rubrique-numero-{i}">Rubrique numéro {i} du site</a>'
+        for i in range(MAX_AUDIT_LINKS + 50)
+    )
+
+    assert len(audit_links(page(liens), AGENDA)) == MAX_AUDIT_LINKS

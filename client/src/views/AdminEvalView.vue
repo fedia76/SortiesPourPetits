@@ -2,33 +2,43 @@
 /**
  * Le banc d'évaluation : ce que chaque brique du scraper rend vraiment.
  *
- * Un onglet par étage, et un seul rempli — le **dépouillement**. C'est
- * volontaire, et l'ordre a une raison : cet étage est en amont, donc son
- * ratage plafonne tout ce qui suit ; il est déterministe, ce qui ne veut pas
- * dire juste ; et sa panne se déguise en panne de l'étage d'après. Un agenda
- * dont les liens de fiche ont été perdus rend son menu, la sélection n'en
- * retient rien avec un motif parfaitement sensé, et c'est un prompt qu'on ira
- * retoucher pour un bug de sélecteur.
+ * Un onglet par étage, et un seul rempli — le **dépouillement**. Il est en
+ * amont, donc son ratage plafonne tout ce qui suit ; il est déterministe, ce
+ * qui ne veut pas dire juste ; et sa panne se déguise en panne de l'étage
+ * d'après. Un agenda dont les liens de fiche ont été perdus rend son menu, la
+ * sélection n'en retient rien avec un motif parfaitement sensé, et c'est un
+ * prompt qu'on ira retoucher pour un bug de sélecteur.
  *
- * ## Le geste que cette page existe pour permettre
+ * ## Le principe : la brique précoche, l'humain corrige
  *
- * Ajouter les liens manquants. Tout le reste est de la mise en scène autour
- * de ce bouton-là. Aucun signal gratuit ne peut dire ce que `links_of` a
- * manqué — aucun site ne déclare lesquelles de ses URL sont ses propres
- * fiches — donc il faut un humain, une fois. Ensuite l'étiquette ne périme
- * plus : la page est datée, et la mesure se rejoue sans réseau.
+ * Le banc relève **tous** les liens de la page. Pour chacun, ce que le vrai
+ * `links_of` en a fait devient une proposition — retenu, donc probablement une
+ * sortie ; écarté, donc probablement du bruit. Il ne reste qu'à corriger ce qui
+ * est faux, et ce sont ces corrections-là qui sont la mesure.
  *
- * ## Pourquoi un arbre, et pas une liste
+ * C'est ce qui donne les **deux** erreurs. Ne montrer que la moisson
+ * obligeait à retrouver les manqués soi-même, en rouvrant la vraie page — lent,
+ * et incomplet par construction. Et surtout ça ne disait rien du contraire :
+ * un lien retenu qui ne mène nulle part coûte un appel payant à l'étage 4, et
+ * cette erreur-là restait invisible.
  *
- * Parce que `links_of` travaille **page par page**. Dire « cet agenda a
- * trente liens » sans dire de quelle page ne permettrait de reprocher un
- * ratage à personne — et masquerait le cas le plus instructif, celui de la
- * page 2 qui ne rend rien alors que la page 1 va bien.
+ * ## Le filtre est un outil de travail, pas un ornement
+ *
+ * Une page d'agenda aligne trois cents liens. On commence par **les retenus** —
+ * une vingtaine, qu'on confirme ou corrige vite — puis on passe aux écartés,
+ * rangés par motif : les sorties perdues se concentrent sous « texte trop
+ * court » et « hors domaine », jamais sous « mentions légales ».
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../lib/api';
-import { EVAL_STATUS_LABELS } from '../types';
-import type { EvalAgenda, EvalAgendaPage, EvalAgendaStatus } from '../types';
+import { EVAL_STATUS_LABELS, EVAL_VERDICT_HINTS, EVAL_VERDICT_LABELS } from '../types';
+import type {
+  EvalAgenda,
+  EvalAgendaPage,
+  EvalAgendaStatus,
+  EvalLink,
+  EvalVerdict,
+} from '../types';
 
 /**
  * Les huit briques, dans l'ordre du pipeline.
@@ -38,15 +48,26 @@ import type { EvalAgenda, EvalAgendaPage, EvalAgendaStatus } from '../types';
  * pages qui nomment différemment le même étage se contrediraient.
  */
 const BRICKS = [
-  { no: 1, name: 'Découverte', who: 'modèle', why: "Son entrée est le web entier, pas une page : elle ne s'évalue qu'en conditions réelles, par comparaison entre gabarits de requêtes." },
-  { no: 2, name: 'Reconnaissance', who: 'mixte', why: "Une page, une étiquette humaine. Ce qu'on y mesure n'est pas l'exactitude mais une matrice de coûts : confondre un agenda avec une fiche coûte tous ses liens, l'inverse coûte un appel." },
-  { no: 3, name: 'Dépouillement', who: 'python', why: '' },
-  { no: 4, name: 'Sélection', who: 'modèle', why: "Le point aveugle : un lien écarté n'est relu par personne. Il faudra un budget d'exploration, ou le vivier commun de plusieurs variantes." },
-  { no: 5, name: 'Lecture', who: 'python', why: "Les dates se vérifient gratuitement contre le JSON-LD que le site déclare. Le texte et l'illustration demandent un œil, cinq secondes par page." },
-  { no: 6, name: 'Extraction', who: 'modèle', why: "Champ par champ, jamais fiche par fiche. Plus la vérification d'ancrage, qui ne coûte aucune étiquette : toute valeur extraite doit se retrouver dans la page." },
-  { no: 7, name: 'Attribution', who: 'mixte', why: "Partiellement mesurée déjà, depuis la page d'une exécution : ce que le moteur rend, ce que le tamis refuse." },
-  { no: 8, name: 'Publication', who: 'python', why: "Un contrat d'API. Des tests unitaires suffisent, et il y en a." },
+  { no: 1, name: 'Découverte', why: "Son entrée est le web entier, pas une page : elle ne s'évalue qu'en conditions réelles, par comparaison entre gabarits de requêtes." },
+  { no: 2, name: 'Reconnaissance', why: "Une page, une étiquette humaine. Ce qu'on y mesure n'est pas l'exactitude mais une matrice de coûts : confondre un agenda avec une fiche coûte tous ses liens, l'inverse coûte un appel." },
+  { no: 3, name: 'Dépouillement', why: '' },
+  { no: 4, name: 'Sélection', why: "Le point aveugle : un lien écarté n'est relu par personne. Il faudra un budget d'exploration, ou le vivier commun de plusieurs variantes." },
+  { no: 5, name: 'Lecture', why: "Les dates se vérifient gratuitement contre le JSON-LD que le site déclare. Le texte et l'illustration demandent un œil, cinq secondes par page." },
+  { no: 6, name: 'Extraction', why: "Champ par champ, jamais fiche par fiche. Plus la vérification d'ancrage, qui ne coûte aucune étiquette : toute valeur extraite doit se retrouver dans la page." },
+  { no: 7, name: 'Attribution', why: "Partiellement mesurée déjà, depuis la page d'une exécution : ce que le moteur rend, ce que le tamis refuse." },
+  { no: 8, name: 'Publication', why: "Un contrat d'API. Des tests unitaires suffisent, et il y en a." },
 ] as const;
+
+const VERDICTS: EvalVerdict[] = ['SORTIE', 'PAGINATION', 'SOUS_AGENDA', 'AUTRE'];
+
+/** Les quatre vues d'une page. « Retenus » d'abord : c'est par là qu'on commence. */
+const FILTERS = [
+  { key: 'kept', label: 'Retenus' },
+  { key: 'dropped', label: 'Écartés' },
+  { key: 'diff', label: 'Désaccords' },
+  { key: 'all', label: 'Tous' },
+] as const;
+type FilterKey = (typeof FILTERS)[number]['key'];
 
 const tab = ref(3);
 
@@ -55,25 +76,27 @@ const loading = ref(true);
 const error = ref('');
 const notice = ref('');
 
-/** Le formulaire d'ajout. */
 const form = ref({ url: '', pages: 1, label: '' });
 const adding = ref(false);
 
-/** Agendas et pages dépliés, par identifiant. */
 const openAgendas = ref(new Set<number>());
 const openPages = ref(new Set<number>());
 
-/** Le formulaire d'ajout d'un lien, ouvert sur une page à la fois. */
+/** Le filtre courant, commun à toutes les pages : on travaille page par page. */
+const filter = ref<FilterKey>('kept');
+/** Motif de rejet affiché ; vide = tous. Ne s'applique qu'aux écartés. */
+const reason = ref('');
+
 const addingTo = ref<number | null>(null);
 const newLink = ref({ url: '', text: '' });
 const savingLink = ref(false);
 
-/** Identifiants dont une action est en cours, pour ne pas la lancer deux fois. */
+/** Liens dont le verdict est en cours d'envoi, pour ne pas cliquer deux fois. */
+const saving = ref(new Set<number>());
 const busy = ref(new Set<number>());
 
 let poll: ReturnType<typeof setInterval> | null = null;
 
-/** Vrai tant qu'un agenda attend le worker : c'est ce qui justifie le sondage. */
 const waiting = computed(() =>
   agendas.value.some((a) => a.status === 'QUEUED' || a.status === 'RUNNING'),
 );
@@ -91,14 +114,6 @@ async function load(quiet = false) {
   }
 }
 
-/**
- * Sonde le serveur tant qu'un agenda est en file.
- *
- * Le worker passe toutes les trente secondes à vide : sonder plus vite
- * n'accélérerait rien, sonder moins vite laisserait la page mentir pendant une
- * minute. On s'arrête dès que plus rien n'attend — une page ouverte tout
- * l'après-midi n'a aucune raison de continuer à parler au serveur.
- */
 function tick() {
   if (waiting.value) load(true);
 }
@@ -120,10 +135,6 @@ function replace(agenda: EvalAgenda) {
 /**
  * Déplie ou replie. Un `Set` neuf à chaque fois : Vue ne suit pas les mutations
  * d'un `Set` derrière un `ref`, et muter celui en place n'afficherait rien.
- *
- * Deux fonctions plutôt qu'une paramétrée par la ref : dans un template, une
- * ref est déjà déballée — la passer en argument y donnerait le `Set`, pas la
- * référence, et l'affectation se perdrait.
  */
 function flip(current: Set<number>, id: number): Set<number> {
   const next = new Set(current);
@@ -140,26 +151,63 @@ function togglePage(id: number) {
   openPages.value = flip(openPages.value, id);
 }
 
-function mark(id: number, on: boolean) {
-  const next = new Set(busy.value);
+function mark(set: typeof busy, id: number, on: boolean) {
+  const next = new Set(set.value);
   if (on) next.add(id);
   else next.delete(id);
-  busy.value = next;
+  set.value = next;
 }
 
 async function act<T>(id: number, run: () => Promise<T>): Promise<T | null> {
   error.value = '';
   notice.value = '';
-  mark(id, true);
+  mark(busy, id, true);
   try {
     return await run();
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erreur';
     return null;
   } finally {
-    mark(id, false);
+    mark(busy, id, false);
   }
 }
+
+// ───────────────────────────────────────────────────────────── la mesure
+
+/**
+ * Le désaccord entre la brique et l'humain — l'erreur, dans un sens ou l'autre.
+ *
+ * C'est la seule chose que cette console cherche à faire voir : un lien retenu
+ * qui n'est pas une sortie a coûté un appel payant pour rien, un lien écarté
+ * qui en est une est une sortie que personne n'aurait jamais vue.
+ */
+function disagrees(link: EvalLink): boolean {
+  return link.harvested !== (link.verdict === 'SORTIE');
+}
+
+/** Corrige le verdict d'un lien. C'est le geste que toute la page entoure. */
+async function setVerdict(link: EvalLink, verdict: EvalVerdict) {
+  if (link.verdict === verdict) return;
+  error.value = '';
+  mark(saving, link.id, true);
+  const before = link.verdict;
+  // Optimiste : le bouton répond tout de suite, sinon corriger deux cents
+  // liens serait insupportable. On revient en arrière si le serveur refuse.
+  link.verdict = verdict;
+  try {
+    const data = await api.patch<{ agenda: EvalAgenda }>(`/api/eval/links/${link.id}`, {
+      verdict,
+    });
+    replace(data.agenda);
+  } catch (e) {
+    link.verdict = before;
+    error.value = e instanceof Error ? e.message : 'Erreur';
+  } finally {
+    mark(saving, link.id, false);
+  }
+}
+
+// ─────────────────────────────────────────────────────────── les agendas
 
 async function addAgenda() {
   error.value = '';
@@ -174,7 +222,7 @@ async function addAgenda() {
     replace(data.agenda);
     openAgendas.value = new Set([...openAgendas.value, data.agenda.id]);
     form.value = { url: '', pages: form.value.pages, label: '' };
-    notice.value = "Agenda mis en file : le worker le dépouillera à son prochain passage.";
+    notice.value = 'Agenda mis en file : le worker le relèvera à son prochain passage.';
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erreur';
   } finally {
@@ -184,12 +232,11 @@ async function addAgenda() {
 
 async function analyze(agenda: EvalAgenda) {
   if (
-    agenda.stats.manual > 0 &&
+    agenda.stats.juges > 0 &&
     !confirm(
-      `Relancer l'analyse effacera les ${agenda.stats.manual} lien(s) ajouté(s) à la main.\n\n` +
-        "Ils disaient « le dépouillement a manqué ceci sur cette page telle qu'elle était » : " +
-        'la page va être retéléchargée, elle a pu changer, et les garder les rattacherait à ' +
-        "un HTML qu'ils n'ont jamais décrit.",
+      `Relancer l'analyse effacera les ${agenda.stats.juges} verdict(s) déjà donné(s).\n\n` +
+        "Ils décrivaient la page telle qu'elle était : elle va être retéléchargée, " +
+        "elle a pu changer, et les garder les rattacherait à un HTML qu'ils n'ont jamais décrit.",
     )
   ) {
     return;
@@ -228,10 +275,9 @@ async function addLink(page: EvalAgendaPage) {
     const data = await api.post<{ agenda: EvalAgenda }>(`/api/eval/pages/${page.id}/links`, {
       url: newLink.value.url.trim(),
       text: newLink.value.text.trim(),
+      verdict: 'SORTIE',
     });
     replace(data.agenda);
-    // Le formulaire reste ouvert : les liens manquants vont rarement seuls, et
-    // refermer après chacun ferait recliquer pour rien.
     newLink.value = { url: '', text: '' };
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erreur';
@@ -246,6 +292,8 @@ async function removeLink(agendaId: number, linkId: number) {
   );
   if (data) replace(data.agenda);
 }
+
+// ──────────────────────────────────────────────────────────── affichage
 
 function title(agenda: EvalAgenda) {
   return agenda.label || agenda.url;
@@ -264,13 +312,67 @@ function when(value: string | null) {
   return new Date(value).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
-/** Ce que la page a rendu, dit en une ligne dans l'en-tête du dépliant. */
+function counts(page: EvalAgendaPage) {
+  const kept = page.links.filter((l) => l.harvested).length;
+  return { kept, dropped: page.links.length - kept, diff: page.links.filter(disagrees).length };
+}
+
+/** Les motifs de rejet présents sur cette page, du plus fréquent au moins. */
+function reasons(page: EvalAgendaPage): { key: string; count: number }[] {
+  const tally = new Map<string, number>();
+  for (const link of page.links) {
+    if (link.harvested || !link.dropReason) continue;
+    tally.set(link.dropReason, (tally.get(link.dropReason) ?? 0) + 1);
+  }
+  return [...tally.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+function visible(page: EvalAgendaPage): EvalLink[] {
+  let links = page.links;
+  if (filter.value === 'kept') links = links.filter((l) => l.harvested);
+  else if (filter.value === 'dropped') links = links.filter((l) => !l.harvested);
+  else if (filter.value === 'diff') links = links.filter(disagrees);
+  if (reason.value && filter.value === 'dropped') {
+    links = links.filter((l) => l.dropReason === reason.value);
+  }
+  return links;
+}
+
 function pageSummary(page: EvalAgendaPage) {
   if (page.error) return page.error;
-  const harvested = page.links.filter((l) => l.source === 'HARVEST').length;
-  const manual = page.links.length - harvested;
-  const found = `${harvested} lien(s) dépouillé(s)`;
-  return manual ? `${found}, ${manual} ajouté(s) à la main` : found;
+  const { kept } = counts(page);
+  return `${page.links.length} lien(s) relevé(s), ${kept} retenu(s) par la brique`;
+}
+
+/**
+ * La vérification de la pagination, page par page.
+ *
+ * Trois cas, et le troisième est celui que le banc existe pour attraper : le
+ * site offre visiblement une suite, et `next_page()` ne la voit pas — parce
+ * qu'elle n'est pas déclarée en `rel="next"`. Cette page-là ne sera jamais
+ * suivie, et rien ailleurs ne le signale.
+ */
+function pagination(page: EvalAgendaPage): { ok: boolean; text: string } | null {
+  if (page.error) return null;
+  const marked = page.links.filter((l) => l.verdict === 'PAGINATION');
+  if (page.nextUrl) {
+    const matches = marked.some((l) => l.url === page.nextUrl);
+    return matches
+      ? { ok: true, text: `L'étage 3 suivrait ${page.nextUrl}` }
+      : {
+          ok: false,
+          text: `L'étage 3 suivrait ${page.nextUrl} — qu'aucun lien de la page n'est étiqueté « pagination ». Vérifiez que c'est bien la page suivante.`,
+        };
+  }
+  if (marked.length) {
+    return {
+      ok: false,
+      text: `${marked.length} lien(s) de pagination sur la page, et aucun « rel=next » : l'étage 3 ne suivra jamais la suite de cet agenda.`,
+    };
+  }
+  return { ok: true, text: 'Ni « rel=next » ni lien de pagination : cette page est la dernière.' };
 }
 
 const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
@@ -308,7 +410,6 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="notice" class="success">{{ notice }}</p>
 
-    <!-- ─────────────────────────────────── les sept briques en attente -->
     <section v-if="tab !== 3" class="card waiting">
       <h2>{{ current.no }}. {{ current.name }}</h2>
       <p>{{ current.why }}</p>
@@ -318,29 +419,26 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
       </p>
     </section>
 
-    <!-- ─────────────────────────────────────────── 3. le dépouillement -->
     <section v-else class="brick3">
       <div class="card intro">
-        <h2>3. Dépouillement — ce que <code>links_of</code> tire d'une page</h2>
+        <h2>3. Dépouillement — la brique précoche, vous corrigez</h2>
         <p>
-          On donne un agenda réel et le nombre de pages à ouvrir. Le worker les télécharge et
-          appelle le <strong>vrai</strong> <code>links_of</code> — une extraction réécrite ici
-          donnerait la vérité d'une réécriture, c'est-à-dire aucune vérité.
+          Le banc relève <strong>tous</strong> les liens de la page, puis appelle le vrai
+          <code>links_of</code> : ce qu'il retient est précoché « sortie », le reste « autre ». Il
+          ne reste qu'à corriger ce qui est faux, et ce sont ces corrections qui sont la mesure.
         </p>
         <p>
-          Puis vient le seul geste qui compte :
-          <strong>ajouter les liens qu'il a manqués</strong>. Aucun signal gratuit ne peut le dire à
-          votre place, parce qu'aucun site ne déclare lesquelles de ses URL sont ses propres fiches.
-          Une fois validée, l'étiquette ne périme plus jamais — le HTML de la page est gardé, et la
-          mesure se rejoue sans réseau.
+          C'est ce qui donne les <strong>deux</strong> erreurs. Un lien retenu qui ne mène nulle
+          part a coûté un appel payant à l'étage 4 ; un lien écarté qui était une sortie est une
+          sortie que personne n'aurait jamais vue — et celle-là ne coûte rien, donc ne se voit
+          nulle part.
         </p>
-        <p class="rule">
-          <strong>Ce qu'est un lien manqué :</strong> un lien de la page qui mène à la fiche d'une
-          sortie, et que le dépouillement n'a pas rendu. Rien d'autre — pas un lien de navigation,
-          pas une catégorie, pas une pagination : ceux-là, l'étage 3 a raison de les écarter, c'est
-          même son travail. La question à laquelle vous répondez est
-          <em>« l'étage 4 aurait-il dû voir ce lien ? »</em>
-        </p>
+        <dl class="verdicts">
+          <div v-for="v in VERDICTS" :key="v" :class="`v-${v.toLowerCase()}`">
+            <dt>{{ EVAL_VERDICT_LABELS[v] }}</dt>
+            <dd>{{ EVAL_VERDICT_HINTS[v] }}</dd>
+          </div>
+        </dl>
       </div>
 
       <form class="card form add" @submit.prevent="addAgenda">
@@ -372,8 +470,8 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
         </div>
         <p class="hint pages-why">
           Un nombre fixe, et non la règle de l'étage 3 qui suit sa pagination tant qu'il manque de
-          liens : ce qu'on mesure ici est <code>links_of</code> sur une page donnée, pas la décision
-          d'en ouvrir une de plus.
+          liens : ce qu'on mesure ici est <code>links_of</code> sur une page donnée. Ce que la
+          pagination donnerait est mesuré à part, page par page.
         </p>
       </form>
 
@@ -410,25 +508,41 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 
         <dl class="stats">
           <div>
-            <dt>Dépouillés</dt>
-            <dd>{{ agenda.stats.harvested }}</dd>
-          </div>
-          <div :class="{ flag: agenda.stats.manual > 0 }">
-            <dt>Manqués</dt>
-            <dd>{{ agenda.stats.manual }}</dd>
+            <dt>Relevés</dt>
+            <dd>{{ agenda.stats.links }}</dd>
           </div>
           <div>
-            <dt>Total</dt>
-            <dd>{{ agenda.stats.total }}</dd>
+            <dt>Retenus</dt>
+            <dd>{{ agenda.stats.kept }}</dd>
           </div>
-          <div class="recall">
+          <div>
+            <dt>Sorties</dt>
+            <dd>{{ agenda.stats.sorties }}</dd>
+          </div>
+          <div :class="{ flag: agenda.stats.keptWrong > 0 }">
+            <dt title="Ils ont coûté un appel à l'étage 4 pour rien">Retenus à tort</dt>
+            <dd>{{ agenda.stats.keptWrong }}</dd>
+          </div>
+          <div :class="{ flag: agenda.stats.missed > 0 }">
+            <dt title="Personne ne les aurait jamais vues">Sorties perdues</dt>
+            <dd>{{ agenda.stats.missed }}</dd>
+          </div>
+          <div :class="{ warn: agenda.stats.sousAgendas > 0 }">
+            <dt title="Le pipeline n'en fait rien aujourd'hui">Sous-agendas</dt>
+            <dd>{{ agenda.stats.sousAgendas }}</dd>
+          </div>
+          <div class="rate">
+            <dt>Précision</dt>
+            <dd>{{ percent(agenda.stats.precision) }}</dd>
+          </div>
+          <div class="rate">
             <dt>Rappel</dt>
             <dd>{{ percent(agenda.stats.recall) }}</dd>
           </div>
         </dl>
-        <p v-if="agenda.stats.recall === null && agenda.status === 'ANALYZED'" class="hint">
-          Le rappel n'apparaît qu'une fois l'agenda validé : avant, il dirait 100 % et ne
-          signifierait que « personne n'a encore regardé ».
+        <p v-if="agenda.stats.precision === null && agenda.status === 'ANALYZED'" class="hint">
+          Les taux n'apparaissent qu'une fois l'agenda validé : avant, ils ne diraient que
+          « personne n'a encore regardé ».
         </p>
 
         <div class="actions">
@@ -462,11 +576,12 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
           </button>
         </div>
 
-        <!-- L'arbre : une branche par page réellement téléchargée. -->
         <div v-if="openAgendas.has(agenda.id)" class="tree">
           <p v-if="!agenda.agendaPages.length" class="muted">
-            Rien de dépouillé pour l'instant.
-            <span v-if="agenda.status === 'QUEUED'">Le worker passe toutes les trente secondes.</span>
+            Rien de relevé pour l'instant.
+            <span v-if="agenda.status === 'QUEUED'"
+              >Le worker passe toutes les trente secondes.</span
+            >
           </p>
 
           <section v-for="page in agenda.agendaPages" :key="page.id" class="page-node">
@@ -481,9 +596,11 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
               >
               <span class="page-no">Page {{ page.pageNo }}</span>
               <span class="page-sum" :class="{ bad: !!page.error }">{{ pageSummary(page) }}</span>
-              <span v-if="page.chars" class="muted chars">{{ page.chars }} caractères</span>
+              <span v-if="counts(page).diff" class="diff-badge"
+                >{{ counts(page).diff }} désaccord(s)</span
+              >
               <span class="archive" :class="{ off: !page.archived }">
-                {{ page.archived ? 'page archivée' : 'non archivée' }}
+                {{ page.archived ? 'archivée' : 'non archivée' }}
               </span>
             </button>
 
@@ -499,19 +616,87 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                   >voir le HTML gelé</a
                 >
               </p>
-              <p v-if="!page.archived && !page.error" class="hint">
-                Le HTML de cette page n'a pas pu être gardé : la mesure ci-dessous reste juste,
-                mais elle ne pourra pas être rejouée hors ligne après une modification de
-                <code>links_of</code>.
+
+              <p v-if="pagination(page)" class="pagination" :class="{ bad: !pagination(page)!.ok }">
+                <strong>Pagination :</strong> {{ pagination(page)!.text }}
               </p>
 
-              <ul v-if="page.links.length" class="links">
-                <li v-for="link in page.links" :key="link.id" :class="link.source.toLowerCase()">
-                  <span class="tag">{{ link.source === 'MANUAL' ? 'manqué' : 'dépouillé' }}</span>
+              <div v-if="page.links.length" class="filters-bar">
+                <button
+                  v-for="f in FILTERS"
+                  :key="f.key"
+                  type="button"
+                  class="fbtn"
+                  :class="{ on: filter === f.key }"
+                  @click="filter = f.key"
+                >
+                  {{ f.label }}
+                  <span class="n">{{
+                    f.key === 'all'
+                      ? page.links.length
+                      : f.key === 'kept'
+                        ? counts(page).kept
+                        : f.key === 'dropped'
+                          ? counts(page).dropped
+                          : counts(page).diff
+                  }}</span>
+                </button>
+                <template v-if="filter === 'dropped' && reasons(page).length">
+                  <span class="sep" aria-hidden="true">·</span>
+                  <button
+                    type="button"
+                    class="rbtn"
+                    :class="{ on: !reason }"
+                    @click="reason = ''"
+                  >
+                    Tous motifs
+                  </button>
+                  <button
+                    v-for="r in reasons(page)"
+                    :key="r.key"
+                    type="button"
+                    class="rbtn"
+                    :class="{ on: reason === r.key }"
+                    @click="reason = r.key"
+                  >
+                    {{ r.key }} <span class="n">{{ r.count }}</span>
+                  </button>
+                </template>
+              </div>
+
+              <ul v-if="visible(page).length" class="links">
+                <li
+                  v-for="link in visible(page)"
+                  :key="link.id"
+                  :class="{ diff: disagrees(link), manual: link.source === 'MANUAL' }"
+                >
+                  <span class="tag" :class="link.harvested ? 'kept' : 'dropped'">
+                    {{
+                      link.source === 'MANUAL'
+                        ? 'ajouté'
+                        : link.harvested
+                          ? 'retenu'
+                          : link.dropReason || 'écarté'
+                    }}
+                  </span>
                   <span class="link-body">
                     <a :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.url }}</a>
                     <span v-if="link.text" class="link-text">{{ link.text }}</span>
                     <span v-if="link.context" class="link-context">{{ link.context }}</span>
+                  </span>
+                  <span class="seg" :class="{ busy: saving.has(link.id) }">
+                    <button
+                      v-for="v in VERDICTS"
+                      :key="v"
+                      type="button"
+                      class="segb"
+                      :class="[`v-${v.toLowerCase()}`, { on: link.verdict === v }]"
+                      :aria-pressed="link.verdict === v"
+                      :title="EVAL_VERDICT_HINTS[v]"
+                      @click="setVerdict(link, v)"
+                    >
+                      {{ EVAL_VERDICT_LABELS[v] }}
+                    </button>
                   </span>
                   <button
                     v-if="link.source === 'MANUAL'"
@@ -524,22 +709,22 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                   </button>
                 </li>
               </ul>
-              <p v-else class="muted">
-                Aucun lien sur cette page.
-                <template v-if="!page.error">
-                  Si la page en montre pourtant, c'est exactement ce que le banc cherche à
-                  attraper : ajoutez-les.
+              <p v-else class="muted none">
+                Rien sous ce filtre.
+                <template v-if="filter === 'kept' && !page.error">
+                  La brique n'a retenu aucun lien de cette page — si elle en montre pourtant, c'est
+                  exactement ce que le banc cherche à attraper : passez aux écartés.
                 </template>
               </p>
 
               <button class="btn small secondary add-link" type="button" @click="openAdd(page)">
-                {{ addingTo === page.id ? 'Fermer' : 'Ajouter un lien manqué' }}
+                {{ addingTo === page.id ? 'Fermer' : 'Ajouter un lien absent du HTML' }}
               </button>
 
               <form v-if="addingTo === page.id" class="form inline" @submit.prevent="addLink(page)">
                 <div class="row">
                   <div class="field grow">
-                    <label :for="`link-url-${page.id}`">Adresse du lien manqué</label>
+                    <label :for="`link-url-${page.id}`">Adresse du lien</label>
                     <input
                       :id="`link-url-${page.id}`"
                       v-model="newLink.url"
@@ -564,13 +749,8 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                   </div>
                 </div>
                 <p class="hint">
-                  N'ajoutez qu'un lien qui mène à <strong>la fiche d'une sortie</strong> : un lien
-                  de navigation ou de pagination, l'étage 3 a raison de l'écarter.
-                </p>
-                <p class="hint">
-                  Pas de contexte à saisir : le dépouillement, lui, rend le texte qui entoure le
-                  lien. En inventer un ferait croire à l'étage 4 qu'il a reçu quelque chose qu'il
-                  n'aurait jamais reçu.
+                  Réservé à ce que le HTML ne porte pas — une carte rendue en JavaScript, par
+                  exemple. Tout le reste est déjà relevé : donnez-lui plutôt son verdict.
                 </p>
               </form>
             </div>
@@ -628,8 +808,7 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
   font-size: 0.75rem;
   font-weight: 700;
 }
-/* Le seul étage réellement mesuré se distingue même quand il n'est pas ouvert :
-   sept onglets identiques laisseraient chercher lequel donne quelque chose. */
+/* Le seul étage réellement mesuré se distingue même quand il n'est pas ouvert. */
 .tab.ready {
   color: var(--ink);
 }
@@ -659,21 +838,47 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 .intro p {
   max-width: 76ch;
 }
-.intro p:last-child {
-  margin-bottom: 0;
+
+/* ---- la légende des quatre verdicts ---- */
+.verdicts {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  margin: 1rem 0 0;
+}
+.verdicts > div {
+  border-left: 3px solid var(--a, var(--line));
+  padding: 0.35rem 0 0.35rem 0.7rem;
+}
+.verdicts dt {
+  font-weight: 700;
+  color: var(--a, var(--ink));
+  font-size: 0.88rem;
+}
+.verdicts dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+.v-sortie {
+  --a: var(--ok);
+}
+.v-pagination {
+  --a: var(--accent-dark);
+}
+.v-sous_agenda {
+  --a: var(--warn);
+}
+.v-autre {
+  --a: var(--ink-soft);
 }
 
 /* ---- ajout d'un agenda ---- */
 .add {
   margin-top: 1rem;
-  /* `.form` est plafonné à 640 px pour les formulaires du site, où une ligne
-     trop longue se lit mal. Ici on aligne quatre champs et un arbre de liens :
-     c'est la largeur de la console qu'il faut. */
   max-width: none;
 }
-/* Une grille plutôt qu'un flex : les quatre champs n'ont pas la même largeur
-   naturelle, et laisser le flex arbitrer les faisait passer à la ligne dans un
-   ordre qui ne voulait rien dire. */
 .add .row {
   display: grid;
   grid-template-columns: 1fr 7.5rem 14rem auto;
@@ -774,7 +979,7 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 
 .stats {
   display: flex;
-  gap: 1.6rem;
+  gap: 1.4rem;
   margin: 0 0 0.6rem;
   flex-wrap: wrap;
 }
@@ -788,6 +993,7 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--ink-soft);
+  white-space: nowrap;
 }
 .stats dd {
   margin: 0;
@@ -795,12 +1001,17 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-/* Les liens manqués sont le chiffre du banc : ils se voient, ou la page ne
+/* Les deux erreurs sont le chiffre du banc : elles se voient, ou la page ne
    sert à rien. */
-.stats .flag dd {
+.stats .flag dd,
+.stats .flag dt {
   color: var(--danger);
 }
-.stats .recall dd {
+.stats .warn dd,
+.stats .warn dt {
+  color: var(--warn);
+}
+.stats .rate dd {
   color: var(--accent-dark);
 }
 
@@ -847,9 +1058,13 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 .page-sum.bad {
   color: var(--danger);
 }
-.chars {
-  font-size: 0.78rem;
-  font-variant-numeric: tabular-nums;
+.diff-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 5px;
+  padding: 0.1rem 0.45rem;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .archive {
   font-size: 0.72rem;
@@ -863,33 +1078,82 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
   background: var(--warn-soft);
   color: var(--warn);
 }
-.frozen {
-  margin-left: 0.7rem;
-  font-size: 0.78rem;
-  white-space: nowrap;
-}
-.rule {
-  border-left: 3px solid var(--accent);
-  background: var(--accent-soft);
-  border-radius: 0 8px 8px 0;
-  padding: 0.7rem 0.9rem;
-}
 .page-body {
   padding: 0.3rem 0 0.8rem;
 }
 .page-url {
-  margin: 0 0 0.6rem;
+  margin: 0 0 0.5rem;
   font-size: 0.8rem;
   word-break: break-all;
 }
+.frozen {
+  margin-left: 0.7rem;
+  white-space: nowrap;
+}
 
+.pagination {
+  margin: 0 0 0.7rem;
+  font-size: 0.83rem;
+  border-left: 3px solid var(--ok);
+  background: var(--ok-soft);
+  border-radius: 0 8px 8px 0;
+  padding: 0.5rem 0.7rem;
+  word-break: break-word;
+}
+.pagination.bad {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* ---- filtres ---- */
+.filters-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+.fbtn,
+.rbtn {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.22rem 0.6rem;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.fbtn.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-dark);
+  font-weight: 600;
+}
+.rbtn.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--card);
+}
+.fbtn .n,
+.rbtn .n {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+  margin-left: 0.2rem;
+}
+.sep {
+  color: var(--line);
+  margin: 0 0.2rem;
+}
+
+/* ---- les liens ---- */
 .links {
   list-style: none;
   margin: 0 0 0.7rem;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.3rem;
 }
 .links li {
   display: flex;
@@ -898,24 +1162,31 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
   padding: 0.4rem 0.6rem;
   border-radius: 8px;
   background: var(--bg);
-  font-size: 0.85rem;
+  font-size: 0.84rem;
+}
+/* Le désaccord entre la brique et l'humain : c'est la seule chose que cette
+   liste cherche à faire voir. */
+.links li.diff {
+  background: var(--danger-soft);
 }
 .links li.manual {
-  background: var(--danger-soft);
+  background: var(--accent-soft);
 }
 .tag {
   flex: none;
+  min-width: 7.5rem;
   font-size: 0.68rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   font-weight: 700;
   border-radius: 5px;
-  padding: 0.12rem 0.4rem;
+  padding: 0.15rem 0.4rem;
+  text-align: center;
   background: var(--card);
   color: var(--ink-soft);
 }
-.links li.manual .tag {
-  color: var(--danger);
+.tag.kept {
+  color: var(--ok);
 }
 .link-body {
   display: flex;
@@ -932,7 +1203,46 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 }
 .link-context {
   color: var(--ink-soft);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
+}
+
+/* ---- les quatre boutons de verdict ---- */
+.seg {
+  display: flex;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--card);
+}
+.seg.busy {
+  opacity: 0.55;
+}
+.segb {
+  background: none;
+  border: 0;
+  border-right: 1px solid var(--line);
+  padding: 0.25rem 0.55rem;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.segb:last-child {
+  border-right: 0;
+}
+.segb:hover {
+  background: var(--bg);
+  color: var(--ink);
+}
+.segb.on {
+  background: var(--a, var(--ink));
+  color: #fff;
+  font-weight: 700;
+}
+.none {
+  margin: 0.4rem 0 0.8rem;
 }
 .add-link {
   margin-bottom: 0.5rem;

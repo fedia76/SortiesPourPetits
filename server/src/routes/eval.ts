@@ -39,6 +39,7 @@ import {
   evalFailSchema,
   evalHarvestSchema,
   evalLinkSchema,
+  evalVerdictSchema,
 } from '../lib/validators';
 
 export const evalRouter = Router();
@@ -56,7 +57,7 @@ const AGENDA_INCLUDE = {
     // `htmlPath` est un chemin sur le disque du serveur : la console n'a pas à
     // le connaître, seulement à savoir si l'archive existe. Il est donc
     // remplacé par un booléen à la sérialisation.
-    include: { links: { orderBy: [{ source: 'asc' }, { id: 'asc' }] } },
+    include: { links: { orderBy: [{ position: 'asc' }, { id: 'asc' }] } },
   },
 } satisfies Prisma.EvalAgendaInclude;
 
@@ -76,37 +77,87 @@ async function forgetArchive(agendaId: number): Promise<void> {
   await deleteEvalPages(pages.map((p) => p.htmlPath));
 }
 
-/**
- * Le rappel du dépouillement sur cet agenda.
- *
- * `harvested / total` : un lien ajouté à la main est très exactement un lien
- * que `links_of` aurait dû voir et n'a pas vu. Le chiffre ne vaut que si un
- * humain est passé — d'où `null` tant que l'agenda n'est pas validé, plutôt
- * qu'un 100 % flatteur qui ne dirait que « personne n'a encore regardé ».
- */
-type SerializablePage = { htmlPath: string | null; links: { source: string }[] };
+type SerializableLink = { url: string; harvested: boolean; verdict: string | null };
+type SerializablePage = {
+  htmlPath: string | null;
+  nextUrl: string;
+  links: SerializableLink[];
+};
 type SerializableAgenda = { status: string; agendaPages: SerializablePage[] };
 
-function recallOf(agenda: SerializableAgenda): {
-  harvested: number;
-  manual: number;
-  total: number;
-  recall: number | null;
-} {
-  let harvested = 0;
-  let manual = 0;
+/**
+ * Ce que le dépouillement a fait de cet agenda, une fois l'humain passé.
+ *
+ * Le croisement de deux colonnes donne les **deux** erreurs, là où ne montrer
+ * que la moisson n'en donnait qu'une :
+ *
+ * |              | l'humain dit SORTIE | l'humain dit autre chose |
+ * |--------------|---------------------|--------------------------|
+ * | **retenu**   | juste               | retenu pour rien         |
+ * | **écarté**   | **sortie perdue**   | juste                    |
+ *
+ * « Retenu pour rien » coûte un appel payant à l'étage 4. « Sortie perdue » ne
+ * coûte rien du tout et ne se voit nulle part — c'est la plus chère des deux.
+ *
+ * Deux compteurs s'ajoutent, qui ne sont pas des erreurs du dépouillement mais
+ * des trous du pipeline :
+ *
+ * * `sousAgendas` — les pages à facettes. Le dépouillement les rend, la
+ *   sélection les écarte parce qu'on lui dit d'écarter les catégories, et les
+ *   sorties qu'elles portent ne sont jamais atteintes ;
+ * * `paginationVue` / `paginationSuivie` — ce que le site offre, et ce que
+ *   `next_page()` a su en voir. Un écart dit que ce site se pagine d'une façon
+ *   que l'étage 3 ignore.
+ */
+function statsOf(agenda: SerializableAgenda) {
+  let kept = 0;
+  let sorties = 0;
+  let keptRight = 0;
+  let sousAgendas = 0;
+  let paginationVue = 0;
+  let paginationSuivie = 0;
+  let links = 0;
+  let juges = 0;
+
   for (const page of agenda.agendaPages) {
+    const pagination = page.links.filter((l) => l.verdict === 'PAGINATION');
+    paginationVue += pagination.length;
+    // `nextUrl` est ce que l'étage 3 saurait suivre. On ne le compte que s'il
+    // désigne un lien que l'humain a bien reconnu comme une pagination : un
+    // `rel="next"` qui pointe ailleurs n'est pas une pagination suivie, c'est
+    // une pagination fausse.
+    if (page.nextUrl && pagination.some((l) => l.url === page.nextUrl)) {
+      paginationSuivie += 1;
+    }
     for (const link of page.links) {
-      if (link.source === 'MANUAL') manual += 1;
-      else harvested += 1;
+      links += 1;
+      if (link.verdict) juges += 1;
+      if (link.harvested) kept += 1;
+      if (link.verdict === 'SORTIE') {
+        sorties += 1;
+        if (link.harvested) keptRight += 1;
+      }
+      if (link.verdict === 'SOUS_AGENDA') sousAgendas += 1;
     }
   }
-  const total = harvested + manual;
+
+  // Les taux n'ont de sens qu'une fois l'humain passé : avant, ils diraient
+  // seulement que personne n'a encore regardé.
+  const juge = agenda.status === 'VALIDATED';
   return {
-    harvested,
-    manual,
-    total,
-    recall: agenda.status === 'VALIDATED' && total > 0 ? harvested / total : null,
+    links,
+    juges,
+    kept,
+    sorties,
+    /** Retenus à tort : ils ont coûté un appel à l'étage 4 pour rien. */
+    keptWrong: kept - keptRight,
+    /** Sorties perdues : personne ne les aurait jamais vues. */
+    missed: sorties - keptRight,
+    sousAgendas,
+    paginationVue,
+    paginationSuivie,
+    precision: juge && kept > 0 ? keptRight / kept : null,
+    recall: juge && sorties > 0 ? keptRight / sorties : null,
   };
 }
 
@@ -117,7 +168,7 @@ function serialize<T extends SerializableAgenda>(agenda: T) {
       ...page,
       archived: !!htmlPath,
     })),
-    stats: recallOf(agenda),
+    stats: statsOf(agenda),
   };
 }
 
@@ -256,13 +307,15 @@ evalRouter.post('/pages/:pageId(\\d+)/links', admin, async (req, res) => {
   if (duplicate) {
     res.status(409).json({
       error:
-        duplicate.source === 'HARVEST'
-          ? 'Ce lien a déjà été trouvé par le dépouillement'
+        duplicate.source === 'PAGE'
+          ? 'Ce lien est déjà relevé sur la page : donnez-lui son verdict.'
           : 'Ce lien a déjà été ajouté',
     });
     return;
   }
-  await prisma.evalLink.create({ data: { ...parsed.data, pageId, source: 'MANUAL' } });
+  await prisma.evalLink.create({
+    data: { ...parsed.data, pageId, source: 'MANUAL', harvested: false, position: 10_000 },
+  });
   // Un ajout après validation rouvre l'agenda : la vérité a changé, et le
   // chiffre qu'on en tirait ne vaut plus pour ce qu'elle contient maintenant.
   const agenda = await prisma.evalAgenda.update({
@@ -273,7 +326,48 @@ evalRouter.post('/pages/:pageId(\\d+)/links', admin, async (req, res) => {
   res.status(201).json({ agenda: serialize(agenda) });
 });
 
-/** Retire un lien ajouté à la main. Un lien de la moisson, lui, ne s'efface pas. */
+/**
+ * Corrige le verdict d'un lien. **C'est la mesure**, et tout le reste de cette
+ * console est la mise en scène autour de ce geste.
+ *
+ * La brique a précoché ; l'humain confirme ou corrige. Un lien retenu qu'il
+ * fait passer en `AUTRE` est un appel payant dépensé pour rien ; un lien
+ * écarté qu'il fait passer en `SORTIE` est une sortie que personne n'aurait
+ * jamais vue.
+ *
+ * Rien n'est refusé ici, pas même de contredire la brique sur un lien qu'elle
+ * a retenu : c'est précisément le but.
+ */
+evalRouter.patch('/links/:id(\\d+)', admin, async (req, res) => {
+  const parsed = evalVerdictSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const link = await prisma.evalLink.findUnique({
+    where: { id: Number(req.params.id) },
+    select: { id: true, page: { select: { agendaId: true } } },
+  });
+  if (!link) {
+    res.status(404).json({ error: 'Lien introuvable' });
+    return;
+  }
+  await prisma.evalLink.update({ where: { id: link.id }, data: parsed.data });
+  // Corriger après validation rouvre l'agenda : la vérité a changé, et les
+  // taux qu'on en tirait ne valent plus pour ce qu'elle contient maintenant.
+  const agenda = await prisma.evalAgenda.update({
+    where: { id: link.page.agendaId },
+    data: { status: 'ANALYZED', validatedAt: null },
+    include: AGENDA_INCLUDE,
+  });
+  res.json({ agenda: serialize(agenda) });
+});
+
+/**
+ * Retire un lien ajouté à la main. Un lien relevé sur la page, lui, ne s'efface
+ * pas : il **est** sur la page, et le faire disparaître falsifierait le
+ * dénominateur. Pour dire qu'il ne mène nulle part, il y a le verdict `AUTRE`.
+ */
 evalRouter.delete('/links/:id(\\d+)', admin, async (req, res) => {
   const link = await prisma.evalLink.findUnique({
     where: { id: Number(req.params.id) },
@@ -283,11 +377,11 @@ evalRouter.delete('/links/:id(\\d+)', admin, async (req, res) => {
     res.status(404).json({ error: 'Lien introuvable' });
     return;
   }
-  if (link.source === 'HARVEST') {
+  if (link.source === 'PAGE') {
     res.status(409).json({
       error:
-        "Ce lien vient du dépouillement : l'effacer falsifierait la mesure. " +
-        'Relancez l\'analyse si la page a changé.',
+        "Ce lien est sur la page : l'effacer falsifierait la mesure. " +
+        'Donnez-lui plutôt le verdict « autre ».',
     });
     return;
   }
@@ -447,8 +541,25 @@ evalRouter.post('/harvest/:id(\\d+)/pages', harvestBody, async (req, res) => {
           url: page.url,
           chars: page.chars,
           error: page.error ?? null,
+          nextUrl: page.nextUrl,
           htmlPath: archived[index] || null,
-          links: { create: links.map((l) => ({ ...l, source: 'HARVEST' as const })) },
+          links: {
+            create: links.map((l, position) => ({
+              url: l.url,
+              text: l.text,
+              context: l.context,
+              harvested: l.harvested,
+              dropReason: l.reason,
+              position,
+              source: 'PAGE' as const,
+              // **La précoche.** Ce que la brique a décidé devient la
+              // proposition faite à l'humain : retenu, donc probablement une
+              // sortie ; écarté, donc probablement du bruit. Il n'a plus qu'à
+              // corriger ce qui est faux — et ce sont ces corrections-là qui
+              // sont la mesure.
+              verdict: l.harvested ? ('SORTIE' as const) : ('AUTRE' as const),
+            })),
+          },
         },
       });
     }
