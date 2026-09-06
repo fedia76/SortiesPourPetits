@@ -5,7 +5,7 @@ import { cached } from '../seo/cache';
 import { renderDocument } from '../seo/html';
 import { baseUrl } from '../seo/meta';
 import { pageOf, renderPage } from '../seo/pages';
-import { listAreas, listSitemapEvents } from '../seo/query';
+import { lastPublishedAt, listAreas, listSitemapEvents } from '../seo/query';
 import { EDIT_SUFFIX, PRIVATE_PREFIXES } from '../seo/routes';
 import { sitemapXml } from '../seo/sitemap';
 
@@ -60,8 +60,20 @@ siteRouter.get('/sitemap.xml', async (req, res, next) => {
   try {
     const base = baseUrl(req);
     const xml = await cached(`sitemap:${base}`, SITEMAP_TTL_MS, async () => {
-      const [events, areas] = await Promise.all([listSitemapEvents(), listAreas()]);
-      return sitemapXml(base, events, areas.map((a) => a.slug));
+      const [events, areas, home] = await Promise.all([
+        listSitemapEvents(),
+        listAreas(),
+        lastPublishedAt(),
+      ]);
+      const areaPages = await Promise.all(
+        areas.map(async (a) => ({
+          path: `/sorties/${a.slug}`,
+          // À défaut de sortie, la date d'ouverture de la zone : mieux vaut une
+          // date honnête et ancienne que pas de date du tout.
+          lastmod: (await lastPublishedAt(a)) ?? a.createdAt,
+        })),
+      );
+      return sitemapXml(base, events, home, areaPages);
     });
     res.type('application/xml; charset=utf-8').send(xml);
   } catch (err) {

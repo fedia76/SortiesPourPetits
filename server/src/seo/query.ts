@@ -169,3 +169,27 @@ export function listSitemapEvents(): Promise<{ id: number; createdAt: Date }[]> 
     take: SITEMAP_MAX,
   });
 }
+
+/**
+ * Quand une page de liste a-t-elle changé pour la dernière fois ?
+ *
+ * C'est la date de la sortie la plus récemment publiée parmi celles qu'elle
+ * affiche. Un moteur s'appuie dessus pour décider s'il vaut la peine de
+ * revenir : sans elle, l'accueil et les pages de zone ne disent jamais qu'elles
+ * ont bougé, et rien ne les distingue d'une page figée — quand bien même leur
+ * contenu change toutes les semaines.
+ *
+ * On ne met surtout pas la date du jour : une page qui se prétend modifiée en
+ * permanence perd sa crédibilité, et le signal cesse d'être lu.
+ */
+export async function lastPublishedAt(area?: Area | null): Promise<Date | null> {
+  const latest = await prisma.event.findFirst({
+    where: {
+      status: 'APPROVED',
+      AND: [dateFilter(today()), ...(area ? [areaFilter(area.postalPrefixes)] : [])],
+    },
+    select: { createdAt: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  return latest?.createdAt ?? null;
+}
