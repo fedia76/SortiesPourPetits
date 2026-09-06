@@ -71,6 +71,21 @@ Le Havre, Niort et Nancy.
   de chaque domaine source — avec ce qu'il a réellement donné, et pas
   seulement ce qu'il a coûté à lire — et la part de chaque catégorie, qui dit
   ce qu'aucune recherche ne couvre.
+- **Banc d'évaluation** (`/admin/evaluation`, administrateurs) : un onglet par
+  brique du scraper, et le premier ouvert est le **dépouillement**. On donne un
+  agenda réel et le nombre de pages à ouvrir ; le worker les télécharge et
+  appelle le vrai `links_of` — une extraction réécrite côté site donnerait la
+  vérité d'une réécriture, c'est-à-dire aucune. **Tous** les liens de la page
+  sont relevés, et ce que la brique en a fait devient une **précoche** : il ne
+  reste qu'à corriger. Chaque lien reçoit l'un de quatre verdicts — *sortie*,
+  *pagination*, *sous-agenda* (« voir aussi les sorties en château » : une autre
+  liste, que le pipeline n'exploite pas aujourd'hui), *autre*. Le croisement
+  donne les deux erreurs : les liens **retenus à tort**, qui ont coûté un appel
+  payant pour rien, et les **sorties perdues**, que personne n'aurait jamais
+  vues. Chaque page dit aussi si sa pagination est d'une forme que le scraper
+  sait suivre. Le HTML de chaque page est gardé, gzippé : c'est ce qui fait du
+  banc un corpus gelé, et permet de rejouer la mesure hors ligne sans que la
+  page ait bougé entre-temps.
 - **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
   sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
   une clé d'API. Il sait aussi partir d'une adresse connue — le site d'un
@@ -145,6 +160,16 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | GET | `/api/scraper/memory` | modérateur | Mémoire des pages analysées (`q`, `decision`, `page`) |
 | DELETE | `/api/scraper/memory` | modérateur | Oublier des pages (`decision` pour n'en purger qu'un lot) |
 | DELETE | `/api/scraper/runs/:id/data` | modérateur | Supprimer ce qu'une exécution a produit : ses sorties et ce qu'elle a mémorisé (le journal reste) |
+| GET | `/api/eval/agendas` | admin | Le banc d'évaluation : les agendas et ce que le dépouillement en a tiré |
+| POST | `/api/eval/agendas` | admin | Ajouter un agenda au banc et le mettre en file (`url`, `pages`, `label`) |
+| POST | `/api/eval/agendas/:id/analyze` | admin | Relancer le dépouillement (efface la moisson précédente et les ajouts manuels) |
+| PATCH | `/api/eval/links/:id` | admin | Corriger le verdict d'un lien — c'est la mesure |
+| POST | `/api/eval/pages/:pageId/links` | admin | Ajouter un lien absent du HTML (une carte rendue en JavaScript) |
+| DELETE | `/api/eval/links/:id` | admin | Retirer un ajout manuel (un lien relevé sur la page, lui, ne s'efface pas) |
+| POST | `/api/eval/agendas/:id/validate` | admin | Figer la vérité de référence : le rappel devient lisible |
+| GET | `/api/eval/pages/:id/html` | admin | Le HTML gelé d'une page, tel que le site l'a servi ce jour-là |
+| POST | `/api/eval/harvest/next` | modérateur | Le worker réclame le prochain agenda du banc |
+| POST | `/api/eval/harvest/:id/pages` | modérateur | Le worker rend les liens de chaque page |
 | GET | `/api/admin/users` | admin | Liste des utilisateurs |
 | PATCH | `/api/admin/users/:id/role` | admin | Changer un rôle |
 

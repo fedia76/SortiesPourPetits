@@ -515,3 +515,138 @@ export const scraperMemoryPurgeSchema = z.object({
 export const scraperSeenSchema = z.object({
   urls: z.array(scraperUrl).min(1).max(500),
 });
+
+// ───────────────────────────────────────────────────────── banc d'évaluation
+
+/**
+ * Combien de pages d'un agenda le banc dépouille, la première comprise.
+ *
+ * Le plafond est bas et c'est voulu : chaque page est un téléchargement réel
+ * chez quelqu'un, et un humain devra ensuite relire ce qu'elle a donné. Une
+ * vérité de référence se construit sur quelques pages qu'on regarde vraiment,
+ * pas sur cinquante qu'on survole.
+ */
+export const EVAL_MAX_PAGES = 10;
+
+/** Un agenda ajouté au banc depuis la console. */
+export const evalAgendaSchema = z.object({
+  url: scraperUrl,
+  label: z.string().trim().max(150).optional().default(''),
+  pages: z.number().int().min(1).max(EVAL_MAX_PAGES).optional().default(1),
+  note: z.string().trim().max(2000).optional().default(''),
+});
+
+/** Ce qu'on peut changer d'un agenda déjà au banc, sans le ressaisir. */
+export const evalAgendaUpdateSchema = z
+  .object({
+    label: z.string().trim().max(150),
+    pages: z.number().int().min(1).max(EVAL_MAX_PAGES),
+    note: z.string().trim().max(2000),
+  })
+  .partial();
+
+/**
+ * Les quatre verdicts, et pourquoi quatre.
+ *
+ * Trois ne suffisent pas à décrire ce qu'un agenda contient. `SOUS_AGENDA` est
+ * le cas que personne ne comptait : « voir aussi les sorties en château », une
+ * page à facettes qui porte d'autres sorties sans être la page suivante. Le
+ * dépouillement la rend, la sélection l'écarte parce qu'on lui dit d'écarter
+ * les catégories, et ce qu'elle porte n'est jamais atteint.
+ */
+export const EVAL_VERDICTS = ['SORTIE', 'PAGINATION', 'SOUS_AGENDA', 'AUTRE'] as const;
+
+/** La correction d'un humain sur un lien relevé. */
+export const evalVerdictSchema = z.object({
+  verdict: z.enum(EVAL_VERDICTS),
+  note: z.string().trim().max(500).optional(),
+});
+
+/**
+ * Un lien ajouté à la main : ce que le HTML ne portait pas.
+ *
+ * Le relevé prend déjà tous les `<a href>` de la page ; cette route ne sert
+ * plus qu'au cas résiduel mais réel — une carte rendue en JavaScript, qui
+ * n'existe dans aucune ancre. Pas de `context` : l'humain donne une URL, pas
+ * le texte qui l'entoure, et en fabriquer un ferait croire à l'étage 4 qu'il a
+ * reçu quelque chose que le dépouillement ne lui aurait jamais donné.
+ */
+export const evalLinkSchema = z.object({
+  url: scraperUrl,
+  text: z.string().trim().max(200).optional().default(''),
+  verdict: z.enum(EVAL_VERDICTS).optional().default('SORTIE'),
+  note: z.string().trim().max(500).optional().default(''),
+});
+
+/**
+ * Plafond du HTML archivé d'une page, en base64 de gzip.
+ *
+ * Un million de caractères de base64 font environ 750 ko compressés, soit
+ * plusieurs mégaoctets de HTML — bien au-delà de tout agenda réel. Une page
+ * plus grosse que ça est pathologique ; le worker la rapporte alors **sans**
+ * son HTML plutôt que de faire échouer tout le compte rendu. La mesure tient,
+ * seul le rejeu hors ligne s'en trouve privé pour cette page-là.
+ */
+export const EVAL_MAX_HTML_B64 = 1_000_000;
+
+/**
+ * Ce que le worker rend d'un agenda : une entrée par page réellement
+ * demandée, dans l'ordre de la pagination.
+ *
+ * Une page en erreur est une réponse — elle a été demandée, pas obtenue — et
+ * porte donc zéro lien plutôt que de manquer du compte rendu.
+ */
+export const evalHarvestSchema = z.object({
+  pages: z
+    .array(
+      z.object({
+        pageNo: z.number().int().min(1).max(EVAL_MAX_PAGES),
+        url: scraperUrl,
+        chars: z.number().int().min(0).optional().default(0),
+        error: z.string().trim().max(1000).optional(),
+        /**
+         * Ce que `next_page()` a trouvé sur cette page — donc ce que l'étage 3
+         * saurait suivre. Vide quand la page ne déclare pas de suite, ce qui
+         * est une réponse : comparé aux liens étiquetés « pagination », c'est
+         * ce qui dit qu'un site se pagine d'une façon que le pipeline ignore.
+         */
+        nextUrl: z.union([scraperUrl, z.literal('')]).optional().default(''),
+        /**
+         * Le HTML servi, gzippé puis encodé en base64 par le worker.
+         *
+         * Il voyage compressé et sera écrit tel quel : c'est ce qui fait du
+         * banc un corpus gelé. Absent pour une page injoignable, ou trop
+         * lourde pour être archivée.
+         */
+        html: z.string().max(EVAL_MAX_HTML_B64).optional(),
+        /**
+         * **Tous** les liens de la page, pas seulement la moisson : c'est ce
+         * qui permet de mesurer les deux erreurs. Le plafond est large parce
+         * qu'une page à méga-menu aligne trois cents liens avant d'arriver à
+         * son listing.
+         */
+        links: z
+          .array(
+            z.object({
+              url: scraperUrl,
+              text: z.string().trim().max(200).optional().default(''),
+              context: z.string().trim().max(1000).optional().default(''),
+              /** Le verdict du vrai `links_of` : la précoche. */
+              harvested: z.boolean().optional().default(false),
+              /** Pourquoi il a été écarté. Un libellé, pas une décision. */
+              reason: z.string().trim().max(60).optional().default(''),
+            }),
+          )
+          .max(600)
+          .optional()
+          .default([]),
+      }),
+    )
+    .min(1)
+    .max(EVAL_MAX_PAGES),
+});
+
+/** Clôture en échec : le worker n'a rien pu tirer de cet agenda. */
+export const evalFailSchema = z.object({
+  error: z.string().trim().min(1).max(2000),
+});

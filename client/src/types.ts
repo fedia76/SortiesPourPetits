@@ -700,3 +700,136 @@ export interface ScraperStats {
     costUsd: number;
   }[];
 }
+
+// ───────────────────────────────────────────────────────── banc d'évaluation
+
+export type EvalAgendaStatus = 'QUEUED' | 'RUNNING' | 'ANALYZED' | 'FAILED' | 'VALIDATED';
+
+export const EVAL_STATUS_LABELS: Record<EvalAgendaStatus, string> = {
+  QUEUED: 'En file',
+  RUNNING: 'Analyse en cours',
+  ANALYZED: 'À relire',
+  FAILED: 'Échec',
+  VALIDATED: 'Validé',
+};
+
+/**
+ * Les quatre verdicts, et pourquoi quatre.
+ *
+ * Trois ne suffisent pas à décrire ce qu'un agenda contient. `SOUS_AGENDA` est
+ * le cas que personne ne comptait : « voir aussi les sorties en château », une
+ * page à facettes qui porte d'autres sorties sans être la page suivante.
+ */
+export type EvalVerdict = 'SORTIE' | 'PAGINATION' | 'SOUS_AGENDA' | 'AUTRE';
+
+export const EVAL_VERDICT_LABELS: Record<EvalVerdict, string> = {
+  SORTIE: 'Sortie',
+  PAGINATION: 'Pagination',
+  SOUS_AGENDA: 'Sous-agenda',
+  AUTRE: 'Autre',
+};
+
+/** Ce que chaque verdict veut dire, en une phrase, dans l'aide de la console. */
+export const EVAL_VERDICT_HINTS: Record<EvalVerdict, string> = {
+  SORTIE: "Mène à la fiche d'un événement — ce que l'étage 4 doit garder.",
+  PAGINATION: 'La page 2, 3… du même agenda.',
+  SOUS_AGENDA:
+    "Une autre liste de sorties — « voir aussi les sorties en château ». Le pipeline n'en fait rien aujourd'hui.",
+  AUTRE: 'Navigation, mentions légales, partage. Correctement écarté.',
+};
+
+/**
+ * Un lien relevé sur une page du banc — **tous** les liens, pas seulement la
+ * moisson.
+ *
+ * Deux champs portent la mesure : `harvested` dit ce que le vrai `links_of` en
+ * a fait (la précoche), `verdict` dit ce qu'un humain affirme que c'est. Leur
+ * désaccord est l'erreur, dans un sens comme dans l'autre.
+ */
+export interface EvalLink {
+  id: number;
+  url: string;
+  text: string;
+  /** Le texte qui entoure le lien. Renseigné pour les seuls liens retenus. */
+  context: string;
+  /** `PAGE` : relevé dans le HTML. `MANUAL` : tapé à la main. */
+  source: 'PAGE' | 'MANUAL';
+  /** Le dépouillement l'a-t-il retenu ? La précoche que l'humain corrige. */
+  harvested: boolean;
+  /** Pourquoi il a été écarté — « texte trop court », « hors domaine »… */
+  dropReason: string;
+  position: number;
+  verdict: EvalVerdict | null;
+  note: string;
+  addedAt: string;
+}
+
+/** Une page réellement téléchargée : la première de l'agenda, ou un `rel="next"` suivi. */
+export interface EvalAgendaPage {
+  id: number;
+  pageNo: number;
+  url: string;
+  /** Taille du HTML servi — un effondrement trahit une liste passée en JavaScript. */
+  chars: number;
+  error: string | null;
+  /**
+   * Vrai si le HTML de ce jour-là est gardé sur le serveur.
+   *
+   * C'est ce qui permet de rejouer `links_of` hors ligne après l'avoir modifié
+   * et de comparer à des étiquettes qui, elles, n'ont pas bougé. Faux pour une
+   * page injoignable ou démesurée : la mesure tient, seul le rejeu s'en trouve
+   * privé.
+   */
+  archived: boolean;
+  /**
+   * Ce que `next_page()` a trouvé sur cette page — donc ce que l'étage 3
+   * saurait suivre. Vide quand la page ne déclare pas de suite : comparé aux
+   * liens étiquetés « pagination », c'est ce qui dit qu'un site se pagine
+   * d'une façon que le pipeline ignore.
+   */
+  nextUrl: string;
+  links: EvalLink[];
+}
+
+export interface EvalAgenda {
+  id: number;
+  url: string;
+  label: string;
+  status: EvalAgendaStatus;
+  pages: number;
+  error: string | null;
+  note: string;
+  createdAt: string;
+  analyzedAt: string | null;
+  validatedAt: string | null;
+  author: { id: number; displayName: string };
+  agendaPages: EvalAgendaPage[];
+  /**
+   * Les deux erreurs, et les deux trous.
+   *
+   * `precision` et `recall` restent nuls tant qu'aucun humain n'a validé :
+   * sinon ils diraient seulement que personne n'a encore regardé.
+   */
+  stats: {
+    /** Liens relevés sur la page, tous confondus. */
+    links: number;
+    /** Ceux à qui un humain a donné un verdict. */
+    juges: number;
+    /** Ceux que le dépouillement a retenus. */
+    kept: number;
+    /** Ceux qu'un humain déclare être des sorties. */
+    sorties: number;
+    /** Retenus à tort : un appel payant à l'étage 4 dépensé pour rien. */
+    keptWrong: number;
+    /** Sorties perdues : personne ne les aurait jamais vues. */
+    missed: number;
+    /** Pages à facettes trouvées — que le pipeline n'exploite pas. */
+    sousAgendas: number;
+    /** Liens de pagination que l'humain a reconnus. */
+    paginationVue: number;
+    /** Pages dont `next_page()` a su désigner la suivante. */
+    paginationSuivie: number;
+    precision: number | null;
+    recall: number | null;
+  };
+}

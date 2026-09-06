@@ -74,6 +74,12 @@ recherche avec la configuration que le site lui donne, rend compte page par
 page (`/runs/:id/items`) puis clôt l'exécution avec ses compteurs
 (`/runs/:id/finish`). Il ne décide de rien : tout se règle dans la console.
 
+Il sert aussi une **seconde file**, celle du banc d'évaluation
+(`POST /api/eval/harvest/next`) — voir « [Le banc
+d'évaluation](#le-banc-dévaluation) ». Les recherches passent d'abord : une
+recherche produit des sorties que des parents attendent, un agenda du banc
+attend un humain qui le relira quand il pourra.
+
 Une exécution est close **quoi qu'il arrive**, y compris sur un plantage :
 sans clôture elle resterait « En cours » dans la console, et bloquerait toute
 nouvelle exécution de la même configuration.
@@ -687,6 +693,174 @@ ses liens sans rattrapage.
 Le HTML est téléchargé une fois pour toutes à cet étage : le `Fetcher` garde
 les pages du run et les rend à qui les redemandera, si bien que le
 dépouillement et la lecture ne repassent pas sur le réseau.
+
+### Le banc d'évaluation
+
+Le registre ci-dessus mesure la **reconnaissance** en la laissant tourner. Le
+banc répond à l'autre question, celle qu'aucune observation passive ne peut
+atteindre : **ce que le pipeline a manqué.**
+
+Le déséquilibre est structurel. Une fausse sortie remonte au modérateur, qui la
+refuse — l'erreur est vue, corrigée, et *étiquetée*. Une vraie sortie écartée à
+l'étage 3 ou 4 n'est vue par personne, jamais ; elle ne produit même pas une
+ligne de regret. La précision a le filet de la modération, le rappel n'en a
+aucun.
+
+Le banc s'ouvre donc par le **dépouillement**, et l'ordre n'est pas arbitraire :
+
+* il est **en amont** — un lien que `links_of` n'a pas vu est perdu pour les
+  cinq étages suivants, et aucun modèle en aval ne le rattrape ;
+* il est **déterministe, ce qui ne veut pas dire juste**. `links_of` rend les
+  mêmes liens à chaque fois ; ça ne dit rien de savoir si ce sont les bons. Une
+  fonction peut être fiablement fausse ;
+* et **sa panne se déguise en panne de l'étage 4**. Un agenda dont les liens de
+  fiche ont été perdus rend son menu ; la sélection n'en retient rien, avec un
+  `dropped_reason` parfaitement sensé ; et c'est le prompt de la sélection qu'on
+  ira retoucher pour un bug de sélecteur.
+
+#### Comment ça marche
+
+La console est à `/admin/evaluation`, réservée aux **administrateurs** — le banc
+fabrique la vérité de référence sur laquelle les mesures s'appuieront, et une
+vérité que plusieurs mains modifient sans se concerter n'en est plus une.
+
+On y donne un agenda réel et un nombre de pages. L'agenda part en file ; le
+worker le réclame comme il réclame une exécution
+(`POST /api/eval/harvest/next`), télécharge les pages avec le `Fetcher` du
+scraper — donc `robots.txt` et le délai par hôte — et appelle
+[`evaluation.harvest_agenda()`](sortiesbot/evaluation.py), qui n'est qu'une
+enveloppe autour du **vrai** `links_of`.
+
+C'est le point qui commande tout le reste, et il demande d'être précis :
+
+* **la fonction est partagée** avec la production — `links_of` est importée
+  telle quelle, avec ses seuils et son plafond. Refaire l'extraction côté site
+  donnerait la vérité d'une réimplémentation, c'est-à-dire aucune ;
+* **l'orchestration ne l'est pas.** L'étage 3 fait davantage qu'appeler
+  `links_of` : il journalise, tient les compteurs du run, dédoublonne entre
+  pages, et s'arrête dès que sa moisson suffit. Le banc a sa propre boucle,
+  délibérément plus bête. **On mesure la fonction, pas la brique.**
+
+Ce module n'a pas non plus le droit de « corriger » quoi que ce soit au
+passage — il appelle et rapporte. Compléter est le travail de l'humain.
+
+#### Le corpus est gelé, pour de bon
+
+Chaque page part avec son **HTML gzippé**, écrit sur le disque du serveur. Sans
+lui, le banc ne mesurerait `links_of` qu'à un instant donné : rejouer la mesure
+après l'avoir modifié obligerait à retélécharger, donc à comparer un nouveau
+code à une nouvelle page — et l'écart ne dirait plus lequel des deux a bougé.
+
+`GET /api/eval/pages/:id/html` rend cette page telle qu'elle a été servie. Une
+page injoignable ou démesurée est rapportée **sans** son archive : la mesure
+est le travail, l'archive est le confort du rejeu, et on ne perd pas la
+première pour avoir manqué la seconde. La console dit quelles pages ne sont pas
+archivées.
+
+#### La brique précoche, l'humain corrige
+
+Le banc relève **tous** les liens de la page, pas seulement ceux que le
+dépouillement a retenus, et ce que la brique en a fait devient une
+**précoche** : retenu, donc proposé comme « sortie » ; écarté, donc proposé
+comme « autre ». Il ne reste qu'à corriger ce qui est faux, et ce sont ces
+corrections-là qui sont la mesure.
+
+Ne montrer que la moisson obligeait à retrouver les manqués soi-même, en
+rouvrant la vraie page : lent, et incomplet par construction — on ne trouve que
+ce qu'on a pensé à chercher. Et surtout ça ne disait rien du contraire.
+
+**La précoche vient de la fonction, jamais d'une relecture de ses règles.**
+`evaluation.audit_links()` appelle le vrai `links_of` et se sert de sa réponse ;
+le motif du rejet, lui, est reconstitué à côté. Une erreur dans ce
+raisonnement-là fausserait un libellé, jamais la mesure — et un test le vérifie
+terme à terme.
+
+#### Les quatre verdicts
+
+Il en faut **quatre**, parce que trois ne suffisent pas à décrire ce qu'un
+agenda contient :
+
+| Verdict | Ce que c'est | Ce que le pipeline en fait |
+|---|---|---|
+| **sortie** | mène à la fiche d'un événement | ce que l'étage 4 doit garder |
+| **pagination** | la page 2, 3… du même agenda | suivie, mais seulement en `rel="next"` |
+| **sous-agenda** | une **autre** liste de sorties | **rien** |
+| **autre** | navigation, mentions légales, partage | correctement écarté |
+
+`SOUS_AGENDA` est le cas que personne ne comptait, et il est partout : « voir
+aussi les sorties en château », « les sorties gratuites ». Ces pages à facettes
+portent d'autres sorties sans être la page suivante. Le dépouillement les rend,
+le prompt de sélection lui dit d'écarter « les liens de navigation, de catégorie
+ou de pagination » — donc le modèle les jette, et ce qu'elles portent n'est
+jamais atteint. Le banc ne corrige pas ce trou : il le chiffre, ce qui est le
+premier pas.
+
+#### Les deux erreurs
+
+Le croisement de la précoche et du verdict les donne toutes les deux :
+
+|  | l'humain dit « sortie » | l'humain dit autre chose |
+|---|---|---|
+| **retenu** | juste | **retenu à tort** — un appel payant pour rien |
+| **écarté** | **sortie perdue** | juste |
+
+« Sortie perdue » est la plus chère, précisément parce qu'elle ne coûte rien :
+elle ne consomme aucun jeton, ne produit aucune ligne de journal, et personne
+ne la voit jamais.
+
+Car l'étage 3 n'est pas un pur extracteur. `links_of` **filtre déjà** : hors
+domaine, texte d'ancre de moins de quinze caractères, chemins de service,
+doublons, plafond à deux cents. Le partage avec l'étage 4 est celui-ci —
+l'étage 3 retire ce qui n'est *certainement pas* une fiche, gratuitement et par
+des règles ; l'étage 4 décide lesquelles des restantes correspondent au thème, à
+la zone et à la période, et c'est un jugement, donc facturé.
+
+Ce préfiltrage est légitime — il raccourcit l'appel payant. Mais il a sa propre
+balance, et un lien qu'il écarte n'atteint jamais l'étage 4. Les erreurs de
+l'étage 4 laissent une trace, un `dropped_reason` que la console affiche ;
+celles de l'étage 3 ne laissent rien.
+
+Chaque rejet part d'ailleurs avec **son motif** — « texte trop court », « hors
+domaine », « chemin de service ». Il ne décide de rien : il sert à ranger les
+rejets dans la console, parce que les sorties perdues se concentrent sous deux
+motifs et jamais sous les autres.
+
+Les taux ne s'affichent **qu'une fois l'extraction validée** : avant, ils
+diraient 100 % pour signifier « personne n'a encore regardé ».
+
+#### La pagination, vérifiée plutôt que supposée
+
+Chaque page rapporte aussi ce que `next_page()` y a trouvé. Comparé aux liens
+étiquetés « pagination », ça répond à une question que le pipeline ne pose
+jamais : **ce site se pagine-t-il d'une façon que l'étage 3 sait suivre ?**
+
+Trois cas, et le troisième est celui qu'on cherche :
+
+* `rel="next"` trouvé, et il désigne bien un lien étiqueté pagination —
+  l'étage 3 suivra ;
+* ni `rel="next"` ni lien de pagination — cette page est la dernière ;
+* **des liens de pagination, et aucun `rel="next"`** — le site numérote ses
+  pages sans le déclarer, et l'étage 3 ne suivra jamais cet agenda. Rien
+  ailleurs ne le signale.
+
+#### Deux choix qui ne vont pas de soi
+
+**Un nombre de pages fixe**, là où l'étage 3 en suit *tant qu'il manque de
+liens*. Ce sont deux questions distinctes : « ce site a-t-il des liens que je ne
+sais pas voir ? » se répond sur une page fixée, « fallait-il ouvrir la page 3 ? »
+est un arbitrage de budget qui se juge sur un run entier et son coût. Le banc
+répond à la première, et vérifie à part que la pagination est d'une forme
+suivable.
+
+**Pas de dédoublonnage entre pages.** `links_of` travaille page par page, et
+c'est page par page que la vérité s'établit. Fusionner ferait disparaître la
+moitié du travail qu'on cherche à noter — et masquerait le cas le plus
+instructif, celui de la page 2 qui ne rend rien alors que la page 1 va bien.
+
+Relancer une analyse efface aussi les ajouts manuels, et il n'y a pas d'autre
+choix honnête : ils disaient « `links_of` a manqué ceci **sur cette page telle
+qu'elle était** », la page vient d'être retéléchargée, et les garder les
+rattacherait à un HTML qu'ils n'ont jamais décrit.
 
 ### Le registre, et comment le lire
 
