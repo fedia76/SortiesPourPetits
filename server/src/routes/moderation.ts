@@ -158,8 +158,9 @@ const MAX_CANDIDATES = 300;
  * Le vivier est volontairement large — tout ce qui est au même endroit (ou à
  * moins de `radiusKm`), plus tout ce qui partage un mot marquant du titre —
  * puis chaque candidat est noté et seuls les plus proches sont renvoyés.
- * Les sorties refusées sont ignorées : un doublon d'une sortie déjà refusée
- * n'apprend rien au modérateur.
+ * Les sorties refusées sont incluses, et pas ignorées : un doublon d'une
+ * sortie déjà refusée est un indice fort — souvent le même motif s'applique
+ * à celle qu'on modère.
  */
 moderationRouter.get('/:id/similar', async (req, res) => {
   const id = Number(req.params.id);
@@ -207,7 +208,7 @@ moderationRouter.get('/:id/similar', async (req, res) => {
   const candidates = await prisma.event.findMany({
     where: {
       id: { not: event.id },
-      status: { in: ['APPROVED', 'PENDING'] },
+      status: { in: ['APPROVED', 'PENDING', 'REJECTED'] },
       OR: matchers,
     },
     include: MODERATION_INCLUDE,
