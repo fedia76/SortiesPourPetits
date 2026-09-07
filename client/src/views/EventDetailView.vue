@@ -240,7 +240,12 @@ onMounted(async () => {
     if (canHunt.value) await loadHunt();
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erreur';
-    setPageSeo({ title: 'Sortie introuvable', noindex: true });
+    // Un titre, et rien de plus. Poser un `noindex` ici reviendrait à
+    // désindexer une sortie parfaitement publique parce que l'API n'a pas
+    // répondu une fois — et l'API ne répond pas pendant chaque redéploiement.
+    // Le serveur a déjà tranché dans le document initial ; il en savait plus
+    // que nous, puisque lui a interrogé la base.
+    setPageSeo({ title: 'Sortie introuvable' });
   }
 });
 </script>

@@ -48,7 +48,9 @@ async function load() {
     others.value = areas.filter((a) => a.slug !== slug.value);
     if (!found) {
       error.value = 'Cette zone n’existe pas.';
-      setPageSeo({ title: 'Zone introuvable', noindex: true });
+      // Pas de `noindex` : le serveur a répondu 404 sur cette adresse s'il
+      // n'en connaît pas la zone, et lui seul est en mesure de le savoir.
+      setPageSeo({ title: 'Zone introuvable' });
       return;
     }
     setPageSeo({
