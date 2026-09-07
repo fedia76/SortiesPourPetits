@@ -78,7 +78,12 @@ async function forgetArchive(agendaId: number): Promise<void> {
   await deleteEvalPages(pages.map((p) => p.htmlPath));
 }
 
-type SerializableLink = { url: string; harvested: boolean; verdict: string | null };
+type SerializableLink = {
+  url: string;
+  harvested: boolean;
+  verdict: string | null;
+  reviewed: boolean;
+};
 type SerializablePage = {
   htmlPath: string | null;
   nextUrl: string;
@@ -100,25 +105,41 @@ type SerializableAgenda = { status: string; agendaPages: SerializablePage[] };
  * « Retenu pour rien » coûte un appel payant à l'étage 4. « Sortie perdue » ne
  * coûte rien du tout et ne se voit nulle part — c'est la plus chère des deux.
  *
- * Deux compteurs s'ajoutent, qui ne sont pas des erreurs du dépouillement mais
- * des trous du pipeline :
+ * ## Pourquoi deux précisions
  *
- * * `sousAgendas` — les pages à facettes. Le dépouillement les rend, la
- *   sélection les écarte parce qu'on lui dit d'écarter les catégories, et les
- *   sorties qu'elles portent ne sont jamais atteintes ;
- * * `paginationVue` / `paginationSuivie` — ce que le site offre, et ce que
- *   `next_page()` a su en voir. Un écart dit que ce site se pagine d'une façon
- *   que l'étage 3 ignore.
+ * Compter tout ce qui n'est pas une sortie comme une faute du dépouillement
+ * accuse la mauvaise brique. Un **sous-agenda** retenu mène bien quelque part —
+ * vers d'autres sorties — et c'est l'étage 4 qui le jette, parce qu'on lui dit
+ * d'écarter les catégories. Une **pagination** retenue mène à la suite de la
+ * liste. Ni l'un ni l'autre n'est du bruit.
+ *
+ * D'où deux chiffres qui répondent à deux questions :
+ *
+ * * `precision` — de ce que la brique donne à l'étage 4, quelle part est une
+ *   sortie. C'est la mesure du couple 3+4, et celle qui dit ce qu'on paie.
+ * * `precisionUseful` — quelle part mène quelque part de réel, bruit exclu.
+ *   C'est la mesure de l'étage 3 seul, celle qui dit s'il sait reconnaître un
+ *   lien qui compte.
+ *
+ * ## Pourquoi la couverture compte autant que les taux
+ *
+ * `reviewed` dit combien de liens un humain a réellement tranchés. Sans lui,
+ * les taux mentent : le dénominateur du rappel — les liens appelés « sortie » —
+ * ne peut pas être juste si une partie des liens n'a jamais été lue. Un agenda
+ * dont on n'a relu que la moisson affichait 100 % de rappel, non pas parce que
+ * la brique n'avait rien raté, mais parce que personne n'avait regardé le
+ * reste.
  */
 function statsOf(agenda: SerializableAgenda) {
   let kept = 0;
   let sorties = 0;
   let keptRight = 0;
+  let keptUseful = 0;
   let sousAgendas = 0;
   let paginationVue = 0;
   let paginationSuivie = 0;
   let links = 0;
-  let juges = 0;
+  let reviewed = 0;
 
   for (const page of agenda.agendaPages) {
     const pagination = page.links.filter((l) => l.verdict === 'PAGINATION');
@@ -132,8 +153,13 @@ function statsOf(agenda: SerializableAgenda) {
     }
     for (const link of page.links) {
       links += 1;
-      if (link.verdict) juges += 1;
-      if (link.harvested) kept += 1;
+      if (link.reviewed) reviewed += 1;
+      if (link.harvested) {
+        kept += 1;
+        // « Mène quelque part » : une sortie, la suite de la liste, ou une
+        // autre liste. Tout sauf du bruit.
+        if (link.verdict !== 'AUTRE') keptUseful += 1;
+      }
       if (link.verdict === 'SORTIE') {
         sorties += 1;
         if (link.harvested) keptRight += 1;
@@ -142,12 +168,12 @@ function statsOf(agenda: SerializableAgenda) {
     }
   }
 
-  // Les taux n'ont de sens qu'une fois l'humain passé : avant, ils diraient
-  // seulement que personne n'a encore regardé.
+  // Les taux n'ont de sens qu'une fois l'humain passé — et passé **partout** :
+  // la validation exige que tout soit relu, et c'est elle qui les débloque.
   const juge = agenda.status === 'VALIDATED';
   return {
     links,
-    juges,
+    reviewed,
     kept,
     sorties,
     /** Retenus à tort : ils ont coûté un appel à l'étage 4 pour rien. */
@@ -158,6 +184,7 @@ function statsOf(agenda: SerializableAgenda) {
     paginationVue,
     paginationSuivie,
     precision: juge && kept > 0 ? keptRight / kept : null,
+    precisionUseful: juge && kept > 0 ? keptUseful / kept : null,
     recall: juge && sorties > 0 ? keptRight / sorties : null,
   };
 }
@@ -315,7 +342,15 @@ evalRouter.post('/pages/:pageId(\\d+)/links', admin, async (req, res) => {
     return;
   }
   await prisma.evalLink.create({
-    data: { ...parsed.data, pageId, source: 'MANUAL', harvested: false, position: 10_000 },
+    data: {
+      ...parsed.data,
+      pageId,
+      source: 'MANUAL',
+      harvested: false,
+      position: 10_000,
+      reviewed: true,
+      reviewedAt: new Date(),
+    },
   });
   // Un ajout après validation rouvre l'agenda : la vérité a changé, et le
   // chiffre qu'on en tirait ne vaut plus pour ce qu'elle contient maintenant.
@@ -353,7 +388,13 @@ evalRouter.patch('/links/:id(\\d+)', admin, async (req, res) => {
     res.status(404).json({ error: 'Lien introuvable' });
     return;
   }
-  await prisma.evalLink.update({ where: { id: link.id }, data: parsed.data });
+  // `reviewed` est ce qui sépare « la machine a deviné » de « un humain a
+  // tranché ». C'est ce clic-ci qui le pose, et c'est lui qui rend les taux
+  // lisibles plus tard.
+  await prisma.evalLink.update({
+    where: { id: link.id },
+    data: { ...parsed.data, reviewed: true, reviewedAt: new Date() },
+  });
   // Corriger après validation rouvre l'agenda : la vérité a changé, et les
   // taux qu'on en tirait ne valent plus pour ce qu'elle contient maintenant.
   const agenda = await prisma.evalAgenda.update({
@@ -398,7 +439,7 @@ evalRouter.post('/pages/:id(\\d+)/verdict', admin, async (req, res) => {
       harvested: false,
       ...(parsed.data.reason ? { dropReason: parsed.data.reason } : {}),
     },
-    data: { verdict: parsed.data.verdict },
+    data: { verdict: parsed.data.verdict, reviewed: true, reviewedAt: new Date() },
   });
   const agenda = await prisma.evalAgenda.update({
     where: { id: page.agendaId },
@@ -450,7 +491,7 @@ evalRouter.post('/agendas/:id(\\d+)/validate', admin, async (req, res) => {
   const id = Number(req.params.id);
   const current = await prisma.evalAgenda.findUnique({
     where: { id },
-    select: { status: true, _count: { select: { agendaPages: true } } },
+    select: { status: true },
   });
   if (!current) {
     res.status(404).json({ error: 'Agenda introuvable' });
@@ -458,6 +499,23 @@ evalRouter.post('/agendas/:id(\\d+)/validate', admin, async (req, res) => {
   }
   if (current.status !== 'ANALYZED') {
     res.status(409).json({ error: 'Seule une analyse terminée se valide' });
+    return;
+  }
+  // Tout doit avoir été relu, et ce n'est pas de la rigidité : le dénominateur
+  // du rappel — les liens qu'un humain appelle « sortie » — ne peut pas être
+  // juste si une partie des liens n'a jamais été lue. Valider en n'ayant relu
+  // que la moisson produisait un rappel de 100 % qui ne disait rien.
+  const reste = await prisma.evalLink.count({
+    where: { page: { agendaId: id }, reviewed: false },
+  });
+  if (reste > 0) {
+    res.status(409).json({
+      error:
+        `${reste} lien(s) n'ont pas encore été tranchés par un humain — ils portent ` +
+        'encore la précoche de la brique. Valider maintenant donnerait des taux qui ' +
+        "ne diraient que « personne n'a regardé ». Le filtre « À revoir » les liste, et " +
+        "l'action de groupe permet d'en expédier un motif entier.",
+    });
     return;
   }
   const agenda = await prisma.evalAgenda.update({

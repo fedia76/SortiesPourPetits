@@ -835,8 +835,46 @@ il est indispensable, puisqu'un lien écarté pour « texte trop court » est pa
 définition un lien dont l'intitulé ne dit rien. Sans lui, la console affichait
 des URL nues, impossibles à trancher sans les ouvrir une par une.
 
-Les taux ne s'affichent **qu'une fois l'extraction validée** : avant, ils
-diraient 100 % pour signifier « personne n'a encore regardé ».
+Formellement, avec `retenus∩sorties` l'intersection des deux :
+
+```
+précision     = retenus∩sorties / retenus      ce que l'étage 4 veut, sur ce qu'il reçoit
+dont utiles   = retenus non-« autre » / retenus  ce qui mène quelque part, bruit exclu
+rappel        = retenus∩sorties / sorties      les vraies sorties que la brique a vues
+```
+
+**Deux précisions, parce qu'une seule accuse la mauvaise brique.** Compter tout
+ce qui n'est pas une sortie comme une faute du dépouillement est injuste : un
+sous-agenda retenu mène bien quelque part — vers d'autres sorties — et c'est
+l'étage 4 qui le jette, parce qu'on lui dit d'écarter les catégories. Une
+pagination retenue mène à la suite de la liste. « Précision » mesure donc le
+couple 3+4 et dit ce qu'on paie ; « dont utiles » mesure l'étage 3 seul et dit
+s'il sait reconnaître un lien qui compte.
+
+**Rien n'est dédoublonné entre pages** : un lien présent sur les pages 1 et 2
+compte deux fois, parce que `links_of` l'a vu deux fois.
+
+#### Ce qu'un humain a tranché, et ce que la brique a deviné
+
+L'import pose déjà un verdict sur chaque lien — la précoche. C'est ce qui rend
+la relecture rapide, et c'était un piège : rien ne distinguait « la machine a
+deviné *autre* » de « un humain a confirmé *autre* ».
+
+Constaté sur un vrai agenda : on pouvait valider en n'ayant relu que les
+soixante-trois liens retenus, et le rappel affichait **100 %**. Non pas parce
+que le dépouillement n'avait rien raté, mais parce que personne n'avait regardé
+les soixante-seize autres. Le dénominateur du rappel — les liens qu'un humain
+appelle « sortie » — ne peut pas être juste si une partie des liens n'a jamais
+été lue.
+
+D'où la colonne `reviewed`, posée au premier clic humain, et la règle qui en
+découle : **la validation exige que tout ait été tranché.** Ce n'est pas de la
+rigidité, c'est la condition pour que les taux veuillent dire quelque chose. Le
+filtre « À revoir » liste ce qui reste, et l'action de groupe permet d'expédier
+un motif entier.
+
+Les taux ne s'affichent **qu'une fois l'extraction validée** — donc une fois
+tout relu. Avant, ils ne diraient que « personne n'a encore regardé ».
 
 #### La pagination, vérifiée plutôt que supposée
 

@@ -82,7 +82,12 @@ Le Havre, Niort et Nancy.
   liste, que le pipeline n'exploite pas aujourd'hui), *autre*. Le croisement
   donne les deux erreurs : les liens **retenus à tort**, qui ont coûté un appel
   payant pour rien, et les **sorties perdues**, que personne n'aurait jamais
-  vues. Chaque page dit aussi si sa pagination est d'une forme que le scraper
+  vues. Deux précisions sont affichées — celle du couple 3+4, qui dit ce qu'on
+  paie, et celle de l'étage 3 seul, qui ne compte comme faute que le vrai bruit
+  (un sous-agenda retenu mène quelque part ; c'est l'étage 4 qui le jette). Les
+  taux ne se débloquent **qu'une fois tous les liens tranchés par un humain** :
+  valider en n'ayant relu que la moisson affichait un rappel de 100 % qui ne
+  disait que « personne n'a regardé le reste ». Chaque page dit aussi si sa pagination est d'une forme que le scraper
   sait suivre. Le HTML de chaque page est gardé, gzippé : c'est ce qui fait du
   banc un corpus gelé, et permet de rejouer la mesure hors ligne sans que la
   page ait bougé entre-temps.
