@@ -55,5 +55,12 @@ export function setPageSeo({ title, description, path, noindex }: PageSeo) {
   // On n'ajoute jamais `index` : quand le serveur a mis la page en `noindex` —
   // parce que le site entier n'est pas indexable, par exemple — l'application
   // n'a pas à revenir sur sa décision.
+  //
+  // Et on ne pose `noindex` que sur une certitude : une page qui demande un
+  // compte, une adresse qui ne mène nulle part. Jamais parce qu'un chargement
+  // a échoué. Googlebot exécute ce script et lit le DOM qui en résulte : un
+  // `noindex` posé sur une erreur passagère fait sortir de l'index une page qui
+  // n'avait rien à se reprocher, et il faut ensuite des semaines pour l'y
+  // remettre.
   if (noindex) setMeta('meta[name="robots"]', 'name', 'robots', 'noindex, nofollow');
 }
