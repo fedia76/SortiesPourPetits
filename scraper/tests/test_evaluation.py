@@ -327,14 +327,43 @@ def test_un_lien_repete_n_est_releve_qu_une_fois():
     assert urls.count("https://agenda.exemple.fr/agenda/tout-le-programme") == 1
 
 
-def test_le_contexte_n_accompagne_que_les_liens_retenus():
-    """Le contexte est ce que l'étage 4 reçoit ; un lien écarté ne le lui donne
-    jamais. L'afficher pour un rejet ferait croire à un envoi qui n'a pas eu
-    lieu — et remonter les ancêtres de six cents ancres coûterait pour rien."""
-    html = page(NAV + fiche("cirque", "Le cirque des petits"))
+def test_le_contexte_accompagne_aussi_les_liens_ecartes():
+    """Sans lui, les écartés sont injugeables — et c'est là qu'est le travail.
 
-    for link in audit_links(html, AGENDA):
-        assert bool(link["context"]) == link["harvested"]
+    Un lien rejeté pour « texte trop court » est, par définition, un lien dont
+    l'intitulé ne dit rien. « Peter Pan » sur une URL opaque ne permet de
+    trancher qu'en ouvrant la page ; le voisinage, lui, porte la date et le
+    lieu. Une première version réservait le contexte aux liens retenus, au motif
+    que c'est ce que l'étage 4 reçoit — l'argument était juste et la conséquence
+    absurde : ici le contexte sert à l'humain, pas à l'étage 4.
+    """
+    html = page(NAV + fiche("peterpan", "Peter Pan"))
+
+    par_url = {link["url"]: link for link in audit_links(html, AGENDA)}
+    ecarte = par_url["https://agenda.exemple.fr/fiches/peterpan"]
+
+    assert ecarte["harvested"] is False
+    assert "3 mai" in ecarte["context"]
+    assert "Rouen" in ecarte["context"]
+
+
+def test_une_ancre_sans_texte_reste_jugeable_par_son_contexte():
+    """Le cas le plus fréquent des vrais agendas : la carte est une image.
+
+    L'ancre n'a aucun texte, `links_of` l'écarte pour « texte trop court », et
+    la console n'aurait qu'une URL à montrer. Le contexte remonte la carte
+    entière, et c'est ce qui rend la ligne jugeable.
+    """
+    html = page(
+        '<article><a href="/fiches/affiche"><img src="/a.jpg"></a>'
+        "<p>Le bal des marionnettes Dimanche 12 mai à Rouen, dès 3 ans</p></article>"
+    )
+
+    releve = audit_links(html, AGENDA)
+
+    assert len(releve) == 1
+    assert releve[0]["harvested"] is False
+    assert "marionnettes" in releve[0]["context"]
 
 
 def test_la_page_rapporte_ce_que_next_page_a_trouve():

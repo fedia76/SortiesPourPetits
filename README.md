@@ -82,7 +82,12 @@ Le Havre, Niort et Nancy.
   liste, que le pipeline n'exploite pas aujourd'hui), *autre*. Le croisement
   donne les deux erreurs : les liens **retenus à tort**, qui ont coûté un appel
   payant pour rien, et les **sorties perdues**, que personne n'aurait jamais
-  vues. Chaque page dit aussi si sa pagination est d'une forme que le scraper
+  vues. Deux précisions sont affichées — celle du couple 3+4, qui dit ce qu'on
+  paie, et celle de l'étage 3 seul, qui ne compte comme faute que le vrai bruit
+  (un sous-agenda retenu mène quelque part ; c'est l'étage 4 qui le jette). Les
+  taux ne se débloquent **qu'une fois tous les liens tranchés par un humain** :
+  valider en n'ayant relu que la moisson affichait un rappel de 100 % qui ne
+  disait que « personne n'a regardé le reste ». Chaque page dit aussi si sa pagination est d'une forme que le scraper
   sait suivre. Le HTML de chaque page est gardé, gzippé : c'est ce qui fait du
   banc un corpus gelé, et permet de rejouer la mesure hors ligne sans que la
   page ait bougé entre-temps.
@@ -164,6 +169,7 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | POST | `/api/eval/agendas` | admin | Ajouter un agenda au banc et le mettre en file (`url`, `pages`, `label`) |
 | POST | `/api/eval/agendas/:id/analyze` | admin | Relancer le dépouillement (efface la moisson précédente et les ajouts manuels) |
 | PATCH | `/api/eval/links/:id` | admin | Corriger le verdict d'un lien — c'est la mesure |
+| POST | `/api/eval/pages/:id/verdict` | admin | Trancher d'un coup les liens écartés d'un motif (jamais les retenus) |
 | POST | `/api/eval/pages/:pageId/links` | admin | Ajouter un lien absent du HTML (une carte rendue en JavaScript) |
 | DELETE | `/api/eval/links/:id` | admin | Retirer un ajout manuel (un lien relevé sur la page, lui, ne s'efface pas) |
 | POST | `/api/eval/agendas/:id/validate` | admin | Figer la vérité de référence : le rappel devient lisible |

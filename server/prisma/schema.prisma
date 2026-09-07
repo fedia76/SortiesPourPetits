@@ -580,8 +580,23 @@ model EvalLink {
   /// où ils se présentent sur la page.
   position   Int     @default(0)
 
-  /// Ce que l'humain dit que ce lien est. Nul tant qu'il n'a rien dit.
+  /// Ce que l'humain dit que ce lien est.
+  ///
+  /// Jamais nul : l'import y pose déjà la **précoche** de la brique. C'est
+  /// pratique et c'est un piège — un lien que personne n'a regardé porte quand
+  /// même une étiquette, d'où `reviewed` juste en dessous.
   verdict EvalVerdict?
+
+  /// Un humain a-t-il tranché ce lien, ou est-ce encore la précoche ?
+  ///
+  /// Sans cette colonne, rien ne distingue « la machine a deviné *autre* » de
+  /// « un humain a confirmé *autre* ». On pouvait alors valider un agenda en
+  /// n'ayant relu que la moisson, et le rappel affichait 100 % — non pas parce
+  /// que la brique n'avait rien raté, mais parce que personne n'avait regardé
+  /// le reste. C'est très exactement le mensonge que le banc existe pour
+  /// éviter, et il s'était glissé dedans.
+  reviewed   Boolean   @default(false)
+  reviewedAt DateTime?
 
   /// Ce que l'humain a tapé pour expliquer sa correction, quand il l'a fait.
   note    String   @default("") @db.Text
@@ -593,6 +608,7 @@ model EvalLink {
   @@unique([pageId, url])
   @@index([pageId])
   @@index([verdict])
+  @@index([reviewed])
 }
 
 /// D'où vient un lien du banc : relevé sur la page, ou ajouté à la main.

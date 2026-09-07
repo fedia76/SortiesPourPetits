@@ -64,6 +64,7 @@ const VERDICTS: EvalVerdict[] = ['SORTIE', 'PAGINATION', 'SOUS_AGENDA', 'AUTRE']
 const FILTERS = [
   { key: 'kept', label: 'Retenus' },
   { key: 'dropped', label: 'Écartés' },
+  { key: 'todo', label: 'À revoir' },
   { key: 'diff', label: 'Désaccords' },
   { key: 'all', label: 'Tous' },
 ] as const;
@@ -232,9 +233,9 @@ async function addAgenda() {
 
 async function analyze(agenda: EvalAgenda) {
   if (
-    agenda.stats.juges > 0 &&
+    agenda.stats.reviewed > 0 &&
     !confirm(
-      `Relancer l'analyse effacera les ${agenda.stats.juges} verdict(s) déjà donné(s).\n\n` +
+      `Relancer l'analyse effacera les ${agenda.stats.reviewed} verdict(s) que vous avez donné(s).\n\n` +
         "Ils décrivaient la page telle qu'elle était : elle va être retéléchargée, " +
         "elle a pu changer, et les garder les rattacherait à un HTML qu'ils n'ont jamais décrit.",
     )
@@ -286,6 +287,41 @@ async function addLink(page: EvalAgendaPage) {
   }
 }
 
+/**
+ * Donne le même verdict à tous les écartés d'un motif. Un raccourci, et une
+ * lame à double tranchant.
+ *
+ * Soixante-seize écartés se lisent mal un par un, et la plupart sont du bruit
+ * évident. Mais trancher en masse un motif qu'on n'a pas lu fabrique un rappel
+ * flatteur — d'où la confirmation qui nomme le motif et le compte, et le fait
+ * que ça ne touche jamais les liens retenus.
+ */
+async function bulk(page: EvalAgendaPage, agendaId: number, verdict: EvalVerdict) {
+  const cible = reason.value
+    ? `les ${reasons(page).find((r) => r.key === reason.value)?.count ?? 0} lien(s) « ${reason.value} »`
+    : `les ${counts(page).dropped} lien(s) écarté(s) de cette page`;
+  if (
+    !confirm(
+      `Marquer « ${EVAL_VERDICT_LABELS[verdict]} » ${cible} ?\n\n` +
+        "Rien ne sera touché parmi les liens retenus. Ne le faites que sur un motif " +
+        "dont vous avez lu assez de lignes pour savoir ce qu'il contient : trancher " +
+        'en masse ce qu\'on n\'a pas lu fabrique un rappel flatteur.',
+    )
+  ) {
+    return;
+  }
+  const data = await act(agendaId, () =>
+    api.post<{ agenda: EvalAgenda; count: number }>(`/api/eval/pages/${page.id}/verdict`, {
+      verdict,
+      reason: reason.value || undefined,
+    }),
+  );
+  if (data) {
+    replace(data.agenda);
+    notice.value = `${data.count} lien(s) marqué(s) « ${EVAL_VERDICT_LABELS[verdict]} ».`;
+  }
+}
+
 async function removeLink(agendaId: number, linkId: number) {
   const data = await act(agendaId, () =>
     api.delete<{ agenda: EvalAgenda }>(`/api/eval/links/${linkId}`),
@@ -314,7 +350,18 @@ function when(value: string | null) {
 
 function counts(page: EvalAgendaPage) {
   const kept = page.links.filter((l) => l.harvested).length;
-  return { kept, dropped: page.links.length - kept, diff: page.links.filter(disagrees).length };
+  return {
+    kept,
+    dropped: page.links.length - kept,
+    todo: page.links.filter((l) => !l.reviewed).length,
+    diff: page.links.filter(disagrees).length,
+  };
+}
+
+/** Le compte du filtre `key` sur cette page — pour la pastille du bouton. */
+function tally(page: EvalAgendaPage, key: FilterKey): number {
+  if (key === 'all') return page.links.length;
+  return counts(page)[key];
 }
 
 /** Les motifs de rejet présents sur cette page, du plus fréquent au moins. */
@@ -333,6 +380,7 @@ function visible(page: EvalAgendaPage): EvalLink[] {
   let links = page.links;
   if (filter.value === 'kept') links = links.filter((l) => l.harvested);
   else if (filter.value === 'dropped') links = links.filter((l) => !l.harvested);
+  else if (filter.value === 'todo') links = links.filter((l) => !l.reviewed);
   else if (filter.value === 'diff') links = links.filter(disagrees);
   if (reason.value && filter.value === 'dropped') {
     links = links.filter((l) => l.dropReason === reason.value);
@@ -531,9 +579,21 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
             <dt title="Le pipeline n'en fait rien aujourd'hui">Sous-agendas</dt>
             <dd>{{ agenda.stats.sousAgendas }}</dd>
           </div>
+          <div :class="{ warn: agenda.stats.reviewed < agenda.stats.links }">
+            <dt title="Tranchés par un humain, pas par la précoche">Revus</dt>
+            <dd>{{ agenda.stats.reviewed }} / {{ agenda.stats.links }}</dd>
+          </div>
           <div class="rate">
-            <dt>Précision</dt>
+            <dt title="De ce que la brique donne à l'étage 4, la part qui est une sortie">
+              Précision
+            </dt>
             <dd>{{ percent(agenda.stats.precision) }}</dd>
+          </div>
+          <div class="rate">
+            <dt title="La part qui mène quelque part de réel : sortie, pagination ou sous-agenda">
+              dont utiles
+            </dt>
+            <dd>{{ percent(agenda.stats.precisionUseful) }}</dd>
           </div>
           <div class="rate">
             <dt>Rappel</dt>
@@ -541,8 +601,19 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
           </div>
         </dl>
         <p v-if="agenda.stats.precision === null && agenda.status === 'ANALYZED'" class="hint">
-          Les taux n'apparaissent qu'une fois l'agenda validé : avant, ils ne diraient que
-          « personne n'a encore regardé ».
+          <template v-if="agenda.stats.reviewed < agenda.stats.links">
+            <strong
+              >{{ agenda.stats.links - agenda.stats.reviewed }} lien(s) portent encore la précoche
+              de la brique.</strong
+            >
+            Tant qu'ils n'ont pas été tranchés, le rappel ne pourrait dire que « personne n'a
+            regardé le reste » — c'est ce qui le ferait afficher 100 % à tort. Le filtre « À
+            revoir » les liste ; l'action de groupe permet d'en expédier un motif entier.
+          </template>
+          <template v-else>
+            Tout est relu. « Valider l'extraction » fige la vérité de référence et débloque les
+            taux.
+          </template>
         </p>
 
         <div class="actions">
@@ -558,7 +629,12 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
             v-if="agenda.status === 'ANALYZED'"
             class="btn small"
             type="button"
-            :disabled="busy.has(agenda.id)"
+            :disabled="busy.has(agenda.id) || agenda.stats.reviewed < agenda.stats.links"
+            :title="
+              agenda.stats.reviewed < agenda.stats.links
+                ? `${agenda.stats.links - agenda.stats.reviewed} lien(s) portent encore la précoche`
+                : 'Figer la vérité de référence'
+            "
             @click="validate(agenda)"
           >
             Valider l’extraction
@@ -631,15 +707,7 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                   @click="filter = f.key"
                 >
                   {{ f.label }}
-                  <span class="n">{{
-                    f.key === 'all'
-                      ? page.links.length
-                      : f.key === 'kept'
-                        ? counts(page).kept
-                        : f.key === 'dropped'
-                          ? counts(page).dropped
-                          : counts(page).diff
-                  }}</span>
+                  <span class="n">{{ tally(page, f.key) }}</span>
                 </button>
                 <template v-if="filter === 'dropped' && reasons(page).length">
                   <span class="sep" aria-hidden="true">·</span>
@@ -661,6 +729,19 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                   >
                     {{ r.key }} <span class="n">{{ r.count }}</span>
                   </button>
+                  <button
+                    type="button"
+                    class="bulk"
+                    :disabled="busy.has(agenda.id)"
+                    :title="
+                      reason
+                        ? `Marquer « autre » tous les liens du motif « ${reason} »`
+                        : 'Marquer « autre » tous les écartés de cette page'
+                    "
+                    @click="bulk(page, agenda.id, 'AUTRE')"
+                  >
+                    Tout marquer « autre »
+                  </button>
                 </template>
               </div>
 
@@ -668,7 +749,11 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                 <li
                   v-for="link in visible(page)"
                   :key="link.id"
-                  :class="{ diff: disagrees(link), manual: link.source === 'MANUAL' }"
+                  :class="{
+                    diff: disagrees(link),
+                    manual: link.source === 'MANUAL',
+                    todo: !link.reviewed,
+                  }"
                 >
                   <span class="tag" :class="link.harvested ? 'kept' : 'dropped'">
                     {{
@@ -684,6 +769,12 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                     <span v-if="link.text" class="link-text">{{ link.text }}</span>
                     <span v-if="link.context" class="link-context">{{ link.context }}</span>
                   </span>
+                  <span
+                    v-if="!link.reviewed"
+                    class="pre"
+                    title="Encore la proposition de la brique : personne ne l'a tranché"
+                    >précoché</span
+                  >
                   <span class="seg" :class="{ busy: saving.has(link.id) }">
                     <button
                       v-for="v in VERDICTS"
@@ -1145,6 +1236,28 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
   color: var(--line);
   margin: 0 0.2rem;
 }
+/* Le raccourci qui rend soixante-seize écartés tenables. Discret : c'est une
+   commodité, pas le geste que cette page existe pour permettre. */
+.bulk {
+  margin-left: auto;
+  background: none;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  padding: 0.22rem 0.7rem;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.bulk:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--ink-soft);
+  color: var(--ink);
+}
+.bulk:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 
 /* ---- les liens ---- */
 .links {
@@ -1171,6 +1284,25 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 }
 .links li.manual {
   background: var(--accent-soft);
+}
+/* Un lien qui porte encore la précoche : rien n'est tranché tant que la barre
+   n'a pas disparu. Discret — c'est l'état par défaut de toute la page au
+   premier chargement. */
+.links li.todo {
+  border-left: 3px solid var(--warn);
+  padding-left: calc(0.6rem - 3px);
+}
+.pre {
+  flex: none;
+  align-self: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: 5px;
+  padding: 0.12rem 0.4rem;
 }
 .tag {
   flex: none;

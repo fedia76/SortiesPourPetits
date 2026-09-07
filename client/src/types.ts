@@ -750,7 +750,13 @@ export interface EvalLink {
   id: number;
   url: string;
   text: string;
-  /** Le texte qui entoure le lien. Renseigné pour les seuls liens retenus. */
+  /**
+   * Le texte qui entoure le lien — date, lieu, tarif.
+   *
+   * Présent aussi pour les **écartés**, et c'est ce qui les rend jugeables : un
+   * lien rejeté pour « texte trop court » est par définition un lien dont
+   * l'intitulé ne dit rien.
+   */
   context: string;
   /** `PAGE` : relevé dans le HTML. `MANUAL` : tapé à la main. */
   source: 'PAGE' | 'MANUAL';
@@ -760,6 +766,15 @@ export interface EvalLink {
   dropReason: string;
   position: number;
   verdict: EvalVerdict | null;
+  /**
+   * Un humain a-t-il tranché ce lien, ou est-ce encore la précoche ?
+   *
+   * Sans ça, rien ne distingue « la machine a deviné *autre* » de « un humain a
+   * confirmé *autre* » — et un agenda dont on n'a relu que la moisson affiche
+   * un rappel de 100 % qui ne dit que « personne n'a regardé le reste ».
+   */
+  reviewed: boolean;
+  reviewedAt: string | null;
   note: string;
   addedAt: string;
 }
@@ -813,8 +828,8 @@ export interface EvalAgenda {
   stats: {
     /** Liens relevés sur la page, tous confondus. */
     links: number;
-    /** Ceux à qui un humain a donné un verdict. */
-    juges: number;
+    /** Ceux qu'un humain a réellement tranchés — pas ceux qui portent la précoche. */
+    reviewed: number;
     /** Ceux que le dépouillement a retenus. */
     kept: number;
     /** Ceux qu'un humain déclare être des sorties. */
@@ -829,7 +844,17 @@ export interface EvalAgenda {
     paginationVue: number;
     /** Pages dont `next_page()` a su désigner la suivante. */
     paginationSuivie: number;
+    /** De ce que la brique donne à l'étage 4, la part qui est une sortie. */
     precision: number | null;
+    /**
+     * La part qui mène quelque part de réel — sortie, pagination ou
+     * sous-agenda — donc qui n'est pas du bruit.
+     *
+     * C'est la mesure de l'étage 3 seul : compter un sous-agenda retenu comme
+     * une faute du dépouillement accuse la mauvaise brique, puisque c'est
+     * l'étage 4 qui le jette.
+     */
+    precisionUseful: number | null;
     recall: number | null;
   };
 }

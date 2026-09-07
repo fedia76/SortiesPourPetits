@@ -135,6 +135,20 @@ def audit_links(html: str, page_url: str) -> list[dict[str, Any]]:
     `harvested` — vrai si le **vrai** `links_of` l'a retenu — et le motif du
     rejet sinon.
 
+    **Le contexte accompagne tous les liens, y compris les écartés**, et c'est
+    une correction. Une première version le réservait aux liens retenus, au
+    motif que c'est ce que l'étage 4 reçoit et qu'un lien écarté ne le lui donne
+    jamais. L'argument était juste et la conséquence absurde : le contexte ne
+    sert pas ici à l'étage 4, il sert à **l'humain pour juger**. Et il manquait
+    très exactement là où il est indispensable — un lien écarté pour « texte
+    trop court » est, par définition, un lien dont l'intitulé ne dit rien. Sans
+    lui, la console affichait soixante-seize URL nues, impossibles à trancher
+    sans les ouvrir une par une.
+
+    Le contexte d'un lien de navigation reste maigre, et c'est honnête :
+    `_context_of` abandonne dès que le voisinage dépasse la carte, donc un lien
+    perdu dans un méga-menu ne rend que son propre texte.
+
     Les ancres pures (`#`, `javascript:`, `mailto:`, `tel:`) sont écartées d'ici
     aussi : elles ne mènent nulle part, il n'y a rien à étiqueter, et les
     montrer à un humain lui ferait lire deux cents lignes pour rien.
@@ -165,7 +179,7 @@ def audit_links(html: str, page_url: str) -> list[dict[str, Any]]:
             {
                 "url": url,
                 "text": text[:150],
-                "context": _context_of(anchor, text) if harvested else "",
+                "context": _context_of(anchor, text),
                 "harvested": harvested,
                 "reason": "" if harvested else _why(url, text, host, seen),
             }
