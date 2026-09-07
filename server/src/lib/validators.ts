@@ -563,6 +563,24 @@ export const evalVerdictSchema = z.object({
 });
 
 /**
+ * Trancher d'un coup tous les liens écartés d'une page, ou d'un seul motif.
+ *
+ * Soixante-seize écartés se lisent mal un par un, et la plupart sont du bruit
+ * évident : quinze liens vers Facebook, douze vers la racine du site. Les
+ * expédier d'un clic laisse le temps là où il compte — sous « texte trop
+ * court », le motif où se cachent les sorties perdues.
+ *
+ * L'outil coupe dans les deux sens, et c'est assumé : trancher en masse un
+ * motif qu'on n'a pas lu fabrique un rappel flatteur. D'où le champ `reason`,
+ * qui oblige à viser un groupe plutôt que « tout le reste ».
+ */
+export const evalBulkVerdictSchema = z.object({
+  verdict: z.enum(EVAL_VERDICTS),
+  /** Le motif visé. Absent : tous les écartés de la page. */
+  reason: z.string().trim().max(60).optional(),
+});
+
+/**
  * Un lien ajouté à la main : ce que le HTML ne portait pas.
  *
  * Le relevé prend déjà tous les `<a href>` de la page ; cette route ne sert

@@ -823,7 +823,17 @@ celles de l'étage 3 ne laissent rien.
 Chaque rejet part d'ailleurs avec **son motif** — « texte trop court », « hors
 domaine », « chemin de service ». Il ne décide de rien : il sert à ranger les
 rejets dans la console, parce que les sorties perdues se concentrent sous deux
-motifs et jamais sous les autres.
+motifs et jamais sous les autres. La console offre aussi de trancher un motif
+entier d'un clic ; l'outil coupe dans les deux sens, et ne touche jamais les
+liens retenus.
+
+Et **tous** les liens partent avec leur contexte, écartés compris. Une première
+version le réservait aux retenus, au motif que c'est ce que l'étage 4 reçoit :
+l'argument était juste et la conséquence absurde. Le contexte ne sert pas ici à
+l'étage 4, il sert à l'humain pour juger — et il manquait très exactement là où
+il est indispensable, puisqu'un lien écarté pour « texte trop court » est par
+définition un lien dont l'intitulé ne dit rien. Sans lui, la console affichait
+des URL nues, impossibles à trancher sans les ouvrir une par une.
 
 Les taux ne s'affichent **qu'une fois l'extraction validée** : avant, ils
 diraient 100 % pour signifier « personne n'a encore regardé ».

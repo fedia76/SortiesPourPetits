@@ -286,6 +286,41 @@ async function addLink(page: EvalAgendaPage) {
   }
 }
 
+/**
+ * Donne le même verdict à tous les écartés d'un motif. Un raccourci, et une
+ * lame à double tranchant.
+ *
+ * Soixante-seize écartés se lisent mal un par un, et la plupart sont du bruit
+ * évident. Mais trancher en masse un motif qu'on n'a pas lu fabrique un rappel
+ * flatteur — d'où la confirmation qui nomme le motif et le compte, et le fait
+ * que ça ne touche jamais les liens retenus.
+ */
+async function bulk(page: EvalAgendaPage, agendaId: number, verdict: EvalVerdict) {
+  const cible = reason.value
+    ? `les ${reasons(page).find((r) => r.key === reason.value)?.count ?? 0} lien(s) « ${reason.value} »`
+    : `les ${counts(page).dropped} lien(s) écarté(s) de cette page`;
+  if (
+    !confirm(
+      `Marquer « ${EVAL_VERDICT_LABELS[verdict]} » ${cible} ?\n\n` +
+        "Rien ne sera touché parmi les liens retenus. Ne le faites que sur un motif " +
+        "dont vous avez lu assez de lignes pour savoir ce qu'il contient : trancher " +
+        'en masse ce qu\'on n\'a pas lu fabrique un rappel flatteur.',
+    )
+  ) {
+    return;
+  }
+  const data = await act(agendaId, () =>
+    api.post<{ agenda: EvalAgenda; count: number }>(`/api/eval/pages/${page.id}/verdict`, {
+      verdict,
+      reason: reason.value || undefined,
+    }),
+  );
+  if (data) {
+    replace(data.agenda);
+    notice.value = `${data.count} lien(s) marqué(s) « ${EVAL_VERDICT_LABELS[verdict]} ».`;
+  }
+}
+
 async function removeLink(agendaId: number, linkId: number) {
   const data = await act(agendaId, () =>
     api.delete<{ agenda: EvalAgenda }>(`/api/eval/links/${linkId}`),
@@ -660,6 +695,19 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                     @click="reason = r.key"
                   >
                     {{ r.key }} <span class="n">{{ r.count }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="bulk"
+                    :disabled="busy.has(agenda.id)"
+                    :title="
+                      reason
+                        ? `Marquer « autre » tous les liens du motif « ${reason} »`
+                        : 'Marquer « autre » tous les écartés de cette page'
+                    "
+                    @click="bulk(page, agenda.id, 'AUTRE')"
+                  >
+                    Tout marquer « autre »
                   </button>
                 </template>
               </div>
@@ -1144,6 +1192,28 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 .sep {
   color: var(--line);
   margin: 0 0.2rem;
+}
+/* Le raccourci qui rend soixante-seize écartés tenables. Discret : c'est une
+   commodité, pas le geste que cette page existe pour permettre. */
+.bulk {
+  margin-left: auto;
+  background: none;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  padding: 0.22rem 0.7rem;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.bulk:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--ink-soft);
+  color: var(--ink);
+}
+.bulk:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* ---- les liens ---- */

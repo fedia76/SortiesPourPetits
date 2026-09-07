@@ -38,6 +38,7 @@ import {
   evalAgendaUpdateSchema,
   evalFailSchema,
   evalHarvestSchema,
+  evalBulkVerdictSchema,
   evalLinkSchema,
   evalVerdictSchema,
 } from '../lib/validators';
@@ -361,6 +362,50 @@ evalRouter.patch('/links/:id(\\d+)', admin, async (req, res) => {
     include: AGENDA_INCLUDE,
   });
   res.json({ agenda: serialize(agenda) });
+});
+
+/**
+ * Donne le même verdict à tous les liens **écartés** d'une page, ou d'un seul
+ * motif de rejet.
+ *
+ * Soixante-seize écartés se lisent mal un par un, et la plupart sont du bruit
+ * évident : quinze liens vers un réseau social, douze vers la racine du site.
+ * Les expédier d'un clic laisse le temps là où il compte — sous « texte trop
+ * court », le motif où se cachent les sorties perdues.
+ *
+ * L'opération ne touche **jamais** les liens retenus. Ceux-là sont peu nombreux
+ * et sont l'objet même de la relecture : les trancher en masse reviendrait à
+ * approuver la brique sans la lire, c'est-à-dire à ne rien mesurer.
+ */
+evalRouter.post('/pages/:id(\\d+)/verdict', admin, async (req, res) => {
+  const parsed = evalBulkVerdictSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const pageId = Number(req.params.id);
+  const page = await prisma.evalAgendaPage.findUnique({
+    where: { id: pageId },
+    select: { agendaId: true },
+  });
+  if (!page) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  const { count } = await prisma.evalLink.updateMany({
+    where: {
+      pageId,
+      harvested: false,
+      ...(parsed.data.reason ? { dropReason: parsed.data.reason } : {}),
+    },
+    data: { verdict: parsed.data.verdict },
+  });
+  const agenda = await prisma.evalAgenda.update({
+    where: { id: page.agendaId },
+    data: { status: 'ANALYZED', validatedAt: null },
+    include: AGENDA_INCLUDE,
+  });
+  res.json({ agenda: serialize(agenda), count });
 });
 
 /**

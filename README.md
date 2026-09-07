@@ -164,6 +164,7 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | POST | `/api/eval/agendas` | admin | Ajouter un agenda au banc et le mettre en file (`url`, `pages`, `label`) |
 | POST | `/api/eval/agendas/:id/analyze` | admin | Relancer le dépouillement (efface la moisson précédente et les ajouts manuels) |
 | PATCH | `/api/eval/links/:id` | admin | Corriger le verdict d'un lien — c'est la mesure |
+| POST | `/api/eval/pages/:id/verdict` | admin | Trancher d'un coup les liens écartés d'un motif (jamais les retenus) |
 | POST | `/api/eval/pages/:pageId/links` | admin | Ajouter un lien absent du HTML (une carte rendue en JavaScript) |
 | DELETE | `/api/eval/links/:id` | admin | Retirer un ajout manuel (un lien relevé sur la page, lui, ne s'efface pas) |
 | POST | `/api/eval/agendas/:id/validate` | admin | Figer la vérité de référence : le rappel devient lisible |

@@ -750,7 +750,13 @@ export interface EvalLink {
   id: number;
   url: string;
   text: string;
-  /** Le texte qui entoure le lien. Renseigné pour les seuls liens retenus. */
+  /**
+   * Le texte qui entoure le lien — date, lieu, tarif.
+   *
+   * Présent aussi pour les **écartés**, et c'est ce qui les rend jugeables : un
+   * lien rejeté pour « texte trop court » est par définition un lien dont
+   * l'intitulé ne dit rien.
+   */
   context: string;
   /** `PAGE` : relevé dans le HTML. `MANUAL` : tapé à la main. */
   source: 'PAGE' | 'MANUAL';
