@@ -122,12 +122,25 @@ async function moderate(id: number, action: 'approve' | 'reject') {
   }
 }
 
+/** Motif pré-rempli du refus, qui tient compte du statut du doublon trouvé. */
+function duplicateReason(original: EventItem): string {
+  const ref = `« ${original.title} » (${original.venue.name})`;
+  if (original.status === 'REJECTED') {
+    // Le motif du refus précédent est le meilleur indice : le même défaut
+    // s'applique très probablement à cette nouvelle proposition.
+    return original.rejectionReason
+      ? `Cette sortie fait doublon avec ${ref}, déjà refusée pour le même motif : ${original.rejectionReason}`
+      : `Cette sortie fait doublon avec ${ref}, déjà refusée.`;
+  }
+  if (original.status === 'PENDING') {
+    return `Cette sortie fait doublon avec ${ref}, déjà proposée et en attente de modération.`;
+  }
+  return `Cette sortie fait doublon avec ${ref}, déjà publiée.`;
+}
+
 /** Refuse la sortie en pointant le doublon trouvé, motif pré-rempli. */
 async function rejectAsDuplicate(id: number, original: EventItem) {
-  const reason = prompt(
-    'Motif du refus (visible par l’auteur) :',
-    `Cette sortie fait doublon avec « ${original.title} » (${original.venue.name}), déjà publiée.`,
-  );
+  const reason = prompt('Motif du refus (visible par l’auteur) :', duplicateReason(original));
   if (reason === null) return;
   try {
     await api.post(`/api/moderation/${id}`, { action: 'reject', reason });
@@ -356,6 +369,11 @@ onMounted(() => {
                 {{ s.venue.name }} · {{ s.venue.city }} · {{ periodLabel(s) }}
                 · proposé par {{ s.author.displayName }}
               </p>
+              <!-- Doublon déjà tranché : son motif de refus vaut probablement
+                   aussi pour celle-ci. -->
+              <p v-if="s.status === 'REJECTED' && s.rejectionReason" class="dup-rejection">
+                Motif du refus précédent : {{ s.rejectionReason }}
+              </p>
               <div class="badges">
                 <span v-for="reason in s.similarity?.reasons ?? []" :key="reason" class="badge">
                   {{ reason }}
@@ -527,6 +545,12 @@ onMounted(() => {
 
 .dup-meta {
   margin: 0.25rem 0 0.4rem;
+}
+
+.dup-rejection {
+  margin: 0 0 0.4rem;
+  color: var(--danger);
+  font-size: 0.88rem;
 }
 
 .dup-action {
