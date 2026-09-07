@@ -361,12 +361,12 @@ onUnmounted(() => clearInterval(timer));
             </div>
             <div v-if="!cibleUnSite" class="field">
               <label for="s-agendas">Agendas ouverts</label>
-              <input id="s-agendas" v-model.number="form.maxAgendas" type="number" min="1" max="20" />
+              <input id="s-agendas" v-model.number="form.maxAgendas" type="number" min="1" max="60" />
               <span class="hint">Gratuit : téléchargés en Python.</span>
             </div>
             <div v-else class="field">
               <label for="s-agendas">Pages de départ dépouillées</label>
-              <input id="s-agendas" v-model.number="form.maxAgendas" type="number" min="1" max="20" />
+              <input id="s-agendas" v-model.number="form.maxAgendas" type="number" min="1" max="60" />
               <span class="hint">Plafond appliqué à vos adresses.</span>
             </div>
             <div class="field">

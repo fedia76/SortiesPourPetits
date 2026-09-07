@@ -279,7 +279,7 @@ export const scraperConfigSchema = z.object({
   horizonDays: z.number().int().min(1).max(365).optional(),
   maxEvents: z.number().int().min(1).max(100).optional(),
   maxSearches: z.number().int().min(1).max(20).optional(),
-  maxAgendas: z.number().int().min(1).max(20).optional(),
+  maxAgendas: z.number().int().min(1).max(60).optional(),
   // Deux pages suivantes suffisent : chacune coûte un téléchargement, une
   // seconde d'attente polie et des liens de plus au tri, qui est facturé.
   maxNextPages: z.number().int().min(0).max(10).optional(),
