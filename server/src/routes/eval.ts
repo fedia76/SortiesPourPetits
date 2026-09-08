@@ -87,9 +87,10 @@ type SerializableLink = {
 type SerializablePage = {
   htmlPath: string | null;
   nextUrl: string;
+  error: string | null;
   links: SerializableLink[];
 };
-type SerializableAgenda = { status: string; agendaPages: SerializablePage[] };
+type SerializableAgenda = { status: string; pages: number; agendaPages: SerializablePage[] };
 
 /**
  * Ce que le dépouillement a fait de cet agenda, une fois l'humain passé.
@@ -129,6 +130,19 @@ type SerializableAgenda = { status: string; agendaPages: SerializablePage[] };
  * dont on n'a relu que la moisson affichait 100 % de rappel, non pas parce que
  * la brique n'avait rien raté, mais parce que personne n'avait regardé le
  * reste.
+ *
+ * ## Parcourir les pages fait partie du travail, donc en rater est une erreur
+ *
+ * L'étage 3 ne se contente pas de lire une page : il suit la pagination. Un
+ * agenda pour lequel on demande deux pages et dont une seule est lue est donc
+ * un **ratage**, au même titre qu'une sortie perdue — et il ne se voyait nulle
+ * part : la deuxième page n'existait simplement pas dans l'arbre, sans un mot.
+ *
+ * `pagesRead` contre `pagesAsked` le dit tout de suite, sans attendre l'humain,
+ * et `stop` dit pourquoi la moisson s'est arrêtée. Une fois la page relue,
+ * `paginationManquee` le confirme : des liens que l'humain appelle
+ * « pagination » sur une page où `next_page()` n'a rien trouvé, c'est une suite
+ * que le site offrait et que la brique n'a pas su voir.
  */
 function statsOf(agenda: SerializableAgenda) {
   let kept = 0;
@@ -140,10 +154,12 @@ function statsOf(agenda: SerializableAgenda) {
   let paginationSuivie = 0;
   let links = 0;
   let reviewed = 0;
+  let pagesAvecPagination = 0;
 
   for (const page of agenda.agendaPages) {
     const pagination = page.links.filter((l) => l.verdict === 'PAGINATION');
     paginationVue += pagination.length;
+    if (pagination.length) pagesAvecPagination += 1;
     // `nextUrl` est ce que l'étage 3 saurait suivre. On ne le compte que s'il
     // désigne un lien que l'humain a bien reconnu comme une pagination : un
     // `rel="next"` qui pointe ailleurs n'est pas une pagination suivie, c'est
@@ -168,12 +184,37 @@ function statsOf(agenda: SerializableAgenda) {
     }
   }
 
+  // ── la pagination, responsabilité de l'étage 3 comme une autre
+  const pagesAsked = agenda.pages;
+  const pagesRead = agenda.agendaPages.length;
+  const last = agenda.agendaPages[pagesRead - 1];
+  // Pourquoi la moisson s'est arrêtée avant le compte demandé. Dérivé de ce
+  // qu'on garde déjà : une dernière page en erreur s'est vue refuser l'entrée,
+  // une dernière page sans `rel="next"` n'a pas su désigner la suivante, et
+  // sinon c'est que la suivante avait déjà été lue — un agenda qui boucle.
+  let stop = '';
+  if (pagesRead < pagesAsked && last) {
+    if (last.error) stop = 'injoignable';
+    else if (!last.nextUrl) stop = 'sans_suite';
+    else stop = 'boucle';
+  }
+
   // Les taux n'ont de sens qu'une fois l'humain passé — et passé **partout** :
   // la validation exige que tout soit relu, et c'est elle qui les débloque.
   const juge = agenda.status === 'VALIDATED';
   return {
     links,
     reviewed,
+    pagesAsked,
+    pagesRead,
+    /** '' quand tout a été lu ; sinon injoignable, sans_suite ou boucle. */
+    stop,
+    /**
+     * Des liens de pagination sur une page dont `next_page()` n'a rien tiré :
+     * le site offrait une suite, la brique ne l'a pas vue. C'est l'erreur de
+     * pagination, confirmée par l'humain.
+     */
+    paginationManquee: pagesAvecPagination - paginationSuivie,
     kept,
     sorties,
     /** Retenus à tort : ils ont coûté un appel à l'étage 4 pour rien. */

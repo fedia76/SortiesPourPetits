@@ -876,20 +876,32 @@ un motif entier.
 Les taux ne s'affichent **qu'une fois l'extraction validée** — donc une fois
 tout relu. Avant, ils ne diraient que « personne n'a encore regardé ».
 
-#### La pagination, vérifiée plutôt que supposée
+#### Parcourir les pages fait partie du travail, donc en rater est une erreur
 
-Chaque page rapporte aussi ce que `next_page()` y a trouvé. Comparé aux liens
-étiquetés « pagination », ça répond à une question que le pipeline ne pose
-jamais : **ce site se pagine-t-il d'une façon que l'étage 3 sait suivre ?**
+L'étage 3 ne se contente pas de lire une page : **il suit la pagination**. Un
+agenda pour lequel on demande deux pages et dont une seule est lue est donc un
+ratage, au même titre qu'une sortie perdue.
 
-Trois cas, et le troisième est celui qu'on cherche :
+Et il ne se voyait nulle part : la deuxième page n'existait simplement pas dans
+l'arbre, sans un mot. Deux compteurs le disent maintenant.
 
-* `rel="next"` trouvé, et il désigne bien un lien étiqueté pagination —
-  l'étage 3 suivra ;
-* ni `rel="next"` ni lien de pagination — cette page est la dernière ;
-* **des liens de pagination, et aucun `rel="next"`** — le site numérote ses
-  pages sans le déclarer, et l'étage 3 ne suivra jamais cet agenda. Rien
-  ailleurs ne le signale.
+**`pages lues / demandées`**, tout de suite, sans attendre l'humain — avec le
+motif de l'arrêt, dérivé de ce qu'on garde déjà :
+
+| Ce qu'on constate sur la dernière page lue | Motif |
+|---|---|
+| elle porte une erreur de lecture | `injoignable` — ce n'est pas la brique qu'il faut accuser |
+| pas de `rel="next"` | `sans_suite` — la brique n'a pas su désigner la suivante |
+| un `rel="next"` vers une page déjà lue | `boucle` — cet agenda tourne en rond |
+
+**`pagination ratée`**, une fois la page relue : des liens que l'humain appelle
+« pagination » sur une page où `next_page()` n'a rien trouvé. Le site offrait
+une suite, la brique ne l'a pas vue.
+
+Le bandeau par page dit lequel des trois cas s'applique, et **s'abstient quand
+il ne sait pas** : tant que les liens d'une page n'ont pas été relus, affirmer
+« cette page est la dernière » serait exactement l'affirmation gratuite que ce
+banc existe pour éviter. Il invite alors à étiqueter.
 
 #### Deux choix qui ne vont pas de soi
 

@@ -402,25 +402,49 @@ function pageSummary(page: EvalAgendaPage) {
  * qu'elle n'est pas déclarée en `rel="next"`. Cette page-là ne sera jamais
  * suivie, et rien ailleurs ne le signale.
  */
-function pagination(page: EvalAgendaPage): { ok: boolean; text: string } | null {
+function pagination(page: EvalAgendaPage): { tone: 'ok' | 'bad' | 'todo'; text: string } | null {
   if (page.error) return null;
   const marked = page.links.filter((l) => l.verdict === 'PAGINATION');
   if (page.nextUrl) {
-    const matches = marked.some((l) => l.url === page.nextUrl);
-    return matches
-      ? { ok: true, text: `L'étage 3 suivrait ${page.nextUrl}` }
+    return marked.some((l) => l.url === page.nextUrl)
+      ? { tone: 'ok', text: `L'étage 3 suit ${page.nextUrl}` }
       : {
-          ok: false,
+          tone: 'bad',
           text: `L'étage 3 suivrait ${page.nextUrl} — qu'aucun lien de la page n'est étiqueté « pagination ». Vérifiez que c'est bien la page suivante.`,
         };
   }
   if (marked.length) {
     return {
-      ok: false,
-      text: `${marked.length} lien(s) de pagination sur la page, et aucun « rel=next » : l'étage 3 ne suivra jamais la suite de cet agenda.`,
+      tone: 'bad',
+      text: `${marked.length} lien(s) de pagination sur la page, et aucun « rel=next » : l'étage 3 ne saura jamais suivre la suite de cet agenda.`,
     };
   }
-  return { ok: true, text: 'Ni « rel=next » ni lien de pagination : cette page est la dernière.' };
+  // Sans relecture, on ne sait rien : dire « cette page est la dernière »
+  // alors que personne n'a regardé ses liens est exactement l'affirmation
+  // gratuite que ce banc existe pour éviter.
+  if (page.links.some((l) => !l.reviewed)) {
+    return {
+      tone: 'todo',
+      text: "Aucun « rel=next » sur cette page. S'il y a pourtant une suite, étiquetez ses liens « pagination » : c'est ce qui dira que l'étage 3 l'a ratée.",
+    };
+  }
+  return { tone: 'ok', text: 'Ni « rel=next » ni lien de pagination : cette page est bien la dernière.' };
+}
+
+/** Ce que la moisson a manqué en pages, dit en une phrase. */
+function pagesVerdict(agenda: EvalAgenda): string {
+  const { pagesAsked, pagesRead, stop } = agenda.stats;
+  const manque = `${pagesAsked} page(s) demandée(s), ${pagesRead} lue(s).`;
+  if (stop === 'sans_suite') {
+    return `${manque} L'étage 3 n'a trouvé aucun « rel=next » sur la dernière — s'il y a bien une suite, c'est un ratage de la pagination, et parcourir les pages fait partie de son travail.`;
+  }
+  if (stop === 'injoignable') {
+    return `${manque} La page suivante a refusé la lecture : ce n'est pas la brique qu'il faut accuser.`;
+  }
+  if (stop === 'boucle') {
+    return `${manque} Le « rel=next » de la dernière renvoyait vers une page déjà lue : cet agenda boucle.`;
+  }
+  return '';
 }
 
 const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
@@ -553,6 +577,7 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
         </p>
 
         <p v-if="agenda.error" class="error slim">{{ agenda.error }}</p>
+        <p v-if="pagesVerdict(agenda)" class="pages-short">{{ pagesVerdict(agenda) }}</p>
 
         <dl class="stats">
           <div>
@@ -578,6 +603,16 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
           <div :class="{ warn: agenda.stats.sousAgendas > 0 }">
             <dt title="Le pipeline n'en fait rien aujourd'hui">Sous-agendas</dt>
             <dd>{{ agenda.stats.sousAgendas }}</dd>
+          </div>
+          <div :class="{ flag: agenda.stats.pagesRead < agenda.stats.pagesAsked }">
+            <dt title="Parcourir les pages fait partie du travail de la brique">Pages lues</dt>
+            <dd>{{ agenda.stats.pagesRead }} / {{ agenda.stats.pagesAsked }}</dd>
+          </div>
+          <div :class="{ flag: agenda.stats.paginationManquee > 0 }">
+            <dt title="Le site offrait une suite, la brique ne l'a pas vue">
+              Pagination ratée
+            </dt>
+            <dd>{{ agenda.stats.paginationManquee }}</dd>
           </div>
           <div :class="{ warn: agenda.stats.reviewed < agenda.stats.links }">
             <dt title="Tranchés par un humain, pas par la précoche">Revus</dt>
@@ -693,7 +728,7 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                 >
               </p>
 
-              <p v-if="pagination(page)" class="pagination" :class="{ bad: !pagination(page)!.ok }">
+              <p v-if="pagination(page)" class="pagination" :class="pagination(page)!.tone">
                 <strong>Pagination :</strong> {{ pagination(page)!.text }}
               </p>
 
@@ -1194,6 +1229,21 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 .pagination.bad {
   border-color: var(--danger);
   background: var(--danger-soft);
+}
+/* Ni bon ni mauvais : on ne sait pas encore, et le dire est la seule réponse
+   honnête tant que personne n'a relu les liens de la page. */
+.pagination.todo {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+.pages-short {
+  margin: 0.4rem 0 0.7rem;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  border-left: 3px solid var(--danger);
+  background: var(--danger-soft);
+  border-radius: 0 8px 8px 0;
+  padding: 0.55rem 0.8rem;
 }
 
 /* ---- filtres ---- */

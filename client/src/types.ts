@@ -844,6 +844,24 @@ export interface EvalAgenda {
     paginationVue: number;
     /** Pages dont `next_page()` a su désigner la suivante. */
     paginationSuivie: number;
+    /** Pages demandées à l'analyse. */
+    pagesAsked: number;
+    /** Pages réellement lues. Moins que demandé = la brique n'a pas su suivre. */
+    pagesRead: number;
+    /**
+     * Pourquoi la moisson s'est arrêtée avant le compte demandé.
+     *
+     * Vide quand tout a été lu. `sans_suite` : aucun `rel="next"` sur la
+     * dernière page. `injoignable` : la suivante a refusé la lecture.
+     * `boucle` : elle pointait vers une page déjà lue.
+     */
+    stop: '' | 'sans_suite' | 'injoignable' | 'boucle';
+    /**
+     * L'erreur de pagination, confirmée par l'humain : des liens étiquetés
+     * « pagination » sur une page où `next_page()` n'a rien trouvé. Le site
+     * offrait une suite, la brique ne l'a pas vue.
+     */
+    paginationManquee: number;
     /** De ce que la brique donne à l'étage 4, la part qui est une sortie. */
     precision: number | null;
     /**
