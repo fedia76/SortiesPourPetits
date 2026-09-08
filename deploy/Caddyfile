@@ -1,3 +1,14 @@
+{
+	# HTTP/3 (QUIC) passe en UDP/443. De nombreux réseaux mobiles bloquent ou
+	# dégradent silencieusement cet UDP : un visiteur en 4G dont le navigateur
+	# tente QUIC en premier (Alt-Svc gardé d'une visite précédente) reste sans
+	# réponse au lieu de retomber sur TCP, alors qu'en WiFi tout fonctionne. Le
+	# site n'a rien à gagner à HTTP/3 ici ; s'en passer évite ce blocage.
+	servers {
+		protocols h1 h2
+	}
+}
+
 sortiespourpetits.fr {
 	encode zstd gzip
 
