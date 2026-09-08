@@ -37,6 +37,7 @@ import type {
   EvalAgendaPage,
   EvalAgendaStatus,
   EvalLink,
+  EvalNextVerdict,
   EvalVerdict,
 } from '../types';
 
@@ -402,25 +403,91 @@ function pageSummary(page: EvalAgendaPage) {
  * qu'elle n'est pas déclarée en `rel="next"`. Cette page-là ne sera jamais
  * suivie, et rien ailleurs ne le signale.
  */
-function pagination(page: EvalAgendaPage): { ok: boolean; text: string } | null {
+function pagination(page: EvalAgendaPage): { tone: 'ok' | 'bad' | 'todo'; text: string } | null {
   if (page.error) return null;
-  const marked = page.links.filter((l) => l.verdict === 'PAGINATION');
-  if (page.nextUrl) {
-    const matches = marked.some((l) => l.url === page.nextUrl);
-    return matches
-      ? { ok: true, text: `L'étage 3 suivrait ${page.nextUrl}` }
-      : {
-          ok: false,
-          text: `L'étage 3 suivrait ${page.nextUrl} — qu'aucun lien de la page n'est étiqueté « pagination ». Vérifiez que c'est bien la page suivante.`,
-        };
-  }
-  if (marked.length) {
+  // Le constat, factuel : ce que `next_page()` a trouvé. Ce n'est pas un
+  // jugement — c'est l'humain qui tranche, juste en dessous.
+  const trouve = page.nextUrl
+    ? `L'étage 3 suivrait ${page.nextUrl}`
+    : "L'étage 3 n'a trouvé aucun « rel=next » sur cette page";
+  if (!page.nextVerdict) return { tone: 'todo', text: trouve };
+  if (page.nextVerdict === 'CORRECT') {
     return {
-      ok: false,
-      text: `${marked.length} lien(s) de pagination sur la page, et aucun « rel=next » : l'étage 3 ne suivra jamais la suite de cet agenda.`,
+      tone: 'ok',
+      text: page.nextUrl ? `${trouve} — et c'est bien la suite.` : `${trouve}, et il n'y en a pas.`,
     };
   }
-  return { ok: true, text: 'Ni « rel=next » ni lien de pagination : cette page est la dernière.' };
+  const attendu = page.nextExpected ? ` La vraie suite est ${page.nextExpected}.` : '';
+  return {
+    tone: 'bad',
+    text:
+      page.nextVerdict === 'MANQUEE'
+        ? `${trouve} — alors qu'il y a bien une suite.${attendu} Ratage de pagination.`
+        : `${trouve} — qui n'est pas la suite.${attendu} Il court après une fausse page.`,
+  };
+}
+
+/**
+ * Les réponses proposées, qui dépendent de ce que la brique a trouvé.
+ *
+ * Sans `rel="next"`, « fausse » n'a pas de sens : on ne court après rien.
+ */
+function nextChoices(page: EvalAgendaPage): { key: EvalNextVerdict; label: string }[] {
+  const juste = page.nextUrl ? "C'est bien la suite" : "Il n'y a pas de suite";
+  const choix: { key: EvalNextVerdict; label: string }[] = [
+    { key: 'CORRECT', label: juste },
+    { key: 'MANQUEE', label: 'Il a raté la suite' },
+  ];
+  if (page.nextUrl) choix.push({ key: 'FAUSSE', label: "Ce n'est pas la suite" });
+  return choix;
+}
+
+/** La page dont on saisit l'adresse de la vraie suite, et ce qui est tapé. */
+const expectingFor = ref<number | null>(null);
+const expected = ref('');
+
+/**
+ * Enregistre le verdict de pagination d'une page.
+ *
+ * `CORRECT` se pose d'un clic. Les deux autres ouvrent un champ facultatif :
+ * savoir que la brique s'est trompée ne dit pas ce qu'elle aurait dû trouver, et
+ * c'est cette adresse-là qui permettra de réparer `next_page()`.
+ */
+async function setNext(page: EvalAgendaPage, agendaId: number, verdict: EvalNextVerdict) {
+  if (verdict !== 'CORRECT' && expectingFor.value !== page.id) {
+    expectingFor.value = page.id;
+    expected.value = page.nextExpected;
+    // Premier clic : on ouvre le champ. Le second, sur le même bouton,
+    // enregistre — avec ou sans adresse, elle reste facultative.
+    if (page.nextVerdict !== verdict) return;
+  }
+  const data = await act(agendaId, () =>
+    api.patch<{ agenda: EvalAgenda }>(`/api/eval/pages/${page.id}/next`, {
+      verdict,
+      expected: verdict === 'CORRECT' ? '' : expected.value.trim(),
+    }),
+  );
+  if (data) {
+    replace(data.agenda);
+    expectingFor.value = null;
+    expected.value = '';
+  }
+}
+
+/** Ce que la moisson a manqué en pages, dit en une phrase. */
+function pagesVerdict(agenda: EvalAgenda): string {
+  const { pagesAsked, pagesRead, stop } = agenda.stats;
+  const manque = `${pagesAsked} page(s) demandée(s), ${pagesRead} lue(s).`;
+  if (stop === 'sans_suite') {
+    return `${manque} L'étage 3 n'a trouvé aucun « rel=next » sur la dernière — s'il y a bien une suite, c'est un ratage de la pagination, et parcourir les pages fait partie de son travail.`;
+  }
+  if (stop === 'injoignable') {
+    return `${manque} La page suivante a refusé la lecture : ce n'est pas la brique qu'il faut accuser.`;
+  }
+  if (stop === 'boucle') {
+    return `${manque} Le « rel=next » de la dernière renvoyait vers une page déjà lue : cet agenda boucle.`;
+  }
+  return '';
 }
 
 const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
@@ -553,6 +620,7 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
         </p>
 
         <p v-if="agenda.error" class="error slim">{{ agenda.error }}</p>
+        <p v-if="pagesVerdict(agenda)" class="pages-short">{{ pagesVerdict(agenda) }}</p>
 
         <dl class="stats">
           <div>
@@ -579,6 +647,20 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
             <dt title="Le pipeline n'en fait rien aujourd'hui">Sous-agendas</dt>
             <dd>{{ agenda.stats.sousAgendas }}</dd>
           </div>
+          <div :class="{ flag: agenda.stats.pagesRead < agenda.stats.pagesAsked }">
+            <dt title="Parcourir les pages fait partie du travail de la brique">Pages lues</dt>
+            <dd>{{ agenda.stats.pagesRead }} / {{ agenda.stats.pagesAsked }}</dd>
+          </div>
+          <div :class="{ flag: agenda.stats.paginationManquee > 0 }">
+            <dt title="Le site offrait une suite, la brique ne l'a pas vue">Suites ratées</dt>
+            <dd>{{ agenda.stats.paginationManquee }}</dd>
+          </div>
+          <div :class="{ flag: agenda.stats.paginationFausse > 0 }">
+            <dt title="La brique a couru après une page qui n'était pas la suite">
+              Fausses suites
+            </dt>
+            <dd>{{ agenda.stats.paginationFausse }}</dd>
+          </div>
           <div :class="{ warn: agenda.stats.reviewed < agenda.stats.links }">
             <dt title="Tranchés par un humain, pas par la précoche">Revus</dt>
             <dd>{{ agenda.stats.reviewed }} / {{ agenda.stats.links }}</dd>
@@ -601,7 +683,15 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
           </div>
         </dl>
         <p v-if="agenda.stats.precision === null && agenda.status === 'ANALYZED'" class="hint">
-          <template v-if="agenda.stats.reviewed < agenda.stats.links">
+          <template v-if="agenda.stats.pagesJugees < agenda.stats.pagesRead">
+            <strong
+              >{{ agenda.stats.pagesRead - agenda.stats.pagesJugees }} page(s) attendent leur
+              verdict de pagination.</strong
+            >
+            Suivre les pages fait partie du travail de l'étage 3 : dites, pour chacune, si ce qu'il
+            a trouvé — ou n'a pas trouvé — est juste.
+          </template>
+          <template v-else-if="agenda.stats.reviewed < agenda.stats.links">
             <strong
               >{{ agenda.stats.links - agenda.stats.reviewed }} lien(s) portent encore la précoche
               de la brique.</strong
@@ -629,7 +719,11 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
             v-if="agenda.status === 'ANALYZED'"
             class="btn small"
             type="button"
-            :disabled="busy.has(agenda.id) || agenda.stats.reviewed < agenda.stats.links"
+            :disabled="
+              busy.has(agenda.id) ||
+              agenda.stats.reviewed < agenda.stats.links ||
+              agenda.stats.pagesJugees < agenda.stats.pagesRead
+            "
             :title="
               agenda.stats.reviewed < agenda.stats.links
                 ? `${agenda.stats.links - agenda.stats.reviewed} lien(s) portent encore la précoche`
@@ -693,9 +787,43 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                 >
               </p>
 
-              <p v-if="pagination(page)" class="pagination" :class="{ bad: !pagination(page)!.ok }">
-                <strong>Pagination :</strong> {{ pagination(page)!.text }}
-              </p>
+              <div v-if="pagination(page)" class="pagcheck" :class="pagination(page)!.tone">
+                <p class="pag-text"><strong>Pagination :</strong> {{ pagination(page)!.text }}</p>
+                <div class="pag-choices">
+                  <button
+                    v-for="c in nextChoices(page)"
+                    :key="c.key"
+                    type="button"
+                    class="pagb"
+                    :class="{ on: page.nextVerdict === c.key }"
+                    :disabled="busy.has(agenda.id)"
+                    @click="setNext(page, agenda.id, c.key)"
+                  >
+                    {{ c.label }}
+                  </button>
+                </div>
+                <div v-if="expectingFor === page.id" class="pag-expected">
+                  <label :for="`exp-${page.id}`">
+                    Adresse de la vraie page suivante — facultatif, mais c'est ce qui permettra de
+                    réparer&nbsp;:
+                  </label>
+                  <div class="row">
+                    <input
+                      :id="`exp-${page.id}`"
+                      v-model="expected"
+                      type="url"
+                      placeholder="https://exemple.fr/sorties/page/2/"
+                    />
+                    <button type="button" class="btn small" @click="expectingFor = null">
+                      Fermer
+                    </button>
+                  </div>
+                  <p class="hint">
+                    Recliquez sur le bouton pour enregistrer. L'adresse est gardée telle quelle :
+                    savoir que la brique s'est trompée ne dit pas ce qu'elle aurait dû trouver.
+                  </p>
+                </div>
+              </div>
 
               <div v-if="page.links.length" class="filters-bar">
                 <button
@@ -1182,7 +1310,7 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
   white-space: nowrap;
 }
 
-.pagination {
+.pagcheck {
   margin: 0 0 0.7rem;
   font-size: 0.83rem;
   border-left: 3px solid var(--ok);
@@ -1191,9 +1319,76 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
   padding: 0.5rem 0.7rem;
   word-break: break-word;
 }
-.pagination.bad {
+.pagcheck.bad {
   border-color: var(--danger);
   background: var(--danger-soft);
+}
+/* Ni bon ni mauvais : on ne sait pas encore, et le dire est la seule réponse
+   honnête tant que personne n'a relu les liens de la page. */
+.pagcheck.todo {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+.pag-text {
+  margin: 0;
+}
+.pag-choices {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+.pagb {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.pagb:hover:not(:disabled) {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+}
+.pagb.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--card);
+  font-weight: 600;
+}
+.pag-expected {
+  margin-top: 0.6rem;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.5rem;
+}
+.pag-expected label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+.pag-expected .row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.pag-expected input {
+  flex: 1;
+  min-width: 0;
+}
+.pag-expected .hint {
+  margin: 0.4rem 0 0;
+}
+.pages-short {
+  margin: 0.4rem 0 0.7rem;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  border-left: 3px solid var(--danger);
+  background: var(--danger-soft);
+  border-radius: 0 8px 8px 0;
+  padding: 0.55rem 0.8rem;
 }
 
 /* ---- filtres ---- */

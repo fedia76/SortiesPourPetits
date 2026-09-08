@@ -722,6 +722,14 @@ export const EVAL_STATUS_LABELS: Record<EvalAgendaStatus, string> = {
  */
 export type EvalVerdict = 'SORTIE' | 'PAGINATION' | 'SOUS_AGENDA' | 'AUTRE';
 
+/**
+ * Ce que vaut la pagination d'une page. Suivre les pages fait partie du travail
+ * de l'étage 3, donc c'est une mesure de ce travail — et il lui faut trois
+ * valeurs : savoir qu'il s'est trompé ne dit pas s'il a raté une suite ou couru
+ * après une fausse, et les deux ne se réparent pas pareil.
+ */
+export type EvalNextVerdict = 'CORRECT' | 'MANQUEE' | 'FAUSSE';
+
 export const EVAL_VERDICT_LABELS: Record<EvalVerdict, string> = {
   SORTIE: 'Sortie',
   PAGINATION: 'Pagination',
@@ -803,6 +811,16 @@ export interface EvalAgendaPage {
    * d'une façon que le pipeline ignore.
    */
   nextUrl: string;
+  /**
+   * Ce qu'un humain dit de cette pagination. Nul tant qu'il n'a rien dit.
+   *
+   * Il en faut un au niveau de la page : `next_page()` lit aussi le
+   * `<link rel="next">` du `<head>`, qui n'est pas un `<a href>` et n'apparaît
+   * donc dans aucune ligne. L'URL qu'il en tire était alors invérifiable.
+   */
+  nextVerdict: EvalNextVerdict | null;
+  /** L'adresse de la vraie page suivante, quand on la connaît. */
+  nextExpected: string;
   links: EvalLink[];
 }
 
@@ -842,8 +860,25 @@ export interface EvalAgenda {
     sousAgendas: number;
     /** Liens de pagination que l'humain a reconnus. */
     paginationVue: number;
-    /** Pages dont `next_page()` a su désigner la suivante. */
-    paginationSuivie: number;
+    /** Pages dont la pagination a été tranchée par un humain. */
+    pagesJugees: number;
+    /** Il y avait une suite, la brique ne l'a pas vue. */
+    paginationManquee: number;
+    /** La brique a couru après une page qui n'était pas la suite. */
+    paginationFausse: number;
+    /** Pages demandées à l'analyse. */
+    pagesAsked: number;
+    /** Pages réellement lues. Moins que demandé = la brique n'a pas su suivre. */
+    pagesRead: number;
+    /**
+     * Pourquoi la moisson s'est arrêtée avant le compte demandé.
+     *
+     * Vide quand tout a été lu. `sans_suite` : aucun `rel="next"` sur la
+     * dernière page. `injoignable` : la suivante a refusé la lecture.
+     * `boucle` : elle pointait vers une page déjà lue.
+     */
+    stop: '' | 'sans_suite' | 'injoignable' | 'boucle';
+
     /** De ce que la brique donne à l'étage 4, la part qui est une sortie. */
     precision: number | null;
     /**

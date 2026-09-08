@@ -891,20 +891,60 @@ un motif entier.
 Les taux ne s'affichent **qu'une fois l'extraction validée** — donc une fois
 tout relu. Avant, ils ne diraient que « personne n'a encore regardé ».
 
-#### La pagination, vérifiée plutôt que supposée
+#### Parcourir les pages fait partie du travail, donc en rater est une erreur
 
-Chaque page rapporte aussi ce que `next_page()` y a trouvé. Comparé aux liens
-étiquetés « pagination », ça répond à une question que le pipeline ne pose
-jamais : **ce site se pagine-t-il d'une façon que l'étage 3 sait suivre ?**
+L'étage 3 ne se contente pas de lire une page : **il suit la pagination**. Un
+agenda pour lequel on demande deux pages et dont une seule est lue est donc un
+ratage, au même titre qu'une sortie perdue.
 
-Trois cas, et le troisième est celui qu'on cherche :
+Et il ne se voyait nulle part : la deuxième page n'existait simplement pas dans
+l'arbre, sans un mot. Deux compteurs le disent maintenant.
 
-* `rel="next"` trouvé, et il désigne bien un lien étiqueté pagination —
-  l'étage 3 suivra ;
-* ni `rel="next"` ni lien de pagination — cette page est la dernière ;
-* **des liens de pagination, et aucun `rel="next"`** — le site numérote ses
-  pages sans le déclarer, et l'étage 3 ne suivra jamais cet agenda. Rien
-  ailleurs ne le signale.
+**`pages lues / demandées`**, tout de suite, sans attendre l'humain — avec le
+motif de l'arrêt, dérivé de ce qu'on garde déjà :
+
+| Ce qu'on constate sur la dernière page lue | Motif |
+|---|---|
+| elle porte une erreur de lecture | `injoignable` — ce n'est pas la brique qu'il faut accuser |
+| pas de `rel="next"` | `sans_suite` — la brique n'a pas su désigner la suivante |
+| un `rel="next"` vers une page déjà lue | `boucle` — cet agenda tourne en rond |
+
+**`pagination ratée`**, une fois la page relue : des liens que l'humain appelle
+« pagination » sur une page où `next_page()` n'a rien trouvé. Le site offrait
+une suite, la brique ne l'a pas vue.
+
+#### Le verdict de pagination est au niveau de la page
+
+Il ne se déduit **pas** des étiquettes posées sur les liens, et une première
+version qui essayait posait une question sans réponse possible.
+
+`next_page()` lit le `rel="next"` des `<a>` **et** des `<link>` du `<head>`.
+Quand l'URL vient d'un `<link>`, ce n'est pas un lien de la page : elle
+n'apparaît dans aucune ligne, et l'étiqueter « pagination » était donc
+impossible. La console demandait de vérifier quelque chose qui n'existait nulle
+part. Et même sur un `<a>`, rien ne permettait de dire « vérifié, ce n'est pas
+la suite » : le bandeau restait rouge indéfiniment.
+
+D'où le même principe que pour les liens — la brique constate, l'humain
+tranche — avec trois réponses, parce que savoir qu'elle s'est trompée ne dit
+pas comment :
+
+| Verdict | Ce qu'il dit |
+|---|---|
+| **correct** | ce qu'elle a trouvé, ou n'a pas trouvé, est juste |
+| **suite ratée** | il y avait une suite, elle ne l'a pas vue |
+| **fausse suite** | elle a trouvé une page qui n'est pas la suite |
+
+Les deux derniers ouvrent un champ facultatif : **l'adresse de la vraie page
+suivante**. C'est ce qu'il faut pour réparer — savoir que la brique s'est
+trompée ne dit pas ce qu'elle aurait dû trouver, et une poignée de ces adresses
+dira tout de suite si `next_page()` doit apprendre à lire une pagination
+numérotée.
+
+Le bandeau **s'abstient tant que rien n'est tranché** : affirmer « cette page
+est la dernière » avant que quiconque ait regardé serait exactement
+l'affirmation gratuite que ce banc existe pour éviter. Et la validation exige un
+verdict sur chaque page, comme elle exige que chaque lien ait été relu.
 
 #### Deux choix qui ne vont pas de soi
 
