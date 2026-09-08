@@ -89,8 +89,9 @@ Le Havre, Niort et Nancy.
   valider en n'ayant relu que la moisson affichait un rappel de 100 % qui ne
   disait que « personne n'a regardé le reste ». Suivre la pagination fait partie du travail de la brique : la
   console compte donc les **pages lues sur pages demandées** et dit pourquoi la
-  moisson s'est arrêtée, et la **pagination ratée** — un site qui offrait une
-  suite que le scraper n'a pas su voir. Le HTML de chaque page est gardé, gzippé : c'est ce qui fait du
+  moisson s'est arrêtée, et le verdict de pagination de chaque page — juste,
+  **suite ratée** ou **fausse suite** — avec l'adresse de la vraie page suivante
+  quand on la connaît, qui est ce qu'il faut pour réparer. Le HTML de chaque page est gardé, gzippé : c'est ce qui fait du
   banc un corpus gelé, et permet de rejouer la mesure hors ligne sans que la
   page ait bougé entre-temps.
 - **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
@@ -172,6 +173,7 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | POST | `/api/eval/agendas/:id/analyze` | admin | Relancer le dépouillement (efface la moisson précédente et les ajouts manuels) |
 | PATCH | `/api/eval/links/:id` | admin | Corriger le verdict d'un lien — c'est la mesure |
 | POST | `/api/eval/pages/:id/verdict` | admin | Trancher d'un coup les liens écartés d'un motif (jamais les retenus) |
+| PATCH | `/api/eval/pages/:id/next` | admin | Trancher la pagination d'une page, et dire quelle était la vraie suite |
 | POST | `/api/eval/pages/:pageId/links` | admin | Ajouter un lien absent du HTML (une carte rendue en JavaScript) |
 | DELETE | `/api/eval/links/:id` | admin | Retirer un ajout manuel (un lien relevé sur la page, lui, ne s'efface pas) |
 | POST | `/api/eval/agendas/:id/validate` | admin | Figer la vérité de référence : le rappel devient lisible |

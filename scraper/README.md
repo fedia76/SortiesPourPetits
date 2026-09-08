@@ -898,10 +898,38 @@ motif de l'arrêt, dérivé de ce qu'on garde déjà :
 « pagination » sur une page où `next_page()` n'a rien trouvé. Le site offrait
 une suite, la brique ne l'a pas vue.
 
-Le bandeau par page dit lequel des trois cas s'applique, et **s'abstient quand
-il ne sait pas** : tant que les liens d'une page n'ont pas été relus, affirmer
-« cette page est la dernière » serait exactement l'affirmation gratuite que ce
-banc existe pour éviter. Il invite alors à étiqueter.
+#### Le verdict de pagination est au niveau de la page
+
+Il ne se déduit **pas** des étiquettes posées sur les liens, et une première
+version qui essayait posait une question sans réponse possible.
+
+`next_page()` lit le `rel="next"` des `<a>` **et** des `<link>` du `<head>`.
+Quand l'URL vient d'un `<link>`, ce n'est pas un lien de la page : elle
+n'apparaît dans aucune ligne, et l'étiqueter « pagination » était donc
+impossible. La console demandait de vérifier quelque chose qui n'existait nulle
+part. Et même sur un `<a>`, rien ne permettait de dire « vérifié, ce n'est pas
+la suite » : le bandeau restait rouge indéfiniment.
+
+D'où le même principe que pour les liens — la brique constate, l'humain
+tranche — avec trois réponses, parce que savoir qu'elle s'est trompée ne dit
+pas comment :
+
+| Verdict | Ce qu'il dit |
+|---|---|
+| **correct** | ce qu'elle a trouvé, ou n'a pas trouvé, est juste |
+| **suite ratée** | il y avait une suite, elle ne l'a pas vue |
+| **fausse suite** | elle a trouvé une page qui n'est pas la suite |
+
+Les deux derniers ouvrent un champ facultatif : **l'adresse de la vraie page
+suivante**. C'est ce qu'il faut pour réparer — savoir que la brique s'est
+trompée ne dit pas ce qu'elle aurait dû trouver, et une poignée de ces adresses
+dira tout de suite si `next_page()` doit apprendre à lire une pagination
+numérotée.
+
+Le bandeau **s'abstient tant que rien n'est tranché** : affirmer « cette page
+est la dernière » avant que quiconque ait regardé serait exactement
+l'affirmation gratuite que ce banc existe pour éviter. Et la validation exige un
+verdict sur chaque page, comme elle exige que chaque lien ait été relu.
 
 #### Deux choix qui ne vont pas de soi
 

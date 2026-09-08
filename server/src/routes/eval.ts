@@ -40,6 +40,7 @@ import {
   evalHarvestSchema,
   evalBulkVerdictSchema,
   evalLinkSchema,
+  evalNextSchema,
   evalVerdictSchema,
 } from '../lib/validators';
 
@@ -87,6 +88,7 @@ type SerializableLink = {
 type SerializablePage = {
   htmlPath: string | null;
   nextUrl: string;
+  nextVerdict: string | null;
   error: string | null;
   links: SerializableLink[];
 };
@@ -151,22 +153,21 @@ function statsOf(agenda: SerializableAgenda) {
   let keptUseful = 0;
   let sousAgendas = 0;
   let paginationVue = 0;
-  let paginationSuivie = 0;
+  let pagesJugees = 0;
+  let paginationManquee = 0;
+  let paginationFausse = 0;
   let links = 0;
   let reviewed = 0;
-  let pagesAvecPagination = 0;
 
   for (const page of agenda.agendaPages) {
-    const pagination = page.links.filter((l) => l.verdict === 'PAGINATION');
-    paginationVue += pagination.length;
-    if (pagination.length) pagesAvecPagination += 1;
-    // `nextUrl` est ce que l'étage 3 saurait suivre. On ne le compte que s'il
-    // désigne un lien que l'humain a bien reconnu comme une pagination : un
-    // `rel="next"` qui pointe ailleurs n'est pas une pagination suivie, c'est
-    // une pagination fausse.
-    if (page.nextUrl && pagination.some((l) => l.url === page.nextUrl)) {
-      paginationSuivie += 1;
-    }
+    paginationVue += page.links.filter((l) => l.verdict === 'PAGINATION').length;
+    // Le verdict vient de l'humain, pas d'une déduction sur les étiquettes des
+    // liens : l'URL que `next_page()` a trouvée n'est pas toujours un lien de
+    // la page — elle peut venir du `<link rel="next">` du `<head>` — et n'était
+    // alors étiquetable par personne.
+    if (page.nextVerdict) pagesJugees += 1;
+    if (page.nextVerdict === 'MANQUEE') paginationManquee += 1;
+    if (page.nextVerdict === 'FAUSSE') paginationFausse += 1;
     for (const link of page.links) {
       links += 1;
       if (link.reviewed) reviewed += 1;
@@ -209,12 +210,6 @@ function statsOf(agenda: SerializableAgenda) {
     pagesRead,
     /** '' quand tout a été lu ; sinon injoignable, sans_suite ou boucle. */
     stop,
-    /**
-     * Des liens de pagination sur une page dont `next_page()` n'a rien tiré :
-     * le site offrait une suite, la brique ne l'a pas vue. C'est l'erreur de
-     * pagination, confirmée par l'humain.
-     */
-    paginationManquee: pagesAvecPagination - paginationSuivie,
     kept,
     sorties,
     /** Retenus à tort : ils ont coûté un appel à l'étage 4 pour rien. */
@@ -223,7 +218,12 @@ function statsOf(agenda: SerializableAgenda) {
     missed: sorties - keptRight,
     sousAgendas,
     paginationVue,
-    paginationSuivie,
+    /** Pages dont la pagination a été tranchée par un humain. */
+    pagesJugees,
+    /** Il y avait une suite, la brique ne l'a pas vue. */
+    paginationManquee,
+    /** La brique a couru après une page qui n'était pas la suite. */
+    paginationFausse,
     precision: juge && kept > 0 ? keptRight / kept : null,
     precisionUseful: juge && kept > 0 ? keptUseful / kept : null,
     recall: juge && sorties > 0 ? keptRight / sorties : null,
@@ -447,6 +447,51 @@ evalRouter.patch('/links/:id(\\d+)', admin, async (req, res) => {
 });
 
 /**
+ * Tranche la pagination d'une page. **L'autre moitié de la mesure de l'étage 3.**
+ *
+ * Suivre les pages fait partie de son travail, et ce verdict-là ne se déduit
+ * pas des étiquettes des liens : `next_page()` lit aussi le `<link rel="next">`
+ * du `<head>`, qui n'est pas un `<a href>`. L'URL qu'il en tire n'apparaît alors
+ * dans aucune ligne — la console demandait de l'étiqueter « pagination » sans
+ * qu'aucune ligne ne puisse l'être.
+ *
+ * Trois valeurs, parce que savoir que la brique s'est trompée ne dit pas
+ * comment : rater une suite et courir après une fausse ne se réparent pas
+ * pareil.
+ */
+evalRouter.patch('/pages/:id(\\d+)/next', admin, async (req, res) => {
+  const parsed = evalNextSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const pageId = Number(req.params.id);
+  const page = await prisma.evalAgendaPage.findUnique({
+    where: { id: pageId },
+    select: { agendaId: true },
+  });
+  if (!page) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  await prisma.evalAgendaPage.update({
+    where: { id: pageId },
+    // L'adresse attendue ne se garde que lorsqu'elle apprend quelque chose :
+    // sur un verdict « correct », la brique a déjà trouvé la bonne.
+    data: {
+      nextVerdict: parsed.data.verdict,
+      nextExpected: parsed.data.verdict === 'CORRECT' ? '' : parsed.data.expected,
+    },
+  });
+  const agenda = await prisma.evalAgenda.update({
+    where: { id: page.agendaId },
+    data: { status: 'ANALYZED', validatedAt: null },
+    include: AGENDA_INCLUDE,
+  });
+  res.json({ agenda: serialize(agenda) });
+});
+
+/**
  * Donne le même verdict à tous les liens **écartés** d'une page, ou d'un seul
  * motif de rejet.
  *
@@ -549,6 +594,18 @@ evalRouter.post('/agendas/:id(\\d+)/validate', admin, async (req, res) => {
   const reste = await prisma.evalLink.count({
     where: { page: { agendaId: id }, reviewed: false },
   });
+  const pagesSansVerdict = await prisma.evalAgendaPage.count({
+    where: { agendaId: id, nextVerdict: null },
+  });
+  if (pagesSansVerdict > 0) {
+    res.status(409).json({
+      error:
+        `${pagesSansVerdict} page(s) n'ont pas de verdict de pagination. Suivre les ` +
+        "pages fait partie du travail de l'étage 3 : dites, pour chacune, si ce " +
+        "qu'il a trouvé — ou n'a pas trouvé — est juste.",
+    });
+    return;
+  }
   if (reste > 0) {
     res.status(409).json({
       error:

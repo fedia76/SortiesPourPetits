@@ -563,6 +563,22 @@ export const evalVerdictSchema = z.object({
 });
 
 /**
+ * Le verdict de pagination d'une page, tranché par un humain.
+ *
+ * Il ne se déduit pas des étiquettes des liens : `next_page()` lit aussi le
+ * `<link rel="next">` du `<head>`, qui n'est pas un `<a href>` et n'apparaît
+ * donc dans aucune ligne. L'URL qu'il en tire était alors invérifiable.
+ *
+ * `expected` documente la vraie page suivante quand on la connaît — c'est ce
+ * qu'il faut pour réparer, savoir que la brique s'est trompée ne disant pas ce
+ * qu'elle aurait dû trouver.
+ */
+export const evalNextSchema = z.object({
+  verdict: z.enum(['CORRECT', 'MANQUEE', 'FAUSSE']),
+  expected: z.union([scraperUrl, z.literal('')]).optional().default(''),
+});
+
+/**
  * Trancher d'un coup tous les liens écartés d'une page, ou d'un seul motif.
  *
  * Soixante-seize écartés se lisent mal un par un, et la plupart sont du bruit
