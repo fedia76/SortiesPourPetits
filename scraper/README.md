@@ -1192,6 +1192,14 @@ mesure-ci est gratuite comme les deux précédentes. C'est aussi pourquoi la fil
 d'extraction passe **en dernier** dans le worker, derrière les recherches, les
 agendas et les lectures — tout ce qui est gratuit passe avant.
 
+La console permet de mettre en file **toutes** les fiches lisibles d'un coup
+(`POST /api/eval/extractions/all`), et c'est le seul geste du banc dont la
+dépense suit le nombre de pages : d'où la confirmation, qui annonce le compte
+avant de partir. Le serveur reste seul juge de ce qui est éligible — lu,
+au-dessus du seuil, pas déjà extrait — et rend combien de lignes ont réellement
+été créées, qui peut être moins que ce que la console annonçait si une page a
+été extraite depuis un autre onglet entre-temps.
+
 ### Le registre, et comment le lire
 
 Les journaux de run s'oublient — un bouton de la console est là pour ça. Une

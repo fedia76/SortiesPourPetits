@@ -133,6 +133,9 @@ Le Havre, Niort et Nancy.
   du maximum), l'**accord** avec les dates JSON-LD de l'étage 5. Un bouton « le
   reste est juste » balaie ce qu'aucun instrument n'a signalé — et seulement
   cela, sinon la mesure redeviendrait indiscernable de « personne n'a rien lu ».
+  Un second bouton met en file **toutes** les fiches lisibles d'un coup, avec le
+  compte annoncé : c'est le seul geste du banc dont la dépense suit le nombre de
+  pages, un appel par fiche.
   *Intérieur / extérieur* n'a **aucun** instrument — une page ne l'écrit presque
   jamais, elle dit « au parc de la Villette » et c'est le lecteur qui conclut.
   C'est là que la **fiche approuvée** prend le relais : approuver veut dire qu'un
@@ -235,6 +238,7 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | GET | `/api/eval/pages/:id/html` | admin | Le HTML gelé d'une page, tel que le site l'a servi ce jour-là |
 | GET / POST | `/api/eval/seed` | admin | Les deux paniers : ce qu'ils peuvent donner, et en mettre un lot en file |
 | GET / POST | `/api/eval/extractions` | admin | Le banc d'extraction : les fiches et ce que l'étage 6 a tiré du texte gelé |
+| POST | `/api/eval/extractions/all` | admin | Mettre en file toutes les fiches lisibles — un appel payant par fiche |
 | PATCH | `/api/eval/extractions/:id` | admin | Trancher un ou plusieurs champs — *juste*, *faux*, *inventé*, *manqué* |
 | POST | `/api/eval/extractions/:id/validate` | admin | Figer la fiche — tous les aspects exigés |
 | POST | `/api/eval/harvest/next` | modérateur | Le worker réclame le prochain agenda du banc |

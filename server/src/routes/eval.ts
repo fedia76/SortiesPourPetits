@@ -40,6 +40,7 @@ import {
   evalHarvestSchema,
   evalBulkVerdictSchema,
   evalExtractSchema,
+  evalExtractionAllSchema,
   evalExtractionSchema,
   evalFieldVerdictSchema,
   evalLinkSchema,
@@ -1466,6 +1467,60 @@ evalRouter.get('/extractions', admin, async (_req, res) => {
  * atteint l'étage 6 dans le pipeline. La mettre au banc mesurerait un appel que
  * la production ne fait pas.
  */
+/**
+ * Les pages du banc de lecture qu'on peut envoyer à l'extraction.
+ *
+ * **Lues**, et **au-dessus du seuil** : une page que l'étage 5 aurait
+ * abandonnée n'atteint jamais l'étage 6 dans le pipeline, et la mettre au banc
+ * mesurerait un appel qui n'a pas lieu. Et pas déjà extraite : une seconde
+ * ligne pour la même page compterait deux fois la même mesure.
+ *
+ * La route unitaire ci-dessous épelle les mêmes clauses une à une, pour dire
+ * **laquelle** a refusé — un « non » sans motif enverrait chercher dans le code.
+ */
+const EXTRACTABLE = {
+  status: { in: ['ANALYZED', 'VALIDATED'] },
+  tooShort: false,
+  textChars: { gt: 0 },
+  extraction: { is: null },
+} satisfies Prisma.EvalReadingWhereInput;
+
+/**
+ * Met en file **toutes** les fiches extractibles d'un coup.
+ *
+ * C'est le seul geste du banc qui engage une dépense proportionnelle au nombre
+ * de pages : une extraction, un appel. La console demande donc confirmation en
+ * annonçant le compte, et le serveur reste seul juge de ce qui est éligible —
+ * il rend combien de lignes ont réellement été créées, qui peut être moins que
+ * ce que la console annonçait si une page a été extraite entre-temps.
+ */
+evalRouter.post('/extractions/all', admin, async (req, res) => {
+  const parsed = evalExtractionAllSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const rows = await prisma.evalReading.findMany({
+    where: EXTRACTABLE,
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  });
+  if (!rows.length) {
+    res.status(409).json({ error: 'Aucune fiche lue en attente d’extraction' });
+    return;
+  }
+  const created = await prisma.evalExtraction.createMany({
+    data: rows.map((row) => ({
+      readingId: row.id,
+      model: parsed.data.model,
+      createdById: req.user!.id,
+    })),
+    // Une course entre deux onglets ne doit pas faire échouer le lot.
+    skipDuplicates: true,
+  });
+  res.status(201).json({ added: created.count });
+});
+
 evalRouter.post('/extractions', admin, async (req, res) => {
   const parsed = evalExtractionSchema.safeParse(req.body);
   if (!parsed.success) {

@@ -778,6 +778,18 @@ export const evalExtractionSchema = z.object({
 });
 
 /**
+ * Mettre en file **toutes** les fiches lisibles du banc de lecture.
+ *
+ * Pas de `readingId` : c'est le serveur qui tient la liste des pages
+ * extractibles, et lui seul. Laisser la console énumérer les identifiants
+ * ferait de sa copie une seconde vérité — elle en tient déjà une pour peupler
+ * son menu, et deux listes finissent toujours par diverger.
+ */
+export const evalExtractionAllSchema = z.object({
+  model: z.string().trim().max(120).optional().default(''),
+});
+
+/**
  * Ce que le worker rend d'une extraction : la fiche, ses aspects, et le prix.
  *
  * Les aspects arrivent tels que le Python les a calculés — libellé compris. Le
