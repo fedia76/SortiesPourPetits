@@ -22,12 +22,13 @@ import sys
 import tempfile
 import time
 import traceback
+from dataclasses import replace as dataclass_replace
 from pathlib import Path
 from typing import Any, Callable
 
 from .api import ApiError, SppApi
-from .config import ConfigError, Environment, config_from_api, load_dotenv
-from .evaluation import harvest_agenda, read_page
+from .config import Config, ConfigError, Environment, config_from_api, load_dotenv
+from .evaluation import extract_page, harvest_agenda, read_page
 from .harvest import Fetcher
 from .journal import RemoteJournal, RunLog, run_log_path
 from .ledger import Ledger, ledger_path
@@ -292,6 +293,73 @@ def read(reading: dict[str, Any], api: SppApi, quiet: bool) -> None:
             print(f"Clôture impossible de la lecture #{reading_id} : {api_err}", file=sys.stderr, flush=True)
 
 
+def extract(job: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> None:
+    """Rejoue l'étage 6 sur un texte du banc de lecture, et clôt quoi qu'il arrive.
+
+    Trois choses distinguent cette file des deux autres, et toutes les trois
+    tiennent au fait que c'est le **premier étage payant** que le banc mesure :
+
+    * l'entrée ne vient pas du web mais du site — c'est le texte que l'étage 5 a
+      archivé. Retélécharger la page mêlerait la mesure de deux étages ;
+    * il faut un fournisseur, donc une clé d'API, donc une configuration. Elle
+      est minimale et assumée : le banc mesure le **prompt d'extraction du
+      scraper**, pas celui d'une recherche particulière ;
+    * ce que l'appel a coûté part avec le compte rendu. Taire le prix ferait
+      croire que cette mesure-ci est gratuite comme les précédentes.
+    """
+    extraction_id = int(job["id"])
+    url = str(job["url"])
+    text = str(job.get("text") or "")
+    if not quiet:
+        print(f"▶ Banc — extraction #{extraction_id} : {url}", flush=True)
+
+    try:
+        # Le référentiel des catégories vient du site : le prompt impose au
+        # modèle de choisir dedans, et une liste inventée ici mesurerait autre
+        # chose que ce que le pipeline fait.
+        try:
+            categories = sorted(api.categories().keys())
+        except ApiError:
+            categories = []
+
+        config = Config(name="banc", theme="banc d'évaluation")
+        if job.get("model"):
+            config = dataclass_replace(config, extraction_model=str(job["model"]))
+        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
+        # Pas de journal : le banc ne rejoue pas un run, il mesure un appel. Le
+        # `RunLog` sans fichier ni console garde le fournisseur inchangé — c'est
+        # bien le vrai `provider.extract` qui travaille.
+        log = RunLog(None, verbose=False)
+        result = extract_page(
+            url,
+            text,
+            provider=provider,
+            config=config,
+            log=log,
+            categories=categories,
+            declared_dates=[str(d) for d in (job.get("dates") or [])],
+        )
+        api.report_extraction(extraction_id, result)
+        if not quiet:
+            if result.get("error"):
+                print(f"■ Banc — extraction #{extraction_id} : {result['error']}", flush=True)
+            else:
+                doubtful = sum(1 for a in result["aspects"] if a["flags"])
+                print(
+                    f"■ Banc — extraction #{extraction_id} : {doubtful} aspect(s) signalé(s), "
+                    f"{result['costUsd']} $",
+                    flush=True,
+                )
+    except ApiError as err:
+        print(f"Compte rendu impossible pour l'extraction #{extraction_id} : {err}", file=sys.stderr, flush=True)
+    except Exception as err:  # noqa: BLE001 — la trace part dans la console du service
+        traceback.print_exc()
+        try:
+            api.fail_extraction(extraction_id, f"{err.__class__.__name__} : {err}")
+        except ApiError as api_err:
+            print(f"Clôture impossible de l'extraction #{extraction_id} : {api_err}", file=sys.stderr, flush=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sortiesbot.worker",
@@ -375,6 +443,21 @@ def main(argv: list[str] | None = None) -> int:
             reading = None
         if reading:
             read(reading, api, args.quiet)
+            if args.once:
+                return 0
+            continue
+
+        # L'extraction en dernier, et pour une raison de plus que les autres :
+        # c'est la seule file du banc qui dépense de l'argent. Tout ce qui est
+        # gratuit passe avant.
+        try:
+            job = api.next_extraction()
+        except ApiError as err:
+            if not args.quiet:
+                print(f"Banc injoignable ({err}) — nouvelle tentative.", file=sys.stderr, flush=True)
+            job = None
+        if job:
+            extract(job, api, env, args.quiet)
             if args.once:
                 return 0
         elif args.once:

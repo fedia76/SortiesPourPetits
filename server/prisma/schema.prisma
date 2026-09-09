@@ -54,12 +54,13 @@ model User {
   role         Role     @default(USER)
   createdAt    DateTime @default(now())
 
-  events          Event[]      @relation("EventAuthor")
-  moderatedEvents Event[]      @relation("EventModerator")
+  events          Event[]          @relation("EventAuthor")
+  moderatedEvents Event[]          @relation("EventModerator")
   apiKeys         ApiKey[]
-  scraperRuns     ScraperRun[] @relation("ScraperRunRequester")
-  evalAgendas     EvalAgenda[]  @relation("EvalAgendaAuthor")
-  evalReadings    EvalReading[] @relation("EvalReadingAuthor")
+  scraperRuns     ScraperRun[]     @relation("ScraperRunRequester")
+  evalAgendas     EvalAgenda[]     @relation("EvalAgendaAuthor")
+  evalReadings    EvalReading[]    @relation("EvalReadingAuthor")
+  evalExtractions EvalExtraction[] @relation("EvalExtractionAuthor")
 }
 
 /// Clé d'API pour les programmes tiers. La clé en clair n'est jamais stockée :
@@ -181,7 +182,7 @@ model Event {
   scraperItems ScraperRunItem[]
   scrapedUrls  ScrapedUrl[]
   /// Les recherches de source demandées sur cette sortie depuis sa fiche.
-  sourceHunts  ScraperRun[] @relation("SourceHunt")
+  sourceHunts  ScraperRun[]     @relation("SourceHunt")
 
   @@index([status, dateEnd])
   @@index([createdById])
@@ -722,6 +723,8 @@ model EvalReading {
   author      User @relation("EvalReadingAuthor", fields: [createdById], references: [id])
   createdById Int
 
+  extraction EvalExtraction?
+
   @@index([status])
   @@index([createdById])
 }
@@ -754,4 +757,105 @@ enum EvalDatesVerdict {
   INCOMPLETES
   FAUSSES
   MANQUANTES
+}
+
+/// Une fiche du banc d'**extraction** (étage 6), adossée à une page du banc de
+/// lecture.
+///
+/// ## Pourquoi elle s'accroche à une lecture plutôt qu'à une URL
+///
+/// L'étage 6 ne lit pas une page : il lit le **texte** que l'étage 5 lui tend.
+/// Rejouer l'extraction sur la page vivante mêlerait deux mesures — une fiche
+/// sans tarif ne dirait plus si le modèle l'a raté ou si la lecture l'avait
+/// déjà emporté avec un `<aside>`. En partant du texte archivé, l'entrée est
+/// acquise, et une fiche fautive accuse bien cet étage-ci.
+///
+/// C'est aussi ce qui rend le banc économe : la page n'est téléchargée qu'une
+/// fois, par l'étage 5, et l'extraction se rejoue autant qu'on veut dessus.
+///
+/// ## Une seule extraction par page lue
+///
+/// Comparer deux modèles sur la même page demanderait de garder plusieurs
+/// fiches par lecture, donc une notion de campagne. Ce n'est pas ce dont le
+/// banc a besoin d'abord : ce qu'il faut savoir, c'est **quels champs se
+/// ratent**, et un seul passage le dit. Relancer écrase, et c'est dit dans la
+/// console.
+model EvalExtraction {
+  id     Int              @id @default(autoincrement())
+  status EvalAgendaStatus @default(QUEUED)
+  error  String?          @db.Text
+  note   String           @default("") @db.Text
+
+  /// Le modèle qui a répondu. Une mesure sans le nom du modèle ne se compare à
+  /// rien : c'est la première chose qui change entre deux campagnes.
+  model String @default("") @db.VarChar(120)
+
+  /// La fiche rendue, en JSON — les vingt-trois champs, entiers.
+  ///
+  /// Y compris ceux qu'aucun aspect ne juge : c'est la pièce à conviction, et
+  /// une mesure dont on ne peut plus relire l'objet n'est pas vérifiable.
+  fiche String @default("{}") @db.Text
+
+  /// Les douze aspects, en JSON : libellé, valeur en clair, renseigné ou non,
+  /// quel instrument l'a examiné, et les défauts relevés.
+  ///
+  /// En JSON plutôt qu'en table, et c'est un choix : la liste des aspects est
+  /// définie par `evaluation.audit_fiche`, côté Python, et elle bougera. Une
+  /// table imposerait une migration à chaque champ ajouté au schéma
+  /// d'extraction, pour une mesure qui tient en quelques dizaines de lignes et
+  /// que le serveur agrège de toute façon en mémoire.
+  aspects String @default("[]") @db.Text
+
+  /// Ce qu'un humain dit de chaque aspect, en JSON : `{"tarif": "JUSTE", …}`.
+  ///
+  /// Une clé absente veut dire « personne n'a encore regardé » — sans
+  /// ambiguïté, et c'est ce qui remplace le `reviewed` de l'étage 3. Les quatre
+  /// valeurs sont celles de `EvalFieldVerdict`.
+  verdicts String @default("{}") @db.Text
+
+  /// Ce que l'appel a coûté. Le premier étage du banc dont la mesure se paie :
+  /// le taire donnerait l'impression qu'elle est gratuite comme les autres.
+  inputTokens  Int   @default(0)
+  outputTokens Int   @default(0)
+  costUsd      Float @default(0)
+
+  createdAt   DateTime  @default(now())
+  analyzedAt  DateTime?
+  validatedAt DateTime?
+
+  reading   EvalReading @relation(fields: [readingId], references: [id], onDelete: Cascade)
+  readingId Int         @unique
+
+  author      User @relation("EvalExtractionAuthor", fields: [createdById], references: [id])
+  createdById Int
+
+  @@index([status])
+  @@index([createdById])
+}
+
+/// Ce qu'un humain dit d'un champ extrait.
+///
+/// Quatre, et le croisement avec « le modèle a-t-il rempli ce champ ? » donne
+/// les trois taux qui comptent :
+///
+/// |                | la page le dit      | la page n'en dit rien |
+/// |----------------|---------------------|-----------------------|
+/// | **renseigné**  | JUSTE, ou FAUX      | **INVENTE**           |
+/// | **vide**       | **MANQUE**          | JUSTE (vide à raison) |
+///
+/// `INVENTE` mérite sa propre valeur plutôt que d'être rangé sous `FAUX` :
+/// c'est la faute propre à un modèle, celle qu'aucun code déterministe ne
+/// commet, et c'est très exactement celle que l'ancrage sait pré-signaler sans
+/// coûter la moindre étiquette. Les mélanger cacherait le seul chiffre qui dit
+/// si le prompt tient le modèle.
+enum EvalFieldVerdict {
+  /// La valeur rendue est celle de la page — ou le champ est vide, et la page
+  /// n'en dit rien.
+  JUSTE
+  /// Une valeur est rendue, la page en donne une autre.
+  FAUX
+  /// Une valeur est rendue, la page n'en donne aucune.
+  INVENTE
+  /// Aucune valeur rendue, alors que la page en donne une.
+  MANQUE
 }

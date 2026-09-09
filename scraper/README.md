@@ -74,11 +74,14 @@ recherche avec la configuration que le site lui donne, rend compte page par
 page (`/runs/:id/items`) puis clôt l'exécution avec ses compteurs
 (`/runs/:id/finish`). Il ne décide de rien : tout se règle dans la console.
 
-Il sert aussi **deux autres files**, celles du banc d'évaluation
-(`POST /api/eval/harvest/next` et `POST /api/eval/reading/next`) — voir « [Le banc
+Il sert aussi **trois autres files**, celles du banc d'évaluation
+(`POST /api/eval/harvest/next`, `/eval/reading/next` et `/eval/extraction/next`)
+— voir « [Le banc
 d'évaluation](#le-banc-dévaluation) ». Les recherches passent d'abord : une
 recherche produit des sorties que des parents attendent, un agenda du banc
-attend un humain qui le relira quand il pourra.
+attend un humain qui le relira quand il pourra. Et l'extraction passe en
+dernier, pour une raison de plus : c'est la seule file du banc qui dépense de
+l'argent.
 
 Une exécution est close **quoi qu'il arrive**, y compris sur un plantage :
 sans clôture elle resterait « En cours » dans la console, et bloquerait toute
@@ -1005,6 +1008,112 @@ regardé », sans ambiguïté et sans colonne de plus.
 La validation exige les trois : valider en n'ayant jugé que le texte produirait
 un taux d'illustration calculé sur des pages que personne n'a regardées — le
 même mensonge que le rappel à 100 % de l'étage 3.
+
+### Le banc d'extraction — l'étage 6
+
+Le premier étage mesuré qui **coûte**. Et celui qui produit tout ce dont la
+fiche vit : `setting` (intérieur / extérieur), l'âge, le tarif, les horaires, le
+lieu, la catégorie. L'étage 5 ne rend qu'un texte ; tout le reste est lu dedans
+par le modèle.
+
+Trois choses le distinguent des deux étages précédents, et toutes les trois
+tiennent au fait que c'est un appel de modèle.
+
+#### 1. L'entrée est le texte de l'étage 5, jamais la page
+
+`evaluation.extract_page()` reçoit le texte que le banc de lecture a archivé, et
+appelle le vrai `provider.extract` dessus. Retélécharger mêlerait deux mesures :
+une fiche sans tarif dirait aussi bien « le modèle ne l'a pas vu » que « l'étage
+5 l'avait déjà emporté avec un `<aside>` ». Le banc de lecture a mesuré cela
+séparément, et l'a déjà dit — c'est pour ça qu'il vient avant.
+
+Conséquence pratique : on ne met au banc d'extraction qu'une page **déjà lue et
+au-dessus du seuil**. Une page que l'étage 5 aurait abandonnée n'atteint jamais
+l'extraction dans le pipeline, et la mesurer ici mesurerait un appel qui n'a
+pas lieu.
+
+Un seul appel, en mode **page unique**. Le mode programme pose une autre
+question — non pas « les champs sont-ils justes ? » mais « le découpage est-il
+le bon ? » — qui est une mesure de segmentation, avec ses propres taux. Ce que
+le banc mesure quand même, c'est la **décision** qui y mène : `several` est le
+premier aspect jugé.
+
+#### 2. Champ par champ, jamais fiche par fiche
+
+Une fiche « fausse » ne dit pas quel champ a lâché, donc ne dit pas quoi
+réparer. `audit_fiche()` découpe la fiche en **douze aspects** — les vingt-trois
+colonnes du schéma regroupées par *fait* : `free` et `price` sont un seul
+tarif, `age_min` et `age_max` un seul âge, les trois colonnes d'adresse une
+seule adresse. Les juger séparément compterait deux fois la même erreur.
+
+Quatre verdicts par aspect, et le croisement avec « le modèle a-t-il rempli ce
+champ ? » donne les trois taux :
+
+|                | la page le dit  | la page n'en dit rien |
+|----------------|-----------------|-----------------------|
+| **renseigné**  | JUSTE ou FAUX   | **INVENTE**           |
+| **vide**       | **MANQUE**      | JUSTE (vide à raison) |
+
+* **exactitude** = juste / (juste + faux + inventé) — parmi les valeurs qu'il a
+  osé écrire, la part juste ;
+* **couverture** = juste / (juste + faux + manqué) — parmi ce que la page
+  offrait, la part rapportée juste. C'est le rappel, et c'est le seul chiffre
+  qui demande vraiment un humain : il faut avoir lu la page pour savoir que
+  l'information y était ;
+* **invention** = inventé / renseigné. La faute propre à un modèle, celle
+  qu'aucun code déterministe ne commet. La ranger sous « faux » cacherait le
+  seul chiffre qui dit si le prompt tient le modèle.
+
+#### 3. Trois instruments gratuits, avant le premier clic
+
+Aucun ne coûte d'étiquette, et à eux trois ils désignent la plupart des fautes.
+
+| Instrument | Ce qu'il vérifie | Aspects couverts |
+|---|---|---|
+| **ancrage** | la valeur se retrouve-t-elle dans le texte ? | titre, description, tarif, âge, dates, jours, horaires, lieu, adresse |
+| **cohérence** | la fiche se contredit-elle toute seule ? | âge (min > max), tarif (gratuit *et* payant), dates (fin avant début), code postal |
+| **accord** | les dates rencontrent-elles celles du JSON-LD de l'étage 5 ? | dates |
+| **référentiel** | la catégorie existe-t-elle sur le site ? | catégorie |
+
+L'ancrage d'un **nombre** exige son voisinage : un tarif de 8 € ne compte pour
+ancré que près d'un `€` ou d'un « euro », un âge de 3 ans près d'un « ans » ou
+d'un « à partir de ». Sans ça, n'importe quel texte assez long ancre n'importe
+quel petit entier, et l'instrument ne dirait plus rien. Les **dates** sont
+cherchées sous toutes leurs écritures françaises — « 3 août », « 03/08/2026 »,
+« 2026-08-03 » — sinon toute date correctement lue serait déclarée inventée.
+
+Une exception est codée en dur, et elle est réglementaire : le prompt impose de
+mettre *aujourd'hui* en date de début quand la page n'annonce qu'une fin
+(« jusqu'au 23 octobre »). Cette date-là n'est pas dans la page, et la signaler
+accuserait le modèle d'avoir suivi sa consigne.
+
+Comme ailleurs au banc, ce sont des **libellés, pas des verdicts** : ils disent
+où regarder d'abord, ce qui est beaucoup quand douze aspects sur trente fiches
+font trois cent soixante décisions dont l'écrasante majorité est « juste ». D'où
+le bouton « le reste est juste », qui balaie ce qu'**aucun** instrument n'a
+signalé — et seulement cela. Balayer aussi les aspects signalés annulerait le
+seul travail que les instruments font, et rendrait la mesure indiscernable de
+« personne n'a rien lu ».
+
+#### Ce qu'aucun instrument ne sait faire
+
+`setting` — intérieur ou extérieur — n'a **aucun** ancrage possible. Une page ne
+l'écrit presque jamais : elle dit « au parc de la Villette » ou « salle
+Jean-Vilar », et c'est le lecteur qui conclut. C'est l'aspect qui coûtera
+toujours une étiquette humaine, et le banc l'annonce (`instrument: "aucun"`)
+plutôt que d'imaginer une heuristique qui donnerait l'illusion d'une mesure.
+
+La `description` est dans un entre-deux : c'est une reformulation, jugée sur le
+**vocabulaire** — une description dont la moitié des mots longs sont absents de
+la page n'a pas été tirée d'elle.
+
+#### Le prix de la mesure
+
+Une extraction = un appel. Le compte rendu porte les jetons et le coût, et la
+console les additionne : taire le prix donnerait l'impression que cette
+mesure-ci est gratuite comme les deux précédentes. C'est aussi pourquoi la file
+d'extraction passe **en dernier** dans le worker, derrière les recherches, les
+agendas et les lectures — tout ce qui est gratuit passe avant.
 
 ### Le registre, et comment le lire
 

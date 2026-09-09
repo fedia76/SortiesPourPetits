@@ -737,3 +737,75 @@ export const evalReadSchema = z.object({
   imageLooksLogo: z.boolean().optional().default(false),
   html: z.string().max(EVAL_MAX_HTML_B64).optional(),
 });
+
+// ────────────────────────────────────── banc d'extraction (étage 6)
+
+/**
+ * Les quatre verdicts d'un champ extrait, et pourquoi quatre.
+ *
+ * Le croisement avec « le modèle a-t-il rempli ce champ ? » donne les trois
+ * taux qui comptent : l'exactitude de ce qu'il ose, sa couverture de ce que la
+ * page offre, et son taux d'**invention**.
+ *
+ * `INVENTE` mérite sa propre valeur plutôt que d'être rangé sous `FAUX` : c'est
+ * la faute propre à un modèle, celle qu'aucun code déterministe ne commet, et
+ * c'est très exactement celle que l'ancrage sait pré-signaler sans coûter la
+ * moindre étiquette. Les mélanger cacherait le seul chiffre qui dit si le
+ * prompt tient le modèle.
+ */
+export const EVAL_FIELD_VERDICTS = ['JUSTE', 'FAUX', 'INVENTE', 'MANQUE'] as const;
+
+/**
+ * Trancher un aspect d'une fiche, ou plusieurs d'un coup.
+ *
+ * La clé est celle que `evaluation.audit_fiche` a donnée à l'aspect. Le serveur
+ * ne tient pas la liste : elle est définie côté Python, elle bougera avec le
+ * schéma d'extraction, et l'écrire ici en ferait une seconde vérité qui
+ * finirait par diverger. Il vérifie seulement que la clé existe dans les
+ * aspects de **cette** fiche — ce qui est la seule vérification qui ait un sens.
+ */
+export const evalFieldVerdictSchema = z.object({
+  verdicts: z
+    .record(z.string().trim().min(1).max(40), z.enum(EVAL_FIELD_VERDICTS))
+    .refine((v) => Object.keys(v).length > 0, { message: 'Aucun verdict à enregistrer' }),
+  note: z.string().trim().max(2000).optional(),
+});
+
+/** Le modèle à interroger, quand on ne veut pas celui du scraper par défaut. */
+export const evalExtractionSchema = z.object({
+  readingId: z.number().int().positive(),
+  model: z.string().trim().max(120).optional().default(''),
+});
+
+/**
+ * Ce que le worker rend d'une extraction : la fiche, ses aspects, et le prix.
+ *
+ * Les aspects arrivent tels que le Python les a calculés — libellé compris. Le
+ * serveur ne les recompose pas : l'ancrage, la cohérence et l'accord sont des
+ * instruments de `evaluation.audit_fiche`, et les réimplémenter en Node
+ * donnerait la vérité d'une réimplémentation, c'est-à-dire aucune.
+ */
+export const evalExtractSchema = z.object({
+  error: z.string().trim().max(2000).optional(),
+  model: z.string().trim().max(120).optional().default(''),
+  fiche: z.record(z.string(), z.unknown()).optional().default({}),
+  aspects: z
+    .array(
+      z.object({
+        key: z.string().trim().min(1).max(40),
+        label: z.string().trim().max(80),
+        value: z.string().max(4000).optional().default(''),
+        filled: z.boolean().optional().default(false),
+        /** Ce qui l'a examiné : « ancrage », « cohérence », « aucun »… */
+        instrument: z.string().trim().max(60).optional().default(''),
+        /** Les défauts relevés. Des libellés, pas des verdicts. */
+        flags: z.array(z.string().trim().max(30)).max(8).optional().default([]),
+      }),
+    )
+    .max(40)
+    .optional()
+    .default([]),
+  inputTokens: z.number().int().min(0).optional().default(0),
+  outputTokens: z.number().int().min(0).optional().default(0),
+  costUsd: z.number().min(0).optional().default(0),
+});

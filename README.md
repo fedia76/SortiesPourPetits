@@ -104,6 +104,27 @@ Le Havre, Niort et Nancy.
   attrape le ratage le plus discret : quand le titre de la page ne se retrouve
   pas dans le texte extrait, c'est qu'un `<header>` a été décapé — et les dates
   et l'adresse sont parties avec.
+- **Banc d'évaluation, l'extraction** (étage 6) : le premier étage mesuré qui
+  **coûte**, et c'est là que naissent *intérieur / extérieur*, l'âge, le tarif,
+  le lieu — l'étage 5 ne rend qu'un texte, tout le reste de la fiche est lu
+  dedans par le modèle. L'extraction est rejouée sur le **texte gelé** de
+  l'étage 5, jamais sur la page : retélécharger mêlerait les deux mesures, et
+  une fiche sans tarif ne dirait plus si le modèle l'a raté ou si la lecture
+  l'avait déjà emporté avec un `<aside>`. Le jugement se fait **champ par
+  champ**, jamais fiche par fiche : une fiche « fausse » ne dit pas quoi
+  réparer, douze aspects tranchés séparément disent « le tarif se rate une fois
+  sur trois ». Quatre verdicts par champ — *juste*, *faux*, **inventé**,
+  **manqué** — d'où trois taux : l'**exactitude** (parmi les valeurs osées, la
+  part juste), la **couverture** (parmi ce que la page offrait, la part
+  rapportée), et le taux d'**invention**. Trois instruments travaillent avant le
+  premier clic et ne coûtent aucune étiquette : l'**ancrage** (toute valeur doit
+  se retrouver dans le texte), la **cohérence** interne (un âge minimum au-dessus
+  du maximum), l'**accord** avec les dates JSON-LD de l'étage 5. Un bouton « le
+  reste est juste » balaie ce qu'aucun instrument n'a signalé — et seulement
+  cela, sinon la mesure redeviendrait indiscernable de « personne n'a rien lu ».
+  *Intérieur / extérieur* n'a **aucun** instrument, et la console le dit : une
+  page ne l'écrit presque jamais, elle dit « au parc de la Villette » et c'est
+  le lecteur qui conclut.
 - **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
   sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
   une clé d'API. Il sait aussi partir d'une adresse connue — le site d'un
@@ -191,8 +212,13 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | DELETE | `/api/eval/links/:id` | admin | Retirer un ajout manuel (un lien relevé sur la page, lui, ne s'efface pas) |
 | POST | `/api/eval/agendas/:id/validate` | admin | Figer la vérité de référence : le rappel devient lisible |
 | GET | `/api/eval/pages/:id/html` | admin | Le HTML gelé d'une page, tel que le site l'a servi ce jour-là |
+| GET / POST | `/api/eval/extractions` | admin | Le banc d'extraction : les fiches et ce que l'étage 6 a tiré du texte gelé |
+| PATCH | `/api/eval/extractions/:id` | admin | Trancher un ou plusieurs champs — *juste*, *faux*, *inventé*, *manqué* |
+| POST | `/api/eval/extractions/:id/validate` | admin | Figer la fiche — tous les aspects exigés |
 | POST | `/api/eval/harvest/next` | modérateur | Le worker réclame le prochain agenda du banc |
 | POST | `/api/eval/harvest/:id/pages` | modérateur | Le worker rend les liens de chaque page |
+| POST | `/api/eval/reading/next` | modérateur | Le worker réclame la prochaine fiche à lire |
+| POST | `/api/eval/extraction/next` | modérateur | Le worker réclame la prochaine extraction — le texte part avec |
 | GET | `/api/admin/users` | admin | Liste des utilisateurs |
 | PATCH | `/api/admin/users/:id/role` | admin | Changer un rôle |
 

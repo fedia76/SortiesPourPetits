@@ -1020,3 +1020,157 @@ export interface EvalReadingStats {
   /** Sous le seuil, donc abandonnées avant tout appel payant. */
   abandonnees: number;
 }
+
+// ───────────────────────────────────── banc d'extraction (étage 6)
+
+/**
+ * Ce qu'un humain dit d'un champ extrait.
+ *
+ * Le croisement avec « le modèle a-t-il rempli ce champ ? » donne les trois
+ * taux qui comptent :
+ *
+ * |                | la page le dit  | la page n'en dit rien |
+ * |----------------|-----------------|-----------------------|
+ * | **renseigné**  | JUSTE ou FAUX   | **INVENTE**           |
+ * | **vide**       | **MANQUE**      | JUSTE (vide à raison) |
+ *
+ * `INVENTE` a sa propre valeur plutôt que d'être rangé sous `FAUX` : c'est la
+ * faute propre à un modèle, celle qu'aucun code déterministe ne commet, et
+ * celle que l'ancrage sait pré-signaler sans coûter d'étiquette.
+ */
+export type EvalFieldVerdict = 'JUSTE' | 'FAUX' | 'INVENTE' | 'MANQUE';
+
+/**
+ * Les deux réponses possibles selon que le modèle a rempli le champ ou non.
+ *
+ * Deux boutons, jamais quatre : `INVENTE` n'a aucun sens sur un champ vide, et
+ * `MANQUE` aucun sur un champ renseigné. Montrer les quatre ferait relire à
+ * chaque fois deux réponses impossibles — douze aspects sur trente fiches, ce
+ * sont sept cents lectures inutiles.
+ */
+export const EVAL_FIELD_CHOICES: Record<
+  'filled' | 'empty',
+  { key: EvalFieldVerdict; label: string; hint: string }[]
+> = {
+  filled: [
+    { key: 'JUSTE', label: 'Juste', hint: "C'est bien ce que la page dit." },
+    { key: 'FAUX', label: 'Faux', hint: 'La page le dit, mais autrement.' },
+    {
+      key: 'INVENTE',
+      label: 'Inventé',
+      hint: "La page n'en dit rien nulle part : le modèle l'a composé.",
+    },
+  ],
+  empty: [
+    { key: 'JUSTE', label: 'Vide à raison', hint: "La page n'en dit rien : ne rien mettre est juste." },
+    { key: 'MANQUE', label: 'Manqué', hint: 'La page le dit, et le champ est resté vide.' },
+  ],
+};
+
+/**
+ * Ce qu'un instrument a relevé sur un champ. Des libellés, pas des verdicts :
+ * le modèle a rendu ce qu'il a rendu, et c'est ce rendu qu'on mesure. Ils
+ * disent seulement où regarder d'abord.
+ */
+export const EVAL_FLAG_LABELS: Record<string, { label: string; hint: string }> = {
+  hors_texte: {
+    label: 'hors texte',
+    hint: "Cette valeur ne se retrouve pas dans le texte de la page. C'est le signe d'une invention — l'ancrage l'attrape sans savoir ce qui est vrai.",
+  },
+  incoherent: {
+    label: 'incohérent',
+    hint: 'La fiche se contredit toute seule : un âge minimum au-dessus du maximum, un tarif sur une entrée gratuite, une fin avant le début.',
+  },
+  hors_liste: {
+    label: 'hors référentiel',
+    hint: "La catégorie n'existe pas sur le site : le prompt impose de choisir dans la liste, et elle n'a pas été suivie.",
+  },
+  divergent: {
+    label: 'en désaccord',
+    hint: "Ces dates ne rencontrent pas celles que l'étage 5 a relevées en JSON-LD. Deux lectures indépendantes de la même page se contredisent.",
+  },
+};
+
+/** Un aspect d'une fiche, tel que `audit_fiche` le rend. */
+export interface EvalAspect {
+  key: string;
+  label: string;
+  /** La valeur rendue, en clair — « 8 € », « 3 à 10 ans », « intérieur ». */
+  value: string;
+  filled: boolean;
+  /** Ce qui l'a examiné : « ancrage », « ancrage + cohérence », « aucun ». */
+  instrument: string;
+  flags: string[];
+}
+
+/** Une fiche du banc d'extraction, et ce que l'étage 6 en a tiré. */
+export interface EvalExtraction {
+  id: number;
+  status: EvalAgendaStatus;
+  error: string | null;
+  note: string;
+  model: string;
+  /** Les vingt-trois champs rendus par le modèle. La pièce à conviction. */
+  fiche: Record<string, unknown>;
+  aspects: EvalAspect[];
+  /** Ce qu'un humain dit de chaque aspect. Clé absente = personne n'a regardé. */
+  verdicts: Record<string, EvalFieldVerdict>;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  /** Tous les aspects sont tranchés : cette fiche compte dans la mesure. */
+  judged: boolean;
+  createdAt: string;
+  analyzedAt: string | null;
+  validatedAt: string | null;
+  author: { id: number; displayName: string };
+  /** La page du banc de lecture d'où vient le texte. L'entrée, gelée. */
+  reading: {
+    id: number;
+    url: string;
+    label: string;
+    text: string;
+    textChars: number;
+    dates: string[];
+    heading: string;
+    truncated: boolean;
+    tooShort: boolean;
+    textVerdict: EvalTextVerdict | null;
+  };
+}
+
+/** Un aspect, agrégé sur tout le banc. */
+export interface EvalAspectStats {
+  key: string;
+  label: string;
+  instrument: string;
+  renseigne: number;
+  justeRenseigne: number;
+  faux: number;
+  invente: number;
+  manque: number;
+  videJuste: number;
+  /** Fiches — jugées ou non — où un instrument a levé un drapeau. */
+  signale: number;
+  /** Parmi les valeurs qu'il a osé écrire, la part juste. La précision. */
+  exactitude: number | null;
+  /** Parmi ce que la page offrait, la part rapportée juste. Le rappel. */
+  couverture: number | null;
+  /** La part de ses valeurs que la page ne dit nulle part. */
+  invention: number | null;
+}
+
+/** Ce que l'étage 6 rend juste, sur l'ensemble du banc. */
+export interface EvalExtractionStats {
+  fiches: number;
+  judged: number;
+  /** Fiches que le modèle a déclarées hors sujet. */
+  ecartees: number;
+  /** Fiches renvoyées comme programmes, à relire d'un bloc. */
+  programmes: number;
+  inventions: number;
+  manques: number;
+  /** Ce que la mesure a coûté. Le premier étage du banc qui se paie. */
+  costUsd: number;
+  aspects: EvalAspectStats[];
+}

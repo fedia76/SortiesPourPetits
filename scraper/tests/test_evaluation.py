@@ -17,11 +17,14 @@ contrat entre le banc et lui :
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
-from sortiesbot.evaluation import audit_links, harvest_agenda
+from sortiesbot.evaluation import audit_fiche, audit_links, extract_page, fiche_payload, harvest_agenda
 from sortiesbot.harvest import links_of
 from sortiesbot.harvest import FetchError
+from sortiesbot.models import ExtractedEvent
 
 AGENDA = "https://agenda.exemple.fr/sorties"
 
@@ -564,3 +567,232 @@ def test_l_echange_de_langue_est_rejoue():
     assert out["url"] == fr
     assert out["swapped"] is True
     assert "marionnettes" in out["text"]
+
+
+# ═══════════════════════════════════ étage 6 — les instruments de l'extraction
+
+#: Une page de spectacle, telle que l'étage 5 la rendrait. Tout ce que la fiche
+#: de référence prétend s'y trouve, et rien d'autre : c'est ce qui permet aux
+#: tests d'invention d'être des tests, et pas des coïncidences.
+PAGE = (
+    "Le Petit Prince — spectacle de marionnettes pour enfants au théâtre "
+    "municipal de Rouen. Du 3 août au 23 août 2026, tous les mercredis à 14h30. "
+    "Tarif : 8 €, à partir de 3 ans et jusqu'à 10 ans. "
+    "Théâtre municipal, 12 rue des Arts, 76000 Rouen."
+)
+
+JUSTE = ExtractedEvent(
+    relevant=True,
+    title="Le Petit Prince",
+    description="Un spectacle de marionnettes pour enfants au théâtre municipal de Rouen.",
+    price=8.0,
+    age_min=3,
+    age_max=10,
+    date_start="2026-08-03",
+    date_end="2026-08-23",
+    weekdays=("mercredi",),
+    open_time="14:30",
+    setting="INDOOR",
+    category="Spectacle",
+    venue_name="Théâtre municipal",
+    venue_address="12 rue des Arts",
+    venue_city="Rouen",
+    venue_postal_code="76000",
+)
+
+
+def flags(event: ExtractedEvent, key: str, **kwargs) -> list[str]:
+    """Les drapeaux levés sur un aspect. Le raccourci de tous les tests d'après."""
+    aspects = {a["key"]: a for a in audit_fiche(event, PAGE, **kwargs)}
+    return aspects[key]["flags"]
+
+
+def test_une_fiche_entierement_ancree_ne_leve_aucun_drapeau():
+    """Le test qui garde les instruments honnêtes.
+
+    Un ancrage trop strict crierait à l'invention sur une fiche juste, et la
+    console se remplirait de rouge que personne ne regarderait plus — un
+    détecteur qui sonne toujours ne détecte rien.
+    """
+    assert all(not a["flags"] for a in audit_fiche(JUSTE, PAGE, categories=["Spectacle"]))
+
+
+def test_les_douze_aspects_sont_tous_rendus_meme_vides():
+    """Un aspect absent du relevé serait un champ que personne ne jugerait jamais,
+    et son taux ne serait pas « inconnu » mais **absent** — donc invisible."""
+    keys = [a["key"] for a in audit_fiche(ExtractedEvent(relevant=True), PAGE)]
+
+    assert keys == [
+        "verdict", "titre", "description", "tarif", "age", "dates",
+        "jours", "horaires", "cadre", "categorie", "lieu", "adresse",
+    ]
+
+
+def test_un_tarif_absent_de_la_page_est_signale():
+    assert flags(replace(JUSTE, price=12.0), "tarif") == ["hors_texte"]
+
+
+def test_un_nombre_nu_ne_suffit_pas_a_ancrer_un_tarif():
+    """« 3 » est dans la page — c'est l'âge minimum. Un tarif de 3 € n'y est pas.
+
+    C'est tout le sujet de l'ancrage d'un nombre : sans le voisinage d'une
+    monnaie, n'importe quel texte assez long ancre n'importe quel petit entier,
+    et l'instrument ne dirait plus rien.
+    """
+    assert flags(replace(JUSTE, price=3.0), "tarif") == ["hors_texte"]
+
+
+def test_une_gratuite_inventee_est_signalee():
+    """Rien n'oblige un modèle à écrire un nombre pour inventer un tarif : dire
+    « c'est gratuit » d'une page qui affiche 8 € est la même faute."""
+    assert flags(replace(JUSTE, free=True, price=None), "tarif") == ["hors_texte"]
+
+
+def test_un_age_minimum_au_dessus_du_maximum_est_incoherent():
+    """La cohérence ne demande pas de lire la page : la fiche se contredit seule."""
+    assert "incoherent" in flags(replace(JUSTE, age_min=14, age_max=6), "age")
+
+
+def test_un_age_ecrit_autrement_dans_la_page_reste_ancre():
+    """« à partir de 5 » et « 5 ans » sont deux façons de dire la même chose.
+
+    N'en reconnaître qu'une ferait signaler des âges correctement lus, et
+    l'instrument coûterait plus de vérifications qu'il n'en épargne. Noter que la
+    page n'écrit « ans » que pour le maximum : c'est le cas courant.
+    """
+    page = "Spectacle pour les enfants à partir de 5 et jusqu'à 12 ans."
+    event = ExtractedEvent(relevant=True, age_min=5, age_max=12)
+
+    aspects = {a["key"]: a for a in audit_fiche(event, page)}
+    assert aspects["age"]["flags"] == []
+
+
+def test_une_date_ecrite_en_toutes_lettres_est_ancree():
+    """Une page française écrit « 3 août », pas « 2026-08-03 ». Ne chercher que
+    la forme ISO ferait déclarer inventée toute date correctement lue."""
+    assert flags(JUSTE, "dates") == []
+
+
+def test_la_regle_du_jusqu_au_n_est_pas_comptee_comme_une_invention():
+    """Le prompt impose de mettre *aujourd'hui* en date de début quand la page
+    n'annonce qu'une fin. Cette date-là n'est donc pas dans la page, et c'est
+    réglementaire : la signaler accuserait le modèle d'avoir suivi sa consigne."""
+    page = "Exposition Dinosaures, à l'affiche jusqu'au 23 octobre 2026."
+    event = ExtractedEvent(relevant=True, date_start="2026-09-09", date_end="2026-10-23")
+
+    aspects = {a["key"]: a for a in audit_fiche(event, page)}
+    assert aspects["dates"]["flags"] == []
+
+
+def test_des_dates_qui_ne_rencontrent_pas_le_json_ld_sont_signalees():
+    """Deux lectures indépendantes de la même page qui se contredisent : l'une
+    des deux se trompe, et il faut un humain pour dire laquelle."""
+    assert "divergent" in flags(JUSTE, "dates", declared_dates=["2026-12-25T14:30"])
+
+
+def test_le_json_ld_qui_tombe_dans_la_plage_ne_signale_rien():
+    assert flags(JUSTE, "dates", declared_dates=["2026-08-05T14:30"]) == []
+
+
+def test_une_categorie_hors_du_referentiel_est_signalee():
+    """Le prompt impose de choisir dans la liste du site. Un référentiel se
+    vérifie sans humain, et c'est le seul aspect dont l'instrument est exact."""
+    assert flags(JUSTE, "categorie", categories=["Musée", "Balade"]) == ["hors_liste"]
+
+
+def test_le_cadre_n_a_aucun_instrument_et_c_est_dit():
+    """Intérieur ou extérieur ne s'ancre pas : une page dit « au parc de la
+    Villette » et c'est le lecteur qui conclut. Le banc l'annonce plutôt que
+    d'imaginer une heuristique qui donnerait l'illusion d'une mesure."""
+    aspects = {a["key"]: a for a in audit_fiche(replace(JUSTE, setting="OUTDOOR"), PAGE)}
+
+    assert aspects["cadre"]["instrument"] == "aucun"
+    assert aspects["cadre"]["flags"] == []
+    assert aspects["cadre"]["value"] == "extérieur"
+
+
+def test_un_champ_vide_ne_porte_jamais_de_drapeau():
+    """Il n'y a rien à ancrer dans le vide. Un drapeau y voudrait dire « la page
+    en parle », et ça, aucun instrument ne sait le dire — c'est très exactement
+    ce que l'humain apporte, et le taux de couverture qui en dépend."""
+    vide = ExtractedEvent(relevant=True)
+
+    assert all(not a["flags"] for a in audit_fiche(vide, PAGE) if not a["filled"])
+
+
+def test_un_refus_sans_motif_est_incoherent():
+    """Le prompt demande d'expliquer pourquoi dans `skip_reason`. Une page
+    écartée sans motif ne coûte rien, ne se voit nulle part, et fait disparaître
+    une sortie sans laisser de trace."""
+    assert flags(ExtractedEvent(relevant=False), "verdict") == ["incoherent"]
+
+
+def test_la_fiche_part_entiere_meme_les_champs_que_personne_ne_juge():
+    """C'est la pièce à conviction : une mesure dont on ne peut plus relire
+    l'objet n'est pas vérifiable."""
+    payload = fiche_payload(JUSTE)
+
+    assert payload["venuePostalCode"] == "76000"
+    assert payload["ageMin"] == 3
+    assert payload["weekdays"] == ["mercredi"]
+    assert payload["skipReason"] == ""
+
+
+class FakeProvider:
+    """Un fournisseur qui rend la fiche qu'on lui donne, sans appeler personne."""
+
+    def __init__(self, event: ExtractedEvent):
+        self.event = event
+        self.seen: dict[str, object] = {}
+        self.usage = type("U", (), {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0})()
+
+    def extract(self, url, content, config, categories, log, *, multiple=False):
+        self.seen = {"url": url, "content": content, "multiple": multiple}
+        self.usage.input_tokens = 2130
+        self.usage.output_tokens = 410
+        self.usage.cost_usd = 0.0031
+        return [self.event]
+
+
+class FakeConfig:
+    extraction_model = "modele-de-test"
+
+
+def test_l_extraction_est_rejouee_sur_le_texte_gele_jamais_sur_la_page():
+    """L'entrée de cet étage est la sortie du précédent.
+
+    C'est ce qui rend les deux mesures séparables : une fiche sans tarif dirait
+    aussi bien « le modèle ne l'a pas vu » que « l'étage 5 l'avait déjà emporté
+    avec un `<aside>` ». En partant du texte archivé, l'entrée est acquise.
+    """
+    provider = FakeProvider(JUSTE)
+
+    out = extract_page(
+        "https://theatre.exemple.fr/le-petit-prince",
+        PAGE,
+        provider=provider,
+        config=FakeConfig(),
+        log=None,
+        categories=["Spectacle"],
+    )
+
+    assert provider.seen["content"] == PAGE
+    assert provider.seen["multiple"] is False
+    assert out["model"] == "modele-de-test"
+    assert out["fiche"]["title"] == "Le Petit Prince"
+    assert len(out["aspects"]) == 12
+    assert out["inputTokens"] == 2130
+    assert out["costUsd"] == 0.0031
+
+
+def test_un_appel_en_echec_remonte_son_motif_et_rien_d_autre():
+    class Cassé(FakeProvider):
+        def extract(self, *a, **kw):
+            raise RuntimeError("quota dépassé")
+
+    out = extract_page(
+        "https://exemple.fr/x", PAGE, provider=Cassé(JUSTE), config=FakeConfig(), log=None
+    )
+
+    assert "quota dépassé" in out["error"]
+    assert "aspects" not in out

@@ -1,4 +1,4 @@
-"""Étage 5 — le modèle remplit la ou les fiches que porte une page.
+"""Étage 6 — le modèle remplit la ou les fiches que porte une page.
 
 Un appel, sans outil, avec un schéma JSON imposé : c'est le seul étage dont le
 coût dépend de la longueur de la page, et le seul qui puisse rendre plusieurs
