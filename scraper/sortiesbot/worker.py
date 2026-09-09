@@ -382,6 +382,10 @@ def extract(job: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> 
             log=log,
             categories=categories,
             declared_dates=[str(d) for d in (job.get("dates") or [])],
+            # La sortie qu'un modérateur a approuvée depuis cette page, quand
+            # il y en a une. Une étiquette humaine déjà payée, champ par
+            # champ — elle propose un verdict, elle n'en écrit aucun.
+            reference=job.get("reference") or None,
         )
         api.report_extraction(extraction_id, result)
         if not quiet:
@@ -389,9 +393,15 @@ def extract(job: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> 
                 print(f"■ Banc — extraction #{extraction_id} : {result['error']}", flush=True)
             else:
                 doubtful = sum(1 for a in result["aspects"] if a["flags"])
+                proposed = sum(1 for a in result["aspects"] if a.get("proposed"))
+                repere = (
+                    f", {proposed} proposé(s) par la fiche approuvée"
+                    if result.get("hasReference")
+                    else " (page changée depuis le run)" if result.get("pageMoved") else ""
+                )
                 print(
-                    f"■ Banc — extraction #{extraction_id} : {doubtful} aspect(s) signalé(s), "
-                    f"{result['costUsd']} $",
+                    f"■ Banc — extraction #{extraction_id} : {doubtful} aspect(s) signalé(s)"
+                    f"{repere}, {result['costUsd']} $",
                     flush=True,
                 )
     except ApiError as err:

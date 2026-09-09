@@ -34,6 +34,7 @@ import { api } from '../lib/api';
 import {
   EVAL_FIELD_CHOICES,
   EVAL_FLAG_LABELS,
+  EVAL_ORIGIN_LABELS,
   EVAL_READ_ASPECTS,
   EVAL_STATUS_LABELS,
   EVAL_VERDICT_HINTS,
@@ -50,7 +51,10 @@ import type {
   EvalLink,
   EvalNextVerdict,
   EvalReading,
+  EvalReadingOrigin,
   EvalReadingStats,
+  EvalReference,
+  EvalSeedCounts,
   EvalVerdict,
 } from '../types';
 
@@ -121,6 +125,10 @@ const readForm = ref({ url: '', label: '' });
 const addingRead = ref(false);
 const openReadings = ref(new Set<number>());
 
+/** Ce que chaque panier peut encore donner. Nul tant qu'on n'a pas demandé. */
+const seed = ref<EvalSeedCounts | null>(null);
+const seeding = ref('');
+
 // ──────────────────────────────────────── étage 6 : le banc d'extraction
 
 const extractions = ref<EvalExtraction[]>([]);
@@ -159,6 +167,14 @@ async function loadReadings(quiet = false) {
   }
 }
 
+async function loadSeed(quiet = false) {
+  try {
+    seed.value = await api.get<EvalSeedCounts>('/api/eval/seed');
+  } catch (e) {
+    if (!quiet) error.value = e instanceof Error ? e.message : 'Erreur';
+  }
+}
+
 async function loadExtractions(quiet = false) {
   try {
     const data = await api.get<{ extractions: EvalExtraction[]; stats: EvalExtractionStats }>(
@@ -182,7 +198,7 @@ function tick() {
 }
 
 onMounted(async () => {
-  await Promise.all([load(), loadReadings(), loadExtractions()]);
+  await Promise.all([load(), loadReadings(), loadExtractions(), loadSeed()]);
   poll = setInterval(tick, 5000);
 });
 onUnmounted(() => {
@@ -634,6 +650,22 @@ async function removeReading(reading: EvalReading) {
  */
 function readFlags(r: EvalReading): { tone: 'bad' | 'warn'; text: string }[] {
   const flags: { tone: 'bad' | 'warn'; text: string }[] = [];
+  // Le panier des abandons porte une précoche : la brique a dit non. Reste à
+  // dire si elle avait raison, et c'est précisément ce que personne n'a
+  // jamais vérifié.
+  if (r.origin === 'ABANDONNEE' && r.status !== 'QUEUED' && r.status !== 'RUNNING') {
+    flags.push(
+      r.tooShort
+        ? {
+            tone: 'warn',
+            text: `Le pipeline avait abandonné cette page (« ${r.runReason || 'sans motif'} »), et la relecture le confirme. Reste à dire s'il avait raison de le faire.`,
+          }
+        : {
+            tone: 'bad',
+            text: `Le pipeline avait abandonné cette page (« ${r.runReason || 'sans motif'} »), mais à la relecture elle passe le seuil. Soit le site a changé, soit l'abandon était une faute.`,
+          },
+    );
+  }
   if (r.tooShort) {
     flags.push({
       tone: 'bad',
@@ -665,6 +697,98 @@ function readFlags(r: EvalReading): { tone: 'bad' | 'warn'; text: string }[] {
     flags.push({ tone: 'warn', text: `Échange de langue : la page lue est ${r.readUrl}` });
   }
   return flags;
+}
+
+// ──────────────────────────── peupler le banc avec ce que le pipeline a fait
+
+/**
+ * Met en file un lot de pages tirées d'un panier.
+ *
+ * Deux paniers, et l'équilibre entre eux est **la** question de ce banc. Une
+ * sortie approuvée est une page où l'étage 5 a réussi — son texte était
+ * lisible, sinon elle ne serait jamais devenue une sortie. N'en prendre que
+ * celles-là mesurerait la brique sur ses propres succès : on lirait 96 % de
+ * textes corrects, et ça ne voudrait rien dire.
+ */
+async function seedBucket(bucket: 'approuvees' | 'abandonnees', limit: number) {
+  error.value = '';
+  notice.value = '';
+  seeding.value = bucket;
+  try {
+    const data = await api.post<{ added: number }>('/api/eval/seed', { bucket, limit });
+    notice.value = `${data.added} page(s) mise(s) en file : le worker les lira et les gèlera.`;
+    await Promise.all([loadReadings(true), loadSeed(true)]);
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erreur';
+  } finally {
+    seeding.value = '';
+  }
+}
+
+/** L'équilibre des deux paniers dans le banc, qui est ce qu'il faut surveiller. */
+const readingMix = computed(() => {
+  const count = (origin: EvalReadingOrigin) =>
+    readings.value.filter((r) => r.origin === origin).length;
+  return {
+    APPROUVEE: count('APPROUVEE'),
+    ABANDONNEE: count('ABANDONNEE'),
+    MANUEL: count('MANUEL'),
+  };
+});
+
+function originLabel(origin: EvalReadingOrigin) {
+  return EVAL_ORIGIN_LABELS[origin];
+}
+
+/**
+ * Depuis combien de temps le pipeline avait lu cette page.
+ *
+ * La fiche décrit la page de ce jour-là ; le banc la relit aujourd'hui, et
+ * aucun HTML d'époque n'est conservé. Plus l'écart est grand, moins un
+ * désaccord accuse le modèle.
+ */
+function drift(readAt: string | null): string {
+  if (!readAt) return '';
+  const days = Math.round((Date.now() - new Date(readAt).getTime()) / 86400000);
+  if (days <= 0) return "lue par le pipeline aujourd'hui";
+  return `lue par le pipeline il y a ${days} jour${days > 1 ? 's' : ''}`;
+}
+
+/** La fiche approuvée, en lignes, pour la montrer à côté du texte. */
+function referenceRows(ref: EvalReference): { label: string; value: string }[] {
+  const tarif = ref.isFree ? 'gratuit' : ref.price === null ? '' : `${ref.price} €`;
+  const age =
+    ref.ageMin !== null && ref.ageMax !== null
+      ? `${ref.ageMin} à ${ref.ageMax} ans`
+      : ref.ageMin !== null
+        ? `dès ${ref.ageMin} ans`
+        : ref.ageMax !== null
+          ? `jusqu'à ${ref.ageMax} ans`
+          : '';
+  const dates = ref.isPermanent
+    ? "toute l'année"
+    : ref.dateStart && ref.dateEnd && ref.dateEnd !== ref.dateStart
+      ? `du ${ref.dateStart} au ${ref.dateEnd}`
+      : ref.dateStart;
+  const cadre = { INDOOR: 'intérieur', OUTDOOR: 'extérieur', BOTH: 'les deux' }[ref.setting] ?? '';
+  return [
+    { label: 'Titre', value: ref.title },
+    { label: 'Tarif', value: tarif },
+    { label: 'Âge', value: age },
+    { label: 'Dates', value: dates },
+    { label: 'Jours', value: ref.days.length ? `${ref.days.length} date(s)` : 'toute la plage' },
+    {
+      label: 'Horaires',
+      value: [ref.openTime, ref.closeTime].filter(Boolean).join(' – '),
+    },
+    { label: 'Intérieur / extérieur', value: cadre },
+    { label: 'Catégorie', value: ref.category },
+    { label: 'Lieu', value: ref.venueName },
+    {
+      label: 'Adresse',
+      value: [ref.venueAddress, ref.venuePostalCode, ref.venueCity].filter(Boolean).join(', '),
+    },
+  ].filter((row) => row.value);
 }
 
 // ──────────────────────────────────────── étage 6 : le banc d'extraction
@@ -735,6 +859,31 @@ async function setField(x: EvalExtraction, key: string, value: EvalFieldVerdict)
 /** Les aspects qu'aucun instrument n'a signalés et que personne n'a tranchés. */
 function sweepable(x: EvalExtraction): EvalAspect[] {
   return x.aspects.filter((a) => !a.flags.length && !x.verdicts[a.key]);
+}
+
+/** Les aspects que la fiche approuvée propose, et que personne n'a encore tranchés. */
+function proposable(x: EvalExtraction): EvalAspect[] {
+  return x.aspects.filter((a) => a.proposed && !x.verdicts[a.key]);
+}
+
+/**
+ * Confirmer d'un coup ce que la fiche approuvée propose.
+ *
+ * Ce n'est pas un raccourci : approuver veut dire qu'un modérateur a vérifié
+ * chaque champ, donc la proposition **est** une étiquette humaine. Le clic ne
+ * fait que la reporter sur cette mesure-ci — et il reste un clic, parce qu'une
+ * proposition qui s'écrirait toute seule redeviendrait indiscernable de
+ * « personne n'a regardé ».
+ */
+async function acceptProposals(x: EvalExtraction) {
+  const rest = proposable(x);
+  if (!rest.length) return;
+  const verdicts: Record<string, EvalFieldVerdict> = {};
+  for (const aspect of rest) verdicts[aspect.key] = aspect.proposed as EvalFieldVerdict;
+  const data = await act(x.id, () =>
+    api.patch<{ extraction: EvalExtraction }>(`/api/eval/extractions/${x.id}`, { verdicts }),
+  );
+  if (data) replaceExtraction(data.extraction);
 }
 
 /** Ceux qui restent à trancher, tous confondus. */
@@ -881,7 +1030,7 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
         </p>
       </div>
 
-      <form class="card form add" @submit.prevent="addReading">
+      <form class="card form add read-add" @submit.prevent="addReading">
         <div class="row">
           <div class="field grow">
             <label for="read-url">Adresse d'une fiche</label>
@@ -909,6 +1058,70 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
           que le pipeline lirait.
         </p>
       </form>
+
+      <div class="card baskets">
+        <h3>Ou peupler le banc avec ce que le pipeline a déjà fait</h3>
+        <p class="muted small-note">
+          Deux paniers, et l'équilibre entre eux est <strong>la</strong> question de ce banc. Une
+          sortie approuvée est une page où l'étage 5 a <em>réussi</em> : son texte était lisible,
+          sinon elle ne serait jamais devenue une sortie. N'en prendre que celles-là mesurerait la
+          brique sur ses propres succès — on lirait 96 % de textes corrects, et ça ne voudrait rien
+          dire. Les pages qu'il a <em>abandonnées</em> sont l'autre moitié, et personne n'a jamais
+          vérifié s'il avait raison.
+        </p>
+        <div class="basket-row">
+          <div class="basket">
+            <span class="basket-n">{{ seed ? seed.approuvees : '—' }}</span>
+            <span class="basket-t">sorties approuvées</span>
+            <p class="muted small-note">
+              Un modérateur a vérifié chaque champ : la fiche sert de
+              <strong>vérité de référence</strong> à l'onglet 6.
+            </p>
+            <button
+              class="btn small secondary"
+              type="button"
+              :disabled="!seed || !seed.approuvees || !!seeding"
+              @click="seedBucket('approuvees', 25)"
+            >
+              {{ seeding === 'approuvees' ? 'Envoi…' : 'En prendre 25' }}
+            </button>
+          </div>
+          <div class="basket">
+            <span class="basket-n">{{ seed ? seed.abandonnees : '—' }}</span>
+            <span class="basket-t">pages abandonnées</span>
+            <p class="muted small-note">
+              L'étage 5 les a écartées comme « {{ seed ? seed.abandonReason : '…' }} ».
+              <strong>Le point aveugle</strong> : nul n'a vérifié ces abandons.
+            </p>
+            <button
+              class="btn small secondary"
+              type="button"
+              :disabled="!seed || !seed.abandonnees || !!seeding"
+              @click="seedBucket('abandonnees', 25)"
+            >
+              {{ seeding === 'abandonnees' ? 'Envoi…' : 'En prendre 25' }}
+            </button>
+          </div>
+          <div class="basket mix">
+            <span class="basket-t">Au banc aujourd'hui</span>
+            <ul>
+              <li>{{ readingMix.APPROUVEE }} approuvées</li>
+              <li :class="{ warn: readingMix.APPROUVEE > 0 && readingMix.ABANDONNEE === 0 }">
+                {{ readingMix.ABANDONNEE }} abandonnées
+              </li>
+              <li>{{ readingMix.MANUEL }} saisies à la main</li>
+            </ul>
+            <p v-if="readingMix.APPROUVEE > 0 && readingMix.ABANDONNEE === 0" class="muted small-note">
+              Que des succès : les taux qui en sortiront seront flatteurs et faux.
+            </p>
+          </div>
+        </div>
+        <p class="hint">
+          Les pages sont relues et gelées comme les autres. Le pipeline n'archive pas le HTML
+          d'époque : la console affiche donc depuis combien de temps il l'avait lue — plus l'écart
+          est grand, moins un désaccord accuse la brique.
+        </p>
+      </div>
 
       <dl v-if="readStats && readStats.pages" class="stats card readstats">
         <div>
@@ -962,6 +1175,9 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
             >
             <span class="agenda-title">{{ r.label || r.url }}</span>
           </button>
+          <span v-if="r.origin !== 'MANUEL'" class="pill origin" :class="r.origin.toLowerCase()">{{
+            originLabel(r.origin)
+          }}</span>
           <span class="pill" :class="r.status.toLowerCase()">{{ statusLabel(r.status) }}</span>
         </header>
 
@@ -975,6 +1191,7 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
             rel="noopener noreferrer"
             >voir le HTML gelé</a
           >
+          <span v-if="r.readAt" class="muted small-note">{{ drift(r.readAt) }}</span>
         </p>
 
         <p v-if="r.error" class="error slim">{{ r.error }}</p>
@@ -1004,6 +1221,22 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                 <img :src="r.imageUrl" alt="" class="shot" loading="lazy" />
               </template>
               <p v-else class="muted">Aucune.</p>
+
+              <template v-if="r.reference">
+                <h4>Ce que le pipeline a publié depuis cette page</h4>
+                <p class="muted small-note">
+                  Du <strong>contexte</strong>, pas un verdict : les trois questions de cet étage
+                  portent sur ce que la page <em>contient</em>, cette fiche dit ce que la sortie
+                  <em>est</em>. Elle aide à juger si le texte porte bien la sortie — et c'est la
+                  vérité de référence de l'onglet 6, pas du 5.
+                </p>
+                <dl class="reference">
+                  <div v-for="row in referenceRows(r.reference)" :key="row.label">
+                    <dt>{{ row.label }}</dt>
+                    <dd>{{ row.value }}</dd>
+                  </div>
+                </dl>
+              </template>
             </section>
           </div>
 
@@ -1159,11 +1392,27 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
           <dt title="Renvoyées comme programmes, à relire d'un bloc">Programmes</dt>
           <dd>{{ extractStats.programmes }}</dd>
         </div>
+        <div :class="{ warn: extractStats.bougees > 0 }">
+          <dt title="Comparées à une sortie approuvée, champ par champ">Avec référence</dt>
+          <dd>{{ extractStats.avecReference }} / {{ extractStats.fiches }}</dd>
+        </div>
+        <div :class="{ flag: extractStats.corriges > 0 }">
+          <dt title="Verdicts humains qui ont contredit la fiche approuvée">Corrigés</dt>
+          <dd>{{ extractStats.corriges }}</dd>
+        </div>
         <div class="rate">
           <dt title="Le premier étage du banc dont la mesure se paie">Coût</dt>
           <dd>{{ extractStats.costUsd }} $</dd>
         </div>
       </dl>
+
+      <p v-if="extractStats && extractStats.confirmes" class="card confirm-note">
+        <strong>{{ extractStats.confirmes }}</strong> verdict(s) n'ont fait que confirmer la sortie
+        approuvée, <strong>{{ extractStats.corriges }}</strong> l'ont contredite. Le premier chiffre
+        mérite d'être regardé : une mesure entièrement confirmative reste vraie — un humain a
+        cliqué — mais elle dit surtout que le modèle et le modérateur sont d'accord, ce qui est plus
+        faible qu'une relecture indépendante. Les vrais renseignements sont dans les corrections.
+      </p>
 
       <div v-if="extractStats && extractStats.judged" class="card scroller">
         <h3>Les trois taux, aspect par aspect</h3>
@@ -1248,6 +1497,18 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
             {{ x.aspects.filter((a) => a.flags.length).length }} aspect(s) signalé(s) par les
             instruments — c'est par là qu'il faut commencer.
           </li>
+          <li v-if="x.pageMoved" class="bad">
+            Le titre approuvé ne se retrouve plus dans le texte : <strong>ce n'est plus la même
+            page</strong>. Les propositions de la fiche ont été retirées — elles accuseraient le
+            modèle d'un changement du site.
+          </li>
+          <li v-else-if="x.hasReference" class="ok">
+            Comparée à la sortie approuvée
+            <a v-if="x.reading.event" :href="`/sorties/${x.reading.event.id}`" target="_blank"
+              >« {{ x.reading.event.title }} »</a
+            >, dont un modérateur a vérifié chaque champ.
+            {{ x.aspects.filter((a) => a.proposed).length }} aspect(s) proposé(s).
+          </li>
           <li v-if="pending(x).length" class="warn">
             {{ pending(x).length }} aspect(s) restent à trancher.
           </li>
@@ -1287,15 +1548,22 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
                     flagLabel(f)
                   }}</span>
                 </p>
+                <p v-if="a.because" class="because" :class="{ agree: a.proposed === 'JUSTE' }">
+                  <span v-if="a.proposed" class="chip ref">{{ a.proposed.toLowerCase() }}</span>
+                  {{ a.because }}
+                </p>
                 <span class="seg">
                   <button
                     v-for="c in fieldChoices(a)"
                     :key="c.key"
                     type="button"
                     class="segb"
-                    :class="{ on: x.verdicts[a.key] === c.key }"
+                    :class="{
+                      on: x.verdicts[a.key] === c.key,
+                      proposed: !x.verdicts[a.key] && a.proposed === c.key,
+                    }"
                     :aria-pressed="x.verdicts[a.key] === c.key"
-                    :title="c.hint"
+                    :title="a.proposed === c.key ? `${c.hint} — proposé par la fiche approuvée` : c.hint"
                     :disabled="busy.has(x.id)"
                     @click="setField(x, a.key, c.key)"
                   >
@@ -1309,6 +1577,20 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
         </div>
 
         <div class="actions">
+          <button
+            v-if="proposable(x).length"
+            class="btn small"
+            type="button"
+            :disabled="busy.has(x.id)"
+            :title="
+              'Reporte les ' +
+              proposable(x).length +
+              ' verdicts que propose la sortie approuvée. Ce n’est pas un raccourci : un modérateur a vérifié chaque champ, la proposition est déjà une étiquette humaine.'
+            "
+            @click="acceptProposals(x)"
+          >
+            Confirmer la fiche approuvée ({{ proposable(x).length }})
+          </button>
           <button
             v-if="sweepable(x).length"
             class="btn small secondary"
@@ -2002,6 +2284,23 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
   font-size: 0.85rem;
   word-break: break-all;
 }
+/* L'adresse, l'archive gelée et l'ancienneté de la lecture se suivent sur une
+   ligne : sans espacement explicite ils se collent, et « voir le HTML
+   gelélue par le pipeline il y a 39 jours » ne se lit plus. */
+.agenda-url > * + * {
+  margin-left: 0.7rem;
+}
+
+/* Deux champs seulement, contre quatre pour un agenda : sans grille propre, le
+   nom se retrouvait écrasé sous le bouton. */
+.read-add .row {
+  grid-template-columns: 1fr 16rem auto;
+}
+@media (max-width: 860px) {
+  .read-add .row {
+    grid-template-columns: 1fr;
+  }
+}
 
 .pill {
   flex: none;
@@ -2632,5 +2931,137 @@ table.aspects td.bad {
   background: var(--danger-soft);
   color: var(--danger);
   font-weight: 600;
+}
+
+/* ---- les deux paniers ---- */
+.baskets {
+  margin-top: 1rem;
+  padding: 1rem 1.2rem;
+}
+.baskets h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.95rem;
+}
+.basket-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.8rem;
+  margin: 0.8rem 0 0;
+}
+@media (max-width: 860px) {
+  .basket-row {
+    grid-template-columns: 1fr;
+  }
+}
+.basket {
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 0.7rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+.basket-n {
+  font-size: 1.5rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.basket-t {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+.basket p {
+  margin: 0.1rem 0 0.4rem;
+}
+.basket.mix ul {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+}
+.basket.mix li.warn {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* L'origine se lit avant le statut : elle dit de quel côté du tri la page
+   vient, ce qui commande la lecture de tout le reste. */
+.pill.origin {
+  background: var(--bg);
+  color: var(--muted);
+}
+.pill.origin.abandonnee {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.flags li.ok {
+  border-color: var(--c2, #2f855a);
+  background: var(--bg);
+}
+
+/* ---- la fiche approuvée, en regard ---- */
+.reference {
+  margin: 0.3rem 0 0;
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.82rem;
+}
+.reference div {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.reference dt {
+  color: var(--muted);
+}
+.reference dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+/* Le motif d'une proposition : il cite la valeur approuvée, sans quoi il
+   faudrait rouvrir la fiche publiée — le travail que la référence épargne. */
+.because {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.chip.ref {
+  background: var(--warn-soft);
+  color: var(--ink);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.66rem;
+  letter-spacing: 0.03em;
+  margin-right: 0.25rem;
+}
+.because.agree .chip.ref {
+  background: var(--bg);
+  color: var(--muted);
+}
+
+/* Un bouton que la fiche approuvée propose, mais que personne n'a encore
+   cliqué : souligné, jamais coché. La différence entre les deux est toute la
+   question de ce banc. */
+.segb.proposed {
+  box-shadow: inset 0 -2px 0 var(--warn);
+  font-weight: 700;
+}
+
+.confirm-note {
+  margin-top: 0.8rem;
+  padding: 0.8rem 1.2rem;
+  font-size: 0.84rem;
+  line-height: 1.55;
 }
 </style>

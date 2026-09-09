@@ -181,6 +181,8 @@ model Event {
 
   scraperItems ScraperRunItem[]
   scrapedUrls  ScrapedUrl[]
+  /// Les pages du banc de lecture dont cette sortie est la vérité de référence.
+  evalReadings EvalReading[]
   /// Les recherches de source demandées sur cette sortie depuis sa fiche.
   sourceHunts  ScraperRun[]     @relation("SourceHunt")
 
@@ -716,6 +718,34 @@ model EvalReading {
   imageVerdict EvalImageVerdict?
   datesVerdict EvalDatesVerdict?
 
+  // ── d'où vient cette page
+  /// Saisie à la main, ou tirée d'un run — et de quel côté du tri.
+  origin EvalReadingOrigin @default(MANUEL)
+
+  /// La sortie **approuvée** que le pipeline a publiée depuis cette page.
+  ///
+  /// C'est la vérité de référence de l'étage 6 : approuver, sur ce site, veut
+  /// dire qu'un modérateur a vérifié chaque champ. Ce n'est donc pas une
+  /// précoche de plus mais une étiquette humaine déjà payée — y compris sur
+  /// `setting`, que nul instrument ne sait atteindre.
+  ///
+  /// Nulle pour une page saisie à la main, et pour toutes celles du panier des
+  /// abandons : par définition, elles n'ont produit aucune sortie.
+  event   Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  eventId Int?
+
+  /// Quand le pipeline avait lu cette page. Sert à mesurer la **dérive** : la
+  /// fiche décrit la page de ce jour-là, le banc la relit aujourd'hui, et aucun
+  /// HTML d'époque n'est conservé. Plus l'écart est grand, moins un désaccord
+  /// accuse le modèle.
+  readAt DateTime?
+
+  /// Ce que le run avait décidé de cette page, et pourquoi — « page vide ou
+  /// illisible », le motif d'une erreur réseau. C'est la précoche du panier des
+  /// abandons : la brique a dit non, et personne ne l'a jamais vérifié.
+  runDecision String @default("") @db.VarChar(40)
+  runReason   String @default("") @db.Text
+
   createdAt   DateTime  @default(now())
   analyzedAt  DateTime?
   validatedAt DateTime?
@@ -727,6 +757,24 @@ model EvalReading {
 
   @@index([status])
   @@index([createdById])
+  @@index([origin])
+}
+
+/// D'où vient une page du banc de lecture.
+///
+/// Deux paniers, et l'équilibre entre eux est **la** question de ce banc. Une
+/// sortie approuvée est une page où l'étage 5 a réussi : n'en prendre que
+/// celles-là mesurerait la brique sur ses propres succès, et donnerait 96 % de
+/// textes corrects qui ne voudraient rien dire. Les pages que la lecture a
+/// **abandonnées** sont l'autre moitié — personne n'a jamais vérifié si ces
+/// abandons étaient justifiés, et c'est très exactement son point aveugle.
+enum EvalReadingOrigin {
+  /// Saisie à la main dans la console.
+  MANUEL
+  /// Le pipeline en a tiré une sortie, qu'un modérateur a approuvée.
+  APPROUVEE
+  /// L'étage 5 l'a écartée — page vide, illisible, ou injoignable.
+  ABANDONNEE
 }
 
 /// Ce que vaut le texte qu'un étage 5 a tiré d'une page.
@@ -812,6 +860,17 @@ model EvalExtraction {
   /// ambiguïté, et c'est ce qui remplace le `reviewed` de l'étage 3. Les quatre
   /// valeurs sont celles de `EvalFieldVerdict`.
   verdicts String @default("{}") @db.Text
+
+  /// Une fiche approuvée a servi de référence, et les aspects portent donc des
+  /// verdicts **proposés**. Proposés, jamais écrits : un verdict qui
+  /// s'inscrirait tout seul redeviendrait indiscernable de « personne n'a
+  /// regardé », ce que ce banc existe pour éviter.
+  hasReference Boolean @default(false)
+
+  /// Le titre approuvé ne se retrouve plus dans le texte : la page a changé
+  /// depuis le run, et ce n'est plus la même. Toutes les propositions sont
+  /// alors retirées — elles accuseraient le modèle d'un changement du site.
+  pageMoved Boolean @default(false)
 
   /// Ce que l'appel a coûté. Le premier étage du banc dont la mesure se paie :
   /// le taire donnerait l'impression qu'elle est gratuite comme les autres.

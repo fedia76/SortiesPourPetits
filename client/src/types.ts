@@ -969,6 +969,59 @@ export const EVAL_READ_ASPECTS = [
   },
 ] as const;
 
+/**
+ * D'où vient une page du banc de lecture.
+ *
+ * Deux paniers, et l'équilibre entre eux est **la** question de ce banc. Une
+ * sortie approuvée est une page où l'étage 5 a réussi : n'en prendre que
+ * celles-là mesurerait la brique sur ses propres succès. Les pages qu'il a
+ * **abandonnées** sont l'autre moitié — personne n'a jamais vérifié si ces
+ * abandons étaient justifiés.
+ */
+export type EvalReadingOrigin = 'MANUEL' | 'APPROUVEE' | 'ABANDONNEE';
+
+export const EVAL_ORIGIN_LABELS: Record<EvalReadingOrigin, string> = {
+  MANUEL: 'saisie à la main',
+  APPROUVEE: 'sortie approuvée',
+  ABANDONNEE: 'abandonnée par la brique',
+};
+
+/**
+ * Une sortie approuvée, telle que le banc s'en sert.
+ *
+ * Approuver veut dire qu'un modérateur a vérifié **chaque champ** : ce n'est
+ * pas une précoche de plus, c'est une étiquette humaine déjà payée.
+ */
+export interface EvalReference {
+  id: number;
+  title: string;
+  isFree: boolean;
+  price: number | null;
+  ageMin: number | null;
+  ageMax: number | null;
+  isPermanent: boolean;
+  dateStart: string;
+  dateEnd: string;
+  openTime: string;
+  closeTime: string;
+  setting: string;
+  sourceUrl: string;
+  category: string;
+  venueName: string;
+  venueAddress: string;
+  venueCity: string;
+  venuePostalCode: string;
+  days: string[];
+}
+
+/** Ce que chaque panier peut encore donner au banc de lecture. */
+export interface EvalSeedCounts {
+  approuvees: number;
+  abandonnees: number;
+  /** Le libellé qui isole les abandons de l'étage 5, pour diagnostiquer un panier vide. */
+  abandonReason: string;
+}
+
 /** Une page du banc de lecture, et ce que l'étage 5 en a tiré. */
 export interface EvalReading {
   id: number;
@@ -1000,6 +1053,20 @@ export interface EvalReading {
   datesVerdict: EvalDatesVerdict | null;
   /** Les trois verdicts sont posés : cette page compte dans la mesure. */
   judged: boolean;
+  /** D'où vient cette page : saisie à la main, ou tirée d'un run. */
+  origin: EvalReadingOrigin;
+  /** Quand le pipeline l'avait lue. Mesure la dérive possible de la page. */
+  readAt: string | null;
+  runDecision: string;
+  runReason: string;
+  /**
+   * La sortie approuvée tirée de cette page.
+   *
+   * Du **contexte** ici, jamais un verdict : les trois verdicts de l'étage 5
+   * portent sur ce que la page *contient*, la fiche dit ce que la sortie *est*.
+   * C'est en revanche la vérité de référence de l'étage 6.
+   */
+  reference: EvalReference | null;
   createdAt: string;
   analyzedAt: string | null;
   validatedAt: string | null;
@@ -1101,6 +1168,16 @@ export interface EvalAspect {
   /** Ce qui l'a examiné : « ancrage », « ancrage + cohérence », « aucun ». */
   instrument: string;
   flags: string[];
+  /**
+   * Le verdict que la fiche approuvée **propose** pour ce champ.
+   *
+   * Proposé, jamais écrit : il n'entre dans `verdicts` que si un humain clique.
+   * Vide quand la référence ne peut pas trancher — la description, qui est une
+   * reformulation, ou une valeur absente de la fiche mais présente dans la page.
+   */
+  proposed?: EvalFieldVerdict | '';
+  /** Pourquoi cette proposition, avec la valeur approuvée citée. */
+  because?: string;
 }
 
 /** Une fiche du banc d'extraction, et ce que l'étage 6 en a tiré. */
@@ -1118,6 +1195,10 @@ export interface EvalExtraction {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  /** Une fiche approuvée a servi de référence : les aspects portent des propositions. */
+  hasReference: boolean;
+  /** Le titre approuvé ne se retrouve plus dans le texte : comparaison suspendue. */
+  pageMoved: boolean;
   /** Tous les aspects sont tranchés : cette fiche compte dans la mesure. */
   judged: boolean;
   createdAt: string;
@@ -1136,6 +1217,9 @@ export interface EvalExtraction {
     truncated: boolean;
     tooShort: boolean;
     textVerdict: EvalTextVerdict | null;
+    origin: EvalReadingOrigin;
+    readAt: string | null;
+    event: { id: number; title: string; status: string } | null;
   };
 }
 
@@ -1152,6 +1236,10 @@ export interface EvalAspectStats {
   videJuste: number;
   /** Fiches — jugées ou non — où un instrument a levé un drapeau. */
   signale: number;
+  /** Verdicts humains qui n'ont fait que confirmer la fiche approuvée. */
+  confirme: number;
+  /** Verdicts humains qui l'ont contredite. */
+  corrige: number;
   /** Parmi les valeurs qu'il a osé écrire, la part juste. La précision. */
   exactitude: number | null;
   /** Parmi ce que la page offrait, la part rapportée juste. Le rappel. */
@@ -1170,6 +1258,19 @@ export interface EvalExtractionStats {
   programmes: number;
   inventions: number;
   manques: number;
+  /** Fiches jugées contre une sortie approuvée. */
+  avecReference: number;
+  /** Fiches dont la page a changé depuis le run : comparaison suspendue. */
+  bougees: number;
+  /**
+   * Ce que la fiche approuvée a fait gagner, et ce qu'elle n'a pas dit.
+   *
+   * Une mesure entièrement confirmative reste vraie — un humain a cliqué — mais
+   * elle dit surtout que le modèle et le modérateur sont d'accord, ce qui est
+   * plus faible qu'une relecture indépendante. D'où le chiffre, sous les yeux.
+   */
+  confirmes: number;
+  corriges: number;
   /** Ce que la mesure a coûté. Le premier étage du banc qui se paie. */
   costUsd: number;
   aspects: EvalAspectStats[];

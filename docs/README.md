@@ -41,7 +41,10 @@ reste juste ; pour les huit, c'est `scraper-briques.html` qui fait foi.
 `scraper-evaluation.html` a changé de statut depuis. Le banc qu'il décrivait
 existe : la console `/admin/evaluation` mesure aujourd'hui les étages **3**
 (dépouillement), **5** (lecture) et **6** (extraction), chacun sur la sortie
-gelée du précédent. Ce que le document dit des cinq autres reste une
+gelée du précédent. Le banc se peuple avec ce que le pipeline a déjà fait — en
+deux paniers, les pages où il a réussi et celles qu'il a abandonnées — et les
+sorties approuvées y servent de vérité de référence, puisque approuver veut dire
+qu'un modérateur a vérifié chaque champ. Ce que le document dit des cinq autres reste une
 recommandation, et les **chiffres** qu'il cite restent des ordres de grandeur —
 les vrais sont dans la console.
 

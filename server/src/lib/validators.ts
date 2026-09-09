@@ -800,12 +800,45 @@ export const evalExtractSchema = z.object({
         instrument: z.string().trim().max(60).optional().default(''),
         /** Les défauts relevés. Des libellés, pas des verdicts. */
         flags: z.array(z.string().trim().max(30)).max(8).optional().default([]),
+        /**
+         * Le verdict que la fiche approuvée **propose** pour ce champ, quand il
+         * y en a une. Vide quand elle ne peut pas trancher — la description,
+         * qui est une reformulation, ou un champ vide des deux côtés mais
+         * ancré dans la page.
+         *
+         * Proposé, jamais écrit : il n'entre dans `verdicts` que si un humain
+         * clique. Un verdict qui s'inscrirait tout seul redeviendrait
+         * indiscernable de « personne n'a regardé ».
+         */
+        proposed: z.enum(EVAL_FIELD_VERDICTS).or(z.literal('')).optional().default(''),
+        /** Pourquoi cette proposition, en clair. */
+        because: z.string().trim().max(200).optional().default(''),
       }),
     )
     .max(40)
     .optional()
     .default([]),
+  /** Une fiche approuvée a servi de référence. */
+  hasReference: z.boolean().optional().default(false),
+  /**
+   * Le titre approuvé ne se retrouve plus dans le texte : ce n'est plus la même
+   * page, et toutes les propositions ont été retirées.
+   */
+  pageMoved: z.boolean().optional().default(false),
   inputTokens: z.number().int().min(0).optional().default(0),
   outputTokens: z.number().int().min(0).optional().default(0),
   costUsd: z.number().min(0).optional().default(0),
+});
+
+/**
+ * Peupler le banc de lecture depuis ce que le pipeline a déjà fait.
+ *
+ * Deux paniers, et l'équilibre entre eux est **la** question de ce banc :
+ * `approuvees` sont les pages où l'étage 5 a réussi, `abandonnees` celles qu'il
+ * a écartées sans que personne ne vérifie jamais s'il avait raison. Ne prendre
+ * que les premières mesurerait la brique sur ses propres succès.
+ */
+export const evalSeedSchema = z.object({
+  bucket: z.enum(['approuvees', 'abandonnees']),
+  limit: z.number().int().min(1).max(100).optional().default(25),
 });

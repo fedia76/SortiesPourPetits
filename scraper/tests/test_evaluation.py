@@ -21,7 +21,15 @@ from dataclasses import replace
 
 import pytest
 
-from sortiesbot.evaluation import audit_fiche, audit_links, extract_page, fiche_payload, harvest_agenda
+from sortiesbot.evaluation import (
+    audit_fiche,
+    audit_links,
+    extract_page,
+    fiche_payload,
+    harvest_agenda,
+    page_moved,
+    propose_verdicts,
+)
 from sortiesbot.harvest import links_of
 from sortiesbot.harvest import FetchError
 from sortiesbot.models import ExtractedEvent
@@ -796,3 +804,174 @@ def test_un_appel_en_echec_remonte_son_motif_et_rien_d_autre():
 
     assert "quota dépassé" in out["error"]
     assert "aspects" not in out
+
+
+# ═══════════════════════════ la fiche approuvée comme vérité de référence
+
+#: La sortie qu'un modérateur a approuvée depuis PAGE. Sur ce site, approuver
+#: veut dire qu'un humain a vérifié **chaque champ** : ce n'est donc pas une
+#: précoche de plus mais une étiquette déjà payée, et elle tranche l'étage 6
+#: gratuitement — y compris `setting`, que nul instrument n'atteint.
+REFERENCE = {
+    "title": "Le Petit Prince",
+    "isFree": False,
+    "price": 8,
+    "ageMin": 3,
+    "ageMax": 10,
+    "isPermanent": False,
+    "dateStart": "2026-08-03",
+    "dateEnd": "2026-08-23",
+    "openTime": "14:30",
+    "closeTime": "",
+    "setting": "INDOOR",
+    "category": "Spectacle",
+    "venueName": "Théâtre municipal",
+    "venueAddress": "12 rue des Arts",
+    "venueCity": "Rouen",
+    "venuePostalCode": "76000",
+    "days": ["2026-08-05", "2026-08-12", "2026-08-19"],
+}
+
+
+def proposals(event: ExtractedEvent, reference=None, page=PAGE) -> dict[str, str]:
+    """Le verdict proposé pour chaque aspect. Le raccourci des tests d'après."""
+    aspects = audit_fiche(event, page, [], ["Spectacle"])
+    return {
+        key: verdict
+        for key, (verdict, _) in propose_verdicts(
+            event, reference or REFERENCE, aspects
+        ).items()
+    }
+
+
+def test_une_fiche_conforme_a_la_reference_est_proposee_juste_partout():
+    assert set(proposals(JUSTE).values()) == {"JUSTE"}
+
+
+def test_la_description_ne_recoit_aucune_proposition():
+    """C'est une reformulation. Deux paraphrases différentes de la même page sont
+    toutes les deux justes, et les comparer à la lettre fabriquerait des fautes
+    qui n'existent pas — or une proposition se confirme d'un clic."""
+    assert "description" not in proposals(JUSTE)
+
+
+def test_le_cadre_est_tranche_par_la_reference_et_c_est_le_gain_principal():
+    """Intérieur ou extérieur n'a aucun instrument : une page ne l'écrit presque
+    jamais. C'est très exactement l'aspect que la fiche approuvée offre."""
+    assert proposals(replace(JUSTE, setting="OUTDOOR"))["cadre"] == "FAUX"
+    assert proposals(replace(JUSTE, setting=""))["cadre"] == "MANQUE"
+
+
+def test_un_champ_absent_de_la_reference_mais_present_dans_la_page_ne_propose_rien():
+    """Les deux instruments se contredisent : le modérateur n'a rien mis, mais
+    l'ancrage retrouve la valeur dans le texte. C'est le cas qu'il faut montrer
+    à un humain plutôt que de trancher à sa place.
+
+    Le motif reste rendu, lui : sans verdict mais avec l'explication, la console
+    dit *pourquoi* elle ne propose rien — ce qui vaut mieux qu'un silence, dans
+    lequel on ne distingue pas « pas d'avis » de « rien à dire ».
+    """
+    sans_age = {**REFERENCE, "ageMin": None, "ageMax": None}
+    aspects = audit_fiche(JUSTE, PAGE, [], ["Spectacle"])
+    verdict, because = propose_verdicts(JUSTE, sans_age, aspects)["age"]
+
+    assert verdict == ""
+    assert "dans la page" in because
+
+
+def test_une_valeur_absente_de_la_reference_et_de_la_page_est_une_invention():
+    """Là, les deux instruments s'accordent : le modérateur n'a rien vu et
+    l'ancrage non plus. C'est la faute propre au modèle."""
+    sans_tarif = {**REFERENCE, "isFree": False, "price": None}
+    invente = replace(JUSTE, price=12.0)
+
+    assert proposals(invente, sans_tarif)["tarif"] == "INVENTE"
+
+
+def test_le_motif_cite_la_valeur_approuvee():
+    """Sans elle, l'humain devrait rouvrir la fiche publiée pour trancher — le
+    travail même que la référence est censée lui épargner."""
+    aspects = audit_fiche(replace(JUSTE, setting="OUTDOOR"), PAGE, [], ["Spectacle"])
+    _, because = propose_verdicts(replace(JUSTE, setting="OUTDOOR"), REFERENCE, aspects)["cadre"]
+
+    assert "intérieur" in because
+
+
+def test_une_page_ecartee_est_contredite_par_l_approbation():
+    """Un modérateur a approuvé une sortie tirée de cette page : elle en portait
+    bien une. C'est le verdict le plus lourd de l'étage, et le seul que la
+    référence tranche sans nuance."""
+    assert proposals(ExtractedEvent(relevant=False, skip_reason="page de liste"))["verdict"] == "FAUX"
+
+
+def test_une_page_rendue_comme_programme_ne_recoit_pas_de_proposition():
+    """La référence est *une* sortie tirée de cette page ; elle ne dit rien de ce
+    qu'il y en avait d'autres."""
+    assert "verdict" not in proposals(replace(JUSTE, several=True))
+
+
+def test_les_jours_se_comparent_apres_le_calendrier_de_production():
+    """Le site stocke des dates, la fiche rend des « mercredis ». C'est
+    `schedule.resolve` qui convertit, et c'est son résultat qu'on compare —
+    refaire le calcul ici comparerait deux implémentations."""
+    assert proposals(JUSTE)["jours"] == "JUSTE"
+    # Les mêmes bornes, mais tous les jours : trois mercredis contre vingt et un.
+    assert proposals(replace(JUSTE, weekdays=()))["jours"] == "MANQUE"
+
+
+def test_une_page_qui_a_change_depuis_le_run_est_detectee():
+    """La fiche décrit la page du jour du run ; le banc la relit aujourd'hui, et
+    aucun HTML d'époque n'est conservé. Un site qui a changé de saison ferait
+    accuser le modèle de tout ce qui a bougé."""
+    assert page_moved(REFERENCE, "Exposition Dinosaures, saison 2027 au muséum de la ville.")
+    assert not page_moved(REFERENCE, PAGE)
+
+
+def test_les_propositions_disparaissent_quand_la_page_a_bouge():
+    """Elles ne sont pas seulement suspectes : elles accuseraient le modèle d'un
+    changement du site. Mieux vaut aucune proposition qu'une proposition fausse,
+    parce qu'une proposition se confirme d'un clic."""
+    provider = FakeProvider(JUSTE)
+    autre_page = "Exposition Dinosaures, saison 2027 au muséum de la ville de Rouen."
+
+    out = extract_page(
+        "https://theatre.exemple.fr/le-petit-prince",
+        autre_page,
+        provider=provider,
+        config=FakeConfig(),
+        log=None,
+        reference=REFERENCE,
+    )
+
+    assert out["pageMoved"] is True
+    assert out["hasReference"] is False
+    assert all(not a.get("proposed") for a in out["aspects"])
+
+
+def test_sans_reference_aucun_aspect_ne_porte_de_proposition():
+    out = extract_page(
+        "https://exemple.fr/x", PAGE, provider=FakeProvider(JUSTE), config=FakeConfig(), log=None
+    )
+
+    assert out["hasReference"] is False
+    assert all("proposed" not in a for a in out["aspects"])
+
+
+def test_la_reference_propose_mais_n_ecrit_jamais_de_verdict():
+    """L'invariant du banc, repris de l'étage 3 : rien n'entre dans la mesure
+    sans qu'un humain ait cliqué. Une proposition qui s'inscrirait toute seule
+    redeviendrait indiscernable de « personne n'a regardé »."""
+    out = extract_page(
+        "https://exemple.fr/x",
+        PAGE,
+        provider=FakeProvider(JUSTE),
+        config=FakeConfig(),
+        log=None,
+        reference=REFERENCE,
+    )
+
+    assert out["hasReference"] is True
+    assert any(a["proposed"] for a in out["aspects"])
+    # Le compte rendu ne porte aucun verdict : c'est le site qui tient la
+    # colonne, et elle ne se remplit qu'au clic.
+    assert "verdicts" not in out
