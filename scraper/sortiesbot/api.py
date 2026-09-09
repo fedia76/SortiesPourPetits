@@ -176,6 +176,38 @@ class SppApi:
         """
         self._post_json(f"/api/eval/harvest/{agenda_id}/fail", {"error": error[:2000]})
 
+    def next_reading(self) -> dict[str, Any] | None:
+        """Réclame la prochaine page du banc de lecture, ou None."""
+        body = self._post_json("/api/eval/reading/next")
+        return body.get("reading")
+
+    def report_reading(self, reading_id: int, result: dict[str, Any]) -> None:
+        """Rend ce que l'étage 5 a tiré de la page."""
+        self._post_json(f"/api/eval/reading/{reading_id}/result", result)
+
+    def fail_reading(self, reading_id: int, error: str) -> None:
+        """Clôt une page en échec, pour qu'elle ne reste pas « en cours »."""
+        self._post_json(f"/api/eval/reading/{reading_id}/fail", {"error": error[:2000]})
+
+    def next_extraction(self) -> dict[str, Any] | None:
+        """Réclame la prochaine extraction du banc, ou None.
+
+        Le site envoie le **texte** avec le travail, et pas seulement une URL :
+        c'est celui que l'étage 5 a archivé, et le rejouer sur la page vivante
+        mêlerait deux variables — une fiche sans tarif ne dirait plus si c'est
+        le modèle qui l'a raté ou la lecture qui l'avait déjà emporté.
+        """
+        body = self._post_json("/api/eval/extraction/next")
+        return body.get("extraction")
+
+    def report_extraction(self, extraction_id: int, result: dict[str, Any]) -> None:
+        """Rend la fiche que l'étage 6 a tirée du texte, et ce qu'elle a coûté."""
+        self._post_json(f"/api/eval/extraction/{extraction_id}/result", result)
+
+    def fail_extraction(self, extraction_id: int, error: str) -> None:
+        """Clôt une extraction en échec, pour qu'elle ne reste pas « en cours »."""
+        self._post_json(f"/api/eval/extraction/{extraction_id}/fail", {"error": error[:2000]})
+
     def known_urls(self, urls: list[str]) -> set[str]:
         """Parmi ces URLs, celles que le site a déjà vu analyser."""
         if not urls:

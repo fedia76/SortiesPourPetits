@@ -38,10 +38,12 @@ page sur son HTML, et l'*attribution* (étage 7), qui remonte d'un agrégateur �
 la page de l'organisateur. Ce que ces deux documents disent des six autres
 reste juste ; pour les huit, c'est `scraper-briques.html` qui fait foi.
 
-`scraper-evaluation.html` est du même genre — une analyse, pas une
-spécification. Il décrit un banc d'essai qui **n'est pas implémenté** : les
-chiffres qu'il cite sont des ordres de grandeur, et son plan reste une
-recommandation.
+`scraper-evaluation.html` a changé de statut depuis. Le banc qu'il décrivait
+existe : la console `/admin/evaluation` mesure aujourd'hui les étages **3**
+(dépouillement), **5** (lecture) et **6** (extraction), chacun sur la sortie
+gelée du précédent. Ce que le document dit des cinq autres reste une
+recommandation, et les **chiffres** qu'il cite restent des ordres de grandeur —
+les vrais sont dans la console.
 
 La description du pipeline, elle, est tenue à jour avec le code : le tableau
 des huit étages du [README du scraper](../scraper/README.md) et le vocabulaire

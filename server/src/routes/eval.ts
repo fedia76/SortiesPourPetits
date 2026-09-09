@@ -39,8 +39,14 @@ import {
   evalFailSchema,
   evalHarvestSchema,
   evalBulkVerdictSchema,
+  evalExtractSchema,
+  evalExtractionSchema,
+  evalFieldVerdictSchema,
   evalLinkSchema,
   evalNextSchema,
+  evalReadSchema,
+  evalReadingSchema,
+  evalReadingVerdictSchema,
   evalVerdictSchema,
 } from '../lib/validators';
 
@@ -791,6 +797,798 @@ evalRouter.post('/harvest/:id(\\d+)/fail', async (req, res) => {
   });
   if (updated.count === 0) {
     res.status(404).json({ error: 'Agenda introuvable' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════ étage 5 — le banc de lecture
+
+/**
+ * L'étage 5 lit trois fois un même HTML : le texte qui part au modèle, les
+ * dates que le site déclare, l'illustration. Et il en tire une décision — sous
+ * deux cents caractères, la page est **abandonnée** avant le moindre appel
+ * payant.
+ *
+ * ## Trois verdicts plutôt qu'un
+ *
+ * Parce que les trois lectures se ratent séparément et ne se réparent pas au
+ * même endroit. Un texte amputé accuse la liste des balises décapées ; un texte
+ * tronqué accuse le plafond de caractères ; une illustration qui est le logo du
+ * site accuse le tamis des images. Un verdict unique les mélangerait et ne
+ * pointerait rien.
+ *
+ * ## Rien n'est précoché en base
+ *
+ * À l'étage 3 il fallait précocher : cent trente-neuf liens ne se tranchent pas
+ * un par un, et il fallait distinguer ensuite ce qu'un humain avait dit de ce
+ * que la machine avait deviné. Ici il y a **trois** clics par page : la console
+ * met en avant ce que la brique prétend, mais rien de cette proposition n'est
+ * écrit. Un verdict nul veut dire « personne n'a encore regardé », sans
+ * ambiguïté et sans colonne de plus.
+ */
+const READING_SELECT = {
+  id: true, url: true, label: true, status: true, error: true, note: true,
+  readUrl: true, swapped: true, text: true, textChars: true, dates: true,
+  imageUrl: true, chars: true, htmlPath: true,
+  heading: true, h1InText: true, truncated: true, tooShort: true, imageLooksLogo: true,
+  textVerdict: true, imageVerdict: true, datesVerdict: true,
+  createdAt: true, analyzedAt: true, validatedAt: true,
+  author: { select: { id: true, displayName: true } },
+} satisfies Prisma.EvalReadingSelect;
+
+type SerializableReading = {
+  status: string;
+  htmlPath: string | null;
+  dates: string;
+  textVerdict: string | null;
+  imageVerdict: string | null;
+  datesVerdict: string | null;
+};
+
+function serializeReading<T extends SerializableReading>(reading: T) {
+  const { htmlPath, dates, ...rest } = reading;
+  let parsed: string[] = [];
+  try {
+    // Écrit par le serveur lui-même à l'import, donc bien formé — mais une
+    // ligne d'un import raté ne doit pas faire échouer toute la console.
+    parsed = JSON.parse(dates);
+  } catch {
+    parsed = [];
+  }
+  const judged =
+    !!reading.textVerdict && !!reading.imageVerdict && !!reading.datesVerdict;
+  return {
+    ...rest,
+    dates: Array.isArray(parsed) ? parsed : [],
+    archived: !!htmlPath,
+    /** Les trois verdicts sont posés : cette page compte dans la mesure. */
+    judged,
+  };
+}
+
+/**
+ * Ce que l'étage 5 rend juste, sur l'ensemble du banc.
+ *
+ * Un taux par aspect, parce que les trois se ratent séparément. Et les motifs
+ * comptés à côté, parce que « 60 % de textes corrects » ne dit pas quoi
+ * réparer, alors que « douze textes amputés » désigne la liste des balises
+ * décapées.
+ */
+function readingStats(rows: ReturnType<typeof serializeReading>[]) {
+  const judged = rows.filter((r) => r.judged);
+  const n = judged.length;
+  const part = (predicate: (r: (typeof judged)[number]) => boolean) =>
+    n > 0 ? judged.filter(predicate).length / n : null;
+  const count = (predicate: (r: (typeof rows)[number]) => boolean) =>
+    rows.filter(predicate).length;
+  return {
+    pages: rows.length,
+    judged: n,
+    textOk: part((r) => r.textVerdict === 'CORRECT'),
+    imageOk: part((r) => r.imageVerdict === 'CORRECTE'),
+    datesOk: part((r) => r.datesVerdict === 'CORRECTES'),
+    /** Le décapage a emporté une partie de la page. */
+    ampute: count((r) => r.textVerdict === 'AMPUTE'),
+    /** Le plafond de caractères a coupé la fin. */
+    tronque: count((r) => r.textVerdict === 'TRONQUE'),
+    /** Ce n'est pas la page de la sortie. */
+    horsSujet: count((r) => r.textVerdict === 'HORS_SUJET'),
+    /**
+     * Sous le seuil, donc abandonnée avant tout appel payant — le ratage le
+     * plus cher, et le seul que la brique décide toute seule. Compté sur le
+     * signal, pas sur un verdict : c'est un fait, pas un jugement.
+     */
+    abandonnees: count((r) => r.tooShort),
+  };
+}
+
+evalRouter.get('/readings', admin, async (_req, res) => {
+  const rows = await prisma.evalReading.findMany({
+    orderBy: { createdAt: 'desc' },
+    select: READING_SELECT,
+  });
+  const readings = rows.map(serializeReading);
+  res.json({ readings, stats: readingStats(readings) });
+});
+
+evalRouter.post('/readings', admin, async (req, res) => {
+  const parsed = evalReadingSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const existing = await prisma.evalReading.findUnique({
+    where: { url: parsed.data.url },
+    select: { id: true },
+  });
+  if (existing) {
+    res.status(409).json({ error: 'Cette page est déjà au banc' });
+    return;
+  }
+  const reading = await prisma.evalReading.create({
+    data: { ...parsed.data, createdById: req.user!.id },
+    select: READING_SELECT,
+  });
+  res.status(201).json({ reading: serializeReading(reading) });
+});
+
+/**
+ * Relance la lecture. Les verdicts partent avec, et il n'y a pas d'autre choix
+ * honnête : ils décrivaient la page telle qu'elle était, et elle va être
+ * retéléchargée.
+ */
+evalRouter.post('/readings/:id(\\d+)/analyze', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const current = await prisma.evalReading.findUnique({
+    where: { id },
+    select: { status: true, htmlPath: true },
+  });
+  if (!current) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  if (current.status === 'RUNNING') {
+    res.status(409).json({ error: 'Lecture déjà en cours' });
+    return;
+  }
+  await deleteEvalPages([current.htmlPath]);
+  const reading = await prisma.evalReading.update({
+    where: { id },
+    data: {
+      status: 'QUEUED', error: null, analyzedAt: null, validatedAt: null, htmlPath: null,
+      textVerdict: null, imageVerdict: null, datesVerdict: null,
+    },
+    select: READING_SELECT,
+  });
+  res.json({ reading: serializeReading(reading) });
+});
+
+/** Trancher un aspect, ou plusieurs. **C'est la mesure.** */
+evalRouter.patch('/readings/:id(\\d+)', admin, async (req, res) => {
+  const parsed = evalReadingVerdictSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const id = Number(req.params.id);
+  const current = await prisma.evalReading.findUnique({ where: { id }, select: { id: true } });
+  if (!current) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  // Corriger après validation rouvre la page : la vérité a changé.
+  const reading = await prisma.evalReading.update({
+    where: { id },
+    data: { ...parsed.data, status: 'ANALYZED', validatedAt: null },
+    select: READING_SELECT,
+  });
+  res.json({ reading: serializeReading(reading) });
+});
+
+evalRouter.post('/readings/:id(\\d+)/validate', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const current = await prisma.evalReading.findUnique({
+    where: { id },
+    select: { status: true, textVerdict: true, imageVerdict: true, datesVerdict: true },
+  });
+  if (!current) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  if (current.status !== 'ANALYZED') {
+    res.status(409).json({ error: 'Seule une lecture terminée se valide' });
+    return;
+  }
+  // Les trois aspects, ou rien. Valider en n'ayant jugé que le texte
+  // produirait un taux d'illustration calculé sur des pages que personne n'a
+  // regardées — c'est le même mensonge que le rappel à 100 % de l'étage 3.
+  if (!current.textVerdict || !current.imageVerdict || !current.datesVerdict) {
+    res.status(409).json({
+      error:
+        "Les trois aspects doivent être tranchés — texte, illustration, dates. " +
+        "Valider à moitié donnerait des taux calculés sur des pages que personne n'a regardées.",
+    });
+    return;
+  }
+  const reading = await prisma.evalReading.update({
+    where: { id },
+    data: { status: 'VALIDATED', validatedAt: new Date() },
+    select: READING_SELECT,
+  });
+  res.json({ reading: serializeReading(reading) });
+});
+
+evalRouter.delete('/readings/:id(\\d+)', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const current = await prisma.evalReading.findUnique({
+    where: { id },
+    select: { htmlPath: true },
+  });
+  if (!current) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  await deleteEvalPages([current.htmlPath]);
+  await prisma.evalReading.delete({ where: { id } });
+  res.json({ ok: true });
+});
+
+/** Le HTML gelé de la page lue. */
+evalRouter.get('/readings/:id(\\d+)/html', admin, async (req, res) => {
+  const row = await prisma.evalReading.findUnique({
+    where: { id: Number(req.params.id) },
+    select: { htmlPath: true },
+  });
+  if (!row?.htmlPath) {
+    res.status(404).json({ error: "Cette page n'a pas été archivée" });
+    return;
+  }
+  const html = await readEvalPage(row.htmlPath);
+  if (html === null) {
+    res.status(410).json({ error: "L'archive de cette page a disparu du disque" });
+    return;
+  }
+  res.type('text/plain; charset=utf-8').send(html);
+});
+
+// ─────────────────────────────────────────────────────── worker (lecture)
+
+evalRouter.post('/reading/next', async (_req, res) => {
+  const queued = await prisma.evalReading.findFirst({
+    where: { status: 'QUEUED' },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, url: true },
+  });
+  if (!queued) {
+    res.json({ reading: null });
+    return;
+  }
+  const claimed = await prisma.evalReading.updateMany({
+    where: { id: queued.id, status: 'QUEUED' },
+    data: { status: 'RUNNING' },
+  });
+  if (claimed.count === 0) {
+    res.json({ reading: null });
+    return;
+  }
+  res.json({ reading: queued });
+});
+
+evalRouter.post('/reading/:id(\\d+)/result', harvestBody, async (req, res) => {
+  const parsed = evalReadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const id = Number(req.params.id);
+  const current = await prisma.evalReading.findUnique({
+    where: { id },
+    select: { htmlPath: true },
+  });
+  if (!current) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  const { html, dates, url, error, ...rest } = parsed.data;
+  await deleteEvalPages([current.htmlPath]);
+  const archived = html ? await saveEvalPage(html) : '';
+  const reading = await prisma.evalReading.update({
+    where: { id },
+    data: {
+      ...rest,
+      readUrl: url,
+      dates: JSON.stringify(dates),
+      htmlPath: archived || null,
+      // Une page injoignable est une réponse : elle reste au banc avec son
+      // motif, plutôt que de disparaître comme si on ne l'avait pas demandée.
+      status: error ? 'FAILED' : 'ANALYZED',
+      error: error ?? null,
+      analyzedAt: new Date(),
+      validatedAt: null,
+    },
+    select: READING_SELECT,
+  });
+  res.json({ reading: serializeReading(reading) });
+});
+
+evalRouter.post('/reading/:id(\\d+)/fail', async (req, res) => {
+  const parsed = evalFailSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const updated = await prisma.evalReading.updateMany({
+    where: { id: Number(req.params.id) },
+    data: { status: 'FAILED', error: parsed.data.error },
+  });
+  if (updated.count === 0) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+// ═══════════════════════════════════ étage 6 — le banc d'extraction
+
+/**
+ * L'étage 6 est le premier que le banc mesure et qui **coûte**. Trois choses
+ * changent par rapport aux deux précédents, et toutes les trois en découlent.
+ *
+ * ## 1. Champ par champ, jamais fiche par fiche
+ *
+ * Une fiche « fausse » ne dit pas quel champ a lâché, donc ne dit pas quoi
+ * réparer. Douze aspects jugés séparément disent « le tarif se rate une fois
+ * sur trois » — et c'est une ligne de prompt à réécrire.
+ *
+ * ## 2. Trois instruments gratuits avant le premier clic
+ *
+ * L'**ancrage** (toute valeur doit se retrouver dans le texte), la **cohérence**
+ * interne (un âge minimum au-dessus du maximum), l'**accord** avec les dates
+ * JSON-LD que l'étage 5 a relevées. Aucun ne demande d'étiquette humaine, et à
+ * eux trois ils désignent la plupart des fautes. Ils sont calculés côté Python,
+ * par `evaluation.audit_fiche`, et arrivent tels quels : les recalculer ici
+ * donnerait la vérité d'une réimplémentation.
+ *
+ * Ce ne sont pas des verdicts. Comme les motifs de rejet de l'étage 3 et les
+ * signaux de l'étage 5, ce sont des libellés : ils disent **où regarder
+ * d'abord**, et c'est beaucoup quand douze aspects sur trente fiches font trois
+ * cent soixante décisions dont l'écrasante majorité est « juste ».
+ *
+ * ## 3. L'entrée est le texte de l'étage 5, jamais la page
+ *
+ * C'est ce qui fait qu'une fiche fautive accuse bien cet étage-ci. Retélécharger
+ * mêlerait deux mesures : une fiche sans tarif dirait aussi bien « le modèle ne
+ * l'a pas vu » que « la lecture l'avait déjà emporté avec un `<aside>` ». Le
+ * banc de lecture a mesuré cela séparément, et l'a déjà dit.
+ */
+const EXTRACTION_SELECT = {
+  id: true, status: true, error: true, note: true, model: true,
+  fiche: true, aspects: true, verdicts: true,
+  inputTokens: true, outputTokens: true, costUsd: true,
+  createdAt: true, analyzedAt: true, validatedAt: true,
+  author: { select: { id: true, displayName: true } },
+  // Le texte voyage avec la fiche : c'est la pièce à conviction. Juger « ce
+  // tarif est-il dans la page ? » sans l'avoir sous les yeux obligerait à
+  // rouvrir la vraie page — donc à comparer à un HTML qui a pu changer, ce que
+  // le corpus gelé existe précisément pour éviter.
+  reading: {
+    select: {
+      id: true, url: true, label: true, text: true, textChars: true,
+      dates: true, heading: true, truncated: true, tooShort: true,
+      textVerdict: true,
+    },
+  },
+} satisfies Prisma.EvalExtractionSelect;
+
+/** Un aspect tel que `audit_fiche` le rend. */
+type Aspect = {
+  key: string;
+  label: string;
+  value: string;
+  filled: boolean;
+  instrument: string;
+  flags: string[];
+};
+
+type SerializableExtraction = {
+  fiche: string;
+  aspects: string;
+  verdicts: string;
+  costUsd: number;
+  reading: { dates: string };
+};
+
+/** Un JSON écrit par le serveur lui-même, donc bien formé — mais une ligne
+ * abîmée ne doit pas faire échouer toute la console. */
+function parseJson<T>(raw: string, fallback: T): T {
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed === null ? fallback : (parsed as T);
+  } catch {
+    return fallback;
+  }
+}
+
+function serializeExtraction<T extends SerializableExtraction>(row: T) {
+  const { fiche, aspects, verdicts, reading, ...rest } = row;
+  const parsedAspects = parseJson<Aspect[]>(aspects, []);
+  const parsedVerdicts = parseJson<Record<string, string>>(verdicts, {});
+  return {
+    ...rest,
+    fiche: parseJson<Record<string, unknown>>(fiche, {}),
+    aspects: Array.isArray(parsedAspects) ? parsedAspects : [],
+    verdicts: parsedVerdicts,
+    reading: { ...reading, dates: parseJson<string[]>(reading.dates, []) },
+    /**
+     * Tous les aspects sont tranchés : cette fiche compte dans la mesure.
+     *
+     * Calculé sur les aspects de **cette** fiche, pas sur une liste tenue ici :
+     * `audit_fiche` en ajoutera, et une liste écrite côté serveur deviendrait
+     * une seconde vérité qui finirait par diverger.
+     */
+    judged:
+      parsedAspects.length > 0 && parsedAspects.every((a) => !!parsedVerdicts[a.key]),
+  };
+}
+
+type SerializedExtraction = ReturnType<typeof serializeExtraction>;
+
+/**
+ * Les trois taux, aspect par aspect.
+ *
+ * Le croisement de « le modèle a-t-il rempli ce champ ? » et de ce que l'humain
+ * en dit :
+ *
+ * |                | la page le dit  | la page n'en dit rien |
+ * |----------------|-----------------|-----------------------|
+ * | **renseigné**  | JUSTE ou FAUX   | **INVENTE**           |
+ * | **vide**       | **MANQUE**      | JUSTE (vide à raison) |
+ *
+ * * **exactitude** — parmi les valeurs qu'il a osé écrire, la part juste. C'est
+ *   la précision, et elle se lit vite : un tarif inexact vaut un parent qui
+ *   arrive avec le mauvais billet.
+ * * **couverture** — parmi ce que la page offrait, la part qu'il a rapportée
+ *   juste. C'est le rappel, et c'est le chiffre qui demande vraiment un
+ *   humain : il faut avoir lu la page pour savoir que l'information y était.
+ * * **invention** — la part de ses valeurs que la page ne dit nulle part. La
+ *   faute propre à un modèle, et la seule que l'ancrage sait pré-signaler
+ *   gratuitement.
+ *
+ * Rien n'est compté sur une fiche non jugée : un taux calculé sur des lignes
+ * que personne n'a regardées dit seulement que personne n'a regardé.
+ */
+function extractionStats(rows: SerializedExtraction[]) {
+  const judged = rows.filter((r) => r.judged);
+  const perAspect = new Map<
+    string,
+    {
+      key: string;
+      label: string;
+      instrument: string;
+      /** Fiches jugées où le modèle a rempli ce champ. */
+      renseigne: number;
+      justeRenseigne: number;
+      faux: number;
+      invente: number;
+      manque: number;
+      videJuste: number;
+      /** Fiches — jugées ou non — où un instrument a levé un drapeau. */
+      signale: number;
+    }
+  >();
+
+  for (const row of rows) {
+    for (const aspect of row.aspects) {
+      const slot = perAspect.get(aspect.key) ?? {
+        key: aspect.key,
+        label: aspect.label,
+        instrument: aspect.instrument,
+        renseigne: 0, justeRenseigne: 0, faux: 0, invente: 0, manque: 0, videJuste: 0,
+        signale: 0,
+      };
+      if (aspect.flags.length) slot.signale += 1;
+      const verdict = row.judged ? row.verdicts[aspect.key] : undefined;
+      if (verdict) {
+        if (aspect.filled) {
+          slot.renseigne += 1;
+          if (verdict === 'JUSTE') slot.justeRenseigne += 1;
+          else if (verdict === 'FAUX') slot.faux += 1;
+          else if (verdict === 'INVENTE') slot.invente += 1;
+        } else if (verdict === 'MANQUE') slot.manque += 1;
+        else slot.videJuste += 1;
+      }
+      perAspect.set(aspect.key, slot);
+    }
+  }
+
+  const rate = (num: number, den: number) => (den > 0 ? num / den : null);
+  const aspects = [...perAspect.values()].map((a) => ({
+    ...a,
+    // Ce qu'il a osé écrire, et qui était juste.
+    exactitude: rate(a.justeRenseigne, a.justeRenseigne + a.faux + a.invente),
+    // Ce que la page offrait, et qu'il a rapporté juste. FAUX y compte : la
+    // page le disait, et il ne l'a pas rapporté.
+    couverture: rate(a.justeRenseigne, a.justeRenseigne + a.faux + a.manque),
+    invention: rate(a.invente, a.renseigne),
+  }));
+
+  return {
+    fiches: rows.length,
+    judged: judged.length,
+    /** Fiches que le modèle a déclarées hors sujet. */
+    ecartees: rows.filter((r) => r.fiche.relevant === false).length,
+    /** Fiches qu'il a renvoyées comme programmes, à relire d'un bloc. */
+    programmes: rows.filter((r) => r.fiche.several === true).length,
+    inventions: aspects.reduce((sum, a) => sum + a.invente, 0),
+    manques: aspects.reduce((sum, a) => sum + a.manque, 0),
+    costUsd: Math.round(rows.reduce((sum, r) => sum + r.costUsd, 0) * 10000) / 10000,
+    aspects,
+  };
+}
+
+evalRouter.get('/extractions', admin, async (_req, res) => {
+  const rows = await prisma.evalExtraction.findMany({
+    orderBy: { createdAt: 'desc' },
+    select: EXTRACTION_SELECT,
+  });
+  const extractions = rows.map(serializeExtraction);
+  res.json({ extractions, stats: extractionStats(extractions) });
+});
+
+/**
+ * Met une fiche du banc de lecture en file d'extraction.
+ *
+ * Une lecture **analysée**, et pas n'importe laquelle : sans texte il n'y a
+ * rien à extraire, et une page que l'étage 5 aurait abandonnée n'aurait jamais
+ * atteint l'étage 6 dans le pipeline. La mettre au banc mesurerait un appel que
+ * la production ne fait pas.
+ */
+evalRouter.post('/extractions', admin, async (req, res) => {
+  const parsed = evalExtractionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const reading = await prisma.evalReading.findUnique({
+    where: { id: parsed.data.readingId },
+    select: { id: true, status: true, textChars: true, tooShort: true },
+  });
+  if (!reading) {
+    res.status(404).json({ error: 'Page introuvable au banc de lecture' });
+    return;
+  }
+  if (reading.status !== 'ANALYZED' && reading.status !== 'VALIDATED') {
+    res.status(409).json({ error: "Cette page n'a pas encore été lue par l'étage 5" });
+    return;
+  }
+  if (reading.tooShort || reading.textChars === 0) {
+    res.status(409).json({
+      error:
+        "Le texte de cette page est sous le seuil de l'étage 5 : le pipeline l'aurait " +
+        "abandonnée avant l'extraction. La mettre ici mesurerait un appel qui n'a jamais lieu.",
+    });
+    return;
+  }
+  const existing = await prisma.evalExtraction.findUnique({
+    where: { readingId: reading.id },
+    select: { id: true },
+  });
+  if (existing) {
+    res.status(409).json({ error: 'Cette page est déjà au banc d’extraction' });
+    return;
+  }
+  const created = await prisma.evalExtraction.create({
+    data: { readingId: reading.id, model: parsed.data.model, createdById: req.user!.id },
+    select: EXTRACTION_SELECT,
+  });
+  res.status(201).json({ extraction: serializeExtraction(created) });
+});
+
+/**
+ * Relance l'extraction. Les verdicts partent avec, et il n'y a pas d'autre
+ * choix honnête : ils décrivaient une fiche que le modèle va réécrire.
+ */
+evalRouter.post('/extractions/:id(\\d+)/analyze', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const current = await prisma.evalExtraction.findUnique({
+    where: { id },
+    select: { status: true },
+  });
+  if (!current) {
+    res.status(404).json({ error: 'Extraction introuvable' });
+    return;
+  }
+  if (current.status === 'RUNNING') {
+    res.status(409).json({ error: 'Extraction déjà en cours' });
+    return;
+  }
+  const extraction = await prisma.evalExtraction.update({
+    where: { id },
+    data: {
+      status: 'QUEUED', error: null, analyzedAt: null, validatedAt: null,
+      fiche: '{}', aspects: '[]', verdicts: '{}',
+      inputTokens: 0, outputTokens: 0, costUsd: 0,
+    },
+    select: EXTRACTION_SELECT,
+  });
+  res.json({ extraction: serializeExtraction(extraction) });
+});
+
+/**
+ * Trancher un aspect, ou plusieurs d'un coup. **C'est la mesure.**
+ *
+ * Les clés sont vérifiées contre les aspects de **cette** fiche, et pas contre
+ * une liste tenue ici : `audit_fiche` en ajoutera, et deux listes finissent
+ * toujours par diverger. Une clé inconnue est refusée plutôt qu'ignorée — un
+ * verdict qui n'entre dans aucun taux serait un clic perdu sans le dire.
+ */
+evalRouter.patch('/extractions/:id(\\d+)', admin, async (req, res) => {
+  const parsed = evalFieldVerdictSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const id = Number(req.params.id);
+  const current = await prisma.evalExtraction.findUnique({
+    where: { id },
+    select: { aspects: true, verdicts: true },
+  });
+  if (!current) {
+    res.status(404).json({ error: 'Extraction introuvable' });
+    return;
+  }
+  const known = new Set(parseJson<Aspect[]>(current.aspects, []).map((a) => a.key));
+  const unknown = Object.keys(parsed.data.verdicts).filter((key) => !known.has(key));
+  if (unknown.length) {
+    res.status(400).json({ error: `Aspect inconnu de cette fiche : ${unknown.join(', ')}` });
+    return;
+  }
+  const merged = {
+    ...parseJson<Record<string, string>>(current.verdicts, {}),
+    ...parsed.data.verdicts,
+  };
+  // Corriger après validation rouvre la fiche : la vérité a changé.
+  const extraction = await prisma.evalExtraction.update({
+    where: { id },
+    data: {
+      verdicts: JSON.stringify(merged),
+      ...(parsed.data.note === undefined ? {} : { note: parsed.data.note }),
+      status: 'ANALYZED',
+      validatedAt: null,
+    },
+    select: EXTRACTION_SELECT,
+  });
+  res.json({ extraction: serializeExtraction(extraction) });
+});
+
+evalRouter.post('/extractions/:id(\\d+)/validate', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const current = await prisma.evalExtraction.findUnique({
+    where: { id },
+    select: { status: true, aspects: true, verdicts: true },
+  });
+  if (!current) {
+    res.status(404).json({ error: 'Extraction introuvable' });
+    return;
+  }
+  if (current.status !== 'ANALYZED') {
+    res.status(409).json({ error: 'Seule une extraction terminée se valide' });
+    return;
+  }
+  const aspects = parseJson<Aspect[]>(current.aspects, []);
+  const verdicts = parseJson<Record<string, string>>(current.verdicts, {});
+  const left = aspects.filter((a) => !verdicts[a.key]);
+  // Tous les aspects, ou rien. Valider en n'ayant jugé que le tarif produirait
+  // un taux d'âge calculé sur des fiches que personne n'a regardées — le même
+  // mensonge que le rappel à 100 % de l'étage 3.
+  if (left.length) {
+    res.status(409).json({
+      error:
+        `Il reste ${left.length} aspect(s) à trancher : ${left.map((a) => a.label).join(', ')}. ` +
+        "Valider à moitié donnerait des taux calculés sur des champs que personne n'a regardés.",
+    });
+    return;
+  }
+  const extraction = await prisma.evalExtraction.update({
+    where: { id },
+    data: { status: 'VALIDATED', validatedAt: new Date() },
+    select: EXTRACTION_SELECT,
+  });
+  res.json({ extraction: serializeExtraction(extraction) });
+});
+
+evalRouter.delete('/extractions/:id(\\d+)', admin, async (req, res) => {
+  const deleted = await prisma.evalExtraction.deleteMany({ where: { id: Number(req.params.id) } });
+  if (deleted.count === 0) {
+    res.status(404).json({ error: 'Extraction introuvable' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+// ──────────────────────────────────────────────────── worker (extraction)
+
+evalRouter.post('/extraction/next', async (_req, res) => {
+  const queued = await prisma.evalExtraction.findFirst({
+    where: { status: 'QUEUED' },
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      model: true,
+      reading: { select: { readUrl: true, url: true, text: true, dates: true } },
+    },
+  });
+  if (!queued) {
+    res.json({ extraction: null });
+    return;
+  }
+  const claimed = await prisma.evalExtraction.updateMany({
+    where: { id: queued.id, status: 'QUEUED' },
+    data: { status: 'RUNNING' },
+  });
+  if (claimed.count === 0) {
+    res.json({ extraction: null });
+    return;
+  }
+  res.json({
+    extraction: {
+      id: queued.id,
+      model: queued.model,
+      // L'adresse réellement lue quand l'échange de langue a joué : c'est celle
+      // que le pipeline aurait donnée au modèle, et le prompt la cite.
+      url: queued.reading.readUrl || queued.reading.url,
+      // Le texte gelé, jamais la page : l'entrée de cet étage est la sortie du
+      // précédent, et c'est ce qui rend les deux mesures séparables.
+      text: queued.reading.text,
+      // Les dates JSON-LD de l'étage 5, pour l'instrument d'accord.
+      dates: parseJson<string[]>(queued.reading.dates, []),
+    },
+  });
+});
+
+evalRouter.post('/extraction/:id(\\d+)/result', harvestBody, async (req, res) => {
+  const parsed = evalExtractSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const id = Number(req.params.id);
+  const { error, fiche, aspects, model, ...usage } = parsed.data;
+  const updated = await prisma.evalExtraction.updateMany({
+    where: { id },
+    data: {
+      ...usage,
+      ...(model ? { model } : {}),
+      fiche: JSON.stringify(fiche),
+      aspects: JSON.stringify(aspects),
+      verdicts: '{}',
+      status: error ? 'FAILED' : 'ANALYZED',
+      error: error ?? null,
+      analyzedAt: new Date(),
+      validatedAt: null,
+    },
+  });
+  if (updated.count === 0) {
+    res.status(404).json({ error: 'Extraction introuvable' });
+    return;
+  }
+  const row = await prisma.evalExtraction.findUnique({ where: { id }, select: EXTRACTION_SELECT });
+  res.json({ extraction: row ? serializeExtraction(row) : null });
+});
+
+evalRouter.post('/extraction/:id(\\d+)/fail', async (req, res) => {
+  const parsed = evalFailSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const updated = await prisma.evalExtraction.updateMany({
+    where: { id: Number(req.params.id) },
+    data: { status: 'FAILED', error: parsed.data.error },
+  });
+  if (updated.count === 0) {
+    res.status(404).json({ error: 'Extraction introuvable' });
     return;
   }
   res.json({ ok: true });

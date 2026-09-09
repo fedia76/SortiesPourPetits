@@ -416,8 +416,8 @@ table.mini td.name { font-weight: 700; color: var(--ink); white-space: nowrap; }
       <tr class="r6">
         <td class="br"><span class="num">6</span>Extraction</td>
         <td><b>un champ</b>, jamais une fiche</td>
-        <td>humain sur ≈ 100 pages, + la vérification d'ancrage qui, elle, ne coûte rien</td>
-        <td>exactitude champ par champ — une date est juste ou fausse, ça se compte</td>
+        <td>humain, mais seulement après trois instruments gratuits : <b>ancrage</b>, <b>cohérence</b> interne, <b>accord</b> avec le JSON-LD de l'étage 5</td>
+        <td>quatre verdicts par champ — juste, faux, <b>inventé</b>, <b>manqué</b> — d'où trois taux : exactitude, couverture, <b>invention</b></td>
         <td><span class="verdict yes">oui</span></td>
       </tr>
       <tr class="r7">
@@ -474,7 +474,10 @@ table.mini td.name { font-weight: 700; color: var(--ink); white-space: nowrap; }
       <ul>
         <li>Toute valeur extraite doit se retrouver dans le texte de la page : un prix, une ville, une date. Ce qui ne s'y retrouve pas est une hallucination — <b>détectée sans le moindre jeu de test</b>.</li>
         <li>C'est exactement le principe de l'étage 7, généralisé à l'étage 6.</li>
-        <li>Reste <code>description</code>, seul champ non vérifiable mécaniquement : c'est le seul endroit où un juge modèle se justifie — et il faut alors <b>l'étalonner</b> contre ≈ 50 jugements humains. Un juge non calibré est un thermomètre non gradué.</li>
+        <li>Un <b>nombre nu ne prouve rien</b> : « 8 » se trouve dans n'importe quel texte assez long. Un tarif n'est tenu pour ancré que près d'un <code>€</code>, un âge près d'un « ans » ou d'un « à partir de ». Sans ce voisinage, l'instrument sonnerait toujours et ne détecterait plus rien.</li>
+        <li>Une <b>date</b> se cherche sous toutes ses écritures françaises — « 3 août », « 03/08/2026 », « 2026-08-03 » — sinon toute date correctement lue serait déclarée inventée.</li>
+        <li>Reste <code>description</code>, jugée sur le <b>vocabulaire</b> : une description dont la moitié des mots longs sont absents de la page n'a pas été tirée d'elle. C'est aussi le seul endroit où un juge modèle se justifierait — à condition de <b>l'étalonner</b> contre ≈ 50 jugements humains. Un juge non calibré est un thermomètre non gradué.</li>
+        <li><b>Ce que l'ancrage ne sait pas faire :</b> <code>setting</code>, intérieur ou extérieur. Une page ne l'écrit presque jamais — elle dit « au parc de la Villette » — et c'est le lecteur qui conclut. Cet aspect-là coûtera toujours un humain, et le banc l'annonce plutôt que d'imaginer une heuristique qui donnerait l'illusion d'une mesure.</li>
       </ul>
     </article>
 
