@@ -1,4 +1,4 @@
-"""Le banc d'évaluation, côté worker. Pour l'instant, l'étage 3 seul.
+"""Le banc d'évaluation, côté worker : les étages 3 et 5.
 
 ## Le principe : la brique précoche, l'humain corrige
 
@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import base64
 import gzip
+import re
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
@@ -72,8 +73,13 @@ from .harvest import (
     Fetcher,
     _context_of,
     _soup,
+    json_ld_dates,
     links_of,
+    main_image,
+    page_text,
 )
+from .language import french_version
+from .stages.reading import MIN_PAGE_CHARS
 
 #: Plafond de l'archive d'une page, en caractères de base64 — le même que celui
 #: du site, qui refuserait au-delà. Un million de caractères font environ 750 ko
@@ -251,3 +257,108 @@ def harvest_agenda(url: str, pages: int, fetcher: Fetcher | None = None) -> list
         # passé — et le compte rendu serait refusé.
         out.append({"pageNo": 1, "url": url, "chars": 0, "error": "aucune page lue", "links": []})
     return out
+
+
+# ═══════════════════════════════════════════════ étage 5 — la lecture d'une page
+
+#: Ce qui, dans une adresse d'image, trahit un logo plutôt qu'une illustration.
+#: Un libellé, pas une décision : `main_image` a déjà tranché, et c'est son
+#: choix qu'on mesure. Ça sert seulement à dire à l'humain où regarder.
+_LOGO_HINT = re.compile(r"(logo|favicon|sprite|icone?|icon|placeholder|default)", re.I)
+
+#: Le texte gardé pour la console. `page_text` plafonne déjà à 8 000, mais la
+#: configuration peut monter : on borne ici pour ne pas faire voyager un roman.
+MAX_TEXT_KEPT = 20_000
+
+
+def _first_heading(soup) -> str:
+    """Le premier `h1` de la page, ou son `title` à défaut.
+
+    C'est l'étalon du signal le plus utile de cet étage : si le titre de la page
+    ne se retrouve pas dans le texte extrait, c'est que `page_text` a emporté le
+    bloc qui le portait — presque toujours un `<header>`.
+    """
+    for tag in ("h1", "title"):
+        node = soup.find(tag)
+        if node:
+            text = " ".join(node.get_text(" ", strip=True).split())
+            if text:
+                return text[:200]
+    return ""
+
+
+def read_page(url: str, fetcher: Fetcher | None = None) -> dict[str, Any]:
+    """Rejoue l'étage 5 sur une page, et rapporte ce qu'il en tire.
+
+    Les trois lectures sont celles de la production — `page_text`,
+    `json_ld_dates`, `main_image` — importées telles quelles, et l'échange de
+    langue est rejoué lui aussi : c'est lui qui décide *quelle* page est
+    finalement lue, et l'oublier ferait mesurer une autre page que celle que le
+    pipeline aurait choisie.
+
+    ## Les signaux, qui ne décident de rien
+
+    Comme les motifs de rejet de l'étage 3, ce sont des libellés : la brique a
+    déjà rendu ce qu'elle rend, et c'est ce rendu qu'on mesure. Ils disent
+    seulement à l'humain **où regarder**, parce qu'une page qui se lit mal se
+    reconnaît presque toujours à l'un de ces quatre indices :
+
+    * `h1InText` — le titre de la page ne se retrouve pas dans le texte. Presque
+      toujours un `<header>` emporté par le décapage, et avec lui les dates et
+      l'adresse ;
+    * `truncated` — le texte est au plafond : la fin de la page n'a jamais
+      atteint le modèle, ce qui se déguise en « l'extraction multi en rate la
+      moitié » ;
+    * `tooShort` — sous le seuil de l'étage 5, donc **la page serait
+      abandonnée** avant le moindre appel payant. C'est le ratage le plus cher
+      et le plus silencieux ;
+    * `imageLooksLogo` — l'adresse de l'illustration ressemble à celle d'un
+      logo.
+    """
+    fetcher = fetcher or Fetcher()
+    out: dict[str, Any] = {"url": url}
+    try:
+        html = fetcher.get_html(url)
+    except FetchError as err:
+        out["error"] = str(err)
+        return out
+
+    # L'échange de langue fait partie de l'étage : c'est lui qui décide quelle
+    # page est lue, et son adresse est celle qui sera proposée au site.
+    read_url, html = french_version(url, html, fetcher)
+    out["url"] = read_url
+    out["swapped"] = read_url != url
+
+    text = page_text(html)
+    dates = json_ld_dates(html)
+    image = main_image(html, read_url)
+    heading = _first_heading(_soup(html))
+
+    out.update(
+        {
+            "chars": len(html),
+            "text": text[:MAX_TEXT_KEPT],
+            "textChars": len(text),
+            "heading": heading,
+            "dates": dates,
+            "imageUrl": image,
+            # `page_text` tronque à sa limite : y être exactement, c'est y avoir
+            # été coupé. Le cas limite d'une page qui fait pile la taille est
+            # rarissime, et se tromper dans ce sens ne coûte qu'un signal de
+            # trop — jamais une mesure fausse.
+            "truncated": len(text) >= 8000,
+            "tooShort": len(text) < MIN_PAGE_CHARS,
+            "h1InText": bool(heading) and _normalise(heading) in _normalise(text),
+            "imageLooksLogo": bool(image) and bool(_LOGO_HINT.search(image)),
+        }
+    )
+    packed = _archive(html)
+    if packed:
+        out["html"] = packed
+    return out
+
+
+def _normalise(text: str) -> str:
+    """Minuscules et espaces normalisés : comparer un titre à un texte extrait
+    ne doit pas échouer sur une espace insécable ou une capitale."""
+    return " ".join(text.lower().replace("\u00a0", " ").split())

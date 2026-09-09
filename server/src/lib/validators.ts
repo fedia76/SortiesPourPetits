@@ -684,3 +684,56 @@ export const evalHarvestSchema = z.object({
 export const evalFailSchema = z.object({
   error: z.string().trim().min(1).max(2000),
 });
+
+// ─────────────────────────────────────────── banc de lecture (étage 5)
+
+/** Une page ajoutée au banc de lecture. Une fiche, pas un agenda. */
+export const evalReadingSchema = z.object({
+  url: scraperUrl,
+  label: z.string().trim().max(150).optional().default(''),
+  note: z.string().trim().max(2000).optional().default(''),
+});
+
+export const EVAL_TEXT_VERDICTS = ['CORRECT', 'AMPUTE', 'TRONQUE', 'HORS_SUJET'] as const;
+export const EVAL_IMAGE_VERDICTS = ['CORRECTE', 'LOGO', 'MAUVAISE', 'MANQUANTE'] as const;
+export const EVAL_DATES_VERDICTS = ['CORRECTES', 'INCOMPLETES', 'FAUSSES', 'MANQUANTES'] as const;
+
+/**
+ * Ce qu'un humain dit d'une lecture. Les trois aspects sont indépendants : on
+ * peut trancher le texte sans avoir encore regardé l'illustration, et la page
+ * n'est jugée que lorsque les trois le sont.
+ */
+export const evalReadingVerdictSchema = z
+  .object({
+    textVerdict: z.enum(EVAL_TEXT_VERDICTS),
+    imageVerdict: z.enum(EVAL_IMAGE_VERDICTS),
+    datesVerdict: z.enum(EVAL_DATES_VERDICTS),
+    note: z.string().trim().max(2000),
+  })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, { message: 'Aucun verdict à enregistrer' });
+
+/**
+ * Ce que le worker rend d'une page lue.
+ *
+ * Le texte voyage en clair — il fait au plus quelques milliers de caractères et
+ * c'est la pièce à conviction : sans lui, juger « le texte porte-t-il bien la
+ * sortie ? » demanderait de rouvrir la page, donc de comparer à un HTML qui a
+ * pu changer entre-temps.
+ */
+export const evalReadSchema = z.object({
+  url: scraperUrl,
+  error: z.string().trim().max(1000).optional(),
+  swapped: z.boolean().optional().default(false),
+  text: z.string().max(20_000).optional().default(''),
+  textChars: z.number().int().min(0).optional().default(0),
+  chars: z.number().int().min(0).optional().default(0),
+  heading: z.string().trim().max(200).optional().default(''),
+  dates: z.array(z.string().trim().max(40)).max(400).optional().default([]),
+  imageUrl: z.union([scraperUrl, z.literal('')]).optional().default(''),
+  h1InText: z.boolean().optional().default(false),
+  truncated: z.boolean().optional().default(false),
+  tooShort: z.boolean().optional().default(false),
+  imageLooksLogo: z.boolean().optional().default(false),
+  html: z.string().max(EVAL_MAX_HTML_B64).optional(),
+});

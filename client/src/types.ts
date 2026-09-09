@@ -893,3 +893,130 @@ export interface EvalAgenda {
     recall: number | null;
   };
 }
+
+// ───────────────────────────────────────── banc de lecture (étage 5)
+
+export type EvalTextVerdict = 'CORRECT' | 'AMPUTE' | 'TRONQUE' | 'HORS_SUJET';
+export type EvalImageVerdict = 'CORRECTE' | 'LOGO' | 'MAUVAISE' | 'MANQUANTE';
+export type EvalDatesVerdict = 'CORRECTES' | 'INCOMPLETES' | 'FAUSSES' | 'MANQUANTES';
+
+/**
+ * Les trois aspects d'une lecture, avec leurs réponses.
+ *
+ * Trois plutôt qu'un, parce qu'ils se ratent séparément et ne se réparent pas
+ * au même endroit : un texte amputé accuse la liste des balises décapées, un
+ * texte tronqué accuse le plafond de caractères, une illustration qui est le
+ * logo du site accuse le tamis des images.
+ */
+export const EVAL_READ_ASPECTS = [
+  {
+    key: 'textVerdict',
+    title: 'Le texte',
+    choices: [
+      { key: 'CORRECT', label: 'Correct', hint: 'Il porte bien la sortie, en entier.' },
+      {
+        key: 'AMPUTE',
+        label: 'Amputé',
+        hint: "Il manque une partie visible sur la page — souvent le titre, les dates ou l'adresse, emportés avec un <header> ou un <aside>.",
+      },
+      {
+        key: 'TRONQUE',
+        label: 'Tronqué',
+        hint: 'Coupé au plafond de caractères : la fin de la page n’atteindra jamais le modèle.',
+      },
+      {
+        key: 'HORS_SUJET',
+        label: 'Hors sujet',
+        hint: "Du bandeau, du menu, une page d'erreur : ce n'est pas la sortie.",
+      },
+    ],
+  },
+  {
+    key: 'imageVerdict',
+    title: "L'illustration",
+    choices: [
+      {
+        key: 'CORRECTE',
+        label: 'Correcte',
+        hint: "C'est bien la photo de la sortie — ou aucune, et la page n'en a pas.",
+      },
+      { key: 'LOGO', label: 'Logo du site', hint: "Le tamis des images l'a laissée passer." },
+      { key: 'MAUVAISE', label: 'Mauvaise', hint: "Une image, mais pas celle de la sortie." },
+      {
+        key: 'MANQUANTE',
+        label: 'Manquante',
+        hint: 'La page en montre une, la brique n’en a rendu aucune.',
+      },
+    ],
+  },
+  {
+    key: 'datesVerdict',
+    title: 'Les dates JSON-LD',
+    choices: [
+      {
+        key: 'CORRECTES',
+        label: 'Correctes',
+        hint: "Ce sont bien celles de la sortie — ou aucune, et la page n'en déclare pas.",
+      },
+      { key: 'INCOMPLETES', label: 'Incomplètes', hint: 'La page en déclare davantage.' },
+      { key: 'FAUSSES', label: 'Fausses', hint: 'Ce ne sont pas celles de cette sortie.' },
+      {
+        key: 'MANQUANTES',
+        label: 'Manquantes',
+        hint: 'La page en déclare, la brique n’en a relevé aucune.',
+      },
+    ],
+  },
+] as const;
+
+/** Une page du banc de lecture, et ce que l'étage 5 en a tiré. */
+export interface EvalReading {
+  id: number;
+  url: string;
+  label: string;
+  status: EvalAgendaStatus;
+  error: string | null;
+  note: string;
+  /** L'adresse réellement lue : différente quand l'échange de langue a joué. */
+  readUrl: string;
+  swapped: boolean;
+  /** Le texte tel qu'il partirait au modèle. La pièce à conviction. */
+  text: string;
+  textChars: number;
+  dates: string[];
+  imageUrl: string;
+  chars: number;
+  archived: boolean;
+  /** Le premier `h1` de la page, ou son `title` à défaut. */
+  heading: string;
+  /** Ce titre se retrouve-t-il dans le texte extrait ? */
+  h1InText: boolean;
+  truncated: boolean;
+  /** Sous le seuil : la page serait abandonnée avant tout appel payant. */
+  tooShort: boolean;
+  imageLooksLogo: boolean;
+  textVerdict: EvalTextVerdict | null;
+  imageVerdict: EvalImageVerdict | null;
+  datesVerdict: EvalDatesVerdict | null;
+  /** Les trois verdicts sont posés : cette page compte dans la mesure. */
+  judged: boolean;
+  createdAt: string;
+  analyzedAt: string | null;
+  validatedAt: string | null;
+  author: { id: number; displayName: string };
+}
+
+/** Ce que l'étage 5 rend juste, sur l'ensemble du banc. */
+export interface EvalReadingStats {
+  pages: number;
+  judged: number;
+  /** Nuls tant qu'aucune page n'a été jugée. */
+  textOk: number | null;
+  imageOk: number | null;
+  datesOk: number | null;
+  ampute: number;
+  tronque: number;
+  horsSujet: number;
+  /** Sous le seuil, donc abandonnées avant tout appel payant. */
+  abandonnees: number;
+}

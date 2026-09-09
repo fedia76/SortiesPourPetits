@@ -27,7 +27,7 @@ from typing import Any, Callable
 
 from .api import ApiError, SppApi
 from .config import ConfigError, Environment, config_from_api, load_dotenv
-from .evaluation import harvest_agenda
+from .evaluation import harvest_agenda, read_page
 from .harvest import Fetcher
 from .journal import RemoteJournal, RunLog, run_log_path
 from .ledger import Ledger, ledger_path
@@ -257,6 +257,41 @@ def evaluate(agenda: dict[str, Any], api: SppApi, quiet: bool) -> None:
                 print(f"Clôture impossible de l'agenda #{agenda_id} : {api_err}", file=sys.stderr, flush=True)
 
 
+def read(reading: dict[str, Any], api: SppApi, quiet: bool) -> None:
+    """Rejoue l'étage 5 sur une page du banc, et la clôt quoi qu'il arrive.
+
+    Une page injoignable n'est pas un échec du banc : c'est une réponse, et
+    `read_page` la rapporte avec son motif. L'échec, ici, c'est de ne pas
+    réussir à rendre compte — et le `finally` est là pour ça, comme ailleurs.
+    """
+    reading_id = int(reading["id"])
+    url = str(reading["url"])
+    if not quiet:
+        print(f"▶ Banc — lecture #{reading_id} : {url}", flush=True)
+
+    try:
+        result = read_page(url, fetcher=Fetcher())
+        api.report_reading(reading_id, result)
+        if not quiet:
+            if result.get("error"):
+                print(f"■ Banc — lecture #{reading_id} : {result['error']}", flush=True)
+            else:
+                print(
+                    f"■ Banc — lecture #{reading_id} : {result['textChars']} caractères, "
+                    f"{len(result['dates'])} date(s), illustration "
+                    f"{'oui' if result['imageUrl'] else 'non'}",
+                    flush=True,
+                )
+    except ApiError as err:
+        print(f"Compte rendu impossible pour la lecture #{reading_id} : {err}", file=sys.stderr, flush=True)
+    except Exception as err:  # noqa: BLE001 — la trace part dans la console du service
+        traceback.print_exc()
+        try:
+            api.fail_reading(reading_id, f"{err.__class__.__name__} : {err}")
+        except ApiError as api_err:
+            print(f"Clôture impossible de la lecture #{reading_id} : {api_err}", file=sys.stderr, flush=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sortiesbot.worker",
@@ -326,6 +361,20 @@ def main(argv: list[str] | None = None) -> int:
             agenda = None
         if agenda:
             evaluate(agenda, api, args.quiet)
+            if args.once:
+                return 0
+            continue
+
+        # Le banc de lecture en dernier : c'est la file la moins pressée des
+        # trois, une page qui attend son humain n'attend pas à la minute.
+        try:
+            reading = api.next_reading()
+        except ApiError as err:
+            if not args.quiet:
+                print(f"Banc injoignable ({err}) — nouvelle tentative.", file=sys.stderr, flush=True)
+            reading = None
+        if reading:
+            read(reading, api, args.quiet)
             if args.once:
                 return 0
         elif args.once:

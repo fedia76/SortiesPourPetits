@@ -2,10 +2,10 @@
 /**
  * Le banc d'évaluation : ce que chaque brique du scraper rend vraiment.
  *
- * Un onglet par étage, et un seul rempli — le **dépouillement**. Il est en
- * amont, donc son ratage plafonne tout ce qui suit ; il est déterministe, ce
- * qui ne veut pas dire juste ; et sa panne se déguise en panne de l'étage
- * d'après. Un agenda dont les liens de fiche ont été perdus rend son menu, la
+ * Un onglet par étage, deux remplis — le **dépouillement** et la **lecture**.
+ * Ce sont les deux étages gratuits en amont des appels payants : leur ratage
+ * plafonne tout ce qui suit, ils sont déterministes — ce qui ne veut pas dire
+ * justes — et leurs pannes se déguisent en pannes des étages d'après. Un agenda dont les liens de fiche ont été perdus rend son menu, la
  * sélection n'en retient rien avec un motif parfaitement sensé, et c'est un
  * prompt qu'on ira retoucher pour un bug de sélecteur.
  *
@@ -31,13 +31,20 @@
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../lib/api';
-import { EVAL_STATUS_LABELS, EVAL_VERDICT_HINTS, EVAL_VERDICT_LABELS } from '../types';
+import {
+  EVAL_READ_ASPECTS,
+  EVAL_STATUS_LABELS,
+  EVAL_VERDICT_HINTS,
+  EVAL_VERDICT_LABELS,
+} from '../types';
 import type {
   EvalAgenda,
   EvalAgendaPage,
   EvalAgendaStatus,
   EvalLink,
   EvalNextVerdict,
+  EvalReading,
+  EvalReadingStats,
   EvalVerdict,
 } from '../types';
 
@@ -53,7 +60,7 @@ const BRICKS = [
   { no: 2, name: 'Reconnaissance', why: "Une page, une étiquette humaine. Ce qu'on y mesure n'est pas l'exactitude mais une matrice de coûts : confondre un agenda avec une fiche coûte tous ses liens, l'inverse coûte un appel." },
   { no: 3, name: 'Dépouillement', why: '' },
   { no: 4, name: 'Sélection', why: "Le point aveugle : un lien écarté n'est relu par personne. Il faudra un budget d'exploration, ou le vivier commun de plusieurs variantes." },
-  { no: 5, name: 'Lecture', why: "Les dates se vérifient gratuitement contre le JSON-LD que le site déclare. Le texte et l'illustration demandent un œil, cinq secondes par page." },
+  { no: 5, name: 'Lecture', why: '' },
   { no: 6, name: 'Extraction', why: "Champ par champ, jamais fiche par fiche. Plus la vérification d'ancrage, qui ne coûte aucune étiquette : toute valeur extraite doit se retrouver dans la page." },
   { no: 7, name: 'Attribution', why: "Partiellement mesurée déjà, depuis la page d'une exécution : ce que le moteur rend, ce que le tamis refuse." },
   { no: 8, name: 'Publication', why: "Un contrat d'API. Des tests unitaires suffisent, et il y en a." },
@@ -97,6 +104,14 @@ const savingLink = ref(false);
 const saving = ref(new Set<number>());
 const busy = ref(new Set<number>());
 
+// ─────────────────────────────────────────── étage 5 : le banc de lecture
+
+const readings = ref<EvalReading[]>([]);
+const readStats = ref<EvalReadingStats | null>(null);
+const readForm = ref({ url: '', label: '' });
+const addingRead = ref(false);
+const openReadings = ref(new Set<number>());
+
 let poll: ReturnType<typeof setInterval> | null = null;
 
 const waiting = computed(() =>
@@ -116,12 +131,27 @@ async function load(quiet = false) {
   }
 }
 
+async function loadReadings(quiet = false) {
+  try {
+    const data = await api.get<{ readings: EvalReading[]; stats: EvalReadingStats }>(
+      '/api/eval/readings',
+    );
+    readings.value = data.readings;
+    readStats.value = data.stats;
+  } catch (e) {
+    if (!quiet) error.value = e instanceof Error ? e.message : 'Erreur';
+  }
+}
+
 function tick() {
   if (waiting.value) load(true);
+  if (readings.value.some((r) => r.status === 'QUEUED' || r.status === 'RUNNING')) {
+    loadReadings(true);
+  }
 }
 
 onMounted(async () => {
-  await load();
+  await Promise.all([load(), loadReadings()]);
   poll = setInterval(tick, 5000);
 });
 onUnmounted(() => {
@@ -490,6 +520,122 @@ function pagesVerdict(agenda: EvalAgenda): string {
   return '';
 }
 
+function replaceReading(reading: EvalReading) {
+  const index = readings.value.findIndex((r) => r.id === reading.id);
+  if (index === -1) readings.value.unshift(reading);
+  else readings.value[index] = reading;
+  // Les taux se recalculent au serveur, sur l'ensemble du banc : les recopier
+  // ici en aurait fait une seconde vérité, qui aurait fini par diverger.
+  loadReadings(true);
+}
+
+function toggleReading(id: number) {
+  openReadings.value = flip(openReadings.value, id);
+}
+
+async function addReading() {
+  error.value = '';
+  notice.value = '';
+  addingRead.value = true;
+  try {
+    const data = await api.post<{ reading: EvalReading }>('/api/eval/readings', {
+      url: readForm.value.url.trim(),
+      label: readForm.value.label.trim(),
+    });
+    replaceReading(data.reading);
+    openReadings.value = new Set([...openReadings.value, data.reading.id]);
+    readForm.value = { url: '', label: '' };
+    notice.value = 'Page mise en file : le worker la lira à son prochain passage.';
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erreur';
+  } finally {
+    addingRead.value = false;
+  }
+}
+
+/** Trancher un aspect. C'est le geste que cet onglet existe pour permettre. */
+async function setAspect(reading: EvalReading, key: string, value: string) {
+  const data = await act(reading.id, () =>
+    api.patch<{ reading: EvalReading }>(`/api/eval/readings/${reading.id}`, { [key]: value }),
+  );
+  if (data) replaceReading(data.reading);
+}
+
+async function analyzeReading(reading: EvalReading) {
+  if (
+    reading.judged &&
+    !confirm(
+      "Relancer la lecture effacera les trois verdicts.\n\nIls décrivaient la page telle " +
+        "qu'elle était : elle va être retéléchargée, et elle a pu changer.",
+    )
+  ) {
+    return;
+  }
+  const data = await act(reading.id, () =>
+    api.post<{ reading: EvalReading }>(`/api/eval/readings/${reading.id}/analyze`),
+  );
+  if (data) replaceReading(data.reading);
+}
+
+async function validateReading(reading: EvalReading) {
+  const data = await act(reading.id, () =>
+    api.post<{ reading: EvalReading }>(`/api/eval/readings/${reading.id}/validate`),
+  );
+  if (data) {
+    replaceReading(data.reading);
+    notice.value = 'Vérité de référence enregistrée : cette page compte dans la mesure.';
+  }
+}
+
+async function removeReading(reading: EvalReading) {
+  if (!confirm(`Supprimer « ${reading.label || reading.url} » et ce qui en a été relevé ?`)) return;
+  const done = await act(reading.id, () => api.delete(`/api/eval/readings/${reading.id}`));
+  if (done) readings.value = readings.value.filter((r) => r.id !== reading.id);
+}
+
+/**
+ * Les signaux gratuits d'une page, en clair.
+ *
+ * Ils ne décident de rien — la brique a déjà rendu ce qu'elle rend, et c'est ce
+ * rendu qu'on mesure. Ils disent seulement **où regarder**, et le premier est
+ * de loin le plus utile : un titre absent du texte extrait veut presque
+ * toujours dire qu'un `<header>` a été décapé, et avec lui les dates.
+ */
+function readFlags(r: EvalReading): { tone: 'bad' | 'warn'; text: string }[] {
+  const flags: { tone: 'bad' | 'warn'; text: string }[] = [];
+  if (r.tooShort) {
+    flags.push({
+      tone: 'bad',
+      text: `Sous le seuil des 200 caractères : le pipeline aurait abandonné cette page avant le moindre appel payant.`,
+    });
+  }
+  if (r.heading && !r.h1InText) {
+    flags.push({
+      tone: 'bad',
+      text: `Le titre de la page — « ${r.heading} » — ne se retrouve pas dans le texte extrait. Un bloc a été décapé, et souvent les dates avec.`,
+    });
+  }
+  if (r.truncated) {
+    flags.push({
+      tone: 'warn',
+      text: 'Texte coupé au plafond : la fin de la page n’atteindra jamais le modèle.',
+    });
+  }
+  if (r.imageLooksLogo) {
+    flags.push({ tone: 'warn', text: "L'adresse de l'illustration ressemble à celle d'un logo." });
+  }
+  if (!r.imageUrl && !r.error) {
+    flags.push({ tone: 'warn', text: 'Aucune illustration retenue.' });
+  }
+  if (!r.dates.length && !r.error) {
+    flags.push({ tone: 'warn', text: 'Aucune date JSON-LD relevée.' });
+  }
+  if (r.swapped) {
+    flags.push({ tone: 'warn', text: `Échange de langue : la page lue est ${r.readUrl}` });
+  }
+  return flags;
+}
+
 const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 </script>
 
@@ -504,7 +650,8 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
     <h1>Banc d'évaluation</h1>
     <p class="muted lede">
       Mesurer ce que chaque brique rend vraiment, plutôt que d'espérer qu'elle rende ce qu'il faut.
-      Un étage est ouvert pour l'instant — le dépouillement.
+      Deux étages sont ouverts — le <strong>dépouillement</strong>, qui décide quels liens partent au
+      tri, et la <strong>lecture</strong>, qui décide ce que le modèle verra de la page.
     </p>
 
     <nav class="tabs" aria-label="Les huit briques du scraper">
@@ -525,12 +672,219 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="notice" class="success">{{ notice }}</p>
 
-    <section v-if="tab !== 3" class="card waiting">
+    <!-- ─────────────────────────────────────────── 5. la lecture -->
+    <section v-if="tab === 5" class="brick3">
+      <div class="card intro">
+        <h2>5. Lecture — ce que la brique tire d'une fiche</h2>
+        <p>
+          L'étage 5 lit <strong>trois fois</strong> un même HTML : le texte qui part au modèle, les
+          dates que le site déclare en JSON-LD, et l'illustration. Et il en tire une décision — sous
+          deux cents caractères, la page est <strong>abandonnée</strong> avant le moindre appel
+          payant.
+        </p>
+        <p>
+          Trois verdicts plutôt qu'un, parce que les trois se ratent séparément et ne se réparent
+          pas au même endroit : un texte amputé accuse la liste des balises décapées
+          (<code>nav header footer aside form</code>), un texte tronqué accuse le plafond de
+          caractères, une illustration qui est le logo du site accuse le tamis des images.
+        </p>
+        <p class="rule">
+          <strong>Le signal à regarder en premier :</strong> quand le titre de la page ne se
+          retrouve pas dans le texte extrait, c'est qu'un bloc a été décapé — presque toujours un
+          <code>&lt;header&gt;</code>, et les dates et l'adresse sont parties avec. Le texte reste
+          non vide, rien ne proteste, et c'est l'extraction qu'on ira accuser de rendre une fiche
+          sans date.
+        </p>
+      </div>
+
+      <form class="card form add" @submit.prevent="addReading">
+        <div class="row">
+          <div class="field grow">
+            <label for="read-url">Adresse d'une fiche</label>
+            <input
+              id="read-url"
+              v-model="readForm.url"
+              type="url"
+              required
+              placeholder="https://exemple.fr/agenda/le-spectacle"
+            />
+          </div>
+          <div class="field">
+            <label for="read-label">Nom (facultatif)</label>
+            <input id="read-label" v-model="readForm.label" type="text" maxlength="150" />
+          </div>
+          <div class="field submit">
+            <button class="btn" type="submit" :disabled="addingRead || !readForm.url.trim()">
+              {{ addingRead ? 'Envoi…' : 'Lire' }}
+            </button>
+          </div>
+        </div>
+        <p class="hint pages-why">
+          Une <strong>fiche</strong>, pas un agenda : ce ne sont pas les mêmes pages, donc pas le
+          même corpus. Prenez-les dans les liens que l'étage 3 a retenus — ce sont exactement celles
+          que le pipeline lirait.
+        </p>
+      </form>
+
+      <dl v-if="readStats && readStats.pages" class="stats card readstats">
+        <div>
+          <dt>Pages</dt>
+          <dd>{{ readStats.pages }}</dd>
+        </div>
+        <div :class="{ warn: readStats.judged < readStats.pages }">
+          <dt title="Les trois aspects tranchés">Jugées</dt>
+          <dd>{{ readStats.judged }} / {{ readStats.pages }}</dd>
+        </div>
+        <div class="rate">
+          <dt>Texte juste</dt>
+          <dd>{{ percent(readStats.textOk) }}</dd>
+        </div>
+        <div class="rate">
+          <dt>Illustration juste</dt>
+          <dd>{{ percent(readStats.imageOk) }}</dd>
+        </div>
+        <div class="rate">
+          <dt>Dates justes</dt>
+          <dd>{{ percent(readStats.datesOk) }}</dd>
+        </div>
+        <div :class="{ flag: readStats.ampute > 0 }">
+          <dt title="Le décapage a emporté une partie de la page">Amputés</dt>
+          <dd>{{ readStats.ampute }}</dd>
+        </div>
+        <div :class="{ flag: readStats.tronque > 0 }">
+          <dt title="Le plafond de caractères a coupé la fin">Tronqués</dt>
+          <dd>{{ readStats.tronque }}</dd>
+        </div>
+        <div :class="{ flag: readStats.abandonnees > 0 }">
+          <dt title="Sous le seuil : le pipeline les aurait abandonnées">Abandonnées</dt>
+          <dd>{{ readStats.abandonnees }}</dd>
+        </div>
+      </dl>
+
+      <p v-if="!readings.length" class="muted empty">
+        Aucune fiche au banc. Une trentaine suffit à savoir si l'étage 5 lit ce qu'il devrait lire.
+      </p>
+
+      <article v-for="r in readings" :key="r.id" class="card agenda">
+        <header class="agenda-head">
+          <button
+            type="button"
+            class="disclose"
+            :aria-expanded="openReadings.has(r.id)"
+            @click="toggleReading(r.id)"
+          >
+            <span class="caret" :class="{ open: openReadings.has(r.id) }" aria-hidden="true"
+              >▸</span
+            >
+            <span class="agenda-title">{{ r.label || r.url }}</span>
+          </button>
+          <span class="pill" :class="r.status.toLowerCase()">{{ statusLabel(r.status) }}</span>
+        </header>
+
+        <p class="agenda-url">
+          <a :href="r.url" target="_blank" rel="noopener noreferrer">{{ r.url }}</a>
+          <a
+            v-if="r.archived"
+            class="frozen"
+            :href="`/api/eval/readings/${r.id}/html`"
+            target="_blank"
+            rel="noopener noreferrer"
+            >voir le HTML gelé</a
+          >
+        </p>
+
+        <p v-if="r.error" class="error slim">{{ r.error }}</p>
+
+        <ul v-if="readFlags(r).length" class="flags">
+          <li v-for="(f, i) in readFlags(r)" :key="i" :class="f.tone">{{ f.text }}</li>
+        </ul>
+
+        <div v-if="openReadings.has(r.id) && !r.error" class="tree">
+          <div class="read-grid">
+            <section class="read-col">
+              <h4>Le texte — {{ r.textChars }} caractères</h4>
+              <pre class="extract">{{ r.text || '(vide)' }}</pre>
+            </section>
+            <section class="read-col">
+              <h4>Les dates JSON-LD</h4>
+              <ul v-if="r.dates.length" class="dates">
+                <li v-for="(d, i) in r.dates" :key="i">{{ d }}</li>
+              </ul>
+              <p v-else class="muted">Aucune.</p>
+
+              <h4>L'illustration</h4>
+              <template v-if="r.imageUrl">
+                <a :href="r.imageUrl" target="_blank" rel="noopener noreferrer" class="imgurl">{{
+                  r.imageUrl
+                }}</a>
+                <img :src="r.imageUrl" alt="" class="shot" loading="lazy" />
+              </template>
+              <p v-else class="muted">Aucune.</p>
+            </section>
+          </div>
+
+          <div v-for="aspect in EVAL_READ_ASPECTS" :key="aspect.key" class="aspect">
+            <span class="aspect-title">{{ aspect.title }}</span>
+            <span class="seg">
+              <button
+                v-for="c in aspect.choices"
+                :key="c.key"
+                type="button"
+                class="segb"
+                :class="{ on: r[aspect.key] === c.key }"
+                :aria-pressed="r[aspect.key] === c.key"
+                :title="c.hint"
+                :disabled="busy.has(r.id)"
+                @click="setAspect(r, aspect.key, c.key)"
+              >
+                {{ c.label }}
+              </button>
+            </span>
+            <span v-if="!r[aspect.key]" class="pre">à juger</span>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button
+            class="btn small secondary"
+            type="button"
+            :disabled="busy.has(r.id) || r.status === 'RUNNING'"
+            @click="analyzeReading(r)"
+          >
+            {{ r.status === 'FAILED' ? 'Réessayer' : 'Relire' }}
+          </button>
+          <button
+            v-if="r.status === 'ANALYZED'"
+            class="btn small"
+            type="button"
+            :disabled="busy.has(r.id) || !r.judged"
+            :title="r.judged ? 'Figer la vérité de référence' : 'Les trois aspects doivent être tranchés'"
+            @click="validateReading(r)"
+          >
+            Valider la lecture
+          </button>
+          <span v-if="r.validatedAt" class="muted small-note">
+            Validé le {{ when(r.validatedAt) }} · {{ r.author.displayName }}
+          </span>
+          <button
+            class="btn small danger"
+            type="button"
+            :disabled="busy.has(r.id)"
+            @click="removeReading(r)"
+          >
+            Supprimer
+          </button>
+        </div>
+      </article>
+    </section>
+
+    <section v-else-if="tab !== 3" class="card waiting">
       <h2>{{ current.no }}. {{ current.name }}</h2>
       <p>{{ current.why }}</p>
       <p class="muted">
-        Rien à mesurer ici pour l'instant : le banc s'est ouvert par le dépouillement, et les autres
-        étages viendront quand celui-là aura donné ses premiers chiffres.
+        Rien à mesurer ici pour l'instant : le banc s'est ouvert par le dépouillement et la lecture —
+        les deux étages gratuits, en amont, dont les pannes se déguisent en pannes des étages
+        payants. Les autres viendront quand ceux-là auront donné leurs premiers chiffres.
       </p>
     </section>
 
@@ -1380,6 +1734,104 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 }
 .pag-expected .hint {
   margin: 0.4rem 0 0;
+}
+/* ---- onglet 5 : la lecture ---- */
+.readstats {
+  margin-top: 1rem;
+  padding: 1rem 1.2rem;
+}
+.flags {
+  list-style: none;
+  margin: 0.5rem 0 0.7rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.flags li {
+  font-size: 0.84rem;
+  line-height: 1.45;
+  border-left: 3px solid var(--warn);
+  background: var(--warn-soft);
+  border-radius: 0 8px 8px 0;
+  padding: 0.4rem 0.7rem;
+}
+/* Les deux qui font perdre la page se distinguent des trois qui la dégradent. */
+.flags li.bad {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+.read-grid {
+  display: grid;
+  gap: 1.2rem;
+  grid-template-columns: 1.4fr 1fr;
+  margin-bottom: 1rem;
+}
+@media (max-width: 900px) {
+  .read-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.read-col h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.read-col h4 + * + h4 {
+  margin-top: 1rem;
+}
+.extract {
+  margin: 0;
+  max-height: 22rem;
+  overflow: auto;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.dates li {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg);
+  border-radius: 5px;
+  padding: 0.15rem 0.45rem;
+}
+.imgurl {
+  display: block;
+  font-size: 0.78rem;
+  word-break: break-all;
+  margin-bottom: 0.4rem;
+}
+.shot {
+  max-width: 100%;
+  max-height: 12rem;
+  border-radius: 8px;
+  background: var(--photo-bg);
+}
+.aspect {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--line);
+}
+.aspect-title {
+  font-weight: 700;
+  font-size: 0.88rem;
+  min-width: 9rem;
 }
 .pages-short {
   margin: 0.4rem 0 0.7rem;

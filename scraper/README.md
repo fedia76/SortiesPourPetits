@@ -74,8 +74,8 @@ recherche avec la configuration que le site lui donne, rend compte page par
 page (`/runs/:id/items`) puis clôt l'exécution avec ses compteurs
 (`/runs/:id/finish`). Il ne décide de rien : tout se règle dans la console.
 
-Il sert aussi une **seconde file**, celle du banc d'évaluation
-(`POST /api/eval/harvest/next`) — voir « [Le banc
+Il sert aussi **deux autres files**, celles du banc d'évaluation
+(`POST /api/eval/harvest/next` et `POST /api/eval/reading/next`) — voir « [Le banc
 d'évaluation](#le-banc-dévaluation) ». Les recherches passent d'abord : une
 recherche produit des sorties que des parents attendent, un agenda du banc
 attend un humain qui le relira quand il pourra.
@@ -949,6 +949,62 @@ Relancer une analyse efface aussi les ajouts manuels, et il n'y a pas d'autre
 choix honnête : ils disaient « `links_of` a manqué ceci **sur cette page telle
 qu'elle était** », la page vient d'être retéléchargée, et les garder les
 rattacherait à un HTML qu'ils n'ont jamais décrit.
+
+### Le banc de lecture — l'étage 5
+
+Le même principe, sur l'autre étage gratuit. L'étage 3 se mesure sur des
+**agendas**, celui-ci sur des **fiches** : ce ne sont pas les mêmes pages, donc
+pas le même corpus.
+
+L'étage 5 lit **trois fois** un même HTML — le texte qui part au modèle, les
+dates JSON-LD, l'illustration — et en tire une décision : sous
+`MIN_PAGE_CHARS`, la page est **abandonnée** avant le moindre appel payant.
+`evaluation.read_page()` rejoue les trois lectures avec les fonctions de
+production, et **l'échange de langue avec** : c'est lui qui décide *quelle* page
+est lue, et l'oublier ferait mesurer une autre page que celle que le pipeline
+aurait choisie.
+
+#### Trois verdicts plutôt qu'un
+
+Parce que les trois se ratent séparément et ne se réparent pas au même endroit.
+
+| Aspect | Réponses | Ce que la faute accuse |
+|---|---|---|
+| **texte** | correct · amputé · tronqué · hors sujet | la liste des balises décapées · le plafond de caractères · la mauvaise page |
+| **illustration** | correcte · logo du site · mauvaise · manquante | le tamis des images |
+| **dates** | correctes · incomplètes · fausses · manquantes | la lecture du JSON-LD |
+
+Un verdict unique les mélangerait et ne pointerait rien.
+
+#### Les signaux, et le premier d'entre eux
+
+Comme les motifs de rejet de l'étage 3, ce sont des **libellés** : la brique a
+déjà rendu ce qu'elle rend, et c'est ce rendu qu'on mesure. Ils disent seulement
+où regarder.
+
+Le plus utile de loin : **le titre de la page ne se retrouve pas dans le texte
+extrait.** `page_text` décape `nav header footer aside form`, et beaucoup de
+gabarits mettent le titre et les dates dans un `<header>`, l'encadré pratique
+dans un `<aside>`. Ils partent avec, le texte reste non vide, rien ne proteste —
+et c'est l'extraction qu'on ira accuser de rendre une fiche sans date.
+
+Les trois autres : texte **au plafond** (la fin n'atteindra jamais le modèle),
+**sous le seuil** (la page serait abandonnée — le ratage le plus cher, et le
+seul que la brique décide toute seule), et une adresse d'illustration qui
+**ressemble à un logo**.
+
+#### Rien n'est précoché en base
+
+À l'étage 3 il le fallait : cent trente-neuf liens ne se tranchent pas un par
+un, et il a fallu ensuite une colonne `reviewed` pour distinguer ce qu'un humain
+avait dit de ce que la machine avait deviné. Ici il y a **trois clics par
+page** : la console met en avant ce que la brique prétend, mais rien de cette
+proposition n'est écrit. Un verdict nul veut dire « personne n'a encore
+regardé », sans ambiguïté et sans colonne de plus.
+
+La validation exige les trois : valider en n'ayant jugé que le texte produirait
+un taux d'illustration calculé sur des pages que personne n'a regardées — le
+même mensonge que le rappel à 100 % de l'étage 3.
 
 ### Le registre, et comment le lire
 

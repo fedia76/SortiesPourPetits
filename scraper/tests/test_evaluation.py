@@ -439,3 +439,128 @@ def test_le_releve_est_plafonne():
     )
 
     assert len(audit_links(page(liens), AGENDA)) == MAX_AUDIT_LINKS
+
+
+# ═════════════════════════════════════════════ étage 5 — la lecture d'une page
+
+
+from sortiesbot.evaluation import read_page  # noqa: E402
+
+FICHE = "https://theatre.exemple.fr/saison/le-petit-prince"
+
+
+def fiche_page(corps: str, tete: str = "") -> str:
+    return f"<html><head><title>Le Petit Prince</title>{tete}</head><body>{corps}</body></html>"
+
+
+CORPS = (
+    "<main><h1>Le Petit Prince</h1>"
+    "<p>Un spectacle de marionnettes pour les enfants dès quatre ans, joué au "
+    "Théâtre du Chapiteau à Rouen. La séance dure cinquante minutes et se termine "
+    "par une rencontre avec les marionnettistes. Tarif unique de huit euros, "
+    "réservation conseillée auprès de la billetterie du théâtre.</p></main>"
+)
+
+
+def test_la_lecture_rend_ce_que_la_brique_rend():
+    fetcher = FakeFetcher({FICHE: fiche_page(CORPS)})
+
+    out = read_page(FICHE, fetcher=fetcher)
+
+    assert "marionnettes" in out["text"]
+    assert out["heading"] == "Le Petit Prince"
+    assert out["h1InText"] is True
+    assert out["truncated"] is False
+    assert out["tooShort"] is False
+
+
+def test_un_titre_dans_un_header_disparait_et_le_signal_le_dit():
+    """Le ratage le plus fréquent de l'étage 5, et le plus discret.
+
+    `page_text` décape `nav header footer aside form`. Beaucoup de gabarits
+    mettent le titre et les dates dans un `<header>` : ils partent avec, le
+    texte reste non vide, et c'est l'extraction qu'on ira accuser de rendre une
+    fiche sans date.
+    """
+    # Le titre et les dates sont dans le `<header>`, et nulle part ailleurs —
+    # c'est le gabarit courant, et c'est ce qui rend la perte invisible.
+    #
+    # Le `<title>` du document porte autre chose, et ce n'est pas un détail :
+    # `page_text` prend le texte du document **entier**, `<head>` compris, donc
+    # un `<title>` identique au `h1` masquerait la perte à lui seul.
+    html = (
+        "<html><head><title>Théâtre du Chapiteau — saison</title></head><body>"
+        "<header><h1>Le Petit Prince</h1><p>Samedi 3 mai à 15h, Rouen</p></header>"
+        + CORPS.replace("<h1>Le Petit Prince</h1>", "")
+        + "</body></html>"
+    )
+    fetcher = FakeFetcher({FICHE: html})
+
+    out = read_page(FICHE, fetcher=fetcher)
+
+    # Le texte survit — c'est bien le problème : rien ne proteste, et la page
+    # passe même le seuil qui l'aurait sauvée en l'écartant.
+    assert out["tooShort"] is False
+    assert "Samedi 3 mai" not in out["text"]
+    assert out["heading"] == "Le Petit Prince"
+    assert out["h1InText"] is False
+
+
+def test_une_page_sous_le_seuil_serait_abandonnee():
+    """Le ratage le plus cher : la page est écartée avant tout appel payant."""
+    fetcher = FakeFetcher({FICHE: fiche_page("<main><p>Bientôt.</p></main>")})
+
+    out = read_page(FICHE, fetcher=fetcher)
+
+    assert out["tooShort"] is True
+
+
+def test_les_dates_json_ld_remontent_telles_que_la_brique_les_lit():
+    ld = (
+        '<script type="application/ld+json">'
+        '{"@type":"Event","name":"Le Petit Prince","startDate":"2026-05-03T15:00",'
+        '"endDate":"2026-05-03T16:00"}</script>'
+    )
+    fetcher = FakeFetcher({FICHE: fiche_page(CORPS, tete=ld)})
+
+    out = read_page(FICHE, fetcher=fetcher)
+
+    assert out["dates"] == ["2026-05-03T15:00"]
+
+
+def test_une_illustration_qui_ressemble_a_un_logo_est_signalee():
+    """Le signal ne décide de rien : `main_image` a déjà tranché, et c'est son
+    choix qu'on mesure. Il dit seulement à l'humain où regarder."""
+    tete = '<meta property="og:image" content="https://theatre.exemple.fr/img/logo-site.png">'
+    fetcher = FakeFetcher({FICHE: fiche_page(CORPS, tete=tete)})
+
+    out = read_page(FICHE, fetcher=fetcher)
+
+    assert out["imageUrl"].endswith("logo-site.png")
+    assert out["imageLooksLogo"] is True
+
+
+def test_une_page_injoignable_remonte_son_motif_et_rien_d_autre():
+    out = read_page(FICHE, fetcher=FakeFetcher({}))
+
+    assert "inaccessible" in out["error"]
+    assert "text" not in out
+
+
+def test_l_echange_de_langue_est_rejoue():
+    """C'est lui qui décide quelle page est lue : l'oublier ferait mesurer une
+    autre page que celle que le pipeline aurait choisie."""
+    en = "https://theatre.exemple.fr/en/season/the-little-prince"
+    fr = "https://theatre.exemple.fr/saison/le-petit-prince"
+    anglais = (
+        '<html lang="en"><head><title>The Little Prince</title>'
+        f'<link rel="alternate" hreflang="fr" href="{fr}">'
+        "</head><body><main><p>A puppet show for children.</p></main></body></html>"
+    )
+    fetcher = FakeFetcher({en: anglais, fr: fiche_page(CORPS)})
+
+    out = read_page(en, fetcher=fetcher)
+
+    assert out["url"] == fr
+    assert out["swapped"] is True
+    assert "marionnettes" in out["text"]

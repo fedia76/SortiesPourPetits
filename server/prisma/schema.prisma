@@ -58,7 +58,8 @@ model User {
   moderatedEvents Event[]      @relation("EventModerator")
   apiKeys         ApiKey[]
   scraperRuns     ScraperRun[] @relation("ScraperRunRequester")
-  evalAgendas     EvalAgenda[] @relation("EvalAgendaAuthor")
+  evalAgendas     EvalAgenda[]  @relation("EvalAgendaAuthor")
+  evalReadings    EvalReading[] @relation("EvalReadingAuthor")
 }
 
 /// Clé d'API pour les programmes tiers. La clé en clair n'est jamais stockée :
@@ -660,4 +661,97 @@ enum EvalVerdict {
   PAGINATION
   SOUS_AGENDA
   AUTRE
+}
+
+/// Une page du banc de **lecture** (étage 5).
+///
+/// L'étage 3 se mesure sur des agendas, celui-ci sur des **fiches** : ce ne
+/// sont pas les mêmes pages, donc pas le même corpus, donc pas la même table.
+///
+/// Ce qu'on y mesure, ce sont les trois lectures que l'étage fait d'un même
+/// HTML — le texte qui part au modèle, les dates que le site déclare, et
+/// l'illustration — plus la décision qui en découle : sous le seuil, la page
+/// est abandonnée avant le moindre appel payant.
+model EvalReading {
+  id     Int              @id @default(autoincrement())
+  url    String           @unique @db.VarChar(500)
+  label  String           @default("")
+  status EvalAgendaStatus @default(QUEUED)
+  error  String?          @db.Text
+  note   String           @default("") @db.Text
+
+  // ── ce que la brique a rendu
+  /// L'adresse réellement lue. Différente quand l'échange de langue a joué :
+  /// c'est elle qui serait proposée au site.
+  readUrl   String  @default("") @db.VarChar(500)
+  swapped   Boolean @default(false)
+  /// Le texte tel qu'il partirait au modèle. C'est la pièce à conviction :
+  /// sans lui, juger « le texte porte-t-il bien la sortie ? » demanderait de
+  /// rouvrir la page, donc de comparer à un HTML qui a pu changer.
+  text      String  @default("") @db.Text
+  textChars Int     @default(0)
+  /// Les dates JSON-LD, en JSON. Une liste vide est une réponse.
+  dates     String  @default("[]") @db.Text
+  imageUrl  String  @default("") @db.VarChar(500)
+  chars     Int     @default(0)
+  htmlPath  String? @db.VarChar(255)
+
+  // ── les signaux gratuits : des libellés, pas des décisions
+  /// Le premier `h1` de la page, ou son `title` à défaut.
+  heading        String  @default("") @db.VarChar(200)
+  /// Ce titre se retrouve-t-il dans le texte extrait ? Non : le bloc qui le
+  /// portait a été décapé, et avec lui les dates et l'adresse le plus souvent.
+  h1InText       Boolean @default(false)
+  /// Le texte est au plafond : la fin de la page n'atteindra jamais le modèle.
+  truncated      Boolean @default(false)
+  /// Sous le seuil de l'étage 5 : la page serait **abandonnée** avant tout
+  /// appel payant. Le ratage le plus cher, et le plus silencieux.
+  tooShort       Boolean @default(false)
+  imageLooksLogo Boolean @default(false)
+
+  // ── ce qu'un humain en dit. Nul tant qu'il n'a rien dit : la brique propose
+  //    dans la console, mais rien de sa proposition n'est écrit ici.
+  textVerdict  EvalTextVerdict?
+  imageVerdict EvalImageVerdict?
+  datesVerdict EvalDatesVerdict?
+
+  createdAt   DateTime  @default(now())
+  analyzedAt  DateTime?
+  validatedAt DateTime?
+
+  author      User @relation("EvalReadingAuthor", fields: [createdById], references: [id])
+  createdById Int
+
+  @@index([status])
+  @@index([createdById])
+}
+
+/// Ce que vaut le texte qu'un étage 5 a tiré d'une page.
+///
+/// Trois façons de se tromper, et elles ne se réparent pas au même endroit :
+/// `AMPUTE` accuse la liste des balises décapées, `TRONQUE` le plafond de
+/// caractères, `HORS_SUJET` le fait d'avoir lu la mauvaise page.
+enum EvalTextVerdict {
+  CORRECT
+  AMPUTE
+  TRONQUE
+  HORS_SUJET
+}
+
+/// Ce que vaut l'illustration retenue. `CORRECTE` vaut aussi pour « aucune
+/// image, et la page n'en a pas » — la brique a raison de n'en rendre aucune.
+enum EvalImageVerdict {
+  CORRECTE
+  LOGO
+  MAUVAISE
+  MANQUANTE
+}
+
+/// Ce que valent les dates JSON-LD relevées. `CORRECTES` vaut aussi pour
+/// « aucune, et la page n'en déclare pas ».
+enum EvalDatesVerdict {
+  CORRECTES
+  INCOMPLETES
+  FAUSSES
+  MANQUANTES
 }

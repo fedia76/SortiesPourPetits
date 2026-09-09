@@ -94,6 +94,16 @@ Le Havre, Niort et Nancy.
   quand on la connaît, qui est ce qu'il faut pour réparer. Le HTML de chaque page est gardé, gzippé : c'est ce qui fait du
   banc un corpus gelé, et permet de rejouer la mesure hors ligne sans que la
   page ait bougé entre-temps.
+- **Banc d'évaluation, la lecture** (étage 5) : le même principe sur l'autre
+  étage gratuit, mais sur des **fiches** plutôt que des agendas. La brique lit
+  trois fois un même HTML — le texte qui part au modèle, les dates JSON-LD,
+  l'illustration — et en tire une décision : sous deux cents caractères, la page
+  est abandonnée avant tout appel payant. La console montre les trois lectures
+  côte à côte et demande **trois verdicts**, parce qu'elles se ratent séparément
+  et ne se réparent pas au même endroit. Avec, en évidence, le signal qui
+  attrape le ratage le plus discret : quand le titre de la page ne se retrouve
+  pas dans le texte extrait, c'est qu'un `<header>` a été décapé — et les dates
+  et l'adresse sont parties avec.
 - **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
   sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
   une clé d'API. Il sait aussi partir d'une adresse connue — le site d'un
@@ -174,6 +184,9 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | PATCH | `/api/eval/links/:id` | admin | Corriger le verdict d'un lien — c'est la mesure |
 | POST | `/api/eval/pages/:id/verdict` | admin | Trancher d'un coup les liens écartés d'un motif (jamais les retenus) |
 | PATCH | `/api/eval/pages/:id/next` | admin | Trancher la pagination d'une page, et dire quelle était la vraie suite |
+| GET / POST | `/api/eval/readings` | admin | Le banc de lecture : les fiches et ce que l'étage 5 en a tiré |
+| PATCH | `/api/eval/readings/:id` | admin | Trancher le texte, l'illustration ou les dates |
+| POST | `/api/eval/readings/:id/validate` | admin | Figer la lecture — les trois aspects exigés |
 | POST | `/api/eval/pages/:pageId/links` | admin | Ajouter un lien absent du HTML (une carte rendue en JavaScript) |
 | DELETE | `/api/eval/links/:id` | admin | Retirer un ajout manuel (un lien relevé sur la page, lui, ne s'efface pas) |
 | POST | `/api/eval/agendas/:id/validate` | admin | Figer la vérité de référence : le rappel devient lisible |

@@ -41,6 +41,9 @@ import {
   evalBulkVerdictSchema,
   evalLinkSchema,
   evalNextSchema,
+  evalReadSchema,
+  evalReadingSchema,
+  evalReadingVerdictSchema,
   evalVerdictSchema,
 } from '../lib/validators';
 
@@ -791,6 +794,333 @@ evalRouter.post('/harvest/:id(\\d+)/fail', async (req, res) => {
   });
   if (updated.count === 0) {
     res.status(404).json({ error: 'Agenda introuvable' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════ étage 5 — le banc de lecture
+
+/**
+ * L'étage 5 lit trois fois un même HTML : le texte qui part au modèle, les
+ * dates que le site déclare, l'illustration. Et il en tire une décision — sous
+ * deux cents caractères, la page est **abandonnée** avant le moindre appel
+ * payant.
+ *
+ * ## Trois verdicts plutôt qu'un
+ *
+ * Parce que les trois lectures se ratent séparément et ne se réparent pas au
+ * même endroit. Un texte amputé accuse la liste des balises décapées ; un texte
+ * tronqué accuse le plafond de caractères ; une illustration qui est le logo du
+ * site accuse le tamis des images. Un verdict unique les mélangerait et ne
+ * pointerait rien.
+ *
+ * ## Rien n'est précoché en base
+ *
+ * À l'étage 3 il fallait précocher : cent trente-neuf liens ne se tranchent pas
+ * un par un, et il fallait distinguer ensuite ce qu'un humain avait dit de ce
+ * que la machine avait deviné. Ici il y a **trois** clics par page : la console
+ * met en avant ce que la brique prétend, mais rien de cette proposition n'est
+ * écrit. Un verdict nul veut dire « personne n'a encore regardé », sans
+ * ambiguïté et sans colonne de plus.
+ */
+const READING_SELECT = {
+  id: true, url: true, label: true, status: true, error: true, note: true,
+  readUrl: true, swapped: true, text: true, textChars: true, dates: true,
+  imageUrl: true, chars: true, htmlPath: true,
+  heading: true, h1InText: true, truncated: true, tooShort: true, imageLooksLogo: true,
+  textVerdict: true, imageVerdict: true, datesVerdict: true,
+  createdAt: true, analyzedAt: true, validatedAt: true,
+  author: { select: { id: true, displayName: true } },
+} satisfies Prisma.EvalReadingSelect;
+
+type SerializableReading = {
+  status: string;
+  htmlPath: string | null;
+  dates: string;
+  textVerdict: string | null;
+  imageVerdict: string | null;
+  datesVerdict: string | null;
+};
+
+function serializeReading<T extends SerializableReading>(reading: T) {
+  const { htmlPath, dates, ...rest } = reading;
+  let parsed: string[] = [];
+  try {
+    // Écrit par le serveur lui-même à l'import, donc bien formé — mais une
+    // ligne d'un import raté ne doit pas faire échouer toute la console.
+    parsed = JSON.parse(dates);
+  } catch {
+    parsed = [];
+  }
+  const judged =
+    !!reading.textVerdict && !!reading.imageVerdict && !!reading.datesVerdict;
+  return {
+    ...rest,
+    dates: Array.isArray(parsed) ? parsed : [],
+    archived: !!htmlPath,
+    /** Les trois verdicts sont posés : cette page compte dans la mesure. */
+    judged,
+  };
+}
+
+/**
+ * Ce que l'étage 5 rend juste, sur l'ensemble du banc.
+ *
+ * Un taux par aspect, parce que les trois se ratent séparément. Et les motifs
+ * comptés à côté, parce que « 60 % de textes corrects » ne dit pas quoi
+ * réparer, alors que « douze textes amputés » désigne la liste des balises
+ * décapées.
+ */
+function readingStats(rows: ReturnType<typeof serializeReading>[]) {
+  const judged = rows.filter((r) => r.judged);
+  const n = judged.length;
+  const part = (predicate: (r: (typeof judged)[number]) => boolean) =>
+    n > 0 ? judged.filter(predicate).length / n : null;
+  const count = (predicate: (r: (typeof rows)[number]) => boolean) =>
+    rows.filter(predicate).length;
+  return {
+    pages: rows.length,
+    judged: n,
+    textOk: part((r) => r.textVerdict === 'CORRECT'),
+    imageOk: part((r) => r.imageVerdict === 'CORRECTE'),
+    datesOk: part((r) => r.datesVerdict === 'CORRECTES'),
+    /** Le décapage a emporté une partie de la page. */
+    ampute: count((r) => r.textVerdict === 'AMPUTE'),
+    /** Le plafond de caractères a coupé la fin. */
+    tronque: count((r) => r.textVerdict === 'TRONQUE'),
+    /** Ce n'est pas la page de la sortie. */
+    horsSujet: count((r) => r.textVerdict === 'HORS_SUJET'),
+    /**
+     * Sous le seuil, donc abandonnée avant tout appel payant — le ratage le
+     * plus cher, et le seul que la brique décide toute seule. Compté sur le
+     * signal, pas sur un verdict : c'est un fait, pas un jugement.
+     */
+    abandonnees: count((r) => r.tooShort),
+  };
+}
+
+evalRouter.get('/readings', admin, async (_req, res) => {
+  const rows = await prisma.evalReading.findMany({
+    orderBy: { createdAt: 'desc' },
+    select: READING_SELECT,
+  });
+  const readings = rows.map(serializeReading);
+  res.json({ readings, stats: readingStats(readings) });
+});
+
+evalRouter.post('/readings', admin, async (req, res) => {
+  const parsed = evalReadingSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const existing = await prisma.evalReading.findUnique({
+    where: { url: parsed.data.url },
+    select: { id: true },
+  });
+  if (existing) {
+    res.status(409).json({ error: 'Cette page est déjà au banc' });
+    return;
+  }
+  const reading = await prisma.evalReading.create({
+    data: { ...parsed.data, createdById: req.user!.id },
+    select: READING_SELECT,
+  });
+  res.status(201).json({ reading: serializeReading(reading) });
+});
+
+/**
+ * Relance la lecture. Les verdicts partent avec, et il n'y a pas d'autre choix
+ * honnête : ils décrivaient la page telle qu'elle était, et elle va être
+ * retéléchargée.
+ */
+evalRouter.post('/readings/:id(\\d+)/analyze', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const current = await prisma.evalReading.findUnique({
+    where: { id },
+    select: { status: true, htmlPath: true },
+  });
+  if (!current) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  if (current.status === 'RUNNING') {
+    res.status(409).json({ error: 'Lecture déjà en cours' });
+    return;
+  }
+  await deleteEvalPages([current.htmlPath]);
+  const reading = await prisma.evalReading.update({
+    where: { id },
+    data: {
+      status: 'QUEUED', error: null, analyzedAt: null, validatedAt: null, htmlPath: null,
+      textVerdict: null, imageVerdict: null, datesVerdict: null,
+    },
+    select: READING_SELECT,
+  });
+  res.json({ reading: serializeReading(reading) });
+});
+
+/** Trancher un aspect, ou plusieurs. **C'est la mesure.** */
+evalRouter.patch('/readings/:id(\\d+)', admin, async (req, res) => {
+  const parsed = evalReadingVerdictSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const id = Number(req.params.id);
+  const current = await prisma.evalReading.findUnique({ where: { id }, select: { id: true } });
+  if (!current) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  // Corriger après validation rouvre la page : la vérité a changé.
+  const reading = await prisma.evalReading.update({
+    where: { id },
+    data: { ...parsed.data, status: 'ANALYZED', validatedAt: null },
+    select: READING_SELECT,
+  });
+  res.json({ reading: serializeReading(reading) });
+});
+
+evalRouter.post('/readings/:id(\\d+)/validate', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const current = await prisma.evalReading.findUnique({
+    where: { id },
+    select: { status: true, textVerdict: true, imageVerdict: true, datesVerdict: true },
+  });
+  if (!current) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  if (current.status !== 'ANALYZED') {
+    res.status(409).json({ error: 'Seule une lecture terminée se valide' });
+    return;
+  }
+  // Les trois aspects, ou rien. Valider en n'ayant jugé que le texte
+  // produirait un taux d'illustration calculé sur des pages que personne n'a
+  // regardées — c'est le même mensonge que le rappel à 100 % de l'étage 3.
+  if (!current.textVerdict || !current.imageVerdict || !current.datesVerdict) {
+    res.status(409).json({
+      error:
+        "Les trois aspects doivent être tranchés — texte, illustration, dates. " +
+        "Valider à moitié donnerait des taux calculés sur des pages que personne n'a regardées.",
+    });
+    return;
+  }
+  const reading = await prisma.evalReading.update({
+    where: { id },
+    data: { status: 'VALIDATED', validatedAt: new Date() },
+    select: READING_SELECT,
+  });
+  res.json({ reading: serializeReading(reading) });
+});
+
+evalRouter.delete('/readings/:id(\\d+)', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const current = await prisma.evalReading.findUnique({
+    where: { id },
+    select: { htmlPath: true },
+  });
+  if (!current) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  await deleteEvalPages([current.htmlPath]);
+  await prisma.evalReading.delete({ where: { id } });
+  res.json({ ok: true });
+});
+
+/** Le HTML gelé de la page lue. */
+evalRouter.get('/readings/:id(\\d+)/html', admin, async (req, res) => {
+  const row = await prisma.evalReading.findUnique({
+    where: { id: Number(req.params.id) },
+    select: { htmlPath: true },
+  });
+  if (!row?.htmlPath) {
+    res.status(404).json({ error: "Cette page n'a pas été archivée" });
+    return;
+  }
+  const html = await readEvalPage(row.htmlPath);
+  if (html === null) {
+    res.status(410).json({ error: "L'archive de cette page a disparu du disque" });
+    return;
+  }
+  res.type('text/plain; charset=utf-8').send(html);
+});
+
+// ─────────────────────────────────────────────────────── worker (lecture)
+
+evalRouter.post('/reading/next', async (_req, res) => {
+  const queued = await prisma.evalReading.findFirst({
+    where: { status: 'QUEUED' },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, url: true },
+  });
+  if (!queued) {
+    res.json({ reading: null });
+    return;
+  }
+  const claimed = await prisma.evalReading.updateMany({
+    where: { id: queued.id, status: 'QUEUED' },
+    data: { status: 'RUNNING' },
+  });
+  if (claimed.count === 0) {
+    res.json({ reading: null });
+    return;
+  }
+  res.json({ reading: queued });
+});
+
+evalRouter.post('/reading/:id(\\d+)/result', harvestBody, async (req, res) => {
+  const parsed = evalReadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const id = Number(req.params.id);
+  const current = await prisma.evalReading.findUnique({
+    where: { id },
+    select: { htmlPath: true },
+  });
+  if (!current) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  const { html, dates, url, error, ...rest } = parsed.data;
+  await deleteEvalPages([current.htmlPath]);
+  const archived = html ? await saveEvalPage(html) : '';
+  const reading = await prisma.evalReading.update({
+    where: { id },
+    data: {
+      ...rest,
+      readUrl: url,
+      dates: JSON.stringify(dates),
+      htmlPath: archived || null,
+      // Une page injoignable est une réponse : elle reste au banc avec son
+      // motif, plutôt que de disparaître comme si on ne l'avait pas demandée.
+      status: error ? 'FAILED' : 'ANALYZED',
+      error: error ?? null,
+      analyzedAt: new Date(),
+      validatedAt: null,
+    },
+    select: READING_SELECT,
+  });
+  res.json({ reading: serializeReading(reading) });
+});
+
+evalRouter.post('/reading/:id(\\d+)/fail', async (req, res) => {
+  const parsed = evalFailSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const updated = await prisma.evalReading.updateMany({
+    where: { id: Number(req.params.id) },
+    data: { status: 'FAILED', error: parsed.data.error },
+  });
+  if (updated.count === 0) {
+    res.status(404).json({ error: 'Page introuvable' });
     return;
   }
   res.json({ ok: true });
