@@ -416,7 +416,7 @@ table.mini td.name { font-weight: 700; color: var(--ink); white-space: nowrap; }
       <tr class="r6">
         <td class="br"><span class="num">6</span>Extraction</td>
         <td><b>un champ</b>, jamais une fiche</td>
-        <td>humain, mais seulement après trois instruments gratuits : <b>ancrage</b>, <b>cohérence</b> interne, <b>accord</b> avec le JSON-LD de l'étage 5</td>
+        <td>trois instruments gratuits — <b>ancrage</b>, <b>cohérence</b>, <b>accord</b> avec le JSON-LD de l'étage 5 — puis la <b>fiche approuvée</b>, dont chaque champ a déjà été vérifié par un modérateur</td>
         <td>quatre verdicts par champ — juste, faux, <b>inventé</b>, <b>manqué</b> — d'où trois taux : exactitude, couverture, <b>invention</b></td>
         <td><span class="verdict yes">oui</span></td>
       </tr>
@@ -477,7 +477,9 @@ table.mini td.name { font-weight: 700; color: var(--ink); white-space: nowrap; }
         <li>Un <b>nombre nu ne prouve rien</b> : « 8 » se trouve dans n'importe quel texte assez long. Un tarif n'est tenu pour ancré que près d'un <code>€</code>, un âge près d'un « ans » ou d'un « à partir de ». Sans ce voisinage, l'instrument sonnerait toujours et ne détecterait plus rien.</li>
         <li>Une <b>date</b> se cherche sous toutes ses écritures françaises — « 3 août », « 03/08/2026 », « 2026-08-03 » — sinon toute date correctement lue serait déclarée inventée.</li>
         <li>Reste <code>description</code>, jugée sur le <b>vocabulaire</b> : une description dont la moitié des mots longs sont absents de la page n'a pas été tirée d'elle. C'est aussi le seul endroit où un juge modèle se justifierait — à condition de <b>l'étalonner</b> contre ≈ 50 jugements humains. Un juge non calibré est un thermomètre non gradué.</li>
-        <li><b>Ce que l'ancrage ne sait pas faire :</b> <code>setting</code>, intérieur ou extérieur. Une page ne l'écrit presque jamais — elle dit « au parc de la Villette » — et c'est le lecteur qui conclut. Cet aspect-là coûtera toujours un humain, et le banc l'annonce plutôt que d'imaginer une heuristique qui donnerait l'illusion d'une mesure.</li>
+        <li><b>Ce que l'ancrage ne sait pas faire :</b> <code>setting</code>, intérieur ou extérieur. Une page ne l'écrit presque jamais — elle dit « au parc de la Villette » — et c'est le lecteur qui conclut.</li>
+        <li>C'est là que la <b>fiche approuvée</b> prend le relais : sur ce site, approuver veut dire qu'un modérateur a vérifié chaque champ. L'étiquette est donc <b>déjà payée</b>, et elle tranche l'étage 6 gratuitement, <code>setting</code> compris. Elle <i>propose</i> un verdict par champ ; elle n'en écrit aucun — un verdict qui s'inscrirait seul redeviendrait indiscernable de « personne n'a regardé ».</li>
+        <li>Deux garde-fous : le titre approuvé qui ne se retrouve plus dans le texte veut dire que la page a changé depuis le run, et <b>toutes</b> les propositions sautent ; et le banc compte à part les verdicts qui n'ont fait que <i>confirmer</i> — une mesure entièrement confirmative reste vraie, mais elle dit surtout que le modèle et le modérateur sont d'accord.</li>
       </ul>
     </article>
 

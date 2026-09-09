@@ -104,6 +104,17 @@ Le Havre, Niort et Nancy.
   attrape le ratage le plus discret : quand le titre de la page ne se retrouve
   pas dans le texte extrait, c'est qu'un `<header>` a été décapé — et les dates
   et l'adresse sont parties avec.
+- **Banc d'évaluation, peupler les deux paniers** : plutôt que de saisir des
+  adresses une par une, le banc de lecture se remplit avec ce que le pipeline a
+  déjà fait — et en **deux paniers**, dont l'équilibre est la question centrale.
+  Les **sorties approuvées** sont des pages où l'étage 5 a réussi (sinon elles ne
+  seraient jamais devenues des sorties) ; n'en prendre que celles-là mesurerait
+  la brique sur ses propres succès. Les **pages abandonnées** — « page vide ou
+  illisible » — sont l'autre moitié, et personne n'a jamais vérifié si ces
+  abandons étaient justifiés. Les pages viennent de `ScraperRunItem`, qui garde
+  l'adresse *réellement lue*, et non de `sourceUrl` que l'étage 7 a pu réécrire
+  vers une page jamais ouverte. La console affiche le mélange et prévient quand
+  il ne contient que des succès.
 - **Banc d'évaluation, l'extraction** (étage 6) : le premier étage mesuré qui
   **coûte**, et c'est là que naissent *intérieur / extérieur*, l'âge, le tarif,
   le lieu — l'étage 5 ne rend qu'un texte, tout le reste de la fiche est lu
@@ -122,9 +133,19 @@ Le Havre, Niort et Nancy.
   du maximum), l'**accord** avec les dates JSON-LD de l'étage 5. Un bouton « le
   reste est juste » balaie ce qu'aucun instrument n'a signalé — et seulement
   cela, sinon la mesure redeviendrait indiscernable de « personne n'a rien lu ».
-  *Intérieur / extérieur* n'a **aucun** instrument, et la console le dit : une
-  page ne l'écrit presque jamais, elle dit « au parc de la Villette » et c'est
-  le lecteur qui conclut.
+  *Intérieur / extérieur* n'a **aucun** instrument — une page ne l'écrit presque
+  jamais, elle dit « au parc de la Villette » et c'est le lecteur qui conclut.
+  C'est là que la **fiche approuvée** prend le relais : approuver veut dire qu'un
+  modérateur a vérifié chaque champ, donc la fiche est une vérité de référence
+  déjà payée. Quand la page en porte une, chaque aspect reçoit un verdict
+  **proposé**, avec la valeur approuvée citée en clair — et un bouton « confirmer
+  la fiche approuvée » les reporte d'un clic. Proposé, jamais écrit : rien
+  n'entre dans la mesure sans qu'un humain ait cliqué. Deux garde-fous
+  l'accompagnent : si le titre approuvé ne se retrouve plus dans le texte, la
+  page a changé depuis le run et **toutes** les propositions sont retirées ; et
+  la console compte à part les verdicts qui n'ont fait que *confirmer* la
+  référence — une mesure entièrement confirmative reste vraie, mais elle dit
+  surtout que le modèle et le modérateur sont d'accord.
 - **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
   sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
   une clé d'API. Il sait aussi partir d'une adresse connue — le site d'un
@@ -212,6 +233,7 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | DELETE | `/api/eval/links/:id` | admin | Retirer un ajout manuel (un lien relevé sur la page, lui, ne s'efface pas) |
 | POST | `/api/eval/agendas/:id/validate` | admin | Figer la vérité de référence : le rappel devient lisible |
 | GET | `/api/eval/pages/:id/html` | admin | Le HTML gelé d'une page, tel que le site l'a servi ce jour-là |
+| GET / POST | `/api/eval/seed` | admin | Les deux paniers : ce qu'ils peuvent donner, et en mettre un lot en file |
 | GET / POST | `/api/eval/extractions` | admin | Le banc d'extraction : les fiches et ce que l'étage 6 a tiré du texte gelé |
 | PATCH | `/api/eval/extractions/:id` | admin | Trancher un ou plusieurs champs — *juste*, *faux*, *inventé*, *manqué* |
 | POST | `/api/eval/extractions/:id/validate` | admin | Figer la fiche — tous les aspects exigés |

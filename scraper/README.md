@@ -1009,6 +1009,42 @@ La validation exige les trois : valider en n'ayant jugé que le texte produirait
 un taux d'illustration calculé sur des pages que personne n'a regardées — le
 même mensonge que le rappel à 100 % de l'étage 3.
 
+#### Peupler le banc avec ce que le pipeline a déjà fait
+
+Deux paniers, et **l'équilibre entre eux est la question de ce banc**.
+
+| Panier | D'où | Ce qu'il apporte |
+|---|---|---|
+| **approuvées** | `ScraperRunItem` `decision='submitted'` dont la sortie est `APPROVED` | des pages où l'étage 5 a réussi — et la **vérité de référence** de l'étage 6 |
+| **abandonnées** | `ScraperRunItem` `decision='invalid'` avec `reason='page vide ou illisible'` | le **point aveugle** : la brique a dit non, personne n'a jamais vérifié |
+
+Une sortie approuvée est, par construction, une page dont le texte était
+lisible : sinon elle ne serait jamais devenue une sortie. Peupler le banc avec
+elles seules mesurerait la brique sur ses propres succès — on lirait 96 % de
+textes corrects, et ça ne voudrait rien dire. C'est le rappel à 100 % de l'étage
+3 sous un autre déguisement. La console affiche donc le mélange, et prévient
+quand il ne contient que des succès.
+
+**Pourquoi `ScraperRunItem` et pas `Event.sourceUrl`.** Parce que `sourceUrl` a
+pu être réécrit par l'étage 7 : quand l'attribution a remonté de l'agrégateur au
+site du musée, il désigne une page que le pipeline n'a **jamais lue**.
+`ScraperRunItem.url` est l'adresse réellement ouverte, après l'échange de langue.
+
+**Ce qui n'entre dans aucun panier :** les erreurs réseau (`decision='error'`).
+Une page injoignable ce jour-là est un fait du web, pas un jugement de la brique,
+et elle répond peut-être aujourd'hui.
+
+Le motif `page vide ou illisible` est une chaîne littérale de
+`stages/reading.py`, et le couplage est à connaître : s'il changeait côté
+scraper, le panier se viderait en silence. C'est pourquoi la route rend toujours
+le compte disponible — un panier vide se voit dans la console.
+
+**La fiche approuvée est du contexte ici, pas un verdict.** Les trois questions
+de l'étage 5 portent sur ce que la page *contient* ; la fiche dit ce que la
+sortie *est*. Confondre les deux fabriquerait des taux qui ne mesurent pas ce
+qu'ils annoncent. Elle est affichée en regard du texte parce qu'elle aide à
+juger, et c'est tout.
+
 ### Le banc d'extraction — l'étage 6
 
 Le premier étage mesuré qui **coûte**. Et celui qui produit tout ce dont la
@@ -1106,6 +1142,47 @@ plutôt que d'imaginer une heuristique qui donnerait l'illusion d'une mesure.
 La `description` est dans un entre-deux : c'est une reformulation, jugée sur le
 **vocabulaire** — une description dont la moitié des mots longs sont absents de
 la page n'a pas été tirée d'elle.
+
+#### La fiche approuvée comme vérité de référence
+
+Approuver, sur ce site, veut dire qu'un modérateur a vérifié **chaque champ**.
+Une sortie approuvée n'est donc pas une précoche de plus : c'est une étiquette
+humaine déjà payée, et elle tranche l'étage 6 gratuitement — y compris `setting`,
+le seul aspect qu'aucun instrument n'atteint.
+
+Quand la page du banc en porte une, `propose_verdicts()` compare champ par champ
+et **propose** un verdict, avec la valeur approuvée citée dans le motif : sans
+elle, il faudrait rouvrir la fiche publiée pour trancher, ce que la référence est
+justement censée épargner.
+
+Elle propose, elle n'écrit pas. Rien n'entre dans `verdicts` sans qu'un humain
+ait cliqué — c'est le même invariant qu'à l'étage 3, où la précoche de `links_of`
+est restée séparée de ce qu'un humain avait tranché. La console offre un bouton
+« confirmer la fiche approuvée » : un clic, et c'est un acte humain.
+
+Deux champs restent sans proposition, délibérément :
+
+* **la description** est une reformulation. Deux paraphrases différentes de la
+  même page sont toutes les deux justes ;
+* **`several`** — la référence est *une* sortie tirée de cette page, elle ne dit
+  rien de ce qu'il y en avait d'autres.
+
+Un troisième cas ne propose rien mais s'explique : la fiche approuvée est vide et
+l'ancrage retrouve pourtant la valeur dans le texte. Les deux instruments se
+contredisent, et c'est exactement le cas à montrer à un humain.
+
+**Le garde-fou.** La fiche décrit la page du jour du run ; le banc la relit
+aujourd'hui, et le pipeline n'archive aucun HTML d'époque. Si le titre approuvé
+ne se retrouve plus dans le texte, ce n'est plus la même page : toutes les
+propositions sont retirées (`pageMoved`), parce qu'elles accuseraient le modèle
+d'un changement du site. La console affiche par ailleurs l'ancienneté de la
+lecture — plus l'écart est grand, moins un désaccord accuse la brique.
+
+**Et le chiffre à garder sous les yeux :** combien de verdicts n'ont fait que
+*confirmer* la référence, contre combien l'ont *corrigée*. Une mesure entièrement
+confirmative reste vraie — un humain a cliqué — mais elle dit surtout que le
+modèle et le modérateur sont d'accord, ce qui est plus faible qu'une relecture
+indépendante. Les renseignements sont dans les corrections.
 
 #### Le prix de la mesure
 

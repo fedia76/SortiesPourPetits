@@ -47,6 +47,7 @@ import {
   evalReadSchema,
   evalReadingSchema,
   evalReadingVerdictSchema,
+  evalSeedSchema,
   evalVerdictSchema,
 } from '../lib/validators';
 
@@ -805,6 +806,23 @@ evalRouter.post('/harvest/:id(\\d+)/fail', async (req, res) => {
 // ═══════════════════════════════════════════ étage 5 — le banc de lecture
 
 /**
+ * La sortie approuvée, telle que le banc s'en sert.
+ *
+ * Approuver, sur ce site, veut dire qu'un modérateur a vérifié **chaque champ**.
+ * Ce n'est donc pas une précoche de plus : c'est une étiquette humaine déjà
+ * payée, et elle donne le verdict de l'étage 6 gratuitement — y compris sur
+ * `setting`, le seul aspect qu'aucun instrument ne sait atteindre.
+ */
+const EVENT_REFERENCE_SELECT = {
+  id: true, title: true, status: true, isFree: true, price: true,
+  ageMin: true, ageMax: true, isPermanent: true, dateStart: true, dateEnd: true,
+  openTime: true, closeTime: true, setting: true, sourceUrl: true,
+  category: { select: { name: true } },
+  venue: { select: { name: true, address: true, city: true, postalCode: true } },
+  dates: { select: { day: true }, orderBy: { day: 'asc' } },
+} satisfies Prisma.EventSelect;
+
+/**
  * L'étage 5 lit trois fois un même HTML : le texte qui part au modèle, les
  * dates que le site déclare, l'illustration. Et il en tire une décision — sous
  * deux cents caractères, la page est **abandonnée** avant le moindre appel
@@ -833,9 +851,73 @@ const READING_SELECT = {
   imageUrl: true, chars: true, htmlPath: true,
   heading: true, h1InText: true, truncated: true, tooShort: true, imageLooksLogo: true,
   textVerdict: true, imageVerdict: true, datesVerdict: true,
+  origin: true, readAt: true, runDecision: true, runReason: true,
   createdAt: true, analyzedAt: true, validatedAt: true,
   author: { select: { id: true, displayName: true } },
+  // La sortie approuvée tirée de cette page. En **contexte** pour l'étage 5, et
+  // pas en verdict : les trois verdicts de cet étage portent sur ce que la page
+  // *contient*, la fiche dit ce que la sortie *est*. Confondre les deux
+  // fabriquerait des taux qui ne mesurent pas ce qu'ils annoncent.
+  //
+  // C'est en revanche la vérité de référence de l'étage 6, où la question est
+  // exactement « ces champs sont-ils les bons ? ».
+  event: { select: EVENT_REFERENCE_SELECT },
 } satisfies Prisma.EvalReadingSelect;
+
+type ReferenceRow = {
+  id: number;
+  title: string;
+  isFree: boolean;
+  price: Prisma.Decimal | null;
+  ageMin: number | null;
+  ageMax: number | null;
+  isPermanent: boolean;
+  dateStart: Date | null;
+  dateEnd: Date | null;
+  openTime: string | null;
+  closeTime: string | null;
+  setting: string | null;
+  sourceUrl: string | null;
+  category: { name: string };
+  venue: { name: string; address: string; city: string; postalCode: string };
+  dates: { day: Date }[];
+};
+
+/** Un jour, en ISO, sans l'heure : les dates du site sont des `DATE`. */
+function isoDay(value: Date | null): string {
+  return value ? value.toISOString().slice(0, 10) : '';
+}
+
+/**
+ * La fiche approuvée mise à plat, dans le vocabulaire que le worker attend.
+ *
+ * Les mêmes clés que `evaluation.fiche_payload`, pour que la comparaison se
+ * fasse champ contre champ sans traduction au milieu — une traduction de plus
+ * serait un endroit de plus où deux vocabulaires peuvent diverger.
+ */
+function flattenReference(event: ReferenceRow) {
+  return {
+    id: event.id,
+    title: event.title,
+    isFree: event.isFree,
+    price: event.price === null ? null : Number(event.price),
+    ageMin: event.ageMin,
+    ageMax: event.ageMax,
+    isPermanent: event.isPermanent,
+    dateStart: isoDay(event.dateStart),
+    dateEnd: isoDay(event.dateEnd),
+    openTime: event.openTime ?? '',
+    closeTime: event.closeTime ?? '',
+    setting: event.setting ?? '',
+    sourceUrl: event.sourceUrl ?? '',
+    category: event.category.name,
+    venueName: event.venue.name,
+    venueAddress: event.venue.address,
+    venueCity: event.venue.city,
+    venuePostalCode: event.venue.postalCode,
+    days: event.dates.map((d) => isoDay(d.day)),
+  };
+}
 
 type SerializableReading = {
   status: string;
@@ -844,10 +926,11 @@ type SerializableReading = {
   textVerdict: string | null;
   imageVerdict: string | null;
   datesVerdict: string | null;
+  event: (ReferenceRow & { status: string }) | null;
 };
 
 function serializeReading<T extends SerializableReading>(reading: T) {
-  const { htmlPath, dates, ...rest } = reading;
+  const { htmlPath, dates, event, ...rest } = reading;
   let parsed: string[] = [];
   try {
     // Écrit par le serveur lui-même à l'import, donc bien formé — mais une
@@ -864,6 +947,12 @@ function serializeReading<T extends SerializableReading>(reading: T) {
     archived: !!htmlPath,
     /** Les trois verdicts sont posés : cette page compte dans la mesure. */
     judged,
+    /**
+     * La sortie approuvée tirée de cette page — du **contexte** ici, la vérité
+     * de référence à l'étage 6. Nulle tant qu'elle n'est pas approuvée : une
+     * fiche en attente n'a été vérifiée par personne.
+     */
+    reference: event && event.status === 'APPROVED' ? flattenReference(event) : null,
   };
 }
 
@@ -1165,6 +1254,7 @@ evalRouter.post('/reading/:id(\\d+)/fail', async (req, res) => {
 const EXTRACTION_SELECT = {
   id: true, status: true, error: true, note: true, model: true,
   fiche: true, aspects: true, verdicts: true,
+  hasReference: true, pageMoved: true,
   inputTokens: true, outputTokens: true, costUsd: true,
   createdAt: true, analyzedAt: true, validatedAt: true,
   author: { select: { id: true, displayName: true } },
@@ -1176,7 +1266,11 @@ const EXTRACTION_SELECT = {
     select: {
       id: true, url: true, label: true, text: true, textChars: true,
       dates: true, heading: true, truncated: true, tooShort: true,
-      textVerdict: true,
+      textVerdict: true, origin: true, readAt: true,
+      // De quoi renvoyer vers la fiche publiée : le motif de chaque proposition
+      // cite déjà la valeur approuvée, mais un doute se lève en ouvrant la
+      // sortie elle-même.
+      event: { select: { id: true, title: true, status: true } },
     },
   },
 } satisfies Prisma.EvalExtractionSelect;
@@ -1189,6 +1283,9 @@ type Aspect = {
   filled: boolean;
   instrument: string;
   flags: string[];
+  /** Le verdict que la fiche approuvée propose. Vide quand elle ne tranche pas. */
+  proposed?: string;
+  because?: string;
 };
 
 type SerializableExtraction = {
@@ -1196,6 +1293,8 @@ type SerializableExtraction = {
   aspects: string;
   verdicts: string;
   costUsd: number;
+  hasReference: boolean;
+  pageMoved: boolean;
   reading: { dates: string };
 };
 
@@ -1275,6 +1374,10 @@ function extractionStats(rows: SerializedExtraction[]) {
       videJuste: number;
       /** Fiches — jugées ou non — où un instrument a levé un drapeau. */
       signale: number;
+      /** Verdicts humains qui n'ont fait que confirmer la fiche approuvée. */
+      confirme: number;
+      /** Verdicts humains qui l'ont contredite. */
+      corrige: number;
     }
   >();
 
@@ -1285,10 +1388,14 @@ function extractionStats(rows: SerializedExtraction[]) {
         label: aspect.label,
         instrument: aspect.instrument,
         renseigne: 0, justeRenseigne: 0, faux: 0, invente: 0, manque: 0, videJuste: 0,
-        signale: 0,
+        signale: 0, confirme: 0, corrige: 0,
       };
       if (aspect.flags.length) slot.signale += 1;
       const verdict = row.judged ? row.verdicts[aspect.key] : undefined;
+      if (verdict && aspect.proposed) {
+        if (verdict === aspect.proposed) slot.confirme += 1;
+        else slot.corrige += 1;
+      }
       if (verdict) {
         if (aspect.filled) {
           slot.renseigne += 1;
@@ -1322,6 +1429,21 @@ function extractionStats(rows: SerializedExtraction[]) {
     programmes: rows.filter((r) => r.fiche.several === true).length,
     inventions: aspects.reduce((sum, a) => sum + a.invente, 0),
     manques: aspects.reduce((sum, a) => sum + a.manque, 0),
+    /** Fiches jugées contre une sortie approuvée. */
+    avecReference: rows.filter((r) => r.hasReference).length,
+    /** Fiches dont la page a changé depuis le run : comparaison suspendue. */
+    bougees: rows.filter((r) => r.pageMoved).length,
+    /**
+     * Ce que la fiche approuvée a fait gagner, et ce qu'elle n'a pas dit.
+     *
+     * `confirmes` mesure la part de la vérité de référence qui n'a fait que
+     * confirmer une proposition. C'est le chiffre à garder sous les yeux : une
+     * mesure entièrement confirmative reste vraie — un humain a cliqué — mais
+     * elle dit surtout que le modèle et le modérateur sont d'accord, ce qui est
+     * une information plus faible qu'une relecture indépendante.
+     */
+    confirmes: aspects.reduce((sum, a) => sum + a.confirme, 0),
+    corriges: aspects.reduce((sum, a) => sum + a.corrige, 0),
     costUsd: Math.round(rows.reduce((sum, r) => sum + r.costUsd, 0) * 10000) / 10000,
     aspects,
   };
@@ -1516,7 +1638,12 @@ evalRouter.post('/extraction/next', async (_req, res) => {
     select: {
       id: true,
       model: true,
-      reading: { select: { readUrl: true, url: true, text: true, dates: true } },
+      reading: {
+        select: {
+          readUrl: true, url: true, text: true, dates: true,
+          event: { select: EVENT_REFERENCE_SELECT },
+        },
+      },
     },
   });
   if (!queued) {
@@ -1543,6 +1670,13 @@ evalRouter.post('/extraction/next', async (_req, res) => {
       text: queued.reading.text,
       // Les dates JSON-LD de l'étage 5, pour l'instrument d'accord.
       dates: parseJson<string[]>(queued.reading.dates, []),
+      // La sortie approuvée tirée de cette page, quand il y en a une : une
+      // étiquette humaine déjà payée, champ par champ. Elle propose un verdict
+      // pour chaque aspect ; elle n'en écrit aucun.
+      reference:
+        queued.reading.event && queued.reading.event.status === 'APPROVED'
+          ? flattenReference(queued.reading.event)
+          : null,
     },
   });
 });
@@ -1554,7 +1688,7 @@ evalRouter.post('/extraction/:id(\\d+)/result', harvestBody, async (req, res) =>
     return;
   }
   const id = Number(req.params.id);
-  const { error, fiche, aspects, model, ...usage } = parsed.data;
+  const { error, fiche, aspects, model, hasReference, pageMoved, ...usage } = parsed.data;
   const updated = await prisma.evalExtraction.updateMany({
     where: { id },
     data: {
@@ -1562,6 +1696,8 @@ evalRouter.post('/extraction/:id(\\d+)/result', harvestBody, async (req, res) =>
       ...(model ? { model } : {}),
       fiche: JSON.stringify(fiche),
       aspects: JSON.stringify(aspects),
+      hasReference,
+      pageMoved,
       verdicts: '{}',
       status: error ? 'FAILED' : 'ANALYZED',
       error: error ?? null,
@@ -1592,4 +1728,143 @@ evalRouter.post('/extraction/:id(\\d+)/fail', async (req, res) => {
     return;
   }
   res.json({ ok: true });
+});
+
+// ══════════════════ peupler le banc avec ce que le pipeline a déjà fait
+
+/**
+ * Le motif exact que l'étage 5 écrit quand il abandonne une page, dans
+ * `scraper/sortiesbot/stages/reading.py`. C'est ce qui isole **ses** abandons de
+ * ceux de l'étage 8, qui écrit le même `invalid` avec d'autres motifs.
+ *
+ * Le couplage est une chaîne de caractères, et il faut le savoir : si ce libellé
+ * changeait côté scraper, le panier se viderait en silence. C'est pourquoi la
+ * route rend toujours le compte disponible — un panier vide se voit.
+ */
+const ABANDON_REASON = 'page vide ou illisible';
+
+/**
+ * Les deux paniers, et pourquoi il en faut deux.
+ *
+ * Une sortie **approuvée** est une page où l'étage 5 a réussi : son texte était
+ * lisible, sinon elle ne serait jamais devenue une sortie. Peupler le banc avec
+ * elles seules mesurerait la brique sur ses propres succès — on lirait 96 % de
+ * textes corrects, et ça ne voudrait rien dire. C'est le rappel à 100 % de
+ * l'étage 3 sous un autre déguisement.
+ *
+ * L'autre moitié est gratuite et déjà en base : les pages que la lecture a
+ * **abandonnées**. Personne n'a jamais vérifié si ces abandons étaient
+ * justifiés, et c'est très exactement le point aveugle de cet étage.
+ *
+ * ## Pourquoi `ScraperRunItem` et pas `Event.sourceUrl`
+ *
+ * Parce que `sourceUrl` a pu être réécrit par l'étage 7 : quand l'attribution a
+ * remonté de l'agrégateur au site du musée, il désigne une page que le pipeline
+ * n'a **jamais lue**. `ScraperRunItem.url` est l'adresse réellement ouverte,
+ * après l'échange de langue — c'est celle-là qu'il faut relire pour mesurer.
+ *
+ * ## Ce qui n'entre dans aucun panier
+ *
+ * Les erreurs réseau (`decision = 'error'`). Une page injoignable ce jour-là est
+ * un fait du web, pas un jugement de la brique, et elle répond peut-être
+ * aujourd'hui : il n'y a rien à mesurer.
+ */
+const BUCKETS = {
+  approuvees: {
+    where: {
+      decision: 'submitted',
+      event: { is: { status: 'APPROVED' as const } },
+    } satisfies Prisma.ScraperRunItemWhereInput,
+    origin: 'APPROUVEE' as const,
+  },
+  abandonnees: {
+    where: {
+      decision: 'invalid',
+      reason: ABANDON_REASON,
+    } satisfies Prisma.ScraperRunItemWhereInput,
+    origin: 'ABANDONNEE' as const,
+  },
+};
+
+/**
+ * Les pages d'un panier qui ne sont pas déjà au banc, la plus récente d'abord.
+ *
+ * Dédoublonnées par URL : une même page revient dans plusieurs runs, et deux
+ * lignes du banc pour une seule page compteraient deux fois la même mesure.
+ */
+async function candidates(bucket: keyof typeof BUCKETS, limit: number) {
+  const rows = await prisma.scraperRunItem.findMany({
+    where: BUCKETS[bucket].where,
+    orderBy: { at: 'desc' },
+    // Large devant `limit` : on dédoublonne et on écarte les déjà-présentes
+    // après coup, donc il faut de la marge pour remplir la demande.
+    take: Math.min(limit * 8, 800),
+    select: { url: true, title: true, reason: true, decision: true, at: true, eventId: true },
+  });
+
+  const seen = new Set<string>();
+  const unique = rows.filter((row) => {
+    if (!row.url || seen.has(row.url)) return false;
+    seen.add(row.url);
+    return true;
+  });
+
+  const already = await prisma.evalReading.findMany({
+    where: { url: { in: unique.map((r) => r.url) } },
+    select: { url: true },
+  });
+  const known = new Set(already.map((r) => r.url));
+  return unique.filter((row) => !known.has(row.url));
+}
+
+/** Ce que chaque panier peut encore donner. */
+evalRouter.get('/seed', admin, async (_req, res) => {
+  const [approuvees, abandonnees] = await Promise.all([
+    candidates('approuvees', 100),
+    candidates('abandonnees', 100),
+  ]);
+  res.json({
+    approuvees: approuvees.length,
+    abandonnees: abandonnees.length,
+    /** Le libellé qui isole les abandons de l'étage 5. Affiché pour qu'un
+     *  panier vide se diagnostique sans lire le code. */
+    abandonReason: ABANDON_REASON,
+  });
+});
+
+/**
+ * Met en file un lot de pages tirées d'un panier.
+ *
+ * Les lignes partent en `QUEUED` : le worker les relira et les gèlera comme
+ * n'importe quelle page du banc. Le HTML d'époque n'existe pas — le pipeline ne
+ * l'archive pas — donc `readAt` voyage avec, pour que la console puisse dire
+ * depuis combien de temps la page a pu bouger.
+ */
+evalRouter.post('/seed', admin, async (req, res) => {
+  const parsed = evalSeedSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const { bucket, limit } = parsed.data;
+  const rows = (await candidates(bucket, limit)).slice(0, limit);
+  if (!rows.length) {
+    res.status(409).json({ error: 'Rien de nouveau dans ce panier' });
+    return;
+  }
+  const created = await prisma.evalReading.createMany({
+    data: rows.map((row) => ({
+      url: row.url,
+      label: (row.title ?? '').slice(0, 150),
+      origin: BUCKETS[bucket].origin,
+      eventId: bucket === 'approuvees' ? row.eventId : null,
+      readAt: row.at,
+      runDecision: row.decision.slice(0, 40),
+      runReason: row.reason ?? '',
+      createdById: req.user!.id,
+    })),
+    // Une course entre deux onglets ne doit pas faire échouer le lot.
+    skipDuplicates: true,
+  });
+  res.status(201).json({ added: created.count });
 });
