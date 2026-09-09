@@ -29,7 +29,7 @@
  * rangés par motif : les sorties perdues se concentrent sous « texte trop
  * court » et « hors domaine », jamais sous « mentions légales ».
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api } from '../lib/api';
 import {
   EVAL_FIELD_CHOICES,
@@ -138,6 +138,39 @@ const addingExtract = ref(false);
 
 let poll: ReturnType<typeof setInterval> | null = null;
 
+/**
+ * Le banc ne travaille pas tout seul : les trois files sont servies par le
+ * **worker**, et une console qui n'affiche que « en file » ne dit pas si le
+ * service tourne. C'est la confusion la plus coûteuse de cette page — surtout à
+ * l'étage 6, où l'on peut attendre longtemps une consommation qui n'arrivera
+ * jamais parce que rien ne réclame le travail.
+ *
+ * Le compteur ci-dessous ne remplace pas un vrai signal de vie du worker, qui
+ * demanderait une route de plus ; il constate seulement que **rien n'a bougé**
+ * depuis un moment, ce qui est exactement ce qu'on voit dans ce cas-là.
+ */
+const nowTs = ref(Date.now());
+const queuedSince = ref(0);
+
+const queuedCount = computed(
+  () =>
+    agendas.value.filter((a) => a.status === 'QUEUED').length +
+    readings.value.filter((r) => r.status === 'QUEUED').length +
+    extractions.value.filter((x) => x.status === 'QUEUED').length,
+);
+
+// Tout changement du compte est un signe de vie — le worker a pris quelque
+// chose, ou on vient d'en ajouter. C'est l'immobilité qui inquiète.
+watch(queuedCount, (count, before) => {
+  if (count === 0) queuedSince.value = 0;
+  else if (count !== before) queuedSince.value = Date.now();
+});
+
+/** Deux minutes sans que la file bouge : le worker ne réclame rien. */
+const stalled = computed(
+  () => queuedCount.value > 0 && queuedSince.value > 0 && nowTs.value - queuedSince.value > 120_000,
+);
+
 const waiting = computed(() =>
   agendas.value.some((a) => a.status === 'QUEUED' || a.status === 'RUNNING'),
 );
@@ -188,6 +221,7 @@ async function loadExtractions(quiet = false) {
 }
 
 function tick() {
+  nowTs.value = Date.now();
   if (waiting.value) load(true);
   if (readings.value.some((r) => r.status === 'QUEUED' || r.status === 'RUNNING')) {
     loadReadings(true);
@@ -1043,6 +1077,16 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="notice" class="success">{{ notice }}</p>
+
+    <p v-if="stalled" class="card stalled">
+      <strong>{{ queuedCount }} tâche(s) en file depuis plus de deux minutes, et rien ne
+      bouge.</strong>
+      Le banc ne travaille pas tout seul : c'est le <strong>worker</strong> qui sert ces files.
+      S'il est arrêté — ou s'il tourne une version antérieure à ces étages — le travail reste en
+      file indéfiniment, et à l'étage 6 aucun appel n'est passé, donc aucun jeton consommé.
+      Vérifiez <code>systemctl status sortiespourpetits-scraper</code> sur le serveur, et qu'il a
+      bien été redéployé depuis.
+    </p>
 
     <!-- ─────────────────────────────────────────── 5. la lecture -->
     <section v-if="tab === 5" class="brick3">
@@ -3000,6 +3044,17 @@ table.aspects td.bad {
   background: var(--danger-soft);
   color: var(--danger);
   font-weight: 600;
+}
+
+/* Le seul bandeau de cette page qui ne parle pas de la mesure mais de ce qui la
+   produit : sans worker, tout reste « en file » et rien ne le dit. */
+.stalled {
+  margin-top: 1rem;
+  padding: 0.8rem 1.2rem;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  border-left: 4px solid var(--warn);
+  background: var(--warn-soft);
 }
 
 /* ---- les deux paniers ---- */

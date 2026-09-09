@@ -1192,6 +1192,17 @@ mesure-ci est gratuite comme les deux précédentes. C'est aussi pourquoi la fil
 d'extraction passe **en dernier** dans le worker, derrière les recherches, les
 agendas et les lectures — tout ce qui est gratuit passe avant.
 
+**Aucune consommation à l'écran, c'est presque toujours le worker.** Le banc ne
+travaille pas tout seul : ses trois files sont servies par le service
+`sortiespourpetits-scraper`. Arrêté, ou tournant une version antérieure à ces
+étages — auquel cas il ne connaît même pas `POST /api/eval/extraction/next` et
+ne réclame donc jamais ce travail — les extractions restent « en file »
+indéfiniment, aucun appel n'est passé, et la facture ne bouge pas. Le statut de
+la fiche le dit : **en file** = jamais réclamée, **en cours** = le worker
+travaille, **à relire** = l'appel a eu lieu et il est payé. La console affiche
+aussi un bandeau quand une file ne bouge plus depuis deux minutes. En local,
+`.venv/bin/python -m sortiesbot.worker --once` traite une tâche et sort.
+
 La console permet de mettre en file **toutes** les fiches lisibles d'un coup
 (`POST /api/eval/extractions/all`), et c'est le seul geste du banc dont la
 dépense suit le nombre de pages : d'où la confirmation, qui annonce le compte

@@ -328,3 +328,145 @@ def test_compteurs_du_resume():
     assert counters["duplicates"] == 1
     assert counters["webSearches"] == 2
     assert counters["costUsd"] == pytest.approx(0.03)  # jetons + 2 recherches
+
+
+# ════════════════════════ le banc d'extraction : la file qui dépense
+
+class BancApi(ScraperApi):
+    """Le site vu par le banc : une extraction en file, et ce qu'on lui rend."""
+
+    def __init__(self, job: dict[str, object]):
+        super().__init__()
+        self.job = job
+        self.reported: list[tuple[int, dict[str, object]]] = []
+        self.failed: list[tuple[int, str]] = []
+
+    def categories(self):
+        return {"Spectacle": 1, "Musée": 2}
+
+    def report_extraction(self, extraction_id, result):
+        self.reported.append((extraction_id, result))
+
+    def fail_extraction(self, extraction_id, error):
+        self.failed.append((extraction_id, error))
+
+
+class CompteurProvider:
+    """Un fournisseur qui compte ses appels et déclare une consommation.
+
+    C'est le point du test : il n'y a pas d'autre façon de mesurer l'étage 6
+    que d'appeler le modèle. Si ce compteur reste à zéro, aucune fiche du banc
+    n'a coûté un jeton — et aucune n'a été mesurée non plus.
+    """
+
+    def __init__(self):
+        self.calls: list[dict[str, object]] = []
+        self.usage = Usage()
+
+    def extract(self, url, content, config, categories, log, *, multiple=False):
+        self.calls.append({"url": url, "content": content, "categories": list(categories)})
+        self.usage.input_tokens += 2130
+        self.usage.output_tokens += 410
+        self.usage.cost_usd += 0.0031
+        return [sortie()]
+
+
+def banc_job(**extra):
+    return {
+        "id": 7,
+        "url": "https://theatre.exemple.fr/le-petit-prince",
+        "model": "claude-haiku-4-5",
+        "text": "Le Petit Prince, spectacle de marionnettes. Du 3 août au 23 août 2026. "
+        "Tarif : 8 €, à partir de 3 ans. Théâtre municipal, 12 rue des Arts, 76000 Rouen.",
+        "dates": [],
+        **extra,
+    }
+
+
+def run_extraction(monkeypatch, provider, job=None):
+    api = BancApi(job or banc_job())
+    monkeypatch.setattr(
+        worker, "get_provider", lambda config, api_key=None, serper_key=None: provider
+    )
+    env = type("Env", (), {"anthropic_key": "clé", "serper_key": None})()
+    worker.extract(api.job, api, env, quiet=True)
+    return api
+
+
+def test_la_file_dextraction_appelle_vraiment_le_modele(monkeypatch):
+    """Le banc de l'étage 6 **dépense**, et c'est le seul du banc à le faire.
+
+    Ce test existe pour qu'une consommation nulle sur la facture ne puisse
+    jamais vouloir dire « le code ne l'appelait pas » : il vérifie l'appel, son
+    entrée, et le coût rapporté au site.
+    """
+    provider = CompteurProvider()
+    api = run_extraction(monkeypatch, provider)
+
+    assert len(provider.calls) == 1
+    extraction_id, result = api.reported[0]
+    assert extraction_id == 7
+    assert result["inputTokens"] == 2130
+    assert result["outputTokens"] == 410
+    assert result["costUsd"] == 0.0031
+
+
+def test_le_texte_envoye_au_modele_est_celui_que_le_site_a_gele(monkeypatch):
+    """L'entrée de l'étage 6 est la sortie de l'étage 5, pas la page.
+
+    Si le worker retéléchargeait, une fiche fautive ne dirait plus lequel des
+    deux étages est en cause.
+    """
+    provider = CompteurProvider()
+    job = banc_job()
+    run_extraction(monkeypatch, provider, job)
+
+    assert provider.calls[0]["content"] == job["text"]
+    assert provider.calls[0]["url"] == job["url"]
+
+
+def test_le_referentiel_des_categories_vient_du_site(monkeypatch):
+    """Le prompt impose au modèle de choisir dans la liste du site : une liste
+    inventée dans le worker mesurerait autre chose que ce que le pipeline fait."""
+    provider = CompteurProvider()
+    run_extraction(monkeypatch, provider)
+
+    assert provider.calls[0]["categories"] == ["Musée", "Spectacle"]
+
+
+def test_le_modele_demande_par_la_console_est_celui_qui_repond(monkeypatch):
+    """Une mesure sans le nom du modèle ne se compare à rien : c'est la première
+    chose qui change entre deux campagnes."""
+    provider = CompteurProvider()
+    api = run_extraction(monkeypatch, provider, banc_job(model="un-autre-modele"))
+
+    assert api.reported[0][1]["model"] == "un-autre-modele"
+
+
+def test_un_appel_qui_echoue_clot_quand_meme_lextraction(monkeypatch):
+    """Sans clôture, la console resterait sur « en cours » et le worker
+    repasserait à côté indéfiniment."""
+
+    class Cassé(CompteurProvider):
+        def extract(self, *a, **kw):
+            raise RuntimeError("quota dépassé")
+
+    api = run_extraction(monkeypatch, Cassé())
+
+    # `extract_page` attrape l'erreur du fournisseur et la rapporte : c'est une
+    # réponse, pas une panne du banc.
+    assert "quota dépassé" in str(api.reported[0][1]["error"])
+
+
+def test_un_fournisseur_introuvable_clot_lextraction_en_echec(monkeypatch):
+    monkeypatch.setattr(
+        worker,
+        "get_provider",
+        lambda config, api_key=None, serper_key=None: (_ for _ in ()).throw(RuntimeError("pas de clé")),
+    )
+    api = BancApi(banc_job())
+    env = type("Env", (), {"anthropic_key": None, "serper_key": None})()
+    worker.extract(api.job, api, env, quiet=True)
+
+    assert api.failed[0][0] == 7
+    assert "pas de clé" in api.failed[0][1]
