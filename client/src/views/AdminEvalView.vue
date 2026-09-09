@@ -826,6 +826,45 @@ function toggleExtraction(id: number) {
   openExtractions.value = flip(openExtractions.value, id);
 }
 
+/**
+ * Met en file toutes les fiches lisibles du banc de lecture.
+ *
+ * C'est le seul geste du banc dont la dépense est proportionnelle au nombre de
+ * pages — une extraction, un appel payant. D'où la confirmation, qui annonce le
+ * compte : un clic de trop sur les autres boutons coûte une seconde, ici il
+ * coûte de l'argent.
+ *
+ * Le compte affiché est celui que la console calcule sur ce qu'elle a en main ;
+ * c'est le serveur qui tranche vraiment, et il rend combien de lignes ont été
+ * créées — moins, si une page a été extraite depuis un autre onglet.
+ */
+async function extractAll() {
+  const total = readyForExtraction.value.length;
+  if (!total) return;
+  if (
+    !confirm(
+      `Extraire ${total} fiche(s) ?\n\nC'est ${total} appel(s) au modèle : ` +
+        "l'étage 6 est le seul du banc dont la mesure se paie, et elle se paie par fiche.",
+    )
+  ) {
+    return;
+  }
+  error.value = '';
+  notice.value = '';
+  addingExtract.value = true;
+  try {
+    const data = await api.post<{ added: number }>('/api/eval/extractions/all', {
+      model: extractForm.value.model.trim(),
+    });
+    notice.value = `${data.added} extraction(s) mise(s) en file : le worker les traitera une par une.`;
+    await loadExtractions(true);
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erreur';
+  } finally {
+    addingExtract.value = false;
+  }
+}
+
 async function addExtraction() {
   error.value = '';
   notice.value = '';
@@ -1364,6 +1403,20 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
           La liste ne montre que les pages <strong>lues et au-dessus du seuil</strong> : une page que
           l'étage 5 aurait abandonnée n'atteint jamais l'extraction dans le pipeline, et la mesurer
           ici mesurerait un appel qui n'a pas lieu. Ajoutez-en d'abord dans l'onglet 5.
+        </p>
+        <p v-if="readyForExtraction.length > 1" class="bulk">
+          <button
+            class="btn small secondary"
+            type="button"
+            :disabled="addingExtract"
+            @click="extractAll"
+          >
+            Extraire les {{ readyForExtraction.length }} fiches de la liste
+          </button>
+          <span class="muted small-note">
+            Un appel payant par fiche — c'est le seul geste du banc dont la dépense suit le nombre
+            de pages. Le worker les traitera une par une, derrière tout ce qui est gratuit.
+          </span>
         </p>
       </form>
 
@@ -2828,6 +2881,22 @@ const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
 }
 
 /* ---- étage 6 : la fiche, champ par champ ---- */
+
+/* Le lot au-dessous du formulaire, et pas dedans : ce n'est pas une variante du
+   bouton « Extraire », c'est un geste dont le prix suit le nombre de pages. */
+.bulk {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin: 0.7rem 0 0;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--line);
+}
+.bulk .small-note {
+  flex: 1 1 22rem;
+  line-height: 1.45;
+}
 
 /* Trois colonnes de largeurs très inégales : la liste des pages est longue, le
    nom d'un modèle tient en quinze caractères. En `flex`, comme les autres
