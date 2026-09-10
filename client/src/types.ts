@@ -701,6 +701,85 @@ export interface ScraperStats {
   }[];
 }
 
+// ────────────────────────────────────── ce que la modération apprend au scraper
+
+/** Un étage du pipeline, tel que le scraper le numérote. */
+export interface BlamedStage {
+  stage: string;
+  number: number;
+  label: string;
+}
+
+/**
+ * Un motif de refus, et l'étage qu'il met en cause.
+ *
+ * Servi par l'API plutôt que recopié ici : la même table remplit les puces de
+ * la modération et groupe les refus par étage sur la page de qualité, et deux
+ * copies auraient divergé au premier motif ajouté.
+ */
+export interface RejectionMeaning {
+  code: string;
+  label: string;
+  hint: string;
+  blames: BlamedStage[];
+}
+
+/** Une population classée sur ce qu'on sait de son taux, pas sur ce qu'on a vu. */
+export interface QualityRanked {
+  pages: number;
+  submitted: number;
+  /** Sorties effectivement jugées — les « en attente » n'y sont pas. */
+  judged: number;
+  approved: number;
+  /** Taux d'approbation brut, ou `null` si rien n'a encore été jugé. */
+  rate: number | null;
+  /** Borne basse de Wilson à 95 % : c'est elle qui ordonne le tableau. */
+  lower: number;
+  /** Faux : l'effectif est sous le plancher, la ligne n'est pas classée. */
+  enough: boolean;
+}
+
+export interface ScraperQuality {
+  codes: RejectionMeaning[];
+  /** Effectif minimal pour qu'une ligne soit classée plutôt que constatée. */
+  rankingFloor: number;
+  judged: { approved: number; rejected: number; pending: number };
+  corrections: {
+    /** Approuvées sans la moindre retouche : la seule preuve positive. */
+    untouched: number;
+    touched: number;
+    fields: { field: string; events: number }[];
+  };
+  /** `code` est nul pour les refus antérieurs au motif comptable. */
+  rejections: { code: string | null; events: number }[];
+  signals: (QualityRanked & { signal: string })[];
+  queries: (QualityRanked & { query: string })[];
+  domains: (QualityRanked & { domain: string })[];
+}
+
+/** Les champs d'une fiche, sous le nom que leur donne l'API du site. */
+export const FIELD_LABELS: Record<string, string> = {
+  title: 'Titre',
+  description: 'Description',
+  sourceUrl: 'Lien',
+  isFree: 'Gratuité',
+  price: 'Tarif',
+  ageMin: 'Âge minimum',
+  ageMax: 'Âge maximum',
+  isPermanent: 'Permanente',
+  dateStart: 'Date de début',
+  dateEnd: 'Date de fin',
+  openTime: 'Heure d’ouverture',
+  closeTime: 'Heure de fermeture',
+  setting: 'Cadre',
+  categoryId: 'Catégorie',
+  venueName: 'Nom du lieu',
+  venueAddress: 'Adresse',
+  venueCity: 'Ville',
+  venuePostalCode: 'Code postal',
+  dates: 'Jours de représentation',
+};
+
 // ───────────────────────────────────────────────────────── banc d'évaluation
 
 export type EvalAgendaStatus = 'QUEUED' | 'RUNNING' | 'ANALYZED' | 'FAILED' | 'VALIDATED';

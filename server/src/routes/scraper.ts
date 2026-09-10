@@ -4,6 +4,8 @@ import { prisma } from '../db';
 import { deletePhoto } from '../lib/upload';
 import { ATTRIBUTE_STAGE, buildAttribution } from '../lib/scraperAttribution';
 import { TREE_MAX_ROWS, buildTree } from '../lib/scraperTree';
+import { groupProvenance, provenanceOf } from '../lib/scraperProvenance';
+import { describeRejections, wilsonLowerBound } from '../lib/rejectionCodes';
 import { requireRole } from '../middleware/auth';
 import {
   aggregatorSchema,
@@ -484,6 +486,214 @@ function count(value: unknown): number {
  * domaine est tiré de l'URL en SQL (`SUBSTRING_INDEX`) : le faire en JS
  * obligerait à rapatrier toutes les lignes du journal.
  */
+// ═════════════════════════════════════════ ce que la modération apprend
+
+/**
+ * Plancher d'effectif sous lequel un domaine ou une requête n'est pas classé.
+ *
+ * Sans lui, un domaine vu trois fois et approuvé trois fois trône en tête d'un
+ * tableau où figure un domaine éprouvé cinquante fois. Ce n'est pas un détail
+ * de présentation : c'est la différence entre une mesure et une impression, et
+ * le projet a déjà enterré un signal (le comptage de liens) pour avoir regardé
+ * de trop petits échantillons. Sous le plancher, la ligne est affichée mais
+ * non classée — on ne la cache pas, on dit qu'on ne sait pas encore.
+ */
+const RANKING_FLOOR = 10;
+
+/** `bigint` de MySQL → nombre JSON. Les comptes tiennent tous dans un entier. */
+const asNumber = (value: bigint | number | null): number => Number(value ?? 0);
+
+/**
+ * Ce que la modération apprend au scraper.
+ *
+ * La page de statistiques dit d'où vient le catalogue. Celle-ci répond à
+ * l'autre question, celle que rien ne posait : **où le pipeline se trompe-t-il,
+ * et de combien ?**
+ *
+ * Elle ne mesure qu'une chose, et il faut le dire pour qu'on ne lui demande
+ * pas l'autre : la **précision** — ce qui est parti était-il bon ? Le
+ * **rappel** — qu'a-t-on manqué ? — n'a aucune ligne ici, par construction :
+ * une sortie jamais trouvée ne laisse pas de trace. C'est le travail du banc
+ * d'évaluation, et les deux ne se remplacent pas.
+ */
+scraperRouter.get('/quality', async (req, res) => {
+  const parsed = scraperStatsSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const { configId, days } = parsed.data;
+  const since = days === undefined ? null : new Date(Date.now() - days * 86_400_000);
+  const scope = Prisma.sql`
+    ${configId === undefined ? Prisma.empty : Prisma.sql`AND r.configId = ${configId}`}
+    ${since === null ? Prisma.empty : Prisma.sql`AND r.queuedAt >= ${since}`}
+  `;
+
+  const [statuses, rejections, fields, corrected, signals, queries, domains] = await Promise.all([
+    // Le socle : ce que la modération a fait des sorties du scraper. Les
+    // « en attente » sont comptées à part et n'entrent dans aucun taux —
+    // personne ne les a jugées, les compter comme des échecs serait faux.
+    prisma.$queryRaw<{ status: string; events: bigint }[]>`
+      SELECT e.status AS status, COUNT(DISTINCT e.id) AS events
+      FROM ScraperRunItem i
+      JOIN ScraperRun r ON r.id = i.runId
+      JOIN Event e ON e.id = i.eventId
+      WHERE 1 = 1 ${scope}
+      GROUP BY e.status
+    `,
+
+    // Les motifs de refus. `rejectionCode` est nul pour tout ce qui a été
+    // refusé avant l'existence du champ : ces lignes-là sont regroupées sous
+    // « sans motif », plutôt que d'être passées sous silence — un tableau qui
+    // tait ce qu'il ignore laisse croire que la mesure est complète.
+    prisma.$queryRaw<{ code: string | null; events: bigint }[]>`
+      SELECT e.rejectionCode AS code, COUNT(DISTINCT e.id) AS events
+      FROM ScraperRunItem i
+      JOIN ScraperRun r ON r.id = i.runId
+      JOIN Event e ON e.id = i.eventId
+      WHERE e.status = 'REJECTED' ${scope}
+      GROUP BY e.rejectionCode
+    `,
+
+    // Ce que la modération corrige, champ par champ. La mesure la moins chère
+    // du projet, et la seule qui désigne un champ plutôt qu'une fiche.
+    prisma.$queryRaw<{ field: string; events: bigint }[]>`
+      SELECT c.field AS field, COUNT(DISTINCT e.id) AS events
+      FROM EventCorrection c
+      JOIN Event e ON e.id = c.eventId
+      JOIN ScraperRunItem i ON i.eventId = e.id
+      JOIN ScraperRun r ON r.id = i.runId
+      WHERE 1 = 1 ${scope}
+      GROUP BY c.field
+      ORDER BY events DESC
+    `,
+
+    // Combien de fiches ont été retouchées, toutes corrections confondues.
+    // C'est le dénominateur du tableau précédent, et c'est surtout le chiffre
+    // qui compte le plus : une fiche approuvée **sans retouche** est la seule
+    // preuve dont on dispose que l'étage 6 avait tout bon.
+    prisma.$queryRaw<{ touched: bigint }[]>`
+      SELECT COUNT(DISTINCT e.id) AS touched
+      FROM EventCorrection c
+      JOIN Event e ON e.id = c.eventId
+      JOIN ScraperRunItem i ON i.eventId = e.id
+      JOIN ScraperRun r ON r.id = i.runId
+      WHERE 1 = 1 ${scope}
+    `,
+
+    // L'étage 7, mesuré pour la première fois : chaque signal de la cascade
+    // face au sort de la fiche qu'il a servie. `manuel` s'y trouve aussi, et
+    // il est instructif — c'est un lien qu'un humain a dû reprendre.
+    prisma.$queryRaw<{ signal: string | null; judged: bigint; approved: bigint }[]>`
+      SELECT
+        e.sourceUrlSignal AS signal,
+        COUNT(DISTINCT CASE WHEN e.status <> 'PENDING' THEN e.id END) AS judged,
+        COUNT(DISTINCT CASE WHEN e.status = 'APPROVED' THEN e.id END) AS approved
+      FROM ScraperRunItem i
+      JOIN ScraperRun r ON r.id = i.runId
+      JOIN Event e ON e.id = i.eventId
+      WHERE 1 = 1 ${scope}
+      GROUP BY e.sourceUrlSignal
+    `,
+
+    // Le rendement d'une requête web : ce que 0,01 $ de recherche rapporte
+    // vraiment. Nul ailleurs dans la console — la provenance ne vivait que
+    // dans le journal, qui s'oublie.
+    prisma.$queryRaw<
+      { query: string; pages: bigint; submitted: bigint; judged: bigint; approved: bigint }[]
+    >`
+      SELECT
+        i.query AS query,
+        COUNT(*) AS pages,
+        COUNT(DISTINCT i.eventId) AS submitted,
+        COUNT(DISTINCT CASE WHEN e.status <> 'PENDING' THEN e.id END) AS judged,
+        COUNT(DISTINCT CASE WHEN e.status = 'APPROVED' THEN e.id END) AS approved
+      FROM ScraperRunItem i
+      JOIN ScraperRun r ON r.id = i.runId
+      LEFT JOIN Event e ON e.id = i.eventId
+      WHERE i.query IS NOT NULL AND i.query <> '' ${scope}
+      GROUP BY i.query
+      ORDER BY approved DESC, submitted DESC
+      LIMIT 100
+    `,
+
+    // Le même calcul par domaine lu. La page de statistiques en donne déjà le
+    // volume ; ici c'est la **qualité**, et ordonnée par ce qu'on en sait
+    // plutôt que par ce qu'on en a vu.
+    prisma.$queryRaw<
+      { domain: string; pages: bigint; submitted: bigint; judged: bigint; approved: bigint }[]
+    >`
+      SELECT
+        LOWER(TRIM(LEADING 'www.' FROM
+          SUBSTRING_INDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(i.url, '://', -1), '/', 1), ':', 1)
+        )) AS domain,
+        COUNT(*) AS pages,
+        COUNT(DISTINCT i.eventId) AS submitted,
+        COUNT(DISTINCT CASE WHEN e.status <> 'PENDING' THEN e.id END) AS judged,
+        COUNT(DISTINCT CASE WHEN e.status = 'APPROVED' THEN e.id END) AS approved
+      FROM ScraperRunItem i
+      JOIN ScraperRun r ON r.id = i.runId
+      LEFT JOIN Event e ON e.id = i.eventId
+      WHERE 1 = 1 ${scope}
+      GROUP BY domain
+      HAVING submitted > 0
+      ORDER BY approved DESC, submitted DESC
+      LIMIT 100
+    `,
+  ]);
+
+  const byStatus = Object.fromEntries(statuses.map((s) => [s.status, asNumber(s.events)]));
+  const approved = byStatus.APPROVED ?? 0;
+  const rejected = byStatus.REJECTED ?? 0;
+  const pending = byStatus.PENDING ?? 0;
+  const touched = asNumber(corrected[0]?.touched ?? 0);
+
+  /** Classe une population sur ce qu'on en sait, pas sur ce qu'on en a vu. */
+  const ranked = <T extends { judged: bigint; approved: bigint }>(rows: T[]) =>
+    rows
+      .map((row) => {
+        const judged = asNumber(row.judged);
+        const ok = asNumber(row.approved);
+        return {
+          ...row,
+          pages: asNumber((row as { pages?: bigint }).pages ?? 0),
+          submitted: asNumber((row as { submitted?: bigint }).submitted ?? 0),
+          judged,
+          approved: ok,
+          rate: judged > 0 ? ok / judged : null,
+          // La borne basse de Wilson : elle dit ce qu'on sait du taux, et c'est
+          // elle qui ordonne. Voir `lib/rejectionCodes.ts`.
+          lower: wilsonLowerBound(ok, judged),
+          /** Sous le plancher, la ligne s'affiche mais ne se classe pas. */
+          enough: judged >= RANKING_FLOOR,
+        };
+      })
+      .sort((a, b) => {
+        if (a.enough !== b.enough) return a.enough ? -1 : 1;
+        return b.lower - a.lower;
+      });
+
+  res.json({
+    // Le vocabulaire voyage avec les chiffres : la page groupe les refus par
+    // étage, et une seconde table côté client aurait divergé au premier motif
+    // ajouté.
+    codes: describeRejections(),
+    rankingFloor: RANKING_FLOOR,
+    judged: { approved, rejected, pending },
+    corrections: {
+      // Approuvées **sans** la moindre retouche : la seule preuve positive
+      // dont on dispose sur l'étage 6.
+      untouched: Math.max(0, approved - touched),
+      touched,
+      fields: fields.map((f) => ({ field: f.field, events: asNumber(f.events) })),
+    },
+    rejections: rejections.map((r) => ({ code: r.code, events: asNumber(r.events) })),
+    signals: ranked(signals).map((s) => ({ ...s, signal: s.signal ?? '' })),
+    queries: ranked(queries),
+    domains: ranked(domains),
+  });
+});
+
 scraperRouter.get('/stats', async (req, res) => {
   const parsed = scraperStatsSchema.safeParse(req.query);
   if (!parsed.success) {
@@ -1364,6 +1574,36 @@ scraperRouter.delete('/runs/:id/data', async (req, res) => {
 });
 
 /** Clôt une exécution avec ses compteurs. */
+/**
+ * Recopie sur les items d'un run l'agenda et la requête dont chaque page est
+ * issue, à partir du journal — voir `lib/scraperProvenance.ts` pour le
+ * pourquoi.
+ *
+ * Elle ne peut jamais faire échouer la clôture : une filiation manquante rend
+ * une ligne muette sur son origine, une clôture manquante fige la
+ * configuration entière. L'ordre de gravité n'est pas discutable.
+ */
+async function freezeProvenance(runId: number): Promise<void> {
+  try {
+    const rows = await prisma.scraperRunLog.findMany({
+      where: { runId },
+      select: { seq: true, stage: true, kind: true, level: true, url: true, message: true, data: true },
+      orderBy: { seq: 'asc' },
+      take: TREE_MAX_ROWS,
+    });
+    if (rows.length === 0) return;
+    for (const group of groupProvenance(provenanceOf(rows))) {
+      await prisma.scraperRunItem.updateMany({
+        where: { runId, url: { in: group.urls } },
+        data: { agendaUrl: group.agendaUrl, query: group.query },
+      });
+    }
+  } catch {
+    // Le journal a pu être purgé, ou l'arbre être illisible : la mesure perd
+    // une exécution, le run n'en souffre pas.
+  }
+}
+
 scraperRouter.post('/runs/:id/finish', async (req, res) => {
   const id = Number(req.params.id);
   const parsed = scraperFinishSchema.safeParse(req.body);
@@ -1377,6 +1617,10 @@ scraperRouter.post('/runs/:id/finish', async (req, res) => {
       where: { id },
       data: { ...counters, status, error: error ?? null, finishedAt: new Date() },
     });
+    // La clôture d'abord, la mesure ensuite et sans pouvoir la mettre en
+    // échec : c'est le seul appel du worker qu'on ne peut pas perdre — une
+    // exécution qui reste « En cours » bloque toute la configuration.
+    await freezeProvenance(id);
     res.json({ run: serializeRun(run) });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {

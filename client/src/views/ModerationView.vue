@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
-import type { EventItem, ScraperConfig } from '../types';
+import type { EventItem, RejectionMeaning, ScraperConfig } from '../types';
 import {
   SETTING_LABELS,
   STATUS_LABELS,
@@ -107,14 +107,43 @@ async function load() {
   }
 }
 
-async function moderate(id: number, action: 'approve' | 'reject') {
-  let reason: string | undefined;
-  if (action === 'reject') {
-    reason = prompt('Motif du refus (visible par l’auteur) :') ?? undefined;
-    if (reason === undefined) return;
-  }
+/**
+ * Le refus en cours, s'il y en a un. `code` est ce que le scraper apprendra,
+ * `reason` ce que l'auteur lira — les deux sont utiles et ne disent pas la
+ * même chose.
+ */
+const rejecting = ref<{ id: number; code: string; reason: string } | null>(null);
+
+function openRejection(id: number, reason = '') {
+  rejecting.value = { id, code: '', reason };
+}
+
+/**
+ * Confirme le refus. Le motif comptable est **exigé** — c'est un clic, et
+ * c'est ce clic qui vaut à lui seul toute la boucle de retour ; sans lui le
+ * refus n'apprend rien à personne. « Autre » est toujours disponible pour ce
+ * qui n'entre dans aucune case, et le texte libre reste facultatif.
+ */
+async function confirmRejection() {
+  const pending = rejecting.value;
+  if (!pending || !pending.code) return;
   try {
-    await api.post(`/api/moderation/${id}`, { action, reason });
+    await api.post(`/api/moderation/${pending.id}`, {
+      action: 'reject',
+      code: pending.code,
+      reason: pending.reason.trim() || undefined,
+    });
+    events.value = events.value.filter((e) => e.id !== pending.id);
+    delete duplicates.value[pending.id];
+    rejecting.value = null;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Erreur';
+  }
+}
+
+async function approve(id: number) {
+  try {
+    await api.post(`/api/moderation/${id}`, { action: 'approve' });
     events.value = events.value.filter((e) => e.id !== id);
     delete duplicates.value[id];
   } catch (e) {
@@ -138,17 +167,9 @@ function duplicateReason(original: EventItem): string {
   return `Cette sortie fait doublon avec ${ref}, déjà publiée.`;
 }
 
-/** Refuse la sortie en pointant le doublon trouvé, motif pré-rempli. */
-async function rejectAsDuplicate(id: number, original: EventItem) {
-  const reason = prompt('Motif du refus (visible par l’auteur) :', duplicateReason(original));
-  if (reason === null) return;
-  try {
-    await api.post(`/api/moderation/${id}`, { action: 'reject', reason });
-    events.value = events.value.filter((e) => e.id !== id);
-    delete duplicates.value[id];
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
-  }
+/** Refuse la sortie en pointant le doublon trouvé : motif et puce pré-remplis. */
+function rejectAsDuplicate(id: number, original: EventItem) {
+  rejecting.value = { id, code: 'DOUBLON', reason: duplicateReason(original) };
 }
 
 function periodLabel(e: EventItem) {
@@ -235,9 +256,31 @@ async function loadConfigs() {
   }
 }
 
+/**
+ * Les motifs de refus proposés, et l'étage que chacun met en cause.
+ *
+ * Chargés depuis l'API plutôt que recopiés ici : c'est la même table qui
+ * groupe les refus par étage sur la page de qualité, et deux copies auraient
+ * divergé au premier motif ajouté.
+ */
+const codes = ref<RejectionMeaning[]>([]);
+
+/** L'étage que la puce choisie met en cause, en une ligne. */
+const blamedLabel = computed(() => {
+  const chosen = codes.value.find((c) => c.code === rejecting.value?.code);
+  if (!chosen || chosen.blames.length === 0) return '';
+  return chosen.blames.map((b) => `${b.number}. ${b.label}`).join(', ');
+});
+
 onMounted(() => {
   void loadConfigs();
   void load();
+  // Un échec ne doit pas empêcher de modérer : sans la liste, les puces sont
+  // absentes et le refus reste possible par le texte libre.
+  api
+    .get<{ codes: RejectionMeaning[] }>('/api/moderation/codes')
+    .then((data) => (codes.value = data.codes))
+    .catch(() => undefined);
 });
 </script>
 
@@ -392,17 +435,103 @@ onMounted(() => {
           class="btn"
           :disabled="!hasCoordinates(e.venue) || !hasPrice(e)"
           :title="incompleteHint(e)"
-          @click="moderate(e.id, 'approve')"
+          @click="approve(e.id)"
         >
           ✓ Approuver
         </button>
-        <button class="btn danger" @click="moderate(e.id, 'reject')">✕ Refuser</button>
+        <button class="btn danger" @click="openRejection(e.id)">✕ Refuser</button>
+      </div>
+
+      <!--
+        Le motif du refus. Une puce plutôt qu'une phrase tapée : c'est plus
+        rapide pour le modérateur — un clic contre une ligne de texte — et
+        c'est la seule forme qui s'additionne, donc la seule qui apprenne
+        quelque chose au scraper. Le texte libre reste à côté, facultatif,
+        parce que c'est lui que l'auteur de la sortie lira.
+      -->
+      <div v-if="rejecting?.id === e.id" class="rejection">
+        <p class="rejection-title">Pourquoi cette sortie est-elle refusée ?</p>
+        <div class="chips">
+          <button
+            v-for="c in codes"
+            :key="c.code"
+            type="button"
+            class="chip"
+            :class="{ on: rejecting.code === c.code }"
+            :title="c.hint"
+            @click="rejecting.code = c.code"
+          >
+            {{ c.label }}
+          </button>
+        </div>
+        <p v-if="blamedLabel" class="muted rejection-blame">
+          Étage mis en cause : {{ blamedLabel }}
+        </p>
+        <label class="rejection-label" :for="`reason-${e.id}`">
+          Précision pour l’auteur (facultatif)
+        </label>
+        <textarea
+          :id="`reason-${e.id}`"
+          v-model="rejecting.reason"
+          class="rejection-text"
+          rows="2"
+        ></textarea>
+        <div class="row">
+          <button class="btn danger" :disabled="!rejecting.code" @click="confirmRejection()">
+            Confirmer le refus
+          </button>
+          <button class="linklike" type="button" @click="rejecting = null">Annuler</button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.rejection {
+  margin-top: 0.8rem;
+  padding: 0.8rem;
+  border: 1px solid var(--danger, #b3261e);
+  border-radius: 8px;
+}
+.rejection-title {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+.rejection-blame {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+}
+.rejection-label {
+  display: block;
+  margin: 0.7rem 0 0.2rem;
+  font-size: 0.85rem;
+}
+.rejection-text {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 0.6rem;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.chip {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.chip.on {
+  background: var(--danger, #b3261e);
+  border-color: var(--danger, #b3261e);
+  color: #fff;
+}
 .queue-head {
   display: flex;
   flex-wrap: wrap;

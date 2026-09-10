@@ -121,6 +121,7 @@ onMounted(load);
       <RouterLink to="/admin/scraper">Recherches et exécutions</RouterLink>
       <RouterLink to="/admin/scraper/agregateurs">Agrégateurs</RouterLink>
       <RouterLink to="/admin/scraper/stats">Statistiques</RouterLink>
+      <RouterLink to="/admin/scraper/qualite">Qualité</RouterLink>
       <RouterLink to="/admin/scraper/memoire">Mémoire</RouterLink>
     </nav>
 

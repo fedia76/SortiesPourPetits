@@ -25,6 +25,43 @@ enum EventStatus {
   REJECTED
 }
 
+/// Pourquoi une sortie a été refusée — la version comptable du motif.
+///
+/// Le texte libre reste (`Event.rejectionReason`) : c'est lui que l'auteur
+/// lit, et aucune liste ne dira jamais tout d'un cas particulier. Mais du
+/// texte libre ne s'additionne pas — « pas pour les enfants », « trop vieux »
+/// et « 12+ » sont une seule information et trois chaînes — et il ne pouvait
+/// donc rien apprendre au scraper.
+///
+/// La règle qui a présidé au choix de ces valeurs : **un motif n'est utile
+/// que s'il désigne un étage.** Chacune ci-dessous se lit comme un reproche
+/// adressé à une brique précise du pipeline ; ce qui n'en désigne aucune n'a
+/// rien à faire ici et reste dans le texte libre, sous `AUTRE`.
+enum RejectionCode {
+  /// Ce n'est pas une sortie. Étages 2 (reconnaissance) et 6 (extraction).
+  HORS_SUJET
+  /// C'en est une, mais pas pour ce public. Étages 1 (requête) et 6 (prompt).
+  PAS_POUR_ENFANTS
+  /// Les dates sont fausses. Étage 6, et `schedule.py`.
+  DATE_FAUSSE
+  /// Le lieu est faux ou introuvable. Étage 6, et `geocode.py`.
+  LIEU_FAUX
+  /// Le tarif est faux. Étage 6.
+  TARIF_FAUX
+  /// La description est inutilisable — tronquée, illisible, hors sujet.
+  /// Étage 5 (lecture) avant l'étage 6 : c'est là que le texte se fabrique.
+  DESCRIPTION_INUTILISABLE
+  /// `sourceUrl` ne mène pas à cette sortie. Étage 7 (attribution).
+  MAUVAIS_LIEN
+  /// La sortie est déjà au catalogue. Le dédoublonnage, qui ne connaît
+  /// aujourd'hui que les URL.
+  DOUBLON
+  /// La sortie est passée. `payload._clean_dates`, et la fraîcheur d'un run.
+  DEJA_PASSEE
+  /// Aucun étage en cause, ou plusieurs : le texte libre fait foi.
+  AUTRE
+}
+
 enum ScraperRunStatus {
   QUEUED
   RUNNING
@@ -129,9 +166,9 @@ model Venue {
 }
 
 model Event {
-  id              Int         @id @default(autoincrement())
+  id              Int            @id @default(autoincrement())
   title           String
-  description     String      @db.Text
+  description     String         @db.Text
   /// Le **meilleur lien connu** pour cette sortie : la page de l'organisateur
   /// quand on a su la trouver, la page où elle a été repérée sinon. C'est
   /// celui que la fiche montre, et il n'a jamais changé de rôle — de sorte
@@ -148,20 +185,23 @@ model Event {
   /// `manuel` quand un humain l'a saisi ou corrigé. Le modérateur voit ainsi
   /// quelle confiance accorder au lien qu'on lui propose.
   sourceUrlSignal String?
-  isFree          Boolean     @default(false)
-  price           Decimal?    @db.Decimal(8, 2)
+  isFree          Boolean        @default(false)
+  price           Decimal?       @db.Decimal(8, 2)
   photoUrl        String?
   ageMin          Int?
   ageMax          Int?
-  isPermanent     Boolean     @default(false)
-  dateStart       DateTime?   @db.Date
-  dateEnd         DateTime?   @db.Date
+  isPermanent     Boolean        @default(false)
+  dateStart       DateTime?      @db.Date
+  dateEnd         DateTime?      @db.Date
   openTime        String? // "HH:MM", valable tous les jours de l'évènement
   closeTime       String? // "HH:MM", valable tous les jours de l'évènement
   setting         Setting?
-  status          EventStatus @default(PENDING)
+  status          EventStatus    @default(PENDING)
   rejectionReason String?
-  createdAt       DateTime    @default(now())
+  /// Le même refus, sous une forme qui s'additionne. Nul pour les sorties
+  /// refusées avant ce champ, et pour celles qui ne sont pas refusées.
+  rejectionCode   RejectionCode?
+  createdAt       DateTime       @default(now())
 
   venue   Venue @relation(fields: [venueId], references: [id])
   venueId Int
@@ -181,10 +221,12 @@ model Event {
 
   scraperItems ScraperRunItem[]
   scrapedUrls  ScrapedUrl[]
+  /// Ce qu'un modérateur a corrigé avant d'approuver cette fiche.
+  corrections  EventCorrection[]
   /// Les pages du banc de lecture dont cette sortie est la vérité de référence.
   evalReadings EvalReading[]
   /// Les recherches de source demandées sur cette sortie depuis sa fiche.
-  sourceHunts  ScraperRun[]     @relation("SourceHunt")
+  sourceHunts  ScraperRun[]      @relation("SourceHunt")
 
   @@index([status, dateEnd])
   @@index([createdById])
@@ -213,6 +255,37 @@ model EventDate {
 
   @@unique([eventId, day])
   @@index([day])
+}
+
+/// Un champ qu'un modérateur a corrigé sur une fiche importée, avant de la
+/// juger. Une ligne par champ, et la valeur d'avant comme celle d'après.
+///
+/// C'est la vérité terrain la moins chère du projet : personne n'étiquette
+/// rien, on enregistre un geste que la modération faisait déjà. Et c'est la
+/// seule qui dise **où** l'extraction se trompe — un taux d'approbation dit
+/// qu'une fiche était mauvaise, cette table dit que c'était la ville.
+///
+/// Elle ne se remplit que dans un cas étroit, et c'est délibéré : une fiche
+/// encore en attente, importée par la recherche automatique. Une retouche
+/// éditoriale six mois après approbation n'est pas une erreur d'extraction, et
+/// la compter ici brouillerait la mesure comme le comptage de liens avait
+/// brouillé le classifieur.
+model EventCorrection {
+  id      Int      @id @default(autoincrement())
+  event   Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId Int
+  /// Le champ de la fiche, sous le nom que lui donne l'API : `title`,
+  /// `venueCity`, `price`, `dateStart`… Le même vocabulaire que le payload du
+  /// scraper, pour que la mesure se lise en regard de l'étage 6.
+  field   String   @db.VarChar(40)
+  /// Ce que le scraper avait proposé, et ce que l'humain a mis à la place.
+  /// Tronqués : on mesure une fréquence, on ne rejoue pas la fiche.
+  before  String?  @db.VarChar(500)
+  after   String?  @db.VarChar(500)
+  at      DateTime @default(now())
+
+  @@index([eventId])
+  @@index([field])
 }
 
 /// Un **agrégateur** : un grand agenda qui republie — kidiklik, citizenkid,
@@ -429,6 +502,27 @@ model ScraperRunItem {
   decision String
   reason   String?  @db.Text
   at       DateTime @default(now())
+
+  // ── Provenance ────────────────────────────────────────────────────────
+  // D'où venait cette page : l'agenda qui la listait, et la requête web qui a
+  // fait remonter cet agenda. Le scraper les journalise déjà (les pistes
+  // `agenda` et `query` de `RunLog.trail`), mais dans `ScraperRunLog`, qu'un
+  // bouton de la console permet d'oublier — et le journal d'un run de trois
+  // mois n'a plus vocation à être gardé. Ces deux colonnes recopient la
+  // filiation au moment de la clôture, une fois pour toutes : elle survit
+  // ainsi à la purge du journal, et le rendement d'une requête se lit d'une
+  // jointure au lieu de s'extraire de deux mille lignes de JSON.
+  //
+  // Renseignées par le site, jamais par le worker : le scraper n'a pas
+  // changé, et il ne devait pas changer pour ça.
+
+  /// L'agenda sur lequel la page a été repérée. Vide quand elle était
+  /// elle-même un point de départ — une URL de seed, ou un résultat de
+  /// recherche lu tel quel.
+  agendaUrl String? @db.VarChar(500)
+  /// La requête web qui a remonté cet agenda. Vide en mode « site », et vide
+  /// quand le journal ne permettait plus de la retrouver.
+  query     String? @db.VarChar(300)
 
   run   ScraperRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   runId Int

@@ -100,6 +100,17 @@ const router = createRouter({
       },
     },
     {
+      path: '/admin/scraper/qualite',
+      name: 'admin-scraper-quality',
+      component: () => import('../views/AdminScraperQualityView.vue'),
+      meta: {
+        title: 'Qualité du scraping',
+        noindex: true,
+        requiresAuth: true,
+        requiresModerator: true,
+      },
+    },
+    {
       path: '/admin/scraper/memoire',
       name: 'admin-scraper-memory',
       component: () => import('../views/AdminScraperMemoryView.vue'),
