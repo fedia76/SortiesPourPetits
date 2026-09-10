@@ -1,10 +1,11 @@
-import { Prisma, Role, Setting } from '@prisma/client';
+import { EventStatus, Prisma, Role, Setting } from '@prisma/client';
 import { Router } from 'express';
 import { prisma } from '../db';
 import { hasRole, requireAuth } from '../middleware/auth';
 import { deletePhoto, photoUpload, savePhoto } from '../lib/upload';
 import { hasCoordinates } from '../lib/incomplete';
 import { eventInputSchema, searchSchema } from '../lib/validators';
+import { diffEvent, type ComparableEvent } from '../lib/eventCorrections';
 import { dateFilter } from '../lib/dateWindow';
 import { areaFilter } from '../lib/areas';
 import { rankEvents } from '../lib/relevance';
@@ -289,7 +290,16 @@ eventsRouter.post('/', requireAuth, photoUpload.single('photo'), async (req, res
 
 eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, res) => {
   const id = Number(req.params.id);
-  const existing = await prisma.event.findUnique({ where: { id } });
+  const existing = await prisma.event.findUnique({
+    where: { id },
+    // Le lieu et les dates servent à mesurer ce que la modération corrige ; un
+    // seul item du scraper suffit à savoir que la fiche vient de lui.
+    include: {
+      venue: true,
+      dates: { select: { day: true }, orderBy: { day: 'asc' } },
+      scraperItems: { select: { id: true }, take: 1 },
+    },
+  });
   if (!existing) {
     res.status(404).json({ error: 'Événement introuvable' });
     return;
@@ -357,12 +367,100 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
       // Une modification par l'auteur repasse en modération.
       status: isModerator ? existing.status : 'PENDING',
       rejectionReason: isModerator ? existing.rejectionReason : null,
+      rejectionCode: isModerator ? existing.rejectionCode : null,
     },
     include: EVENT_INCLUDE,
   });
 
+  await recordCorrections(id, existing, event);
+
   res.json({ event: serializeEvent(event) });
 });
+
+/** `Date` → `YYYY-MM-DD`, ou rien. Les fiches se comparent en clair. */
+function day(value: Date | null): string | null {
+  return value ? value.toISOString().slice(0, 10) : null;
+}
+
+/** Une fiche telle que la base la rend, avec ce qu'il faut pour la comparer. */
+type Comparable = {
+  title: string;
+  description: string;
+  sourceUrl: string | null;
+  isFree: boolean;
+  price: Prisma.Decimal | null;
+  ageMin: number | null;
+  ageMax: number | null;
+  isPermanent: boolean;
+  dateStart: Date | null;
+  dateEnd: Date | null;
+  openTime: string | null;
+  closeTime: string | null;
+  setting: Setting | null;
+  categoryId: number;
+  venue: { name: string; address: string; city: string; postalCode: string };
+  dates: { day: Date }[];
+};
+
+function comparable(event: Comparable): ComparableEvent {
+  return {
+    title: event.title,
+    description: event.description,
+    sourceUrl: event.sourceUrl,
+    isFree: event.isFree,
+    price: event.price === null ? null : Number(event.price),
+    ageMin: event.ageMin,
+    ageMax: event.ageMax,
+    isPermanent: event.isPermanent,
+    dateStart: day(event.dateStart),
+    dateEnd: day(event.dateEnd),
+    openTime: event.openTime,
+    closeTime: event.closeTime,
+    setting: event.setting,
+    categoryId: event.categoryId,
+    venueName: event.venue.name,
+    venueAddress: event.venue.address,
+    venueCity: event.venue.city,
+    venuePostalCode: event.venue.postalCode,
+    dates: event.dates.map((d) => d.day.toISOString().slice(0, 10)).sort(),
+  };
+}
+
+/**
+ * Enregistre ce que la modération a corrigé sur une fiche du scraper.
+ *
+ * Trois conditions, et elles sont étroites à dessein :
+ *
+ * * la fiche vient de la **recherche automatique** — un item la désigne. Une
+ *   proposition de visiteur corrigée ne dit rien de l'étage 6 ;
+ * * elle était encore **en attente** avant l'édition. Une retouche éditoriale
+ *   six mois après approbation est une amélioration du catalogue, pas une
+ *   erreur d'extraction, et la compter ici polluerait la mesure exactement
+ *   comme le comptage de liens avait pollué le classifieur ;
+ * * c'est un **modérateur** qui édite. L'auteur d'une fiche importée est la
+ *   clé d'API du scraper : personne d'autre ne passe par là.
+ *
+ * Rien de tout ceci ne peut faire échouer la requête. Une mesure est un
+ * confort ; refuser une correction de fiche parce qu'on n'a pas su la compter
+ * serait le plus sûr moyen de faire retirer le dispositif.
+ */
+async function recordCorrections(
+  eventId: number,
+  before: Comparable & { status: EventStatus; scraperItems: { id: number }[] },
+  after: Comparable,
+): Promise<void> {
+  if (before.status !== 'PENDING' || before.scraperItems.length === 0) return;
+  const corrections = diffEvent(comparable(before), comparable(after));
+  if (corrections.length === 0) return;
+  try {
+    await prisma.eventCorrection.createMany({
+      data: corrections.map((c) => ({ ...c, eventId })),
+    });
+  } catch {
+    // Le catalogue passe avant sa mesure : une écriture ratée ici ne doit ni
+    // annuler la correction, ni se voir de l'utilisateur.
+  }
+}
 
 eventsRouter.delete('/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id);

@@ -11,6 +11,7 @@ import {
   type ModerationFilter,
 } from '../lib/validators';
 import { hasCoordinates, hasPrice } from '../lib/incomplete';
+import { describeRejections } from '../lib/rejectionCodes';
 import { rankSimilar, significantWords, type SimilarityScore } from '../lib/similarity';
 
 export const moderationRouter = Router();
@@ -80,6 +81,19 @@ function pendingWhere(filter: ModerationFilter): Prisma.EventWhereInput {
   }
   return where;
 }
+
+/**
+ * Les motifs de refus proposés au modérateur, et l'étage que chacun met en
+ * cause.
+ *
+ * Servi plutôt que recopié dans le client : c'est la même table qui remplit
+ * les puces de la modération et qui groupe les refus par étage sur la page de
+ * qualité. Deux copies auraient divergé au premier motif ajouté, et la page
+ * aurait alors compté sous « autre » des refus parfaitement imputés.
+ */
+moderationRouter.get('/codes', (_req, res) => {
+  res.json({ codes: describeRejections() });
+});
 
 moderationRouter.get('/pending', async (req, res) => {
   const parsed = moderationQueueSchema.safeParse(req.query);
@@ -241,7 +255,7 @@ moderationRouter.post('/:id', async (req, res) => {
     return;
   }
 
-  const { action, reason } = parsed.data;
+  const { action, reason, code } = parsed.data;
   // Rien de public tant qu'un champ laissé à compléter par un import n'a pas
   // été corrigé (voir lib/incomplete.ts).
   if (action === 'approve' && !hasCoordinates(event.venue)) {
@@ -261,6 +275,11 @@ moderationRouter.post('/:id', async (req, res) => {
     data: {
       status: action === 'approve' ? 'APPROVED' : 'REJECTED',
       rejectionReason: action === 'reject' ? reason ?? null : null,
+      // Le motif comptable suit exactement le sort du texte libre : posé au
+      // refus, effacé à l'approbation. Une approbation qui garderait le code
+      // d'un refus antérieur ferait mentir tous les comptes de la page de
+      // qualité, qui n'a pas à savoir qu'une fiche a changé d'avis.
+      rejectionCode: action === 'reject' ? code ?? null : null,
       moderatedById: req.user!.id,
     },
   });
