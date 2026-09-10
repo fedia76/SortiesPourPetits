@@ -782,575 +782,256 @@ export const FIELD_LABELS: Record<string, string> = {
 
 // ───────────────────────────────────────────────────────── banc d'évaluation
 
-export type EvalAgendaStatus = 'QUEUED' | 'RUNNING' | 'ANALYZED' | 'FAILED' | 'VALIDATED';
+// ══════════════════════════════════════════════════════ le banc d'évaluation
+//
+// Trois choses, et elles ne se mélangent plus : le **corpus** (une entrée
+// gelée et ce qu'un humain dit qu'elle contient), les **runs** (ce qu'une
+// brique en a rendu, un par exécution, jamais écrasés) et la **mesure**, qui
+// se calcule de la confrontation des deux et n'est stockée nulle part.
 
-export const EVAL_STATUS_LABELS: Record<EvalAgendaStatus, string> = {
-  QUEUED: 'En file',
-  RUNNING: 'Analyse en cours',
-  ANALYZED: 'À relire',
-  FAILED: 'Échec',
-  VALIDATED: 'Validé',
+export type EvalCaptureStatus = 'QUEUED' | 'RUNNING' | 'CAPTURED' | 'FAILED';
+
+export const EVAL_CAPTURE_LABELS: Record<EvalCaptureStatus, string> = {
+  QUEUED: 'À capturer',
+  RUNNING: 'Capture en cours',
+  CAPTURED: 'Gelée',
+  FAILED: 'Capture en échec',
 };
 
-/**
- * Les quatre verdicts, et pourquoi quatre.
- *
- * Trois ne suffisent pas à décrire ce qu'un agenda contient. `SOUS_AGENDA` est
- * le cas que personne ne comptait : « voir aussi les sorties en château », une
- * page à facettes qui porte d'autres sorties sans être la page suivante.
- */
+export type EvalStage = 'HARVEST' | 'SELECT' | 'READ' | 'EXTRACT';
+
+export const EVAL_STAGE_LABELS: Record<EvalStage, string> = {
+  HARVEST: '3. Dépouillement',
+  SELECT: '4. Sélection',
+  READ: '5. Lecture',
+  EXTRACT: '6. Extraction',
+};
+
+/** Ce que chaque étage mesuré coûte à rejouer. */
+export const EVAL_STAGE_COST: Record<EvalStage, string> = {
+  HARVEST: 'gratuit — du Python sur du HTML gelé',
+  SELECT: 'payant — un appel au modèle par page',
+  READ: 'gratuit — du Python sur du HTML gelé',
+  EXTRACT: 'payant — un appel au modèle par page',
+};
+
+export type EvalRunStatus = 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED';
+
+export const EVAL_RUN_STATUS_LABELS: Record<EvalRunStatus, string> = {
+  QUEUED: 'En file',
+  RUNNING: 'En cours',
+  DONE: 'Terminé',
+  FAILED: 'En échec',
+};
+
 export type EvalVerdict = 'SORTIE' | 'PAGINATION' | 'SOUS_AGENDA' | 'AUTRE';
 
-/**
- * Ce que vaut la pagination d'une page. Suivre les pages fait partie du travail
- * de l'étage 3, donc c'est une mesure de ce travail — et il lui faut trois
- * valeurs : savoir qu'il s'est trompé ne dit pas s'il a raté une suite ou couru
- * après une fausse, et les deux ne se réparent pas pareil.
- */
-export type EvalNextVerdict = 'CORRECT' | 'MANQUEE' | 'FAUSSE';
-
 export const EVAL_VERDICT_LABELS: Record<EvalVerdict, string> = {
-  SORTIE: 'Sortie',
-  PAGINATION: 'Pagination',
-  SOUS_AGENDA: 'Sous-agenda',
-  AUTRE: 'Autre',
+  SORTIE: 'Une sortie',
+  PAGINATION: 'Page suivante',
+  SOUS_AGENDA: 'Un autre agenda',
+  AUTRE: 'Autre chose',
 };
 
-/** Ce que chaque verdict veut dire, en une phrase, dans l'aide de la console. */
 export const EVAL_VERDICT_HINTS: Record<EvalVerdict, string> = {
-  SORTIE: "Mène à la fiche d'un événement — ce que l'étage 4 doit garder.",
-  PAGINATION: 'La page 2, 3… du même agenda.',
-  SOUS_AGENDA:
-    "Une autre liste de sorties — « voir aussi les sorties en château ». Le pipeline n'en fait rien aujourd'hui.",
-  AUTRE: 'Navigation, mentions légales, partage. Correctement écarté.',
+  SORTIE: 'Le lien mène à la fiche d’un événement précis.',
+  PAGINATION: 'Le lien mène à la suite de cette même liste.',
+  SOUS_AGENDA: 'Le lien mène à une autre liste de sorties — une facette, une catégorie.',
+  AUTRE: 'Navigation, mentions légales, partage : rien qui mène à une sortie.',
+};
+
+/** D'où vient une étiquette. Les deux sont le travail d'un humain. */
+export type EvalLabelOrigin = 'HUMAIN' | 'MODERATION';
+
+export const EVAL_LABEL_ORIGIN_LABELS: Record<EvalLabelOrigin, string> = {
+  HUMAIN: 'relu dans la console',
+  MODERATION: 'approuvé en modération',
 };
 
 /**
- * Un lien relevé sur une page du banc — **tous** les liens, pas seulement la
- * moisson.
- *
- * Deux champs portent la mesure : `harvested` dit ce que le vrai `links_of` en
- * a fait (la précoche), `verdict` dit ce qu'un humain affirme que c'est. Leur
- * désaccord est l'erreur, dans un sens comme dans l'autre.
+ * Une étiquette sur un lien. **Il n'y a pas d'état « non étiqueté »** : la
+ * ligne existe parce qu'un humain l'a posée, et son absence dit que personne
+ * n'a regardé.
  */
 export interface EvalLink {
   id: number;
   url: string;
   text: string;
-  /**
-   * Le texte qui entoure le lien — date, lieu, tarif.
-   *
-   * Présent aussi pour les **écartés**, et c'est ce qui les rend jugeables : un
-   * lien rejeté pour « texte trop court » est par définition un lien dont
-   * l'intitulé ne dit rien.
-   */
-  context: string;
-  /** `PAGE` : relevé dans le HTML. `MANUAL` : tapé à la main. */
   source: 'PAGE' | 'MANUAL';
-  /** Le dépouillement l'a-t-il retenu ? La précoche que l'humain corrige. */
-  harvested: boolean;
-  /** Pourquoi il a été écarté — « texte trop court », « hors domaine »… */
-  dropReason: string;
-  position: number;
-  verdict: EvalVerdict | null;
-  /**
-   * Un humain a-t-il tranché ce lien, ou est-ce encore la précoche ?
-   *
-   * Sans ça, rien ne distingue « la machine a deviné *autre* » de « un humain a
-   * confirmé *autre* » — et un agenda dont on n'a relu que la moisson affiche
-   * un rappel de 100 % qui ne dit que « personne n'a regardé le reste ».
-   */
-  reviewed: boolean;
-  reviewedAt: string | null;
+  verdict: EvalVerdict;
+  origin: EvalLabelOrigin;
   note: string;
-  addedAt: string;
+  labelledAt: string;
 }
 
-/** Une page réellement téléchargée : la première de l'agenda, ou un `rel="next"` suivi. */
+/** Ce qu'un run a relevé sur un lien : le relevé, jamais l'étiquette. */
+export interface EvalLinkResult {
+  id: number;
+  url: string;
+  text: string;
+  context: string;
+  harvested: boolean;
+  dropReason: string;
+  position: number;
+  selected: boolean | null;
+  selectReason: string;
+}
+
+/** Les deux erreurs du dépouillement, comptées séparément. */
+export interface EvalHarvestScore {
+  found: number;
+  missed: number;
+  noise: number;
+  unlabelled: number;
+  recall: number | null;
+  precision: number | null;
+}
+
 export interface EvalAgendaPage {
   id: number;
   pageNo: number;
   url: string;
-  /** Taille du HTML servi — un effondrement trahit une liste passée en JavaScript. */
   chars: number;
-  error: string | null;
-  /**
-   * Vrai si le HTML de ce jour-là est gardé sur le serveur.
-   *
-   * C'est ce qui permet de rejouer `links_of` hors ligne après l'avoir modifié
-   * et de comparer à des étiquettes qui, elles, n'ont pas bougé. Faux pour une
-   * page injoignable ou démesurée : la mesure tient, seul le rejeu s'en trouve
-   * privé.
-   */
   archived: boolean;
-  /**
-   * Ce que `next_page()` a trouvé sur cette page — donc ce que l'étage 3
-   * saurait suivre. Vide quand la page ne déclare pas de suite : comparé aux
-   * liens étiquetés « pagination », c'est ce qui dit qu'un site se pagine
-   * d'une façon que le pipeline ignore.
-   */
-  nextUrl: string;
-  /**
-   * Ce qu'un humain dit de cette pagination. Nul tant qu'il n'a rien dit.
-   *
-   * Il en faut un au niveau de la page : `next_page()` lit aussi le
-   * `<link rel="next">` du `<head>`, qui n'est pas un `<a href>` et n'apparaît
-   * donc dans aucune ligne. L'URL qu'il en tire était alors invérifiable.
-   */
-  nextVerdict: EvalNextVerdict | null;
-  /** L'adresse de la vraie page suivante, quand on la connaît. */
-  nextExpected: string;
+  /** `null` : personne n'a regardé. `''` : il n'y a pas de suite. */
+  nextExpected: string | null;
   links: EvalLink[];
+  results?: EvalLinkResult[];
+  score?: { harvest: EvalHarvestScore; select: EvalHarvestScore | null };
+  labels?: number;
 }
 
 export interface EvalAgenda {
   id: number;
   url: string;
   label: string;
-  status: EvalAgendaStatus;
   pages: number;
-  error: string | null;
+  capture: EvalCaptureStatus;
+  captureError: string | null;
+  capturedAt: string | null;
   note: string;
   createdAt: string;
-  analyzedAt: string | null;
-  validatedAt: string | null;
-  author: { id: number; displayName: string };
+  author?: { id: number; displayName: string };
   agendaPages: EvalAgendaPage[];
-  /**
-   * Les deux erreurs, et les deux trous.
-   *
-   * `precision` et `recall` restent nuls tant qu'aucun humain n'a validé :
-   * sinon ils diraient seulement que personne n'a encore regardé.
-   */
-  stats: {
-    /** Liens relevés sur la page, tous confondus. */
-    links: number;
-    /** Ceux qu'un humain a réellement tranchés — pas ceux qui portent la précoche. */
-    reviewed: number;
-    /** Ceux que le dépouillement a retenus. */
-    kept: number;
-    /** Ceux qu'un humain déclare être des sorties. */
-    sorties: number;
-    /** Retenus à tort : un appel payant à l'étage 4 dépensé pour rien. */
-    keptWrong: number;
-    /** Sorties perdues : personne ne les aurait jamais vues. */
-    missed: number;
-    /** Pages à facettes trouvées — que le pipeline n'exploite pas. */
-    sousAgendas: number;
-    /** Liens de pagination que l'humain a reconnus. */
-    paginationVue: number;
-    /** Pages dont la pagination a été tranchée par un humain. */
-    pagesJugees: number;
-    /** Il y avait une suite, la brique ne l'a pas vue. */
-    paginationManquee: number;
-    /** La brique a couru après une page qui n'était pas la suite. */
-    paginationFausse: number;
-    /** Pages demandées à l'analyse. */
-    pagesAsked: number;
-    /** Pages réellement lues. Moins que demandé = la brique n'a pas su suivre. */
-    pagesRead: number;
-    /**
-     * Pourquoi la moisson s'est arrêtée avant le compte demandé.
-     *
-     * Vide quand tout a été lu. `sans_suite` : aucun `rel="next"` sur la
-     * dernière page. `injoignable` : la suivante a refusé la lecture.
-     * `boucle` : elle pointait vers une page déjà lue.
-     */
-    stop: '' | 'sans_suite' | 'injoignable' | 'boucle';
-
-    /** De ce que la brique donne à l'étage 4, la part qui est une sortie. */
-    precision: number | null;
-    /**
-     * La part qui mène quelque part de réel — sortie, pagination ou
-     * sous-agenda — donc qui n'est pas du bruit.
-     *
-     * C'est la mesure de l'étage 3 seul : compter un sous-agenda retenu comme
-     * une faute du dépouillement accuse la mauvaise brique, puisque c'est
-     * l'étage 4 qui le jette.
-     */
-    precisionUseful: number | null;
-    recall: number | null;
-  };
+  pagesCaptured?: number;
+  labels?: number;
 }
 
-// ───────────────────────────────────────── banc de lecture (étage 5)
-
-export type EvalTextVerdict = 'CORRECT' | 'AMPUTE' | 'TRONQUE' | 'HORS_SUJET';
-export type EvalImageVerdict = 'CORRECTE' | 'LOGO' | 'MAUVAISE' | 'MANQUANTE';
-export type EvalDatesVerdict = 'CORRECTES' | 'INCOMPLETES' | 'FAUSSES' | 'MANQUANTES';
-
-/**
- * Les trois aspects d'une lecture, avec leurs réponses.
- *
- * Trois plutôt qu'un, parce qu'ils se ratent séparément et ne se réparent pas
- * au même endroit : un texte amputé accuse la liste des balises décapées, un
- * texte tronqué accuse le plafond de caractères, une illustration qui est le
- * logo du site accuse le tamis des images.
- */
-export const EVAL_READ_ASPECTS = [
-  {
-    key: 'textVerdict',
-    title: 'Le texte',
-    choices: [
-      { key: 'CORRECT', label: 'Correct', hint: 'Il porte bien la sortie, en entier.' },
-      {
-        key: 'AMPUTE',
-        label: 'Amputé',
-        hint: "Il manque une partie visible sur la page — souvent le titre, les dates ou l'adresse, emportés avec un <header> ou un <aside>.",
-      },
-      {
-        key: 'TRONQUE',
-        label: 'Tronqué',
-        hint: 'Coupé au plafond de caractères : la fin de la page n’atteindra jamais le modèle.',
-      },
-      {
-        key: 'HORS_SUJET',
-        label: 'Hors sujet',
-        hint: "Du bandeau, du menu, une page d'erreur : ce n'est pas la sortie.",
-      },
-    ],
-  },
-  {
-    key: 'imageVerdict',
-    title: "L'illustration",
-    choices: [
-      {
-        key: 'CORRECTE',
-        label: 'Correcte',
-        hint: "C'est bien la photo de la sortie — ou aucune, et la page n'en a pas.",
-      },
-      { key: 'LOGO', label: 'Logo du site', hint: "Le tamis des images l'a laissée passer." },
-      { key: 'MAUVAISE', label: 'Mauvaise', hint: "Une image, mais pas celle de la sortie." },
-      {
-        key: 'MANQUANTE',
-        label: 'Manquante',
-        hint: 'La page en montre une, la brique n’en a rendu aucune.',
-      },
-    ],
-  },
-  {
-    key: 'datesVerdict',
-    title: 'Les dates JSON-LD',
-    choices: [
-      {
-        key: 'CORRECTES',
-        label: 'Correctes',
-        hint: "Ce sont bien celles de la sortie — ou aucune, et la page n'en déclare pas.",
-      },
-      { key: 'INCOMPLETES', label: 'Incomplètes', hint: 'La page en déclare davantage.' },
-      { key: 'FAUSSES', label: 'Fausses', hint: 'Ce ne sont pas celles de cette sortie.' },
-      {
-        key: 'MANQUANTES',
-        label: 'Manquantes',
-        hint: 'La page en déclare, la brique n’en a relevé aucune.',
-      },
-    ],
-  },
-] as const;
-
-/**
- * D'où vient une page du banc de lecture.
- *
- * Deux paniers, et l'équilibre entre eux est **la** question de ce banc. Une
- * sortie approuvée est une page où l'étage 5 a réussi : n'en prendre que
- * celles-là mesurerait la brique sur ses propres succès. Les pages qu'il a
- * **abandonnées** sont l'autre moitié — personne n'a jamais vérifié si ces
- * abandons étaient justifiés.
- */
-export type EvalReadingOrigin = 'MANUEL' | 'APPROUVEE' | 'ABANDONNEE';
+export type EvalReadingOrigin = 'MANUEL' | 'APPROUVEE' | 'ABANDONNEE' | 'ILLISIBLE';
 
 export const EVAL_ORIGIN_LABELS: Record<EvalReadingOrigin, string> = {
   MANUEL: 'saisie à la main',
   APPROUVEE: 'sortie approuvée',
-  ABANDONNEE: 'abandonnée par la brique',
+  ABANDONNEE: 'page abandonnée',
+  ILLISIBLE: 'description refusée',
+};
+
+export const EVAL_ORIGIN_HINTS: Record<EvalReadingOrigin, string> = {
+  MANUEL: 'Quelqu’un l’a ajoutée au corpus depuis cette console.',
+  APPROUVEE: 'Le pipeline en a tiré une sortie qu’un modérateur a approuvée.',
+  ABANDONNEE: 'L’étage 5 l’a écartée — page vide, illisible ou injoignable.',
+  ILLISIBLE:
+    'Elle a passé le seuil et coûté une extraction, et la fiche a été refusée ' +
+    'pour description inutilisable : le point aveugle de cet étage.',
 };
 
 /**
- * Une sortie approuvée, telle que le banc s'en sert.
+ * Une page du corpus, et ce qu'un humain dit qu'elle contient.
  *
- * Approuver veut dire qu'un modérateur a vérifié **chaque champ** : ce n'est
- * pas une précoche de plus, c'est une étiquette humaine déjà payée.
+ * Chaque étiquette a trois états. `null` : personne n'a regardé. Une valeur
+ * vide : la page n'en porte pas, et c'est une étiquette. Une valeur : la voici.
  */
-export interface EvalReference {
-  id: number;
-  title: string;
-  isFree: boolean;
-  price: number | null;
-  ageMin: number | null;
-  ageMax: number | null;
-  isPermanent: boolean;
-  dateStart: string;
-  dateEnd: string;
-  openTime: string;
-  closeTime: string;
-  setting: string;
-  sourceUrl: string;
-  category: string;
-  venueName: string;
-  venueAddress: string;
-  venueCity: string;
-  venuePostalCode: string;
-  days: string[];
-}
-
-/** Ce que chaque panier peut encore donner au banc de lecture. */
-export interface EvalSeedCounts {
-  approuvees: number;
-  abandonnees: number;
-  /** Le libellé qui isole les abandons de l'étage 5, pour diagnostiquer un panier vide. */
-  abandonReason: string;
-}
-
-/** Une page du banc de lecture, et ce que l'étage 5 en a tiré. */
 export interface EvalReading {
   id: number;
   url: string;
   label: string;
-  status: EvalAgendaStatus;
-  error: string | null;
-  note: string;
-  /** L'adresse réellement lue : différente quand l'échange de langue a joué. */
-  readUrl: string;
-  swapped: boolean;
-  /** Le texte tel qu'il partirait au modèle. La pièce à conviction. */
-  text: string;
-  textChars: number;
-  dates: string[];
-  imageUrl: string;
+  capture: EvalCaptureStatus;
+  captureError: string | null;
+  capturedAt: string | null;
   chars: number;
   archived: boolean;
-  /** Le premier `h1` de la page, ou son `title` à défaut. */
-  heading: string;
-  /** Ce titre se retrouve-t-il dans le texte extrait ? */
-  h1InText: boolean;
-  truncated: boolean;
-  /** Sous le seuil : la page serait abandonnée avant tout appel payant. */
-  tooShort: boolean;
-  imageLooksLogo: boolean;
-  textVerdict: EvalTextVerdict | null;
-  imageVerdict: EvalImageVerdict | null;
-  datesVerdict: EvalDatesVerdict | null;
-  /** Les trois verdicts sont posés : cette page compte dans la mesure. */
-  judged: boolean;
-  /** D'où vient cette page : saisie à la main, ou tirée d'un run. */
+  note: string;
+  expectedImage: string | null;
+  /** JSON d'un tableau de dates. */
+  expectedDates: string | null;
+  /** JSON d'un tableau de fragments que le texte doit contenir. */
+  expectedMarkers: string | null;
   origin: EvalReadingOrigin;
-  /** Quand le pipeline l'avait lue. Mesure la dérive possible de la page. */
+  eventId: number | null;
   readAt: string | null;
   runDecision: string;
   runReason: string;
-  /**
-   * La sortie approuvée tirée de cette page.
-   *
-   * Du **contexte** ici, jamais un verdict : les trois verdicts de l'étage 5
-   * portent sur ce que la page *contient*, la fiche dit ce que la sortie *est*.
-   * C'est en revanche la vérité de référence de l'étage 6.
-   */
-  reference: EvalReference | null;
   createdAt: string;
-  analyzedAt: string | null;
-  validatedAt: string | null;
-  author: { id: number; displayName: string };
+  author?: { id: number; displayName: string };
+  fiche?: { id: number; expected: string; labelledAt: string } | null;
 }
 
-/** Ce que l'étage 5 rend juste, sur l'ensemble du banc. */
-export interface EvalReadingStats {
-  pages: number;
-  judged: number;
-  /** Nuls tant qu'aucune page n'a été jugée. */
-  textOk: number | null;
-  imageOk: number | null;
-  datesOk: number | null;
-  ampute: number;
-  tronque: number;
-  horsSujet: number;
-  /** Sous le seuil, donc abandonnées avant tout appel payant. */
-  abandonnees: number;
-}
+/** Le résumé chiffré d'un run, calculé à la lecture et jamais stocké. */
+export type EvalScore =
+  | ({ kind: 'links' } & EvalHarvestScore & {
+        pagination: { correct: number; missed: number; wrong: number; unjudged: number };
+      })
+  | {
+      kind: 'read';
+      items: number;
+      textOk: number;
+      textJudged: number;
+      imageOk: number;
+      imageJudged: number;
+      datesOk: number;
+      datesJudged: number;
+      truncated: number;
+      tooShort: number;
+      rate: number | null;
+    }
+  | {
+      kind: 'extract';
+      items: number;
+      JUSTE: number;
+      FAUX: number;
+      INVENTE: number;
+      MANQUE: number;
+      inconnu: number;
+      rate: number | null;
+    };
 
-// ───────────────────────────────────── banc d'extraction (étage 6)
-
-/**
- * Ce qu'un humain dit d'un champ extrait.
- *
- * Le croisement avec « le modèle a-t-il rempli ce champ ? » donne les trois
- * taux qui comptent :
- *
- * |                | la page le dit  | la page n'en dit rien |
- * |----------------|-----------------|-----------------------|
- * | **renseigné**  | JUSTE ou FAUX   | **INVENTE**           |
- * | **vide**       | **MANQUE**      | JUSTE (vide à raison) |
- *
- * `INVENTE` a sa propre valeur plutôt que d'être rangé sous `FAUX` : c'est la
- * faute propre à un modèle, celle qu'aucun code déterministe ne commet, et
- * celle que l'ancrage sait pré-signaler sans coûter d'étiquette.
- */
-export type EvalFieldVerdict = 'JUSTE' | 'FAUX' | 'INVENTE' | 'MANQUE';
-
-/**
- * Les deux réponses possibles selon que le modèle a rempli le champ ou non.
- *
- * Deux boutons, jamais quatre : `INVENTE` n'a aucun sens sur un champ vide, et
- * `MANQUE` aucun sur un champ renseigné. Montrer les quatre ferait relire à
- * chaque fois deux réponses impossibles — douze aspects sur trente fiches, ce
- * sont sept cents lectures inutiles.
- */
-export const EVAL_FIELD_CHOICES: Record<
-  'filled' | 'empty',
-  { key: EvalFieldVerdict; label: string; hint: string }[]
-> = {
-  filled: [
-    { key: 'JUSTE', label: 'Juste', hint: "C'est bien ce que la page dit." },
-    { key: 'FAUX', label: 'Faux', hint: 'La page le dit, mais autrement.' },
-    {
-      key: 'INVENTE',
-      label: 'Inventé',
-      hint: "La page n'en dit rien nulle part : le modèle l'a composé.",
-    },
-  ],
-  empty: [
-    { key: 'JUSTE', label: 'Vide à raison', hint: "La page n'en dit rien : ne rien mettre est juste." },
-    { key: 'MANQUE', label: 'Manqué', hint: 'La page le dit, et le champ est resté vide.' },
-  ],
-};
-
-/**
- * Ce qu'un instrument a relevé sur un champ. Des libellés, pas des verdicts :
- * le modèle a rendu ce qu'il a rendu, et c'est ce rendu qu'on mesure. Ils
- * disent seulement où regarder d'abord.
- */
-export const EVAL_FLAG_LABELS: Record<string, { label: string; hint: string }> = {
-  hors_texte: {
-    label: 'hors texte',
-    hint: "Cette valeur ne se retrouve pas dans le texte de la page. C'est le signe d'une invention — l'ancrage l'attrape sans savoir ce qui est vrai.",
-  },
-  incoherent: {
-    label: 'incohérent',
-    hint: 'La fiche se contredit toute seule : un âge minimum au-dessus du maximum, un tarif sur une entrée gratuite, une fin avant le début.',
-  },
-  hors_liste: {
-    label: 'hors référentiel',
-    hint: "La catégorie n'existe pas sur le site : le prompt impose de choisir dans la liste, et elle n'a pas été suivie.",
-  },
-  divergent: {
-    label: 'en désaccord',
-    hint: "Ces dates ne rencontrent pas celles que l'étage 5 a relevées en JSON-LD. Deux lectures indépendantes de la même page se contredisent.",
-  },
-};
-
-/** Un aspect d'une fiche, tel que `audit_fiche` le rend. */
-export interface EvalAspect {
-  key: string;
-  label: string;
-  /** La valeur rendue, en clair — « 8 € », « 3 à 10 ans », « intérieur ». */
-  value: string;
-  filled: boolean;
-  /** Ce qui l'a examiné : « ancrage », « ancrage + cohérence », « aucun ». */
-  instrument: string;
-  flags: string[];
-  /**
-   * Le verdict que la fiche approuvée **propose** pour ce champ.
-   *
-   * Proposé, jamais écrit : il n'entre dans `verdicts` que si un humain clique.
-   * Vide quand la référence ne peut pas trancher — la description, qui est une
-   * reformulation, ou une valeur absente de la fiche mais présente dans la page.
-   */
-  proposed?: EvalFieldVerdict | '';
-  /** Pourquoi cette proposition, avec la valeur approuvée citée. */
-  because?: string;
-}
-
-/** Une fiche du banc d'extraction, et ce que l'étage 6 en a tiré. */
-export interface EvalExtraction {
+export interface EvalRun {
   id: number;
-  status: EvalAgendaStatus;
+  stage: EvalStage;
+  status: EvalRunStatus;
   error: string | null;
-  note: string;
+  label: string;
+  /** De quoi ce run est le run. Sans ça, la courbe ne s'attribue à rien. */
+  codeRef: string;
   model: string;
-  /** Les vingt-trois champs rendus par le modèle. La pièce à conviction. */
-  fiche: Record<string, unknown>;
-  aspects: EvalAspect[];
-  /** Ce qu'un humain dit de chaque aspect. Clé absente = personne n'a regardé. */
-  verdicts: Record<string, EvalFieldVerdict>;
+  promptHash: string;
+  settings: string;
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
-  /** Une fiche approuvée a servi de référence : les aspects portent des propositions. */
-  hasReference: boolean;
-  /** Le titre approuvé ne se retrouve plus dans le texte : comparaison suspendue. */
-  pageMoved: boolean;
-  /** Tous les aspects sont tranchés : cette fiche compte dans la mesure. */
-  judged: boolean;
-  createdAt: string;
-  analyzedAt: string | null;
-  validatedAt: string | null;
-  author: { id: number; displayName: string };
-  /** La page du banc de lecture d'où vient le texte. L'entrée, gelée. */
-  reading: {
-    id: number;
-    url: string;
-    label: string;
-    text: string;
-    textChars: number;
-    dates: string[];
-    heading: string;
-    truncated: boolean;
-    tooShort: boolean;
-    textVerdict: EvalTextVerdict | null;
-    origin: EvalReadingOrigin;
-    readAt: string | null;
-    event: { id: number; title: string; status: string } | null;
-  };
+  items: number;
+  queuedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  requestedBy?: { id: number; displayName: string } | null;
+  score?: EvalScore;
 }
 
-/** Un aspect, agrégé sur tout le banc. */
-export interface EvalAspectStats {
-  key: string;
-  label: string;
-  instrument: string;
-  renseigne: number;
-  justeRenseigne: number;
-  faux: number;
-  invente: number;
-  manque: number;
-  videJuste: number;
-  /** Fiches — jugées ou non — où un instrument a levé un drapeau. */
-  signale: number;
-  /** Verdicts humains qui n'ont fait que confirmer la fiche approuvée. */
-  confirme: number;
-  /** Verdicts humains qui l'ont contredite. */
-  corrige: number;
-  /** Parmi les valeurs qu'il a osé écrire, la part juste. La précision. */
-  exactitude: number | null;
-  /** Parmi ce que la page offrait, la part rapportée juste. Le rappel. */
-  couverture: number | null;
-  /** La part de ses valeurs que la page ne dit nulle part. */
-  invention: number | null;
-}
+/** Les quatre verdicts de l'étage 6, dérivés et non plus stockés. */
+export type EvalFieldVerdict = 'JUSTE' | 'FAUX' | 'INVENTE' | 'MANQUE';
 
-/** Ce que l'étage 6 rend juste, sur l'ensemble du banc. */
-export interface EvalExtractionStats {
-  fiches: number;
-  judged: number;
-  /** Fiches que le modèle a déclarées hors sujet. */
-  ecartees: number;
-  /** Fiches renvoyées comme programmes, à relire d'un bloc. */
-  programmes: number;
-  inventions: number;
-  manques: number;
-  /** Fiches jugées contre une sortie approuvée. */
-  avecReference: number;
-  /** Fiches dont la page a changé depuis le run : comparaison suspendue. */
-  bougees: number;
-  /**
-   * Ce que la fiche approuvée a fait gagner, et ce qu'elle n'a pas dit.
-   *
-   * Une mesure entièrement confirmative reste vraie — un humain a cliqué — mais
-   * elle dit surtout que le modèle et le modérateur sont d'accord, ce qui est
-   * plus faible qu'une relecture indépendante. D'où le chiffre, sous les yeux.
-   */
-  confirmes: number;
-  corriges: number;
-  /** Ce que la mesure a coûté. Le premier étage du banc qui se paie. */
-  costUsd: number;
-  aspects: EvalAspectStats[];
+export const EVAL_FIELD_VERDICT_LABELS: Record<EvalFieldVerdict, string> = {
+  JUSTE: 'juste',
+  FAUX: 'faux',
+  INVENTE: 'inventé',
+  MANQUE: 'manquant',
+};
+
+/** Ce que le corpus peut encore recevoir de ce que le pipeline a déjà fait. */
+export interface EvalSeedCounts {
+  approuvees: number;
+  abandonnees: number;
+  illisibles: number;
+  liens: number;
+  abandonReason: string;
 }

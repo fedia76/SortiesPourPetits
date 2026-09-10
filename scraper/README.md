@@ -714,6 +714,33 @@ dépouillement et la lecture ne repassent pas sur le réseau.
 
 ### Le banc d'évaluation
 
+> **Le banc a été scindé en trois.** Ce qui suit décrit ce qu'il mesure et
+> pourquoi, et reste juste. Ce qui a changé, c'est *où* les choses vivent :
+>
+> * le **corpus** — une entrée gelée et ce qu'un humain dit qu'elle contient.
+>   Il ne dépend d'aucun modèle et vit des années. L'étiquette dit désormais ce
+>   que la page *contient* (« la page annonce 8 € ») et non si une brique a eu
+>   raison (« le tarif rendu est juste ») : la première vaut pour toujours, la
+>   seconde périmait au premier changement de prompt ;
+> * un **run** — ce qu'une brique, à sa version du jour, rend sur ce corpus.
+>   Immuable, empilé, jamais écrasé, et il déclare de quoi il est le run (SHA,
+>   modèle, empreinte du prompt, réglages) ;
+> * la **mesure** — la confrontation des deux, calculée à la demande et
+>   stockée nulle part.
+>
+> Le mélange n'était pas une gêne d'architecture : rejouer un agenda
+> supprimait ses pages, donc en cascade les verdicts humains qu'elles
+> portaient. Mesurer détruisait la mesure, et « est-ce que ça s'améliore ? » —
+> la seule question pour laquelle un banc existe — restait sans réponse.
+>
+> Trois conséquences visibles : `reviewed` n'existe plus (une étiquette existe
+> parce qu'un humain l'a posée, son absence dit qu'il n'a pas regardé),
+> `hasReference` non plus (une proposition est un run qu'on affiche), ni
+> `pageMoved` (un run rejoue sur l'entrée gelée, jamais sur le web
+> d'aujourd'hui). La console est en deux pages : **Corpus et étiquettes**, et
+> **Mesures**.
+
+
 Le registre ci-dessus mesure la **reconnaissance** en la laissant tourner. Le
 banc répond à l'autre question, celle qu'aucune observation passive ne peut
 atteindre : **ce que le pipeline a manqué.**

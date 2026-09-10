@@ -27,6 +27,13 @@ export const api = {
       body: data === undefined ? undefined : JSON.stringify(data),
     });
   },
+  put<T>(path: string, data: unknown): Promise<T> {
+    return request<T>(path, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  },
   patch<T>(path: string, data: unknown): Promise<T> {
     return request<T>(path, {
       method: 'PATCH',

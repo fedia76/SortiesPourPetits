@@ -166,6 +166,12 @@ const router = createRouter({
       component: () => import('../views/AdminEvalView.vue'),
       meta: { title: "Banc d'évaluation", noindex: true, requiresAuth: true, requiresAdmin: true },
     },
+    {
+      path: '/admin/evaluation/mesures',
+      name: 'admin-eval-runs',
+      component: () => import('../views/AdminEvalRunsView.vue'),
+      meta: { title: 'Mesures du banc', noindex: true, requiresAuth: true, requiresAdmin: true },
+    },
     // Une adresse inconnue affichait l'accueil, par redirection : le visiteur
     // n'y comprenait rien, et le serveur, lui, répond 404 sur cette adresse.
     {

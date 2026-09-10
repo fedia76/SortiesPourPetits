@@ -2,20 +2,39 @@
  * Le banc d'évaluation : mesurer ce que chaque brique du scraper rend
  * vraiment, plutôt que d'espérer qu'elle rende ce qu'il faut.
  *
- * Un seul étage est mesuré pour l'instant, le **dépouillement** (étage 3), et
- * c'est délibéré : il est en amont, donc son ratage plafonne tout ce qui
- * suit ; il est déterministe, ce qui ne veut pas dire juste ; et sa panne se
- * déguise en panne de l'étage suivant — un agenda dont les liens de fiche ont
- * été perdus rend son menu, et c'est le prompt de la sélection qu'on ira
- * accuser.
+ * ## Trois choses, et elles ne se mélangent plus
+ *
+ * * le **corpus** — une entrée gelée et ce qu'un humain dit qu'elle contient.
+ *   Ça vit des années, ça ne dépend d'aucun modèle, et c'est la seule chose
+ *   qui coûte cher à produire ;
+ * * un **run** — ce qu'une brique, à sa version du jour, rend sur ce corpus.
+ *   Immuable, empilé, jamais écrasé ;
+ * * la **mesure** — la confrontation des deux, calculée à la demande dans
+ *   `lib/evalMetrics.ts` et jamais stockée.
+ *
+ * Elles vivaient dans les mêmes lignes, et ce n'était pas une gêne
+ * d'architecture : rejouer un agenda supprimait ses pages, donc en cascade les
+ * verdicts humains qu'il portait. Mesurer détruisait la mesure. La question
+ * « est-ce que ça s'améliore ? » — la seule pour laquelle un banc existe —
+ * était sans réponse possible.
+ *
+ * ## Capturer n'est pas mesurer
+ *
+ * Une entrée du corpus est **capturée** une fois : on télécharge, on gèle le
+ * HTML, on n'y revient plus. Un run rejoue ensuite sur ce HTML gelé, hors
+ * ligne, autant de fois qu'on veut — de sorte qu'un écart entre deux runs ne
+ * peut venir que du code, jamais du site.
+ *
+ * C'est pourquoi il n'y a pas de « recapture » : elle réécrirait l'objet que
+ * les étiquettes décrivent. Pour repartir d'une page fraîche, on crée une
+ * nouvelle entrée, et l'ancienne garde ses étiquettes et son histoire.
  *
  * ## Pourquoi le worker, et pas ce fichier
  *
- * L'extraction passe par le worker Python et par le vrai `links_of`. La
- * refaire en Node donnerait la vérité d'une réimplémentation — c'est-à-dire
- * aucune vérité. Le statut de l'agenda sert donc de file, exactement comme
- * celui d'une exécution du scraper : le worker réclame ce qui est en QUEUED,
- * rend les pages, et clôt.
+ * Les briques sont en Python. Les refaire en Node donnerait la vérité d'une
+ * réimplémentation, c'est-à-dire aucune vérité. Le statut d'une capture et
+ * celui d'un run servent donc de files, exactement comme pour une exécution du
+ * scraper : le worker réclame, rend, et clôt.
  *
  * ## Qui a le droit
  *
@@ -23,10 +42,9 @@
  * référence sur laquelle tout le reste s'appuiera, et une vérité que plusieurs
  * mains modifient sans se concerter n'en est plus une.
  *
- * Les trois routes du worker se contentent du rôle **modérateur**, qui est
- * celui que porte sa clé d'API. Elles n'exposent rien qu'un modérateur ne
- * puisse déjà voir, et exiger l'administration ici obligerait à donner ce rôle
- * à un programme.
+ * Les routes du worker se contentent du rôle **modérateur**, qui est celui que
+ * porte sa clé d'API : exiger l'administration obligerait à donner ce rôle à
+ * un programme.
  */
 import { Prisma, Role } from '@prisma/client';
 import express, { Router } from 'express';
@@ -34,20 +52,31 @@ import { prisma } from '../db';
 import { deleteEvalPages, readEvalPage, saveEvalPage } from '../lib/evalPages';
 import { requireRole } from '../middleware/auth';
 import {
+  extractScore,
+  harvestScore,
+  readScore,
+  selectScore,
+  type Aspect,
+  type LabelledLink,
+} from '../lib/evalMetrics';
+import {
   evalAgendaSchema,
   evalAgendaUpdateSchema,
-  evalFailSchema,
-  evalHarvestSchema,
   evalBulkVerdictSchema,
-  evalExtractSchema,
-  evalExtractionAllSchema,
-  evalExtractionSchema,
-  evalFieldVerdictSchema,
+  evalCaptureSchema,
+  evalExtractResultSchema,
+  evalFailSchema,
+  evalFicheSchema,
+  evalLinkResultSchema,
   evalLinkSchema,
   evalNextSchema,
-  evalReadSchema,
+  evalReadResultSchema,
+  evalReadingLabelSchema,
   evalReadingSchema,
-  evalReadingVerdictSchema,
+  evalRunClaimSchema,
+  evalRunFinishSchema,
+  evalRunListSchema,
+  evalRunSchema,
   evalSeedSchema,
   evalVerdictSchema,
 } from '../lib/validators';
@@ -59,244 +88,90 @@ evalRouter.use(requireRole(Role.MODERATOR));
 
 const admin = requireRole(Role.ADMIN);
 
-/** L'agenda tel que la console l'affiche : ses pages, et les liens de chacune. */
-const AGENDA_INCLUDE = {
-  author: { select: { id: true, displayName: true } },
-  agendaPages: {
-    orderBy: { pageNo: 'asc' },
-    // `htmlPath` est un chemin sur le disque du serveur : la console n'a pas à
-    // le connaître, seulement à savoir si l'archive existe. Il est donc
-    // remplacé par un booléen à la sérialisation.
-    include: { links: { orderBy: [{ position: 'asc' }, { id: 'asc' }] } },
-  },
-} satisfies Prisma.EvalAgendaInclude;
-
 /**
- * Efface les pages archivées d'un agenda, puis rend la main.
- *
- * Prisma efface les lignes en cascade, pas les fichiers. Sans cet appel, chaque
- * analyse relancée laisserait derrière elle un HTML que plus rien ne
- * référence — et le disque du serveur finirait par se remplir de pages dont
- * personne ne saurait plus de quel agenda elles venaient.
+ * Les comptes rendus du worker portent du HTML gzippé en base64 : quelques
+ * centaines de kilo-octets, bien au-delà du plafond par défaut d'Express.
  */
-async function forgetArchive(agendaId: number): Promise<void> {
-  const pages = await prisma.evalAgendaPage.findMany({
-    where: { agendaId },
-    select: { htmlPath: true },
-  });
-  await deleteEvalPages(pages.map((p) => p.htmlPath));
-}
+const bigBody = express.json({ limit: '12mb' });
 
-type SerializableLink = {
-  url: string;
-  harvested: boolean;
-  verdict: string | null;
-  reviewed: boolean;
-};
-type SerializablePage = {
-  htmlPath: string | null;
-  nextUrl: string;
-  nextVerdict: string | null;
-  error: string | null;
-  links: SerializableLink[];
-};
-type SerializableAgenda = { status: string; pages: number; agendaPages: SerializablePage[] };
-
-/**
- * Ce que le dépouillement a fait de cet agenda, une fois l'humain passé.
- *
- * Le croisement de deux colonnes donne les **deux** erreurs, là où ne montrer
- * que la moisson n'en donnait qu'une :
- *
- * |              | l'humain dit SORTIE | l'humain dit autre chose |
- * |--------------|---------------------|--------------------------|
- * | **retenu**   | juste               | retenu pour rien         |
- * | **écarté**   | **sortie perdue**   | juste                    |
- *
- * « Retenu pour rien » coûte un appel payant à l'étage 4. « Sortie perdue » ne
- * coûte rien du tout et ne se voit nulle part — c'est la plus chère des deux.
- *
- * ## Pourquoi deux précisions
- *
- * Compter tout ce qui n'est pas une sortie comme une faute du dépouillement
- * accuse la mauvaise brique. Un **sous-agenda** retenu mène bien quelque part —
- * vers d'autres sorties — et c'est l'étage 4 qui le jette, parce qu'on lui dit
- * d'écarter les catégories. Une **pagination** retenue mène à la suite de la
- * liste. Ni l'un ni l'autre n'est du bruit.
- *
- * D'où deux chiffres qui répondent à deux questions :
- *
- * * `precision` — de ce que la brique donne à l'étage 4, quelle part est une
- *   sortie. C'est la mesure du couple 3+4, et celle qui dit ce qu'on paie.
- * * `precisionUseful` — quelle part mène quelque part de réel, bruit exclu.
- *   C'est la mesure de l'étage 3 seul, celle qui dit s'il sait reconnaître un
- *   lien qui compte.
- *
- * ## Pourquoi la couverture compte autant que les taux
- *
- * `reviewed` dit combien de liens un humain a réellement tranchés. Sans lui,
- * les taux mentent : le dénominateur du rappel — les liens appelés « sortie » —
- * ne peut pas être juste si une partie des liens n'a jamais été lue. Un agenda
- * dont on n'a relu que la moisson affichait 100 % de rappel, non pas parce que
- * la brique n'avait rien raté, mais parce que personne n'avait regardé le
- * reste.
- *
- * ## Parcourir les pages fait partie du travail, donc en rater est une erreur
- *
- * L'étage 3 ne se contente pas de lire une page : il suit la pagination. Un
- * agenda pour lequel on demande deux pages et dont une seule est lue est donc
- * un **ratage**, au même titre qu'une sortie perdue — et il ne se voyait nulle
- * part : la deuxième page n'existait simplement pas dans l'arbre, sans un mot.
- *
- * `pagesRead` contre `pagesAsked` le dit tout de suite, sans attendre l'humain,
- * et `stop` dit pourquoi la moisson s'est arrêtée. Une fois la page relue,
- * `paginationManquee` le confirme : des liens que l'humain appelle
- * « pagination » sur une page où `next_page()` n'a rien trouvé, c'est une suite
- * que le site offrait et que la brique n'a pas su voir.
- */
-function statsOf(agenda: SerializableAgenda) {
-  let kept = 0;
-  let sorties = 0;
-  let keptRight = 0;
-  let keptUseful = 0;
-  let sousAgendas = 0;
-  let paginationVue = 0;
-  let pagesJugees = 0;
-  let paginationManquee = 0;
-  let paginationFausse = 0;
-  let links = 0;
-  let reviewed = 0;
-
-  for (const page of agenda.agendaPages) {
-    paginationVue += page.links.filter((l) => l.verdict === 'PAGINATION').length;
-    // Le verdict vient de l'humain, pas d'une déduction sur les étiquettes des
-    // liens : l'URL que `next_page()` a trouvée n'est pas toujours un lien de
-    // la page — elle peut venir du `<link rel="next">` du `<head>` — et n'était
-    // alors étiquetable par personne.
-    if (page.nextVerdict) pagesJugees += 1;
-    if (page.nextVerdict === 'MANQUEE') paginationManquee += 1;
-    if (page.nextVerdict === 'FAUSSE') paginationFausse += 1;
-    for (const link of page.links) {
-      links += 1;
-      if (link.reviewed) reviewed += 1;
-      if (link.harvested) {
-        kept += 1;
-        // « Mène quelque part » : une sortie, la suite de la liste, ou une
-        // autre liste. Tout sauf du bruit.
-        if (link.verdict !== 'AUTRE') keptUseful += 1;
-      }
-      if (link.verdict === 'SORTIE') {
-        sorties += 1;
-        if (link.harvested) keptRight += 1;
-      }
-      if (link.verdict === 'SOUS_AGENDA') sousAgendas += 1;
-    }
+function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+  if (!raw) return fallback;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return value === null || value === undefined ? fallback : (value as T);
+  } catch {
+    return fallback;
   }
-
-  // ── la pagination, responsabilité de l'étage 3 comme une autre
-  const pagesAsked = agenda.pages;
-  const pagesRead = agenda.agendaPages.length;
-  const last = agenda.agendaPages[pagesRead - 1];
-  // Pourquoi la moisson s'est arrêtée avant le compte demandé. Dérivé de ce
-  // qu'on garde déjà : une dernière page en erreur s'est vue refuser l'entrée,
-  // une dernière page sans `rel="next"` n'a pas su désigner la suivante, et
-  // sinon c'est que la suivante avait déjà été lue — un agenda qui boucle.
-  let stop = '';
-  if (pagesRead < pagesAsked && last) {
-    if (last.error) stop = 'injoignable';
-    else if (!last.nextUrl) stop = 'sans_suite';
-    else stop = 'boucle';
-  }
-
-  // Les taux n'ont de sens qu'une fois l'humain passé — et passé **partout** :
-  // la validation exige que tout soit relu, et c'est elle qui les débloque.
-  const juge = agenda.status === 'VALIDATED';
-  return {
-    links,
-    reviewed,
-    pagesAsked,
-    pagesRead,
-    /** '' quand tout a été lu ; sinon injoignable, sans_suite ou boucle. */
-    stop,
-    kept,
-    sorties,
-    /** Retenus à tort : ils ont coûté un appel à l'étage 4 pour rien. */
-    keptWrong: kept - keptRight,
-    /** Sorties perdues : personne ne les aurait jamais vues. */
-    missed: sorties - keptRight,
-    sousAgendas,
-    paginationVue,
-    /** Pages dont la pagination a été tranchée par un humain. */
-    pagesJugees,
-    /** Il y avait une suite, la brique ne l'a pas vue. */
-    paginationManquee,
-    /** La brique a couru après une page qui n'était pas la suite. */
-    paginationFausse,
-    precision: juge && kept > 0 ? keptRight / kept : null,
-    precisionUseful: juge && kept > 0 ? keptUseful / kept : null,
-    recall: juge && sorties > 0 ? keptRight / sorties : null,
-  };
 }
 
-function serialize<T extends SerializableAgenda>(agenda: T) {
-  return {
-    ...agenda,
-    agendaPages: agenda.agendaPages.map(({ htmlPath, ...page }) => ({
-      ...page,
-      archived: !!htmlPath,
-    })),
-    stats: statsOf(agenda),
-  };
-}
+// ══════════════════════════════════════════════════════════════ LE CORPUS
+//
+// Des étiquettes, et l'entrée gelée qu'elles décrivent. Rien de ce qu'une
+// brique produit n'entre ici : c'est toute la règle, et elle se vérifie d'un
+// coup d'œil — aucune route de cette section n'écrit ce qu'un run a rendu.
 
-// ───────────────────────────────────────────────────────────────── console
+// ───────────────────────────────────────────── corpus des agendas (ét. 3/4)
 
-/** Tous les agendas du banc, du plus récent au plus ancien. */
 evalRouter.get('/agendas', admin, async (_req, res) => {
   const agendas = await prisma.evalAgenda.findMany({
     orderBy: { createdAt: 'desc' },
-    include: AGENDA_INCLUDE,
+    include: {
+      author: { select: { id: true, displayName: true } },
+      agendaPages: {
+        orderBy: { pageNo: 'asc' },
+        select: {
+          id: true,
+          pageNo: true,
+          url: true,
+          chars: true,
+          htmlPath: true,
+          nextExpected: true,
+          _count: { select: { links: true } },
+        },
+      },
+    },
   });
-  res.json({ agendas: agendas.map(serialize) });
+  res.json({ agendas: agendas.map(serializeAgenda) });
 });
 
-evalRouter.get('/agendas/:id(\\d+)', admin, async (req, res) => {
-  const agenda = await prisma.evalAgenda.findUnique({
-    where: { id: Number(req.params.id) },
-    include: AGENDA_INCLUDE,
-  });
-  if (!agenda) {
-    res.status(404).json({ error: 'Agenda introuvable' });
-    return;
-  }
-  res.json({ agenda: serialize(agenda) });
-});
+function serializeAgenda(agenda: {
+  agendaPages: { htmlPath: string | null; _count: { links: number } }[];
+  [k: string]: unknown;
+}) {
+  const { agendaPages, ...rest } = agenda;
+  return {
+    ...rest,
+    pagesCaptured: agendaPages.length,
+    // Le chemin sur le disque du serveur ne sort jamais : la console n'a
+    // besoin que de savoir si l'archive existe.
+    agendaPages: agendaPages.map(({ htmlPath, _count, ...page }) => ({
+      ...page,
+      archived: Boolean(htmlPath),
+      labels: _count.links,
+    })),
+    /** Étiquettes posées sur l'ensemble de l'agenda. */
+    labels: agendaPages.reduce((sum, p) => sum + p._count.links, 0),
+  };
+}
 
-/**
- * Ajoute un agenda au banc et le met en file.
- *
- * L'URL est unique : le même agenda analysé deux fois donnerait deux vérités
- * de référence pour une seule page, et rien ne dirait laquelle croire.
- */
 evalRouter.post('/agendas', admin, async (req, res) => {
   const parsed = evalAgendaSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const existing = await prisma.evalAgenda.findUnique({
-    where: { url: parsed.data.url },
-    select: { id: true },
-  });
-  if (existing) {
-    res.status(409).json({ error: 'Cet agenda est déjà au banc', id: existing.id });
-    return;
+  try {
+    const agenda = await prisma.evalAgenda.create({
+      data: { ...parsed.data, createdById: req.user!.id },
+    });
+    res.status(201).json({ agenda });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      res.status(409).json({ error: 'Cet agenda est déjà au corpus' });
+      return;
+    }
+    throw e;
   }
-  const agenda = await prisma.evalAgenda.create({
-    data: { ...parsed.data, createdById: req.user!.id },
-    include: AGENDA_INCLUDE,
-  });
-  res.status(201).json({ agenda: serialize(agenda) });
 });
 
 evalRouter.patch('/agendas/:id(\\d+)', admin, async (req, res) => {
@@ -305,702 +180,303 @@ evalRouter.patch('/agendas/:id(\\d+)', admin, async (req, res) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const id = Number(req.params.id);
-  const current = await prisma.evalAgenda.findUnique({ where: { id }, select: { status: true } });
-  if (!current) {
-    res.status(404).json({ error: 'Agenda introuvable' });
-    return;
-  }
-  if (current.status === 'RUNNING') {
-    res.status(409).json({ error: 'Analyse en cours' });
-    return;
-  }
-  const agenda = await prisma.evalAgenda.update({
-    where: { id },
-    data: parsed.data,
-    include: AGENDA_INCLUDE,
-  });
-  res.json({ agenda: serialize(agenda) });
-});
-
-/**
- * Relance l'analyse : la moisson précédente est effacée, la validation avec.
- *
- * Les ajouts manuels partent aussi, et il n'y a pas d'autre choix honnête. Ils
- * disaient « `links_of` a manqué ceci **sur cette page telle qu'elle était** » ;
- * la page vient d'être retéléchargée, elle a pu changer, et garder ces liens
- * les rattacherait à un HTML qu'ils n'ont jamais décrit.
- */
-evalRouter.post('/agendas/:id(\\d+)/analyze', admin, async (req, res) => {
-  const id = Number(req.params.id);
-  const current = await prisma.evalAgenda.findUnique({ where: { id }, select: { status: true } });
-  if (!current) {
-    res.status(404).json({ error: 'Agenda introuvable' });
-    return;
-  }
-  if (current.status === 'RUNNING') {
-    res.status(409).json({ error: 'Analyse déjà en cours' });
-    return;
-  }
-  await forgetArchive(id);
-  const agenda = await prisma.$transaction(async (tx) => {
-    await tx.evalAgendaPage.deleteMany({ where: { agendaId: id } });
-    return tx.evalAgenda.update({
-      where: { id },
-      data: { status: 'QUEUED', error: null, analyzedAt: null, validatedAt: null },
-      include: AGENDA_INCLUDE,
+  try {
+    const agenda = await prisma.evalAgenda.update({
+      where: { id: Number(req.params.id) },
+      data: parsed.data,
     });
-  });
-  res.json({ agenda: serialize(agenda) });
+    res.json({ agenda });
+  } catch {
+    res.status(404).json({ error: 'Agenda introuvable' });
+  }
 });
 
 /**
- * Ajoute à la main un lien que le dépouillement a manqué. C'est **la** mesure :
- * tout le banc de l'étage 3 tient dans ce bouton.
+ * Remet une capture en file. Refusé sur une entrée déjà capturée.
  *
- * Le lien se rattache à une page précise, parce que c'est la page qui est
- * l'unité de travail de `links_of` — dire « cet agenda a 30 liens » sans dire
- * de quelle page ne permettrait de reprocher son ratage à personne.
+ * Recapturer réécrirait le HTML que les étiquettes décrivent, et l'on
+ * retomberait très exactement dans le défaut que la séparation corrige. Pour
+ * repartir d'une page fraîche, on crée une nouvelle entrée : celle-ci garde
+ * ses étiquettes, et les deux se comparent.
  */
-evalRouter.post('/pages/:pageId(\\d+)/links', admin, async (req, res) => {
+evalRouter.post('/agendas/:id(\\d+)/capture', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const agenda = await prisma.evalAgenda.findUnique({ where: { id }, select: { capture: true } });
+  if (!agenda) {
+    res.status(404).json({ error: 'Agenda introuvable' });
+    return;
+  }
+  if (agenda.capture === 'CAPTURED') {
+    res.status(409).json({
+      error:
+        'Cet agenda est déjà capturé. Recapturer réécrirait le HTML que les ' +
+        'étiquettes décrivent : créez plutôt une nouvelle entrée.',
+    });
+    return;
+  }
+  const updated = await prisma.evalAgenda.update({
+    where: { id },
+    data: { capture: 'QUEUED', captureError: null },
+  });
+  res.json({ agenda: updated });
+});
+
+evalRouter.delete('/agendas/:id(\\d+)', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const pages = await prisma.evalAgendaPage.findMany({
+    where: { agendaId: id },
+    select: { htmlPath: true },
+  });
+  try {
+    await prisma.evalAgenda.delete({ where: { id } });
+  } catch {
+    res.status(404).json({ error: 'Agenda introuvable' });
+    return;
+  }
+  // Prisma efface les lignes en cascade, pas les fichiers.
+  await deleteEvalPages(pages.map((p) => p.htmlPath));
+  res.json({ ok: true });
+});
+
+/**
+ * Le détail d'un agenda : ses étiquettes, et le relevé d'un run en regard.
+ *
+ * Le run sert de **précoche d'affichage** : sans lui, étiqueter deux cents
+ * liens sur une page vierge serait invivable et personne ne le ferait deux
+ * fois. Mais rien de ce qu'il dit n'entre au corpus tant qu'un humain n'a pas
+ * cliqué — c'est la différence entre proposer et écrire, et c'est elle qui
+ * empêche un rappel de 100 % obtenu sans que personne ait regardé.
+ */
+evalRouter.get('/agendas/:id(\\d+)', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const agenda = await prisma.evalAgenda.findUnique({
+    where: { id },
+    include: {
+      author: { select: { id: true, displayName: true } },
+      agendaPages: {
+        orderBy: { pageNo: 'asc' },
+        include: { links: { orderBy: { id: 'asc' } } },
+      },
+    },
+  });
+  if (!agenda) {
+    res.status(404).json({ error: 'Agenda introuvable' });
+    return;
+  }
+
+  const runId = Number(req.query.runId) || (await latestRunId(['HARVEST', 'SELECT']));
+  const pageIds = agenda.agendaPages.map((p) => p.id);
+  const results = runId
+    ? await prisma.evalLinkResult.findMany({
+        where: { runId, pageId: { in: pageIds } },
+        orderBy: [{ position: 'asc' }, { id: 'asc' }],
+      })
+    : [];
+
+  const byPage = new Map<number, typeof results>();
+  for (const row of results) {
+    const list = byPage.get(row.pageId) ?? [];
+    list.push(row);
+    byPage.set(row.pageId, list);
+  }
+
+  res.json({
+    agenda: {
+      ...agenda,
+      agendaPages: agenda.agendaPages.map(({ htmlPath, ...page }) => ({
+        ...page,
+        archived: Boolean(htmlPath),
+        /** Le relevé du run affiché, s'il y en a un. */
+        results: byPage.get(page.id) ?? [],
+        score: scorePage(page.links, byPage.get(page.id) ?? []),
+      })),
+    },
+    runId,
+  });
+});
+
+function scorePage(
+  labels: { url: string; verdict: string }[],
+  results: { url: string; harvested: boolean; selected: boolean | null }[],
+) {
+  const typed = labels as LabelledLink[];
+  return {
+    harvest: harvestScore(typed, results),
+    select: results.some((r) => r.selected !== null) ? selectScore(typed, results) : null,
+  };
+}
+
+/** La dernière exécution terminée d'un de ces étages. */
+async function latestRunId(stages: ('HARVEST' | 'SELECT' | 'READ' | 'EXTRACT')[]): Promise<number> {
+  const run = await prisma.evalRun.findFirst({
+    where: { stage: { in: stages }, status: 'DONE' },
+    orderBy: { finishedAt: 'desc' },
+    select: { id: true },
+  });
+  return run?.id ?? 0;
+}
+
+// ── les étiquettes elles-mêmes ─────────────────────────────────────────
+
+/** Pose ou change l'étiquette d'un lien. C'est un `upsert` : l'humain tranche. */
+evalRouter.put('/pages/:pageId(\\d+)/links', admin, async (req, res) => {
   const parsed = evalLinkSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
   const pageId = Number(req.params.pageId);
-  const page = await prisma.evalAgendaPage.findUnique({
-    where: { id: pageId },
-    select: { agendaId: true },
-  });
+  const page = await prisma.evalAgendaPage.findUnique({ where: { id: pageId } });
   if (!page) {
     res.status(404).json({ error: 'Page introuvable' });
     return;
   }
-  const duplicate = await prisma.evalLink.findUnique({
-    where: { pageId_url: { pageId, url: parsed.data.url } },
-    select: { id: true, source: true },
-  });
-  if (duplicate) {
-    res.status(409).json({
-      error:
-        duplicate.source === 'PAGE'
-          ? 'Ce lien est déjà relevé sur la page : donnez-lui son verdict.'
-          : 'Ce lien a déjà été ajouté',
-    });
-    return;
-  }
-  await prisma.evalLink.create({
-    data: {
-      ...parsed.data,
+  const { url, text, verdict, note, source } = parsed.data;
+  const link = await prisma.evalLink.upsert({
+    where: { pageId_url: { pageId, url } },
+    create: {
       pageId,
-      source: 'MANUAL',
-      harvested: false,
-      position: 10_000,
-      reviewed: true,
-      reviewedAt: new Date(),
+      url,
+      text,
+      verdict,
+      note,
+      source,
+      origin: 'HUMAIN',
+      labelledById: req.user!.id,
     },
+    update: { verdict, note, labelledAt: new Date(), labelledById: req.user!.id },
   });
-  // Un ajout après validation rouvre l'agenda : la vérité a changé, et le
-  // chiffre qu'on en tirait ne vaut plus pour ce qu'elle contient maintenant.
-  const agenda = await prisma.evalAgenda.update({
-    where: { id: page.agendaId },
-    data: { status: 'ANALYZED', validatedAt: null },
-    include: AGENDA_INCLUDE,
-  });
-  res.status(201).json({ agenda: serialize(agenda) });
+  res.json({ link });
 });
 
-/**
- * Corrige le verdict d'un lien. **C'est la mesure**, et tout le reste de cette
- * console est la mise en scène autour de ce geste.
- *
- * La brique a précoché ; l'humain confirme ou corrige. Un lien retenu qu'il
- * fait passer en `AUTRE` est un appel payant dépensé pour rien ; un lien
- * écarté qu'il fait passer en `SORTIE` est une sortie que personne n'aurait
- * jamais vue.
- *
- * Rien n'est refusé ici, pas même de contredire la brique sur un lien qu'elle
- * a retenu : c'est précisément le but.
- */
 evalRouter.patch('/links/:id(\\d+)', admin, async (req, res) => {
   const parsed = evalVerdictSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const link = await prisma.evalLink.findUnique({
-    where: { id: Number(req.params.id) },
-    select: { id: true, page: { select: { agendaId: true } } },
-  });
-  if (!link) {
-    res.status(404).json({ error: 'Lien introuvable' });
-    return;
+  try {
+    const link = await prisma.evalLink.update({
+      where: { id: Number(req.params.id) },
+      data: {
+        verdict: parsed.data.verdict,
+        note: parsed.data.note ?? undefined,
+        origin: 'HUMAIN',
+        labelledAt: new Date(),
+        labelledById: req.user!.id,
+      },
+    });
+    res.json({ link });
+  } catch {
+    res.status(404).json({ error: 'Étiquette introuvable' });
   }
-  // `reviewed` est ce qui sépare « la machine a deviné » de « un humain a
-  // tranché ». C'est ce clic-ci qui le pose, et c'est lui qui rend les taux
-  // lisibles plus tard.
-  await prisma.evalLink.update({
-    where: { id: link.id },
-    data: { ...parsed.data, reviewed: true, reviewedAt: new Date() },
-  });
-  // Corriger après validation rouvre l'agenda : la vérité a changé, et les
-  // taux qu'on en tirait ne valent plus pour ce qu'elle contient maintenant.
-  const agenda = await prisma.evalAgenda.update({
-    where: { id: link.page.agendaId },
-    data: { status: 'ANALYZED', validatedAt: null },
-    include: AGENDA_INCLUDE,
-  });
-  res.json({ agenda: serialize(agenda) });
+});
+
+/** Retirer une étiquette, c'est dire « je ne sais pas », pas « c'est faux ». */
+evalRouter.delete('/links/:id(\\d+)', admin, async (req, res) => {
+  try {
+    await prisma.evalLink.delete({ where: { id: Number(req.params.id) } });
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: 'Étiquette introuvable' });
+  }
 });
 
 /**
- * Tranche la pagination d'une page. **L'autre moitié de la mesure de l'étage 3.**
+ * Étiqueter d'un coup les liens qu'un run a écartés sous un même motif.
  *
- * Suivre les pages fait partie de son travail, et ce verdict-là ne se déduit
- * pas des étiquettes des liens : `next_page()` lit aussi le `<link rel="next">`
- * du `<head>`, qui n'est pas un `<a href>`. L'URL qu'il en tire n'apparaît alors
- * dans aucune ligne — la console demandait de l'étiqueter « pagination » sans
- * qu'aucune ligne ne puisse l'être.
- *
- * Trois valeurs, parce que savoir que la brique s'est trompée ne dit pas
- * comment : rater une suite et courir après une fausse ne se réparent pas
- * pareil.
+ * L'outil coupe dans les deux sens, et c'est assumé : expédier un motif qu'on
+ * n'a pas lu fabrique un rappel flatteur. D'où l'obligation de viser un motif
+ * précis plutôt que « tout le reste ».
  */
+evalRouter.post('/pages/:pageId(\\d+)/bulk', admin, async (req, res) => {
+  const parsed = evalBulkVerdictSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const pageId = Number(req.params.pageId);
+  const { runId, verdict, reason } = parsed.data;
+  const results = await prisma.evalLinkResult.findMany({
+    where: { runId, pageId, harvested: false, ...(reason ? { dropReason: reason } : {}) },
+    select: { url: true, text: true },
+  });
+  if (!results.length) {
+    res.status(409).json({ error: 'Aucun lien écarté sous ce motif dans ce relevé' });
+    return;
+  }
+  let written = 0;
+  for (const row of results) {
+    await prisma.evalLink.upsert({
+      where: { pageId_url: { pageId, url: row.url } },
+      create: {
+        pageId,
+        url: row.url,
+        text: row.text,
+        verdict,
+        source: 'PAGE',
+        origin: 'HUMAIN',
+        labelledById: req.user!.id,
+      },
+      update: { verdict, labelledAt: new Date(), labelledById: req.user!.id },
+    });
+    written += 1;
+  }
+  res.json({ ok: true, labelled: written });
+});
+
+/** L'étiquette de pagination d'une page : l'adresse de la vraie suite. */
 evalRouter.patch('/pages/:id(\\d+)/next', admin, async (req, res) => {
   const parsed = evalNextSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const pageId = Number(req.params.id);
-  const page = await prisma.evalAgendaPage.findUnique({
-    where: { id: pageId },
-    select: { agendaId: true },
-  });
-  if (!page) {
+  try {
+    const page = await prisma.evalAgendaPage.update({
+      where: { id: Number(req.params.id) },
+      data: { nextExpected: parsed.data.expected },
+    });
+    res.json({ page: { ...page, htmlPath: undefined, archived: Boolean(page.htmlPath) } });
+  } catch {
     res.status(404).json({ error: 'Page introuvable' });
-    return;
   }
-  await prisma.evalAgendaPage.update({
-    where: { id: pageId },
-    // L'adresse attendue ne se garde que lorsqu'elle apprend quelque chose :
-    // sur un verdict « correct », la brique a déjà trouvé la bonne.
-    data: {
-      nextVerdict: parsed.data.verdict,
-      nextExpected: parsed.data.verdict === 'CORRECT' ? '' : parsed.data.expected,
-    },
-  });
-  const agenda = await prisma.evalAgenda.update({
-    where: { id: page.agendaId },
-    data: { status: 'ANALYZED', validatedAt: null },
-    include: AGENDA_INCLUDE,
-  });
-  res.json({ agenda: serialize(agenda) });
 });
 
-/**
- * Donne le même verdict à tous les liens **écartés** d'une page, ou d'un seul
- * motif de rejet.
- *
- * Soixante-seize écartés se lisent mal un par un, et la plupart sont du bruit
- * évident : quinze liens vers un réseau social, douze vers la racine du site.
- * Les expédier d'un clic laisse le temps là où il compte — sous « texte trop
- * court », le motif où se cachent les sorties perdues.
- *
- * L'opération ne touche **jamais** les liens retenus. Ceux-là sont peu nombreux
- * et sont l'objet même de la relecture : les trancher en masse reviendrait à
- * approuver la brique sans la lire, c'est-à-dire à ne rien mesurer.
- */
-evalRouter.post('/pages/:id(\\d+)/verdict', admin, async (req, res) => {
-  const parsed = evalBulkVerdictSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0].message });
-    return;
-  }
-  const pageId = Number(req.params.id);
-  const page = await prisma.evalAgendaPage.findUnique({
-    where: { id: pageId },
-    select: { agendaId: true },
-  });
-  if (!page) {
-    res.status(404).json({ error: 'Page introuvable' });
-    return;
-  }
-  const { count } = await prisma.evalLink.updateMany({
-    where: {
-      pageId,
-      harvested: false,
-      ...(parsed.data.reason ? { dropReason: parsed.data.reason } : {}),
-    },
-    data: { verdict: parsed.data.verdict, reviewed: true, reviewedAt: new Date() },
-  });
-  const agenda = await prisma.evalAgenda.update({
-    where: { id: page.agendaId },
-    data: { status: 'ANALYZED', validatedAt: null },
-    include: AGENDA_INCLUDE,
-  });
-  res.json({ agenda: serialize(agenda), count });
-});
-
-/**
- * Retire un lien ajouté à la main. Un lien relevé sur la page, lui, ne s'efface
- * pas : il **est** sur la page, et le faire disparaître falsifierait le
- * dénominateur. Pour dire qu'il ne mène nulle part, il y a le verdict `AUTRE`.
- */
-evalRouter.delete('/links/:id(\\d+)', admin, async (req, res) => {
-  const link = await prisma.evalLink.findUnique({
-    where: { id: Number(req.params.id) },
-    select: { id: true, source: true, page: { select: { agendaId: true } } },
-  });
-  if (!link) {
-    res.status(404).json({ error: 'Lien introuvable' });
-    return;
-  }
-  if (link.source === 'PAGE') {
-    res.status(409).json({
-      error:
-        "Ce lien est sur la page : l'effacer falsifierait la mesure. " +
-        'Donnez-lui plutôt le verdict « autre ».',
-    });
-    return;
-  }
-  await prisma.evalLink.delete({ where: { id: link.id } });
-  const agenda = await prisma.evalAgenda.update({
-    where: { id: link.page.agendaId },
-    data: { status: 'ANALYZED', validatedAt: null },
-    include: AGENDA_INCLUDE,
-  });
-  res.json({ agenda: serialize(agenda) });
-});
-
-/**
- * Valide la moisson : un humain a relu, complété, et ce que l'agenda contient
- * fait désormais vérité.
- *
- * C'est cet instant qui rend la mesure lisible — avant, un rappel de 100 %
- * dirait seulement que personne n'a encore regardé.
- */
-evalRouter.post('/agendas/:id(\\d+)/validate', admin, async (req, res) => {
-  const id = Number(req.params.id);
-  const current = await prisma.evalAgenda.findUnique({
-    where: { id },
-    select: { status: true },
-  });
-  if (!current) {
-    res.status(404).json({ error: 'Agenda introuvable' });
-    return;
-  }
-  if (current.status !== 'ANALYZED') {
-    res.status(409).json({ error: 'Seule une analyse terminée se valide' });
-    return;
-  }
-  // Tout doit avoir été relu, et ce n'est pas de la rigidité : le dénominateur
-  // du rappel — les liens qu'un humain appelle « sortie » — ne peut pas être
-  // juste si une partie des liens n'a jamais été lue. Valider en n'ayant relu
-  // que la moisson produisait un rappel de 100 % qui ne disait rien.
-  const reste = await prisma.evalLink.count({
-    where: { page: { agendaId: id }, reviewed: false },
-  });
-  const pagesSansVerdict = await prisma.evalAgendaPage.count({
-    where: { agendaId: id, nextVerdict: null },
-  });
-  if (pagesSansVerdict > 0) {
-    res.status(409).json({
-      error:
-        `${pagesSansVerdict} page(s) n'ont pas de verdict de pagination. Suivre les ` +
-        "pages fait partie du travail de l'étage 3 : dites, pour chacune, si ce " +
-        "qu'il a trouvé — ou n'a pas trouvé — est juste.",
-    });
-    return;
-  }
-  if (reste > 0) {
-    res.status(409).json({
-      error:
-        `${reste} lien(s) n'ont pas encore été tranchés par un humain — ils portent ` +
-        'encore la précoche de la brique. Valider maintenant donnerait des taux qui ' +
-        "ne diraient que « personne n'a regardé ». Le filtre « À revoir » les liste, et " +
-        "l'action de groupe permet d'en expédier un motif entier.",
-    });
-    return;
-  }
-  const agenda = await prisma.evalAgenda.update({
-    where: { id },
-    data: { status: 'VALIDATED', validatedAt: new Date() },
-    include: AGENDA_INCLUDE,
-  });
-  res.json({ agenda: serialize(agenda) });
-});
-
-evalRouter.delete('/agendas/:id(\\d+)', admin, async (req, res) => {
-  const id = Number(req.params.id);
-  const current = await prisma.evalAgenda.findUnique({ where: { id }, select: { id: true } });
-  if (!current) {
-    res.status(404).json({ error: 'Agenda introuvable' });
-    return;
-  }
-  await forgetArchive(id);
-  await prisma.evalAgenda.delete({ where: { id } });
-  res.json({ ok: true });
-});
-
-/**
- * Le HTML gelé d'une page, tel que le site l'a servi ce jour-là.
- *
- * C'est ce qui permet de rejouer `links_of` hors ligne après l'avoir modifié,
- * et de comparer à des étiquettes qui, elles, n'ont pas bougé. Servi en texte
- * brut plutôt qu'en HTML : cette page n'a pas à s'exécuter dans le navigateur
- * de la console, on vient la lire.
- */
 evalRouter.get('/pages/:id(\\d+)/html', admin, async (req, res) => {
   const page = await prisma.evalAgendaPage.findUnique({
     where: { id: Number(req.params.id) },
     select: { htmlPath: true, url: true },
   });
   if (!page?.htmlPath) {
-    res.status(404).json({ error: "Cette page n'a pas été archivée" });
+    res.status(404).json({ error: 'Aucune archive pour cette page' });
     return;
   }
   const html = await readEvalPage(page.htmlPath);
   if (html === null) {
-    res.status(410).json({ error: "L'archive de cette page a disparu du disque" });
+    res.status(404).json({ error: 'Archive illisible' });
     return;
   }
   res.type('text/plain; charset=utf-8').send(html);
 });
 
-// ────────────────────────────────────────────────────────────────── worker
-
-/**
- * Le worker réclame l'agenda en attente. La prise est atomique — le passage en
- * RUNNING est conditionné au statut QUEUED — donc deux workers ne peuvent pas
- * se disputer le même.
- */
-evalRouter.post('/harvest/next', async (_req, res) => {
-  const queued = await prisma.evalAgenda.findFirst({
-    where: { status: 'QUEUED' },
-    orderBy: { createdAt: 'asc' },
-    select: { id: true, url: true, pages: true },
-  });
-  if (!queued) {
-    res.json({ agenda: null });
-    return;
-  }
-  const claimed = await prisma.evalAgenda.updateMany({
-    where: { id: queued.id, status: 'QUEUED' },
-    data: { status: 'RUNNING' },
-  });
-  if (claimed.count === 0) {
-    // Un autre worker est passé devant : il repassera.
-    res.json({ agenda: null });
-    return;
-  }
-  res.json({ agenda: queued });
-});
-
-/**
- * Le worker rend ce qu'il a moissonné, page par page, et l'agenda passe en
- * ANALYZED : il attend maintenant un humain.
- *
- * L'écriture est transactionnelle et repart de zéro. Un compte rendu partiel
- * laisserait un agenda dont on ne saurait pas dire s'il est complet — et une
- * vérité de référence dont on doute ne sert à rien.
- */
-/**
- * Le corps porte le HTML gzippé de chaque page : bien au-delà des 100 ko que
- * `express.json()` accepte par défaut, et ce plafond-là a de bonnes raisons
- * d'exister partout ailleurs. On l'élargit donc pour cette route seule, et pas
- * pour l'application entière.
- */
-const harvestBody = express.json({ limit: '12mb' });
-
-evalRouter.post('/harvest/:id(\\d+)/pages', harvestBody, async (req, res) => {
-  const parsed = evalHarvestSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0].message });
-    return;
-  }
-  const id = Number(req.params.id);
-  const current = await prisma.evalAgenda.findUnique({ where: { id }, select: { id: true } });
-  if (!current) {
-    res.status(404).json({ error: 'Agenda introuvable' });
-    return;
-  }
-  // Les fichiers d'abord, hors transaction : ils ne sont pas transactionnels,
-  // et une archive écrite pour une transaction qui échouerait ensuite serait
-  // simplement orpheline — alors qu'une ligne pointant vers un fichier jamais
-  // écrit serait, elle, un mensonge.
-  await forgetArchive(id);
-  const archived = await Promise.all(
-    parsed.data.pages.map((page) => (page.html ? saveEvalPage(page.html) : Promise.resolve(''))),
-  );
-
-  await prisma.$transaction(async (tx) => {
-    await tx.evalAgendaPage.deleteMany({ where: { agendaId: id } });
-    for (const [index, page] of parsed.data.pages.entries()) {
-      // Le worker envoie ce que `links_of` a rendu, donc déjà dédoublonné par
-      // URL au sein d'une page. On s'en assure quand même : la contrainte
-      // d'unicité ferait échouer tout le compte rendu pour un seul doublon.
-      const seen = new Set<string>();
-      const links = page.links.filter((l) => !seen.has(l.url) && seen.add(l.url));
-      await tx.evalAgendaPage.create({
-        data: {
-          agendaId: id,
-          pageNo: page.pageNo,
-          url: page.url,
-          chars: page.chars,
-          error: page.error ?? null,
-          nextUrl: page.nextUrl,
-          htmlPath: archived[index] || null,
-          links: {
-            create: links.map((l, position) => ({
-              url: l.url,
-              text: l.text,
-              context: l.context,
-              harvested: l.harvested,
-              dropReason: l.reason,
-              position,
-              source: 'PAGE' as const,
-              // **La précoche.** Ce que la brique a décidé devient la
-              // proposition faite à l'humain : retenu, donc probablement une
-              // sortie ; écarté, donc probablement du bruit. Il n'a plus qu'à
-              // corriger ce qui est faux — et ce sont ces corrections-là qui
-              // sont la mesure.
-              verdict: l.harvested ? ('SORTIE' as const) : ('AUTRE' as const),
-            })),
-          },
-        },
-      });
-    }
-    await tx.evalAgenda.update({
-      where: { id },
-      data: { status: 'ANALYZED', error: null, analyzedAt: new Date(), validatedAt: null },
-    });
-  });
-  const agenda = await prisma.evalAgenda.findUnique({ where: { id }, include: AGENDA_INCLUDE });
-  res.json({ agenda: agenda ? serialize(agenda) : null });
-});
-
-/**
- * Clôture en échec. Sans elle, l'agenda resterait « en cours » pour toujours
- * et ne serait plus jamais réclamé — c'est la même règle que pour une
- * exécution du scraper, et pour la même raison.
- */
-evalRouter.post('/harvest/:id(\\d+)/fail', async (req, res) => {
-  const parsed = evalFailSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0].message });
-    return;
-  }
-  const id = Number(req.params.id);
-  const updated = await prisma.evalAgenda.updateMany({
-    where: { id },
-    data: { status: 'FAILED', error: parsed.data.error },
-  });
-  if (updated.count === 0) {
-    res.status(404).json({ error: 'Agenda introuvable' });
-    return;
-  }
-  res.json({ ok: true });
-});
-
-// ═══════════════════════════════════════════ étage 5 — le banc de lecture
-
-/**
- * La sortie approuvée, telle que le banc s'en sert.
- *
- * Approuver, sur ce site, veut dire qu'un modérateur a vérifié **chaque champ**.
- * Ce n'est donc pas une précoche de plus : c'est une étiquette humaine déjà
- * payée, et elle donne le verdict de l'étage 6 gratuitement — y compris sur
- * `setting`, le seul aspect qu'aucun instrument ne sait atteindre.
- */
-const EVENT_REFERENCE_SELECT = {
-  id: true, title: true, status: true, isFree: true, price: true,
-  ageMin: true, ageMax: true, isPermanent: true, dateStart: true, dateEnd: true,
-  openTime: true, closeTime: true, setting: true, sourceUrl: true,
-  category: { select: { name: true } },
-  venue: { select: { name: true, address: true, city: true, postalCode: true } },
-  dates: { select: { day: true }, orderBy: { day: 'asc' } },
-} satisfies Prisma.EventSelect;
-
-/**
- * L'étage 5 lit trois fois un même HTML : le texte qui part au modèle, les
- * dates que le site déclare, l'illustration. Et il en tire une décision — sous
- * deux cents caractères, la page est **abandonnée** avant le moindre appel
- * payant.
- *
- * ## Trois verdicts plutôt qu'un
- *
- * Parce que les trois lectures se ratent séparément et ne se réparent pas au
- * même endroit. Un texte amputé accuse la liste des balises décapées ; un texte
- * tronqué accuse le plafond de caractères ; une illustration qui est le logo du
- * site accuse le tamis des images. Un verdict unique les mélangerait et ne
- * pointerait rien.
- *
- * ## Rien n'est précoché en base
- *
- * À l'étage 3 il fallait précocher : cent trente-neuf liens ne se tranchent pas
- * un par un, et il fallait distinguer ensuite ce qu'un humain avait dit de ce
- * que la machine avait deviné. Ici il y a **trois** clics par page : la console
- * met en avant ce que la brique prétend, mais rien de cette proposition n'est
- * écrit. Un verdict nul veut dire « personne n'a encore regardé », sans
- * ambiguïté et sans colonne de plus.
- */
-const READING_SELECT = {
-  id: true, url: true, label: true, status: true, error: true, note: true,
-  readUrl: true, swapped: true, text: true, textChars: true, dates: true,
-  imageUrl: true, chars: true, htmlPath: true,
-  heading: true, h1InText: true, truncated: true, tooShort: true, imageLooksLogo: true,
-  textVerdict: true, imageVerdict: true, datesVerdict: true,
-  origin: true, readAt: true, runDecision: true, runReason: true,
-  createdAt: true, analyzedAt: true, validatedAt: true,
-  author: { select: { id: true, displayName: true } },
-  // La sortie approuvée tirée de cette page. En **contexte** pour l'étage 5, et
-  // pas en verdict : les trois verdicts de cet étage portent sur ce que la page
-  // *contient*, la fiche dit ce que la sortie *est*. Confondre les deux
-  // fabriquerait des taux qui ne mesurent pas ce qu'ils annoncent.
-  //
-  // C'est en revanche la vérité de référence de l'étage 6, où la question est
-  // exactement « ces champs sont-ils les bons ? ».
-  event: { select: EVENT_REFERENCE_SELECT },
-} satisfies Prisma.EvalReadingSelect;
-
-type ReferenceRow = {
-  id: number;
-  title: string;
-  isFree: boolean;
-  price: Prisma.Decimal | null;
-  ageMin: number | null;
-  ageMax: number | null;
-  isPermanent: boolean;
-  dateStart: Date | null;
-  dateEnd: Date | null;
-  openTime: string | null;
-  closeTime: string | null;
-  setting: string | null;
-  sourceUrl: string | null;
-  category: { name: string };
-  venue: { name: string; address: string; city: string; postalCode: string };
-  dates: { day: Date }[];
-};
-
-/** Un jour, en ISO, sans l'heure : les dates du site sont des `DATE`. */
-function isoDay(value: Date | null): string {
-  return value ? value.toISOString().slice(0, 10) : '';
-}
-
-/**
- * La fiche approuvée mise à plat, dans le vocabulaire que le worker attend.
- *
- * Les mêmes clés que `evaluation.fiche_payload`, pour que la comparaison se
- * fasse champ contre champ sans traduction au milieu — une traduction de plus
- * serait un endroit de plus où deux vocabulaires peuvent diverger.
- */
-function flattenReference(event: ReferenceRow) {
-  return {
-    id: event.id,
-    title: event.title,
-    isFree: event.isFree,
-    price: event.price === null ? null : Number(event.price),
-    ageMin: event.ageMin,
-    ageMax: event.ageMax,
-    isPermanent: event.isPermanent,
-    dateStart: isoDay(event.dateStart),
-    dateEnd: isoDay(event.dateEnd),
-    openTime: event.openTime ?? '',
-    closeTime: event.closeTime ?? '',
-    setting: event.setting ?? '',
-    sourceUrl: event.sourceUrl ?? '',
-    category: event.category.name,
-    venueName: event.venue.name,
-    venueAddress: event.venue.address,
-    venueCity: event.venue.city,
-    venuePostalCode: event.venue.postalCode,
-    days: event.dates.map((d) => isoDay(d.day)),
-  };
-}
-
-type SerializableReading = {
-  status: string;
-  htmlPath: string | null;
-  dates: string;
-  textVerdict: string | null;
-  imageVerdict: string | null;
-  datesVerdict: string | null;
-  event: (ReferenceRow & { status: string }) | null;
-};
-
-function serializeReading<T extends SerializableReading>(reading: T) {
-  const { htmlPath, dates, event, ...rest } = reading;
-  let parsed: string[] = [];
-  try {
-    // Écrit par le serveur lui-même à l'import, donc bien formé — mais une
-    // ligne d'un import raté ne doit pas faire échouer toute la console.
-    parsed = JSON.parse(dates);
-  } catch {
-    parsed = [];
-  }
-  const judged =
-    !!reading.textVerdict && !!reading.imageVerdict && !!reading.datesVerdict;
-  return {
-    ...rest,
-    dates: Array.isArray(parsed) ? parsed : [],
-    archived: !!htmlPath,
-    /** Les trois verdicts sont posés : cette page compte dans la mesure. */
-    judged,
-    /**
-     * La sortie approuvée tirée de cette page — du **contexte** ici, la vérité
-     * de référence à l'étage 6. Nulle tant qu'elle n'est pas approuvée : une
-     * fiche en attente n'a été vérifiée par personne.
-     */
-    reference: event && event.status === 'APPROVED' ? flattenReference(event) : null,
-  };
-}
-
-/**
- * Ce que l'étage 5 rend juste, sur l'ensemble du banc.
- *
- * Un taux par aspect, parce que les trois se ratent séparément. Et les motifs
- * comptés à côté, parce que « 60 % de textes corrects » ne dit pas quoi
- * réparer, alors que « douze textes amputés » désigne la liste des balises
- * décapées.
- */
-function readingStats(rows: ReturnType<typeof serializeReading>[]) {
-  const judged = rows.filter((r) => r.judged);
-  const n = judged.length;
-  const part = (predicate: (r: (typeof judged)[number]) => boolean) =>
-    n > 0 ? judged.filter(predicate).length / n : null;
-  const count = (predicate: (r: (typeof rows)[number]) => boolean) =>
-    rows.filter(predicate).length;
-  return {
-    pages: rows.length,
-    judged: n,
-    textOk: part((r) => r.textVerdict === 'CORRECT'),
-    imageOk: part((r) => r.imageVerdict === 'CORRECTE'),
-    datesOk: part((r) => r.datesVerdict === 'CORRECTES'),
-    /** Le décapage a emporté une partie de la page. */
-    ampute: count((r) => r.textVerdict === 'AMPUTE'),
-    /** Le plafond de caractères a coupé la fin. */
-    tronque: count((r) => r.textVerdict === 'TRONQUE'),
-    /** Ce n'est pas la page de la sortie. */
-    horsSujet: count((r) => r.textVerdict === 'HORS_SUJET'),
-    /**
-     * Sous le seuil, donc abandonnée avant tout appel payant — le ratage le
-     * plus cher, et le seul que la brique décide toute seule. Compté sur le
-     * signal, pas sur un verdict : c'est un fait, pas un jugement.
-     */
-    abandonnees: count((r) => r.tooShort),
-  };
-}
+// ─────────────────────────────────────────────── corpus de lecture (ét. 5/6)
 
 evalRouter.get('/readings', admin, async (_req, res) => {
-  const rows = await prisma.evalReading.findMany({
+  const readings = await prisma.evalReading.findMany({
     orderBy: { createdAt: 'desc' },
-    select: READING_SELECT,
+    include: {
+      author: { select: { id: true, displayName: true } },
+      fiche: { select: { id: true, expected: true, labelledAt: true } },
+    },
   });
-  const readings = rows.map(serializeReading);
-  res.json({ readings, stats: readingStats(readings) });
+  res.json({ readings: readings.map(serializeReading) });
 });
+
+function serializeReading<T extends { htmlPath: string | null; fiche?: unknown }>(reading: T) {
+  const { htmlPath, ...rest } = reading;
+  return { ...rest, archived: Boolean(htmlPath) };
+}
 
 evalRouter.post('/readings', admin, async (req, res) => {
   const parsed = evalReadingSchema.safeParse(req.body);
@@ -1008,822 +484,742 @@ evalRouter.post('/readings', admin, async (req, res) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const existing = await prisma.evalReading.findUnique({
-    where: { url: parsed.data.url },
-    select: { id: true },
-  });
-  if (existing) {
-    res.status(409).json({ error: 'Cette page est déjà au banc' });
-    return;
+  try {
+    const reading = await prisma.evalReading.create({
+      data: { ...parsed.data, createdById: req.user!.id },
+    });
+    res.status(201).json({ reading: serializeReading(reading) });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      res.status(409).json({ error: 'Cette page est déjà au corpus' });
+      return;
+    }
+    throw e;
   }
-  const reading = await prisma.evalReading.create({
-    data: { ...parsed.data, createdById: req.user!.id },
-    select: READING_SELECT,
-  });
-  res.status(201).json({ reading: serializeReading(reading) });
 });
 
-/**
- * Relance la lecture. Les verdicts partent avec, et il n'y a pas d'autre choix
- * honnête : ils décrivaient la page telle qu'elle était, et elle va être
- * retéléchargée.
- */
-evalRouter.post('/readings/:id(\\d+)/analyze', admin, async (req, res) => {
-  const id = Number(req.params.id);
-  const current = await prisma.evalReading.findUnique({
-    where: { id },
-    select: { status: true, htmlPath: true },
-  });
-  if (!current) {
-    res.status(404).json({ error: 'Page introuvable' });
-    return;
-  }
-  if (current.status === 'RUNNING') {
-    res.status(409).json({ error: 'Lecture déjà en cours' });
-    return;
-  }
-  await deleteEvalPages([current.htmlPath]);
-  const reading = await prisma.evalReading.update({
-    where: { id },
-    data: {
-      status: 'QUEUED', error: null, analyzedAt: null, validatedAt: null, htmlPath: null,
-      textVerdict: null, imageVerdict: null, datesVerdict: null,
-    },
-    select: READING_SELECT,
-  });
-  res.json({ reading: serializeReading(reading) });
-});
-
-/** Trancher un aspect, ou plusieurs. **C'est la mesure.** */
+/** Les étiquettes d'une page : ce qu'elle contient. */
 evalRouter.patch('/readings/:id(\\d+)', admin, async (req, res) => {
-  const parsed = evalReadingVerdictSchema.safeParse(req.body);
+  const parsed = evalReadingLabelSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const id = Number(req.params.id);
-  const current = await prisma.evalReading.findUnique({ where: { id }, select: { id: true } });
-  if (!current) {
+  const { expectedDates, expectedMarkers, ...rest } = parsed.data;
+  try {
+    const reading = await prisma.evalReading.update({
+      where: { id: Number(req.params.id) },
+      data: {
+        ...rest,
+        ...(expectedDates === undefined
+          ? {}
+          : { expectedDates: expectedDates === null ? null : JSON.stringify(expectedDates) }),
+        ...(expectedMarkers === undefined
+          ? {}
+          : { expectedMarkers: expectedMarkers === null ? null : JSON.stringify(expectedMarkers) }),
+      },
+    });
+    res.json({ reading: serializeReading(reading) });
+  } catch {
     res.status(404).json({ error: 'Page introuvable' });
-    return;
   }
-  // Corriger après validation rouvre la page : la vérité a changé.
-  const reading = await prisma.evalReading.update({
-    where: { id },
-    data: { ...parsed.data, status: 'ANALYZED', validatedAt: null },
-    select: READING_SELECT,
-  });
-  res.json({ reading: serializeReading(reading) });
 });
 
-evalRouter.post('/readings/:id(\\d+)/validate', admin, async (req, res) => {
+evalRouter.post('/readings/:id(\\d+)/capture', admin, async (req, res) => {
   const id = Number(req.params.id);
-  const current = await prisma.evalReading.findUnique({
-    where: { id },
-    select: { status: true, textVerdict: true, imageVerdict: true, datesVerdict: true },
-  });
-  if (!current) {
+  const reading = await prisma.evalReading.findUnique({ where: { id }, select: { capture: true } });
+  if (!reading) {
     res.status(404).json({ error: 'Page introuvable' });
     return;
   }
-  if (current.status !== 'ANALYZED') {
-    res.status(409).json({ error: 'Seule une lecture terminée se valide' });
-    return;
-  }
-  // Les trois aspects, ou rien. Valider en n'ayant jugé que le texte
-  // produirait un taux d'illustration calculé sur des pages que personne n'a
-  // regardées — c'est le même mensonge que le rappel à 100 % de l'étage 3.
-  if (!current.textVerdict || !current.imageVerdict || !current.datesVerdict) {
+  if (reading.capture === 'CAPTURED') {
     res.status(409).json({
       error:
-        "Les trois aspects doivent être tranchés — texte, illustration, dates. " +
-        "Valider à moitié donnerait des taux calculés sur des pages que personne n'a regardées.",
+        'Cette page est déjà capturée. Recapturer réécrirait le HTML que les ' +
+        'étiquettes décrivent : créez plutôt une nouvelle entrée.',
     });
     return;
   }
-  const reading = await prisma.evalReading.update({
+  const updated = await prisma.evalReading.update({
     where: { id },
-    data: { status: 'VALIDATED', validatedAt: new Date() },
-    select: READING_SELECT,
+    data: { capture: 'QUEUED', captureError: null },
   });
-  res.json({ reading: serializeReading(reading) });
+  res.json({ reading: serializeReading(updated) });
 });
 
 evalRouter.delete('/readings/:id(\\d+)', admin, async (req, res) => {
   const id = Number(req.params.id);
-  const current = await prisma.evalReading.findUnique({
+  const reading = await prisma.evalReading.findUnique({
     where: { id },
     select: { htmlPath: true },
   });
-  if (!current) {
+  try {
+    await prisma.evalReading.delete({ where: { id } });
+  } catch {
     res.status(404).json({ error: 'Page introuvable' });
     return;
   }
-  await deleteEvalPages([current.htmlPath]);
-  await prisma.evalReading.delete({ where: { id } });
+  await deleteEvalPages([reading?.htmlPath ?? null]);
   res.json({ ok: true });
 });
 
-/** Le HTML gelé de la page lue. */
 evalRouter.get('/readings/:id(\\d+)/html', admin, async (req, res) => {
-  const row = await prisma.evalReading.findUnique({
+  const reading = await prisma.evalReading.findUnique({
     where: { id: Number(req.params.id) },
     select: { htmlPath: true },
   });
-  if (!row?.htmlPath) {
-    res.status(404).json({ error: "Cette page n'a pas été archivée" });
+  if (!reading?.htmlPath) {
+    res.status(404).json({ error: 'Aucune archive pour cette page' });
     return;
   }
-  const html = await readEvalPage(row.htmlPath);
+  const html = await readEvalPage(reading.htmlPath);
   if (html === null) {
-    res.status(410).json({ error: "L'archive de cette page a disparu du disque" });
+    res.status(404).json({ error: 'Archive illisible' });
     return;
   }
   res.type('text/plain; charset=utf-8').send(html);
 });
 
-// ─────────────────────────────────────────────────────── worker (lecture)
-
-evalRouter.post('/reading/next', async (_req, res) => {
-  const queued = await prisma.evalReading.findFirst({
-    where: { status: 'QUEUED' },
-    orderBy: { createdAt: 'asc' },
-    select: { id: true, url: true },
-  });
-  if (!queued) {
-    res.json({ reading: null });
-    return;
-  }
-  const claimed = await prisma.evalReading.updateMany({
-    where: { id: queued.id, status: 'QUEUED' },
-    data: { status: 'RUNNING' },
-  });
-  if (claimed.count === 0) {
-    res.json({ reading: null });
-    return;
-  }
-  res.json({ reading: queued });
-});
-
-evalRouter.post('/reading/:id(\\d+)/result', harvestBody, async (req, res) => {
-  const parsed = evalReadSchema.safeParse(req.body);
+/** Ce que la page annonce, champ par champ : le corpus de l'étage 6. */
+evalRouter.put('/readings/:id(\\d+)/fiche', admin, async (req, res) => {
+  const parsed = evalFicheSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const id = Number(req.params.id);
-  const current = await prisma.evalReading.findUnique({
-    where: { id },
-    select: { htmlPath: true },
-  });
-  if (!current) {
-    res.status(404).json({ error: 'Page introuvable' });
-    return;
-  }
-  const { html, dates, url, error, ...rest } = parsed.data;
-  await deleteEvalPages([current.htmlPath]);
-  const archived = html ? await saveEvalPage(html) : '';
-  const reading = await prisma.evalReading.update({
-    where: { id },
-    data: {
-      ...rest,
-      readUrl: url,
-      dates: JSON.stringify(dates),
-      htmlPath: archived || null,
-      // Une page injoignable est une réponse : elle reste au banc avec son
-      // motif, plutôt que de disparaître comme si on ne l'avait pas demandée.
-      status: error ? 'FAILED' : 'ANALYZED',
-      error: error ?? null,
-      analyzedAt: new Date(),
-      validatedAt: null,
-    },
-    select: READING_SELECT,
-  });
-  res.json({ reading: serializeReading(reading) });
-});
-
-evalRouter.post('/reading/:id(\\d+)/fail', async (req, res) => {
-  const parsed = evalFailSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0].message });
-    return;
-  }
-  const updated = await prisma.evalReading.updateMany({
-    where: { id: Number(req.params.id) },
-    data: { status: 'FAILED', error: parsed.data.error },
-  });
-  if (updated.count === 0) {
-    res.status(404).json({ error: 'Page introuvable' });
-    return;
-  }
-  res.json({ ok: true });
-});
-
-// ═══════════════════════════════════ étage 6 — le banc d'extraction
-
-/**
- * L'étage 6 est le premier que le banc mesure et qui **coûte**. Trois choses
- * changent par rapport aux deux précédents, et toutes les trois en découlent.
- *
- * ## 1. Champ par champ, jamais fiche par fiche
- *
- * Une fiche « fausse » ne dit pas quel champ a lâché, donc ne dit pas quoi
- * réparer. Douze aspects jugés séparément disent « le tarif se rate une fois
- * sur trois » — et c'est une ligne de prompt à réécrire.
- *
- * ## 2. Trois instruments gratuits avant le premier clic
- *
- * L'**ancrage** (toute valeur doit se retrouver dans le texte), la **cohérence**
- * interne (un âge minimum au-dessus du maximum), l'**accord** avec les dates
- * JSON-LD que l'étage 5 a relevées. Aucun ne demande d'étiquette humaine, et à
- * eux trois ils désignent la plupart des fautes. Ils sont calculés côté Python,
- * par `evaluation.audit_fiche`, et arrivent tels quels : les recalculer ici
- * donnerait la vérité d'une réimplémentation.
- *
- * Ce ne sont pas des verdicts. Comme les motifs de rejet de l'étage 3 et les
- * signaux de l'étage 5, ce sont des libellés : ils disent **où regarder
- * d'abord**, et c'est beaucoup quand douze aspects sur trente fiches font trois
- * cent soixante décisions dont l'écrasante majorité est « juste ».
- *
- * ## 3. L'entrée est le texte de l'étage 5, jamais la page
- *
- * C'est ce qui fait qu'une fiche fautive accuse bien cet étage-ci. Retélécharger
- * mêlerait deux mesures : une fiche sans tarif dirait aussi bien « le modèle ne
- * l'a pas vu » que « la lecture l'avait déjà emporté avec un `<aside>` ». Le
- * banc de lecture a mesuré cela séparément, et l'a déjà dit.
- */
-const EXTRACTION_SELECT = {
-  id: true, status: true, error: true, note: true, model: true,
-  fiche: true, aspects: true, verdicts: true,
-  hasReference: true, pageMoved: true,
-  inputTokens: true, outputTokens: true, costUsd: true,
-  createdAt: true, analyzedAt: true, validatedAt: true,
-  author: { select: { id: true, displayName: true } },
-  // Le texte voyage avec la fiche : c'est la pièce à conviction. Juger « ce
-  // tarif est-il dans la page ? » sans l'avoir sous les yeux obligerait à
-  // rouvrir la vraie page — donc à comparer à un HTML qui a pu changer, ce que
-  // le corpus gelé existe précisément pour éviter.
-  reading: {
-    select: {
-      id: true, url: true, label: true, text: true, textChars: true,
-      dates: true, heading: true, truncated: true, tooShort: true,
-      textVerdict: true, origin: true, readAt: true,
-      // De quoi renvoyer vers la fiche publiée : le motif de chaque proposition
-      // cite déjà la valeur approuvée, mais un doute se lève en ouvrant la
-      // sortie elle-même.
-      event: { select: { id: true, title: true, status: true } },
-    },
-  },
-} satisfies Prisma.EvalExtractionSelect;
-
-/** Un aspect tel que `audit_fiche` le rend. */
-type Aspect = {
-  key: string;
-  label: string;
-  value: string;
-  filled: boolean;
-  instrument: string;
-  flags: string[];
-  /** Le verdict que la fiche approuvée propose. Vide quand elle ne tranche pas. */
-  proposed?: string;
-  because?: string;
-};
-
-type SerializableExtraction = {
-  fiche: string;
-  aspects: string;
-  verdicts: string;
-  costUsd: number;
-  hasReference: boolean;
-  pageMoved: boolean;
-  reading: { dates: string };
-};
-
-/** Un JSON écrit par le serveur lui-même, donc bien formé — mais une ligne
- * abîmée ne doit pas faire échouer toute la console. */
-function parseJson<T>(raw: string, fallback: T): T {
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed === null ? fallback : (parsed as T);
-  } catch {
-    return fallback;
-  }
-}
-
-function serializeExtraction<T extends SerializableExtraction>(row: T) {
-  const { fiche, aspects, verdicts, reading, ...rest } = row;
-  const parsedAspects = parseJson<Aspect[]>(aspects, []);
-  const parsedVerdicts = parseJson<Record<string, string>>(verdicts, {});
-  return {
-    ...rest,
-    fiche: parseJson<Record<string, unknown>>(fiche, {}),
-    aspects: Array.isArray(parsedAspects) ? parsedAspects : [],
-    verdicts: parsedVerdicts,
-    reading: { ...reading, dates: parseJson<string[]>(reading.dates, []) },
-    /**
-     * Tous les aspects sont tranchés : cette fiche compte dans la mesure.
-     *
-     * Calculé sur les aspects de **cette** fiche, pas sur une liste tenue ici :
-     * `audit_fiche` en ajoutera, et une liste écrite côté serveur deviendrait
-     * une seconde vérité qui finirait par diverger.
-     */
-    judged:
-      parsedAspects.length > 0 && parsedAspects.every((a) => !!parsedVerdicts[a.key]),
-  };
-}
-
-type SerializedExtraction = ReturnType<typeof serializeExtraction>;
-
-/**
- * Les trois taux, aspect par aspect.
- *
- * Le croisement de « le modèle a-t-il rempli ce champ ? » et de ce que l'humain
- * en dit :
- *
- * |                | la page le dit  | la page n'en dit rien |
- * |----------------|-----------------|-----------------------|
- * | **renseigné**  | JUSTE ou FAUX   | **INVENTE**           |
- * | **vide**       | **MANQUE**      | JUSTE (vide à raison) |
- *
- * * **exactitude** — parmi les valeurs qu'il a osé écrire, la part juste. C'est
- *   la précision, et elle se lit vite : un tarif inexact vaut un parent qui
- *   arrive avec le mauvais billet.
- * * **couverture** — parmi ce que la page offrait, la part qu'il a rapportée
- *   juste. C'est le rappel, et c'est le chiffre qui demande vraiment un
- *   humain : il faut avoir lu la page pour savoir que l'information y était.
- * * **invention** — la part de ses valeurs que la page ne dit nulle part. La
- *   faute propre à un modèle, et la seule que l'ancrage sait pré-signaler
- *   gratuitement.
- *
- * Rien n'est compté sur une fiche non jugée : un taux calculé sur des lignes
- * que personne n'a regardées dit seulement que personne n'a regardé.
- */
-function extractionStats(rows: SerializedExtraction[]) {
-  const judged = rows.filter((r) => r.judged);
-  const perAspect = new Map<
-    string,
-    {
-      key: string;
-      label: string;
-      instrument: string;
-      /** Fiches jugées où le modèle a rempli ce champ. */
-      renseigne: number;
-      justeRenseigne: number;
-      faux: number;
-      invente: number;
-      manque: number;
-      videJuste: number;
-      /** Fiches — jugées ou non — où un instrument a levé un drapeau. */
-      signale: number;
-      /** Verdicts humains qui n'ont fait que confirmer la fiche approuvée. */
-      confirme: number;
-      /** Verdicts humains qui l'ont contredite. */
-      corrige: number;
-    }
-  >();
-
-  for (const row of rows) {
-    for (const aspect of row.aspects) {
-      const slot = perAspect.get(aspect.key) ?? {
-        key: aspect.key,
-        label: aspect.label,
-        instrument: aspect.instrument,
-        renseigne: 0, justeRenseigne: 0, faux: 0, invente: 0, manque: 0, videJuste: 0,
-        signale: 0, confirme: 0, corrige: 0,
-      };
-      if (aspect.flags.length) slot.signale += 1;
-      const verdict = row.judged ? row.verdicts[aspect.key] : undefined;
-      if (verdict && aspect.proposed) {
-        if (verdict === aspect.proposed) slot.confirme += 1;
-        else slot.corrige += 1;
-      }
-      if (verdict) {
-        if (aspect.filled) {
-          slot.renseigne += 1;
-          if (verdict === 'JUSTE') slot.justeRenseigne += 1;
-          else if (verdict === 'FAUX') slot.faux += 1;
-          else if (verdict === 'INVENTE') slot.invente += 1;
-        } else if (verdict === 'MANQUE') slot.manque += 1;
-        else slot.videJuste += 1;
-      }
-      perAspect.set(aspect.key, slot);
-    }
-  }
-
-  const rate = (num: number, den: number) => (den > 0 ? num / den : null);
-  const aspects = [...perAspect.values()].map((a) => ({
-    ...a,
-    // Ce qu'il a osé écrire, et qui était juste.
-    exactitude: rate(a.justeRenseigne, a.justeRenseigne + a.faux + a.invente),
-    // Ce que la page offrait, et qu'il a rapporté juste. FAUX y compte : la
-    // page le disait, et il ne l'a pas rapporté.
-    couverture: rate(a.justeRenseigne, a.justeRenseigne + a.faux + a.manque),
-    invention: rate(a.invente, a.renseigne),
-  }));
-
-  return {
-    fiches: rows.length,
-    judged: judged.length,
-    /** Fiches que le modèle a déclarées hors sujet. */
-    ecartees: rows.filter((r) => r.fiche.relevant === false).length,
-    /** Fiches qu'il a renvoyées comme programmes, à relire d'un bloc. */
-    programmes: rows.filter((r) => r.fiche.several === true).length,
-    inventions: aspects.reduce((sum, a) => sum + a.invente, 0),
-    manques: aspects.reduce((sum, a) => sum + a.manque, 0),
-    /** Fiches jugées contre une sortie approuvée. */
-    avecReference: rows.filter((r) => r.hasReference).length,
-    /** Fiches dont la page a changé depuis le run : comparaison suspendue. */
-    bougees: rows.filter((r) => r.pageMoved).length,
-    /**
-     * Ce que la fiche approuvée a fait gagner, et ce qu'elle n'a pas dit.
-     *
-     * `confirmes` mesure la part de la vérité de référence qui n'a fait que
-     * confirmer une proposition. C'est le chiffre à garder sous les yeux : une
-     * mesure entièrement confirmative reste vraie — un humain a cliqué — mais
-     * elle dit surtout que le modèle et le modérateur sont d'accord, ce qui est
-     * une information plus faible qu'une relecture indépendante.
-     */
-    confirmes: aspects.reduce((sum, a) => sum + a.confirme, 0),
-    corriges: aspects.reduce((sum, a) => sum + a.corrige, 0),
-    costUsd: Math.round(rows.reduce((sum, r) => sum + r.costUsd, 0) * 10000) / 10000,
-    aspects,
-  };
-}
-
-evalRouter.get('/extractions', admin, async (_req, res) => {
-  const rows = await prisma.evalExtraction.findMany({
-    orderBy: { createdAt: 'desc' },
-    select: EXTRACTION_SELECT,
-  });
-  const extractions = rows.map(serializeExtraction);
-  res.json({ extractions, stats: extractionStats(extractions) });
-});
-
-/**
- * Met une fiche du banc de lecture en file d'extraction.
- *
- * Une lecture **analysée**, et pas n'importe laquelle : sans texte il n'y a
- * rien à extraire, et une page que l'étage 5 aurait abandonnée n'aurait jamais
- * atteint l'étage 6 dans le pipeline. La mettre au banc mesurerait un appel que
- * la production ne fait pas.
- */
-/**
- * Les pages du banc de lecture qu'on peut envoyer à l'extraction.
- *
- * **Lues**, et **au-dessus du seuil** : une page que l'étage 5 aurait
- * abandonnée n'atteint jamais l'étage 6 dans le pipeline, et la mettre au banc
- * mesurerait un appel qui n'a pas lieu. Et pas déjà extraite : une seconde
- * ligne pour la même page compterait deux fois la même mesure.
- *
- * La route unitaire ci-dessous épelle les mêmes clauses une à une, pour dire
- * **laquelle** a refusé — un « non » sans motif enverrait chercher dans le code.
- */
-const EXTRACTABLE = {
-  status: { in: ['ANALYZED', 'VALIDATED'] },
-  tooShort: false,
-  textChars: { gt: 0 },
-  extraction: { is: null },
-} satisfies Prisma.EvalReadingWhereInput;
-
-/**
- * Met en file **toutes** les fiches extractibles d'un coup.
- *
- * C'est le seul geste du banc qui engage une dépense proportionnelle au nombre
- * de pages : une extraction, un appel. La console demande donc confirmation en
- * annonçant le compte, et le serveur reste seul juge de ce qui est éligible —
- * il rend combien de lignes ont réellement été créées, qui peut être moins que
- * ce que la console annonçait si une page a été extraite entre-temps.
- */
-evalRouter.post('/extractions/all', admin, async (req, res) => {
-  const parsed = evalExtractionAllSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0].message });
-    return;
-  }
-  const rows = await prisma.evalReading.findMany({
-    where: EXTRACTABLE,
-    orderBy: { createdAt: 'asc' },
-    select: { id: true },
-  });
-  if (!rows.length) {
-    res.status(409).json({ error: 'Aucune fiche lue en attente d’extraction' });
-    return;
-  }
-  const created = await prisma.evalExtraction.createMany({
-    data: rows.map((row) => ({
-      readingId: row.id,
-      model: parsed.data.model,
-      createdById: req.user!.id,
-    })),
-    // Une course entre deux onglets ne doit pas faire échouer le lot.
-    skipDuplicates: true,
-  });
-  res.status(201).json({ added: created.count });
-});
-
-evalRouter.post('/extractions', admin, async (req, res) => {
-  const parsed = evalExtractionSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0].message });
-    return;
-  }
-  const reading = await prisma.evalReading.findUnique({
-    where: { id: parsed.data.readingId },
-    select: { id: true, status: true, textChars: true, tooShort: true },
-  });
+  const readingId = Number(req.params.id);
+  const reading = await prisma.evalReading.findUnique({ where: { id: readingId } });
   if (!reading) {
-    res.status(404).json({ error: 'Page introuvable au banc de lecture' });
+    res.status(404).json({ error: 'Page introuvable' });
     return;
   }
-  if (reading.status !== 'ANALYZED' && reading.status !== 'VALIDATED') {
-    res.status(409).json({ error: "Cette page n'a pas encore été lue par l'étage 5" });
-    return;
-  }
-  if (reading.tooShort || reading.textChars === 0) {
-    res.status(409).json({
-      error:
-        "Le texte de cette page est sous le seuil de l'étage 5 : le pipeline l'aurait " +
-        "abandonnée avant l'extraction. La mettre ici mesurerait un appel qui n'a jamais lieu.",
-    });
-    return;
-  }
-  const existing = await prisma.evalExtraction.findUnique({
-    where: { readingId: reading.id },
-    select: { id: true },
+  const expected = JSON.stringify(parsed.data.expected);
+  const fiche = await prisma.evalFiche.upsert({
+    where: { readingId },
+    create: { readingId, expected, note: parsed.data.note, createdById: req.user!.id },
+    update: { expected, note: parsed.data.note, labelledAt: new Date() },
   });
-  if (existing) {
-    res.status(409).json({ error: 'Cette page est déjà au banc d’extraction' });
-    return;
-  }
-  const created = await prisma.evalExtraction.create({
-    data: { readingId: reading.id, model: parsed.data.model, createdById: req.user!.id },
-    select: EXTRACTION_SELECT,
-  });
-  res.status(201).json({ extraction: serializeExtraction(created) });
+  res.json({ fiche });
 });
 
-/**
- * Relance l'extraction. Les verdicts partent avec, et il n'y a pas d'autre
- * choix honnête : ils décrivaient une fiche que le modèle va réécrire.
- */
-evalRouter.post('/extractions/:id(\\d+)/analyze', admin, async (req, res) => {
-  const id = Number(req.params.id);
-  const current = await prisma.evalExtraction.findUnique({
-    where: { id },
-    select: { status: true },
-  });
-  if (!current) {
-    res.status(404).json({ error: 'Extraction introuvable' });
-    return;
-  }
-  if (current.status === 'RUNNING') {
-    res.status(409).json({ error: 'Extraction déjà en cours' });
-    return;
-  }
-  const extraction = await prisma.evalExtraction.update({
-    where: { id },
-    data: {
-      status: 'QUEUED', error: null, analyzedAt: null, validatedAt: null,
-      fiche: '{}', aspects: '[]', verdicts: '{}',
-      inputTokens: 0, outputTokens: 0, costUsd: 0,
-    },
-    select: EXTRACTION_SELECT,
-  });
-  res.json({ extraction: serializeExtraction(extraction) });
-});
+// ═══════════════════════════════════════════════════════════════ LES RUNS
 
 /**
- * Trancher un aspect, ou plusieurs d'un coup. **C'est la mesure.**
+ * Lance un run : une brique, sur tout ce que le corpus a de capturé.
  *
- * Les clés sont vérifiées contre les aspects de **cette** fiche, et pas contre
- * une liste tenue ici : `audit_fiche` en ajoutera, et deux listes finissent
- * toujours par diverger. Une clé inconnue est refusée plutôt qu'ignorée — un
- * verdict qui n'entre dans aucun taux serait un clic perdu sans le dire.
+ * Le run part en file ; c'est le worker qui le joue, parce que les briques
+ * sont en Python et qu'une réimplémentation ne mesurerait qu'elle-même.
  */
-evalRouter.patch('/extractions/:id(\\d+)', admin, async (req, res) => {
-  const parsed = evalFieldVerdictSchema.safeParse(req.body);
+evalRouter.post('/runs', admin, async (req, res) => {
+  const parsed = evalRunSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const id = Number(req.params.id);
-  const current = await prisma.evalExtraction.findUnique({
-    where: { id },
-    select: { aspects: true, verdicts: true },
-  });
-  if (!current) {
-    res.status(404).json({ error: 'Extraction introuvable' });
-    return;
-  }
-  const known = new Set(parseJson<Aspect[]>(current.aspects, []).map((a) => a.key));
-  const unknown = Object.keys(parsed.data.verdicts).filter((key) => !known.has(key));
-  if (unknown.length) {
-    res.status(400).json({ error: `Aspect inconnu de cette fiche : ${unknown.join(', ')}` });
-    return;
-  }
-  const merged = {
-    ...parseJson<Record<string, string>>(current.verdicts, {}),
-    ...parsed.data.verdicts,
-  };
-  // Corriger après validation rouvre la fiche : la vérité a changé.
-  const extraction = await prisma.evalExtraction.update({
-    where: { id },
-    data: {
-      verdicts: JSON.stringify(merged),
-      ...(parsed.data.note === undefined ? {} : { note: parsed.data.note }),
-      status: 'ANALYZED',
-      validatedAt: null,
-    },
-    select: EXTRACTION_SELECT,
-  });
-  res.json({ extraction: serializeExtraction(extraction) });
-});
-
-evalRouter.post('/extractions/:id(\\d+)/validate', admin, async (req, res) => {
-  const id = Number(req.params.id);
-  const current = await prisma.evalExtraction.findUnique({
-    where: { id },
-    select: { status: true, aspects: true, verdicts: true },
-  });
-  if (!current) {
-    res.status(404).json({ error: 'Extraction introuvable' });
-    return;
-  }
-  if (current.status !== 'ANALYZED') {
-    res.status(409).json({ error: 'Seule une extraction terminée se valide' });
-    return;
-  }
-  const aspects = parseJson<Aspect[]>(current.aspects, []);
-  const verdicts = parseJson<Record<string, string>>(current.verdicts, {});
-  const left = aspects.filter((a) => !verdicts[a.key]);
-  // Tous les aspects, ou rien. Valider en n'ayant jugé que le tarif produirait
-  // un taux d'âge calculé sur des fiches que personne n'a regardées — le même
-  // mensonge que le rappel à 100 % de l'étage 3.
-  if (left.length) {
+  const { stage, label } = parsed.data;
+  const items = await countRunnable(stage);
+  if (items === 0) {
     res.status(409).json({
-      error:
-        `Il reste ${left.length} aspect(s) à trancher : ${left.map((a) => a.label).join(', ')}. ` +
-        "Valider à moitié donnerait des taux calculés sur des champs que personne n'a regardés.",
+      error: 'Rien à mesurer : le corpus de cet étage ne contient aucune entrée capturée.',
     });
     return;
   }
-  const extraction = await prisma.evalExtraction.update({
-    where: { id },
-    data: { status: 'VALIDATED', validatedAt: new Date() },
-    select: EXTRACTION_SELECT,
+  const run = await prisma.evalRun.create({
+    data: { stage, label, items, requestedById: req.user!.id },
   });
-  res.json({ extraction: serializeExtraction(extraction) });
+  res.status(201).json({ run });
 });
 
-evalRouter.delete('/extractions/:id(\\d+)', admin, async (req, res) => {
-  const deleted = await prisma.evalExtraction.deleteMany({ where: { id: Number(req.params.id) } });
-  if (deleted.count === 0) {
-    res.status(404).json({ error: 'Extraction introuvable' });
+/** Combien d'entrées capturées un run de cet étage aurait à traiter. */
+async function countRunnable(stage: 'HARVEST' | 'SELECT' | 'READ' | 'EXTRACT'): Promise<number> {
+  if (stage === 'HARVEST' || stage === 'SELECT') {
+    return prisma.evalAgendaPage.count({
+      where: { htmlPath: { not: null }, agenda: { capture: 'CAPTURED' } },
+    });
+  }
+  return prisma.evalReading.count({ where: { capture: 'CAPTURED', htmlPath: { not: null } } });
+}
+
+evalRouter.get('/runs', admin, async (req, res) => {
+  const parsed = evalRunListSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Requête invalide' });
     return;
   }
-  res.json({ ok: true });
+  const runs = await prisma.evalRun.findMany({
+    where: parsed.data.stage ? { stage: parsed.data.stage } : {},
+    orderBy: { queuedAt: 'desc' },
+    take: parsed.data.limit,
+    include: { requestedBy: { select: { id: true, displayName: true } } },
+  });
+  // La mesure de chaque run, calculée ici : c'est elle qui fait la courbe, et
+  // elle n'est stockée nulle part — un run ancien se re-mesure donc contre un
+  // corpus qui a grandi depuis, ce qui est exactement ce qu'on veut.
+  const scored = await Promise.all(
+    runs.map(async (run) => ({ ...run, score: await scoreRun(run.id, run.stage) })),
+  );
+  res.json({ runs: scored });
 });
 
-// ──────────────────────────────────────────────────── worker (extraction)
+evalRouter.get('/runs/:id(\\d+)', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const run = await prisma.evalRun.findUnique({
+    where: { id },
+    include: { requestedBy: { select: { id: true, displayName: true } } },
+  });
+  if (!run) {
+    res.status(404).json({ error: 'Exécution introuvable' });
+    return;
+  }
+  res.json({ run: { ...run, score: await scoreRun(id, run.stage) }, detail: await runDetail(id, run.stage) });
+});
 
-evalRouter.post('/extraction/next', async (_req, res) => {
-  const queued = await prisma.evalExtraction.findFirst({
-    where: { status: 'QUEUED' },
-    orderBy: { createdAt: 'asc' },
-    select: {
-      id: true,
-      model: true,
-      reading: {
-        select: {
-          readUrl: true, url: true, text: true, dates: true,
-          event: { select: EVENT_REFERENCE_SELECT },
+evalRouter.delete('/runs/:id(\\d+)', admin, async (req, res) => {
+  try {
+    await prisma.evalRun.delete({ where: { id: Number(req.params.id) } });
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: 'Exécution introuvable' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────── LA MESURE
+//
+// Calculée, jamais stockée. Un run mesuré aujourd'hui contre un corpus qui a
+// grandi depuis rend un chiffre différent d'hier — et c'est voulu : c'est le
+// corpus qui fait autorité, pas la photographie qu'on en avait prise.
+
+/** Le résumé chiffré d'un run, tel que la courbe l'affiche. */
+async function scoreRun(runId: number, stage: string) {
+  if (stage === 'HARVEST' || stage === 'SELECT') {
+    const [labels, results] = await Promise.all([
+      prisma.evalLink.findMany({ select: { url: true, verdict: true, pageId: true } }),
+      prisma.evalLinkResult.findMany({
+        where: { runId },
+        select: { url: true, harvested: true, selected: true, pageId: true },
+      }),
+    ]);
+    // Page par page : deux agendas différents peuvent porter la même URL, et
+    // les mêler ferait compter une sortie de l'un comme manquée sur l'autre.
+    const total = { found: 0, missed: 0, noise: 0, unlabelled: 0 };
+    const pages = new Set(results.map((r) => r.pageId));
+    for (const pageId of pages) {
+      const pageLabels = labels.filter((l) => l.pageId === pageId) as LabelledLink[];
+      const pageResults = results.filter((r) => r.pageId === pageId);
+      const score =
+        stage === 'SELECT' ? selectScore(pageLabels, pageResults) : harvestScore(pageLabels, pageResults);
+      total.found += score.found;
+      total.missed += score.missed;
+      total.noise += score.noise;
+      total.unlabelled += score.unlabelled;
+    }
+    const sorties = total.found + total.missed;
+    const kept = total.found + total.noise;
+    return {
+      kind: 'links' as const,
+      ...total,
+      recall: sorties > 0 ? total.found / sorties : null,
+      precision: kept > 0 ? total.found / kept : null,
+      pagination: await paginationScore(runId),
+    };
+  }
+
+  if (stage === 'READ') {
+    const results = await prisma.evalReadResult.findMany({
+      where: { runId },
+      include: {
+        reading: {
+          select: { expectedImage: true, expectedDates: true, expectedMarkers: true },
         },
       },
-    },
+    });
+    let textOk = 0;
+    let textJudged = 0;
+    let imageOk = 0;
+    let imageJudged = 0;
+    let datesOk = 0;
+    let datesJudged = 0;
+    let truncated = 0;
+    let tooShort = 0;
+    for (const row of results) {
+      const score = readScore(row.reading, row);
+      if (score.textOk !== null) {
+        textJudged += 1;
+        if (score.textOk) textOk += 1;
+      }
+      if (score.imageOk !== null) {
+        imageJudged += 1;
+        if (score.imageOk) imageOk += 1;
+      }
+      if (score.datesOk !== null) {
+        datesJudged += 1;
+        if (score.datesOk) datesOk += 1;
+      }
+      if (score.truncated) truncated += 1;
+      if (score.tooShort) tooShort += 1;
+    }
+    return {
+      kind: 'read' as const,
+      items: results.length,
+      textOk,
+      textJudged,
+      imageOk,
+      imageJudged,
+      datesOk,
+      datesJudged,
+      truncated,
+      tooShort,
+      // Le taux qui fait la courbe : la part des textes entiers parmi ceux
+      // qu'on sait juger. Les autres ne comptent pas — un corpus muet ne doit
+      // ni flatter ni accabler.
+      rate: textJudged > 0 ? textOk / textJudged : null,
+    };
+  }
+
+  const results = await prisma.evalExtractResult.findMany({
+    where: { runId },
+    include: { reading: { select: { fiche: { select: { expected: true } } } } },
   });
-  if (!queued) {
-    res.json({ extraction: null });
+  const tally = { JUSTE: 0, FAUX: 0, INVENTE: 0, MANQUE: 0, inconnu: 0 };
+  for (const row of results) {
+    const expected = parseJson<Record<string, string>>(row.reading.fiche?.expected ?? null, {});
+    const aspects = parseJson<Aspect[]>(row.aspects, []);
+    const score = extractScore(expected, Array.isArray(aspects) ? aspects : []);
+    for (const key of Object.keys(tally) as (keyof typeof tally)[]) {
+      tally[key] += score.tally[key];
+    }
+  }
+  const judged = tally.JUSTE + tally.FAUX + tally.INVENTE + tally.MANQUE;
+  return {
+    kind: 'extract' as const,
+    items: results.length,
+    ...tally,
+    rate: judged > 0 ? tally.JUSTE / judged : null,
+  };
+}
+
+/** La pagination : ce que le run a trouvé face à ce que le corpus déclare. */
+async function paginationScore(runId: number) {
+  const rows = await prisma.evalLinkResult.findMany({
+    where: { runId },
+    distinct: ['pageId'],
+    select: { pageId: true, page: { select: { nextExpected: true } } },
+  });
+  // `nextUrl` n'est pas par lien mais par page : il est stocké sur la première
+  // ligne de résultat de la page, faute d'une table par page. On le relit donc
+  // depuis le relevé complet.
+  const nexts = await prisma.$queryRaw<{ pageId: number; nextUrl: string }[]>`
+    SELECT DISTINCT r.pageId AS pageId, r.selectReason AS nextUrl
+    FROM EvalLinkResult r WHERE r.runId = ${runId} AND r.position = -1
+  `;
+  const foundBy = new Map(nexts.map((n) => [n.pageId, n.nextUrl]));
+  let correct = 0;
+  let missed = 0;
+  let wrong = 0;
+  let unjudged = 0;
+  for (const row of rows) {
+    const expected = row.page.nextExpected;
+    if (expected === null) {
+      unjudged += 1;
+      continue;
+    }
+    const got = foundBy.get(row.pageId) ?? '';
+    if (got === expected) correct += 1;
+    else if (!got) missed += 1;
+    else wrong += 1;
+  }
+  return { correct, missed, wrong, unjudged };
+}
+
+/** Le détail d'un run, page par page ou fiche par fiche. */
+async function runDetail(runId: number, stage: string) {
+  if (stage === 'READ') {
+    const rows = await prisma.evalReadResult.findMany({
+      where: { runId },
+      include: {
+        reading: {
+          select: {
+            id: true,
+            url: true,
+            label: true,
+            expectedImage: true,
+            expectedDates: true,
+            expectedMarkers: true,
+          },
+        },
+      },
+    });
+    return rows.map((row) => ({
+      readingId: row.readingId,
+      url: row.reading.url,
+      label: row.reading.label,
+      textChars: row.textChars,
+      error: row.error,
+      score: readScore(row.reading, row),
+    }));
+  }
+  if (stage === 'EXTRACT') {
+    const rows = await prisma.evalExtractResult.findMany({
+      where: { runId },
+      include: {
+        reading: { select: { id: true, url: true, label: true, fiche: { select: { expected: true } } } },
+      },
+    });
+    return rows.map((row) => {
+      const expected = parseJson<Record<string, string>>(row.reading.fiche?.expected ?? null, {});
+      const aspects = parseJson<Aspect[]>(row.aspects, []);
+      return {
+        readingId: row.readingId,
+        url: row.reading.url,
+        label: row.reading.label,
+        costUsd: row.costUsd,
+        error: row.error,
+        ...extractScore(expected, Array.isArray(aspects) ? aspects : []),
+      };
+    });
+  }
+  const results = await prisma.evalLinkResult.findMany({
+    where: { runId },
+    select: { pageId: true, url: true, harvested: true, selected: true },
+  });
+  const pageIds = [...new Set(results.map((r) => r.pageId))];
+  const pages = await prisma.evalAgendaPage.findMany({
+    where: { id: { in: pageIds } },
+    select: { id: true, url: true, pageNo: true, agenda: { select: { label: true } }, links: true },
+  });
+  return pages.map((page) => {
+    const rows = results.filter((r) => r.pageId === page.id);
+    const labels = page.links as unknown as LabelledLink[];
+    return {
+      pageId: page.id,
+      url: page.url,
+      pageNo: page.pageNo,
+      label: page.agenda.label,
+      score: stage === 'SELECT' ? selectScore(labels, rows) : harvestScore(labels, rows),
+    };
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════ LE WORKER
+
+/**
+ * Réclame une capture. Le corpus se construit ici, jamais dans un run.
+ *
+ * Les agendas d'abord : ils portent plusieurs pages et sont donc les plus
+ * longs à capturer.
+ */
+evalRouter.post('/capture/next', async (_req, res) => {
+  const agenda = await prisma.evalAgenda.findFirst({
+    where: { capture: 'QUEUED' },
+    orderBy: { createdAt: 'asc' },
+  });
+  if (agenda) {
+    await prisma.evalAgenda.update({ where: { id: agenda.id }, data: { capture: 'RUNNING' } });
+    res.json({ job: { kind: 'agenda', id: agenda.id, url: agenda.url, pages: agenda.pages } });
     return;
   }
-  const claimed = await prisma.evalExtraction.updateMany({
-    where: { id: queued.id, status: 'QUEUED' },
-    data: { status: 'RUNNING' },
+  const reading = await prisma.evalReading.findFirst({
+    where: { capture: 'QUEUED' },
+    orderBy: { createdAt: 'asc' },
   });
-  if (claimed.count === 0) {
-    res.json({ extraction: null });
+  if (!reading) {
+    res.json({ job: null });
     return;
   }
-  res.json({
-    extraction: {
-      id: queued.id,
-      model: queued.model,
-      // L'adresse réellement lue quand l'échange de langue a joué : c'est celle
-      // que le pipeline aurait donnée au modèle, et le prompt la cite.
-      url: queued.reading.readUrl || queued.reading.url,
-      // Le texte gelé, jamais la page : l'entrée de cet étage est la sortie du
-      // précédent, et c'est ce qui rend les deux mesures séparables.
-      text: queued.reading.text,
-      // Les dates JSON-LD de l'étage 5, pour l'instrument d'accord.
-      dates: parseJson<string[]>(queued.reading.dates, []),
-      // La sortie approuvée tirée de cette page, quand il y en a une : une
-      // étiquette humaine déjà payée, champ par champ. Elle propose un verdict
-      // pour chaque aspect ; elle n'en écrit aucun.
-      reference:
-        queued.reading.event && queued.reading.event.status === 'APPROVED'
-          ? flattenReference(queued.reading.event)
-          : null,
-    },
-  });
+  await prisma.evalReading.update({ where: { id: reading.id }, data: { capture: 'RUNNING' } });
+  res.json({ job: { kind: 'reading', id: reading.id, url: reading.url, pages: 1 } });
 });
 
-evalRouter.post('/extraction/:id(\\d+)/result', harvestBody, async (req, res) => {
-  const parsed = evalExtractSchema.safeParse(req.body);
+evalRouter.post('/capture/agenda/:id(\\d+)', bigBody, async (req, res) => {
+  const parsed = evalCaptureSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
   const id = Number(req.params.id);
-  const { error, fiche, aspects, model, hasReference, pageMoved, ...usage } = parsed.data;
-  const updated = await prisma.evalExtraction.updateMany({
-    where: { id },
-    data: {
-      ...usage,
-      ...(model ? { model } : {}),
-      fiche: JSON.stringify(fiche),
-      aspects: JSON.stringify(aspects),
-      hasReference,
-      pageMoved,
-      verdicts: '{}',
-      status: error ? 'FAILED' : 'ANALYZED',
-      error: error ?? null,
-      analyzedAt: new Date(),
-      validatedAt: null,
-    },
-  });
-  if (updated.count === 0) {
-    res.status(404).json({ error: 'Extraction introuvable' });
+  const agenda = await prisma.evalAgenda.findUnique({ where: { id }, select: { capture: true } });
+  if (!agenda) {
+    res.status(404).json({ error: 'Agenda introuvable' });
     return;
   }
-  const row = await prisma.evalExtraction.findUnique({ where: { id }, select: EXTRACTION_SELECT });
-  res.json({ extraction: row ? serializeExtraction(row) : null });
+  if (agenda.capture === 'CAPTURED') {
+    res.status(409).json({ error: 'Cet agenda est déjà capturé' });
+    return;
+  }
+  // Les fichiers d'abord, hors transaction : ils ne sont pas transactionnels,
+  // et une archive orpheline coûte moins qu'une ligne pointant vers un fichier
+  // qui n'existe pas.
+  const archived = await Promise.all(
+    parsed.data.pages.map((page) => (page.html ? saveEvalPage(page.html) : Promise.resolve(''))),
+  );
+  await prisma.$transaction(async (tx) => {
+    for (const [index, page] of parsed.data.pages.entries()) {
+      await tx.evalAgendaPage.create({
+        data: {
+          agendaId: id,
+          pageNo: page.pageNo,
+          url: page.url,
+          chars: page.chars,
+          htmlPath: archived[index] || null,
+        },
+      });
+    }
+    await tx.evalAgenda.update({
+      where: { id },
+      data: { capture: 'CAPTURED', captureError: null, capturedAt: new Date() },
+    });
+  });
+  res.json({ ok: true, pages: parsed.data.pages.length });
 });
 
-evalRouter.post('/extraction/:id(\\d+)/fail', async (req, res) => {
-  const parsed = evalFailSchema.safeParse(req.body);
+evalRouter.post('/capture/reading/:id(\\d+)', bigBody, async (req, res) => {
+  const parsed = evalCaptureSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const updated = await prisma.evalExtraction.updateMany({
-    where: { id: Number(req.params.id) },
-    data: { status: 'FAILED', error: parsed.data.error },
-  });
-  if (updated.count === 0) {
-    res.status(404).json({ error: 'Extraction introuvable' });
+  const id = Number(req.params.id);
+  const page = parsed.data.pages[0];
+  const archived = page.html ? await saveEvalPage(page.html) : '';
+  try {
+    await prisma.evalReading.update({
+      where: { id },
+      data: {
+        capture: 'CAPTURED',
+        captureError: null,
+        capturedAt: new Date(),
+        chars: page.chars,
+        htmlPath: archived || null,
+      },
+    });
+  } catch {
+    res.status(404).json({ error: 'Page introuvable' });
     return;
   }
   res.json({ ok: true });
 });
 
-// ══════════════════ peupler le banc avec ce que le pipeline a déjà fait
+evalRouter.post('/capture/:kind(agenda|reading)/:id(\\d+)/fail', async (req, res) => {
+  const parsed = evalFailSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const id = Number(req.params.id);
+  const data = { capture: 'FAILED' as const, captureError: parsed.data.error };
+  try {
+    if (req.params.kind === 'agenda') await prisma.evalAgenda.update({ where: { id }, data });
+    else await prisma.evalReading.update({ where: { id }, data });
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: 'Entrée introuvable' });
+  }
+});
+
+/** Réclame un run en file, et note de quoi il est le run. */
+evalRouter.post('/runs/next', async (req, res) => {
+  const parsed = evalRunClaimSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const run = await prisma.evalRun.findFirst({
+    where: { status: 'QUEUED' },
+    orderBy: { queuedAt: 'asc' },
+  });
+  if (!run) {
+    res.json({ run: null });
+    return;
+  }
+  const claimed = await prisma.evalRun.update({
+    where: { id: run.id },
+    data: {
+      status: 'RUNNING',
+      startedAt: new Date(),
+      codeRef: parsed.data.codeRef,
+      model: parsed.data.model,
+      promptHash: parsed.data.promptHash,
+      settings: JSON.stringify(parsed.data.settings),
+    },
+  });
+  res.json({ run: { id: claimed.id, stage: claimed.stage, label: claimed.label } });
+});
 
 /**
- * Le motif exact que l'étage 5 écrit quand il abandonne une page, dans
- * `scraper/sortiesbot/stages/reading.py`. C'est ce qui isole **ses** abandons de
- * ceux de l'étage 8, qui écrit le même `invalid` avec d'autres motifs.
+ * L'entrée suivante d'un run, **avec son HTML gelé**.
  *
- * Le couplage est une chaîne de caractères, et il faut le savoir : si ce libellé
- * changeait côté scraper, le panier se viderait en silence. C'est pourquoi la
- * route rend toujours le compte disponible — un panier vide se voit.
+ * C'est ce qui garantit le rejeu hors ligne : le worker ne retélécharge rien,
+ * il rejoue la brique sur ce que le corpus a figé. Un écart entre deux runs ne
+ * peut donc venir que du code.
  */
+evalRouter.post('/runs/:id(\\d+)/next-item', async (req, res) => {
+  const runId = Number(req.params.id);
+  const run = await prisma.evalRun.findUnique({ where: { id: runId } });
+  if (!run) {
+    res.status(404).json({ error: 'Exécution introuvable' });
+    return;
+  }
+
+  if (run.stage === 'HARVEST' || run.stage === 'SELECT') {
+    const done = await prisma.evalLinkResult.findMany({
+      where: { runId },
+      distinct: ['pageId'],
+      select: { pageId: true },
+    });
+    const page = await prisma.evalAgendaPage.findFirst({
+      where: {
+        htmlPath: { not: null },
+        agenda: { capture: 'CAPTURED' },
+        id: { notIn: done.map((d) => d.pageId) },
+      },
+      orderBy: { id: 'asc' },
+      include: { agenda: { select: { url: true } } },
+    });
+    if (!page) {
+      res.json({ item: null });
+      return;
+    }
+    const html = page.htmlPath ? await readEvalPage(page.htmlPath) : null;
+    res.json({ item: { kind: 'page', pageId: page.id, url: page.url, html: html ?? '' } });
+    return;
+  }
+
+  // Les deux tables ont la même colonne mais pas le même type : les unir en
+  // une variable ferait perdre à TypeScript la signature de `findMany`.
+  const done =
+    run.stage === 'READ'
+      ? await prisma.evalReadResult.findMany({ where: { runId }, select: { readingId: true } })
+      : await prisma.evalExtractResult.findMany({ where: { runId }, select: { readingId: true } });
+  const reading = await prisma.evalReading.findFirst({
+    where: {
+      capture: 'CAPTURED',
+      htmlPath: { not: null },
+      id: { notIn: done.map((d) => d.readingId) },
+    },
+    orderBy: { id: 'asc' },
+  });
+  if (!reading) {
+    res.json({ item: null });
+    return;
+  }
+  const html = reading.htmlPath ? await readEvalPage(reading.htmlPath) : null;
+  res.json({
+    item: { kind: 'reading', readingId: reading.id, url: reading.url, html: html ?? '' },
+  });
+});
+
+evalRouter.post('/runs/:id(\\d+)/links', bigBody, async (req, res) => {
+  const parsed = evalLinkResultSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const runId = Number(req.params.id);
+  const { pageId, links, nextUrl } = parsed.data;
+  const seen = new Set<string>();
+  const rows = links.filter((l) => !seen.has(l.url) && seen.add(l.url));
+  await prisma.evalLinkResult.createMany({
+    data: [
+      // La page suivante n'est pas un lien : elle se range en position -1, une
+      // ligne technique que la mesure de pagination relit. Une table par page
+      // pour un seul champ aurait coûté une jointure de plus partout.
+      {
+        runId,
+        pageId,
+        url: `#next#${pageId}`,
+        text: '',
+        context: '',
+        position: -1,
+        selectReason: nextUrl,
+      },
+      ...rows.map((link, position) => ({
+        runId,
+        pageId,
+        url: link.url,
+        text: link.text,
+        context: link.context,
+        harvested: link.harvested,
+        dropReason: link.reason,
+        position,
+        selected: link.selected ?? null,
+        selectReason: link.selectReason,
+      })),
+    ],
+    skipDuplicates: true,
+  });
+  res.json({ ok: true, links: rows.length });
+});
+
+evalRouter.post('/runs/:id(\\d+)/read', bigBody, async (req, res) => {
+  const parsed = evalReadResultSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const { readingId, dates, error, ...rest } = parsed.data;
+  await prisma.evalReadResult.create({
+    data: {
+      runId: Number(req.params.id),
+      readingId,
+      dates: JSON.stringify(dates),
+      error: error ?? null,
+      ...rest,
+    },
+  });
+  res.json({ ok: true });
+});
+
+evalRouter.post('/runs/:id(\\d+)/extract', bigBody, async (req, res) => {
+  const parsed = evalExtractResultSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const { readingId, fiche, aspects, error, ...rest } = parsed.data;
+  await prisma.evalExtractResult.create({
+    data: {
+      runId: Number(req.params.id),
+      readingId,
+      fiche: JSON.stringify(fiche),
+      aspects: JSON.stringify(aspects),
+      error: error ?? null,
+      ...rest,
+    },
+  });
+  res.json({ ok: true });
+});
+
+/**
+ * Clôt un run. C'est ce qu'on ne peut pas perdre : sans clôture, il resterait
+ * « en cours » et le worker n'en prendrait plus d'autre.
+ */
+evalRouter.post('/runs/:id(\\d+)/finish', async (req, res) => {
+  const parsed = evalRunFinishSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const { status, error, ...counters } = parsed.data;
+  try {
+    const run = await prisma.evalRun.update({
+      where: { id: Number(req.params.id) },
+      data: { ...counters, status, error: error ?? null, finishedAt: new Date() },
+    });
+    res.json({ run });
+  } catch {
+    res.status(404).json({ error: 'Exécution introuvable' });
+  }
+});
+
+// ══════════════════ peupler le corpus avec ce que le pipeline a déjà fait
+//
+// Quatre paniers, et l'équilibre entre eux est la question. Ne prendre que les
+// réussites mesurerait la brique sur ses propres succès : on lirait 96 % de
+// textes corrects, et ça ne voudrait rien dire.
+
+/** Le motif exact sous lequel l'étage 5 abandonne une page. */
 const ABANDON_REASON = 'page vide ou illisible';
 
-/**
- * Les deux paniers, et pourquoi il en faut deux.
- *
- * Une sortie **approuvée** est une page où l'étage 5 a réussi : son texte était
- * lisible, sinon elle ne serait jamais devenue une sortie. Peupler le banc avec
- * elles seules mesurerait la brique sur ses propres succès — on lirait 96 % de
- * textes corrects, et ça ne voudrait rien dire. C'est le rappel à 100 % de
- * l'étage 3 sous un autre déguisement.
- *
- * L'autre moitié est gratuite et déjà en base : les pages que la lecture a
- * **abandonnées**. Personne n'a jamais vérifié si ces abandons étaient
- * justifiés, et c'est très exactement le point aveugle de cet étage.
- *
- * ## Pourquoi `ScraperRunItem` et pas `Event.sourceUrl`
- *
- * Parce que `sourceUrl` a pu être réécrit par l'étage 7 : quand l'attribution a
- * remonté de l'agrégateur au site du musée, il désigne une page que le pipeline
- * n'a **jamais lue**. `ScraperRunItem.url` est l'adresse réellement ouverte,
- * après l'échange de langue — c'est celle-là qu'il faut relire pour mesurer.
- *
- * ## Ce qui n'entre dans aucun panier
- *
- * Les erreurs réseau (`decision = 'error'`). Une page injoignable ce jour-là est
- * un fait du web, pas un jugement de la brique, et elle répond peut-être
- * aujourd'hui : il n'y a rien à mesurer.
- */
 const BUCKETS = {
   approuvees: {
     where: {
@@ -1833,37 +1229,33 @@ const BUCKETS = {
     origin: 'APPROUVEE' as const,
   },
   abandonnees: {
-    where: {
-      decision: 'invalid',
-      reason: ABANDON_REASON,
-    } satisfies Prisma.ScraperRunItemWhereInput,
+    where: { decision: 'invalid', reason: ABANDON_REASON } satisfies Prisma.ScraperRunItemWhereInput,
     origin: 'ABANDONNEE' as const,
+  },
+  /**
+   * Le panier qui manquait, et c'est le pire des trois : la page **lue**, dont
+   * le texte a passé le seuil mais ne valait rien. Elle n'a pas été
+   * abandonnée — elle a coûté une extraction, et produit une fiche qu'un
+   * modérateur a refusée pour description inutilisable. Rien ne capturait ce
+   * cas, et c'est exactement là qu'atterrit une page mal décodée.
+   */
+  illisibles: {
+    where: {
+      event: { is: { rejectionCode: 'DESCRIPTION_INUTILISABLE' as const } },
+    } satisfies Prisma.ScraperRunItemWhereInput,
+    origin: 'ILLISIBLE' as const,
   },
 };
 
-/**
- * Les pages d'un panier qui ne sont pas déjà au banc, la plus récente d'abord.
- *
- * Dédoublonnées par URL : une même page revient dans plusieurs runs, et deux
- * lignes du banc pour une seule page compteraient deux fois la même mesure.
- */
 async function candidates(bucket: keyof typeof BUCKETS, limit: number) {
   const rows = await prisma.scraperRunItem.findMany({
     where: BUCKETS[bucket].where,
     orderBy: { at: 'desc' },
-    // Large devant `limit` : on dédoublonne et on écarte les déjà-présentes
-    // après coup, donc il faut de la marge pour remplir la demande.
     take: Math.min(limit * 8, 800),
     select: { url: true, title: true, reason: true, decision: true, at: true, eventId: true },
   });
-
   const seen = new Set<string>();
-  const unique = rows.filter((row) => {
-    if (!row.url || seen.has(row.url)) return false;
-    seen.add(row.url);
-    return true;
-  });
-
+  const unique = rows.filter((row) => row.url && !seen.has(row.url) && seen.add(row.url));
   const already = await prisma.evalReading.findMany({
     where: { url: { in: unique.map((r) => r.url) } },
     select: { url: true },
@@ -1872,29 +1264,48 @@ async function candidates(bucket: keyof typeof BUCKETS, limit: number) {
   return unique.filter((row) => !known.has(row.url));
 }
 
-/** Ce que chaque panier peut encore donner. */
+/**
+ * Les étiquettes que la modération a déjà payées, sur les liens d'agenda.
+ *
+ * Une page qui est devenue une sortie **approuvée** est une sortie : un
+ * modérateur l'a vérifiée, fiche en main. Si cette page figure parmi les liens
+ * d'un agenda du corpus, l'étiquette `SORTIE` est acquise — ce n'est pas une
+ * supposition de la machine mais le travail d'un humain, fait ailleurs.
+ *
+ * Elle n'apporte que des positifs, et c'est sa limite : elle ne dira jamais
+ * qu'un lien n'est **pas** une sortie, donc elle ne remplace pas la relecture.
+ * Elle la raccourcit.
+ */
+async function linkLabelCandidates(limit: number) {
+  return prisma.$queryRaw<{ pageId: number; url: string; title: string | null }[]>`
+    SELECT p.id AS pageId, i.url AS url, i.title AS title
+    FROM ScraperRunItem i
+    JOIN Event e ON e.id = i.eventId AND e.status = 'APPROVED'
+    JOIN EvalLinkResult r ON r.url = i.url
+    JOIN EvalAgendaPage p ON p.id = r.pageId
+    LEFT JOIN EvalLink l ON l.pageId = p.id AND l.url = i.url
+    WHERE l.id IS NULL
+    GROUP BY p.id, i.url, i.title
+    LIMIT ${limit}
+  `;
+}
+
 evalRouter.get('/seed', admin, async (_req, res) => {
-  const [approuvees, abandonnees] = await Promise.all([
+  const [approuvees, abandonnees, illisibles, liens] = await Promise.all([
     candidates('approuvees', 100),
     candidates('abandonnees', 100),
+    candidates('illisibles', 100),
+    linkLabelCandidates(100),
   ]);
   res.json({
     approuvees: approuvees.length,
     abandonnees: abandonnees.length,
-    /** Le libellé qui isole les abandons de l'étage 5. Affiché pour qu'un
-     *  panier vide se diagnostique sans lire le code. */
+    illisibles: illisibles.length,
+    liens: liens.length,
     abandonReason: ABANDON_REASON,
   });
 });
 
-/**
- * Met en file un lot de pages tirées d'un panier.
- *
- * Les lignes partent en `QUEUED` : le worker les relira et les gèlera comme
- * n'importe quelle page du banc. Le HTML d'époque n'existe pas — le pipeline ne
- * l'archive pas — donc `readAt` voyage avec, pour que la console puisse dire
- * depuis combien de temps la page a pu bouger.
- */
 evalRouter.post('/seed', admin, async (req, res) => {
   const parsed = evalSeedSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -1902,6 +1313,28 @@ evalRouter.post('/seed', admin, async (req, res) => {
     return;
   }
   const { bucket, limit } = parsed.data;
+
+  if (bucket === 'liens') {
+    const rows = (await linkLabelCandidates(limit)).slice(0, limit);
+    if (!rows.length) {
+      res.status(409).json({ error: 'Aucune étiquette nouvelle à reprendre de la modération' });
+      return;
+    }
+    const created = await prisma.evalLink.createMany({
+      data: rows.map((row) => ({
+        pageId: row.pageId,
+        url: row.url,
+        text: (row.title ?? '').slice(0, 200),
+        verdict: 'SORTIE' as const,
+        source: 'PAGE' as const,
+        origin: 'MODERATION' as const,
+      })),
+      skipDuplicates: true,
+    });
+    res.status(201).json({ added: created.count });
+    return;
+  }
+
   const rows = (await candidates(bucket, limit)).slice(0, limit);
   if (!rows.length) {
     res.status(409).json({ error: 'Rien de nouveau dans ce panier' });
@@ -1918,7 +1351,6 @@ evalRouter.post('/seed', admin, async (req, res) => {
       runReason: row.reason ?? '',
       createdById: req.user!.id,
     })),
-    // Une course entre deux onglets ne doit pas faire échouer le lot.
     skipDuplicates: true,
   });
   res.status(201).json({ added: created.count });

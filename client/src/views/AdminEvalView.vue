@@ -1,3136 +1,826 @@
 <script setup lang="ts">
 /**
- * Le banc d'évaluation : ce que chaque brique du scraper rend vraiment.
+ * Le corpus : des entrées gelées, et ce qu'un humain dit qu'elles contiennent.
  *
- * Un onglet par étage, deux remplis — le **dépouillement** et la **lecture**.
- * Ce sont les deux étages gratuits en amont des appels payants : leur ratage
- * plafonne tout ce qui suit, ils sont déterministes — ce qui ne veut pas dire
- * justes — et leurs pannes se déguisent en pannes des étages d'après. Un agenda dont les liens de fiche ont été perdus rend son menu, la
- * sélection n'en retient rien avec un motif parfaitement sensé, et c'est un
- * prompt qu'on ira retoucher pour un bug de sélecteur.
+ * Cette page ne mesure rien, et c'est nouveau. Elle fabrique la seule chose du
+ * banc qui coûte cher — l'étiquette — et qui, pour cette raison, ne doit
+ * jamais dépendre de ce qu'une brique a rendu : « le tarif rendu est juste »
+ * périme au premier changement de prompt, « la page annonce 8 € » vaut pour
+ * toujours.
  *
- * ## Le principe : la brique précoche, l'humain corrige
+ * La mesure est à côté, sur « Mesures », et elle se calcule de la
+ * confrontation des deux.
  *
- * Le banc relève **tous** les liens de la page. Pour chacun, ce que le vrai
- * `links_of` en a fait devient une proposition — retenu, donc probablement une
- * sortie ; écarté, donc probablement du bruit. Il ne reste qu'à corriger ce qui
- * est faux, et ce sont ces corrections-là qui sont la mesure.
+ * ## La précoche, et pourquoi elle n'est qu'un affichage
  *
- * C'est ce qui donne les **deux** erreurs. Ne montrer que la moisson
- * obligeait à retrouver les manqués soi-même, en rouvrant la vraie page — lent,
- * et incomplet par construction. Et surtout ça ne disait rien du contraire :
- * un lien retenu qui ne mène nulle part coûte un appel payant à l'étage 4, et
- * cette erreur-là restait invisible.
- *
- * ## Le filtre est un outil de travail, pas un ornement
- *
- * Une page d'agenda aligne trois cents liens. On commence par **les retenus** —
- * une vingtaine, qu'on confirme ou corrige vite — puis on passe aux écartés,
- * rangés par motif : les sorties perdues se concentrent sous « texte trop
- * court » et « hors domaine », jamais sous « mentions légales ».
+ * Étiqueter deux cents liens sur une page vierge serait invivable : la console
+ * affiche donc en regard le relevé d'un run, et l'humain n'a plus qu'à
+ * confirmer. Mais rien de ce que la brique a dit n'entre au corpus tant que
+ * personne n'a cliqué — sans quoi on obtiendrait un rappel de 100 % pour la
+ * seule raison que personne n'a regardé, ce qui est très exactement le
+ * mensonge que ce banc existe pour éviter.
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
-import {
-  EVAL_FIELD_CHOICES,
-  EVAL_FLAG_LABELS,
-  EVAL_ORIGIN_LABELS,
-  EVAL_READ_ASPECTS,
-  EVAL_STATUS_LABELS,
-  EVAL_VERDICT_HINTS,
-  EVAL_VERDICT_LABELS,
-} from '../types';
 import type {
   EvalAgenda,
-  EvalAgendaPage,
-  EvalAgendaStatus,
-  EvalAspect,
-  EvalExtraction,
-  EvalExtractionStats,
-  EvalFieldVerdict,
-  EvalLink,
-  EvalNextVerdict,
+  EvalLinkResult,
   EvalReading,
-  EvalReadingOrigin,
-  EvalReadingStats,
-  EvalReference,
   EvalSeedCounts,
   EvalVerdict,
 } from '../types';
-
-/**
- * Les huit briques, dans l'ordre du pipeline.
- *
- * Le vocabulaire est celui de `sortiesbot/stages/__init__.py`, et il ne doit
- * pas diverger : la console du scraper dessine déjà son graphe avec, et deux
- * pages qui nomment différemment le même étage se contrediraient.
- */
-const BRICKS = [
-  { no: 1, name: 'Découverte', why: "Son entrée est le web entier, pas une page : elle ne s'évalue qu'en conditions réelles, par comparaison entre gabarits de requêtes." },
-  { no: 2, name: 'Reconnaissance', why: "Une page, une étiquette humaine. Ce qu'on y mesure n'est pas l'exactitude mais une matrice de coûts : confondre un agenda avec une fiche coûte tous ses liens, l'inverse coûte un appel." },
-  { no: 3, name: 'Dépouillement', why: '' },
-  { no: 4, name: 'Sélection', why: "Le point aveugle : un lien écarté n'est relu par personne. Il faudra un budget d'exploration, ou le vivier commun de plusieurs variantes." },
-  { no: 5, name: 'Lecture', why: '' },
-  { no: 6, name: 'Extraction', why: "Champ par champ, jamais fiche par fiche. Plus la vérification d'ancrage, qui ne coûte aucune étiquette : toute valeur extraite doit se retrouver dans la page." },
-  { no: 7, name: 'Attribution', why: "Partiellement mesurée déjà, depuis la page d'une exécution : ce que le moteur rend, ce que le tamis refuse." },
-  { no: 8, name: 'Publication', why: "Un contrat d'API. Des tests unitaires suffisent, et il y en a." },
-] as const;
+import {
+  EVAL_CAPTURE_LABELS,
+  EVAL_LABEL_ORIGIN_LABELS,
+  EVAL_ORIGIN_HINTS,
+  EVAL_ORIGIN_LABELS,
+  EVAL_VERDICT_HINTS,
+  EVAL_VERDICT_LABELS,
+} from '../types';
 
 const VERDICTS: EvalVerdict[] = ['SORTIE', 'PAGINATION', 'SOUS_AGENDA', 'AUTRE'];
 
-/** Les étages dont l'onglet est rempli. Le reste attend son tour. */
-const OPEN_BRICKS = [3, 5, 6];
-
-/** Les quatre vues d'une page. « Retenus » d'abord : c'est par là qu'on commence. */
-const FILTERS = [
-  { key: 'kept', label: 'Retenus' },
-  { key: 'dropped', label: 'Écartés' },
-  { key: 'todo', label: 'À revoir' },
-  { key: 'diff', label: 'Désaccords' },
-  { key: 'all', label: 'Tous' },
-] as const;
-type FilterKey = (typeof FILTERS)[number]['key'];
-
-const tab = ref(3);
-
 const agendas = ref<EvalAgenda[]>([]);
+const readings = ref<EvalReading[]>([]);
+const seed = ref<EvalSeedCounts | null>(null);
+const open = ref<EvalAgenda | null>(null);
+const openRunId = ref(0);
 const loading = ref(true);
 const error = ref('');
 const notice = ref('');
 
-const form = ref({ url: '', pages: 1, label: '' });
-const adding = ref(false);
+const newAgendaUrl = ref('');
+const newAgendaPages = ref(1);
+const newReadingUrl = ref('');
 
-const openAgendas = ref(new Set<number>());
-const openPages = ref(new Set<number>());
-
-/** Le filtre courant, commun à toutes les pages : on travaille page par page. */
-const filter = ref<FilterKey>('kept');
-/** Motif de rejet affiché ; vide = tous. Ne s'applique qu'aux écartés. */
-const reason = ref('');
-
-const addingTo = ref<number | null>(null);
-const newLink = ref({ url: '', text: '' });
-const savingLink = ref(false);
-
-/** Liens dont le verdict est en cours d'envoi, pour ne pas cliquer deux fois. */
-const saving = ref(new Set<number>());
-const busy = ref(new Set<number>());
-
-// ─────────────────────────────────────────── étage 5 : le banc de lecture
-
-const readings = ref<EvalReading[]>([]);
-const readStats = ref<EvalReadingStats | null>(null);
-const readForm = ref({ url: '', label: '' });
-const addingRead = ref(false);
-const openReadings = ref(new Set<number>());
-
-/** Ce que chaque panier peut encore donner. Nul tant qu'on n'a pas demandé. */
-const seed = ref<EvalSeedCounts | null>(null);
-const seeding = ref('');
-
-// ──────────────────────────────────────── étage 6 : le banc d'extraction
-
-const extractions = ref<EvalExtraction[]>([]);
-const extractStats = ref<EvalExtractionStats | null>(null);
-const extractForm = ref({ readingId: 0, model: '' });
-const addingExtract = ref(false);
-
-let poll: ReturnType<typeof setInterval> | null = null;
-
-const waiting = computed(() =>
-  agendas.value.some((a) => a.status === 'QUEUED' || a.status === 'RUNNING'),
-);
-
-async function load(quiet = false) {
-  if (!quiet) loading.value = true;
+async function load() {
+  loading.value = true;
+  error.value = '';
   try {
-    const data = await api.get<{ agendas: EvalAgenda[] }>('/api/eval/agendas');
-    agendas.value = data.agendas;
-    if (!quiet) error.value = '';
+    const [a, r] = await Promise.all([
+      api.get<{ agendas: EvalAgenda[] }>('/api/eval/agendas'),
+      api.get<{ readings: EvalReading[] }>('/api/eval/readings'),
+    ]);
+    agendas.value = a.agendas;
+    readings.value = r.readings;
   } catch (e) {
-    if (!quiet) error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = e instanceof Error ? e.message : 'Erreur';
   } finally {
     loading.value = false;
   }
-}
-
-async function loadReadings(quiet = false) {
-  try {
-    const data = await api.get<{ readings: EvalReading[]; stats: EvalReadingStats }>(
-      '/api/eval/readings',
-    );
-    readings.value = data.readings;
-    readStats.value = data.stats;
-  } catch (e) {
-    if (!quiet) error.value = e instanceof Error ? e.message : 'Erreur';
-  }
-}
-
-async function loadSeed(quiet = false) {
   try {
     seed.value = await api.get<EvalSeedCounts>('/api/eval/seed');
-  } catch (e) {
-    if (!quiet) error.value = e instanceof Error ? e.message : 'Erreur';
+  } catch {
+    // Les paniers sont un confort : leur échec ne doit pas vider la page.
   }
 }
 
-async function loadExtractions(quiet = false) {
-  try {
-    const data = await api.get<{ extractions: EvalExtraction[]; stats: EvalExtractionStats }>(
-      '/api/eval/extractions',
-    );
-    extractions.value = data.extractions;
-    extractStats.value = data.stats;
-  } catch (e) {
-    if (!quiet) error.value = e instanceof Error ? e.message : 'Erreur';
-  }
+onMounted(load);
+
+function fail(e: unknown) {
+  error.value = e instanceof Error ? e.message : 'Erreur';
 }
 
-function tick() {
-  if (waiting.value) load(true);
-  if (readings.value.some((r) => r.status === 'QUEUED' || r.status === 'RUNNING')) {
-    loadReadings(true);
-  }
-  if (extractions.value.some((x) => x.status === 'QUEUED' || x.status === 'RUNNING')) {
-    loadExtractions(true);
-  }
-}
-
-onMounted(async () => {
-  await Promise.all([load(), loadReadings(), loadExtractions(), loadSeed()]);
-  poll = setInterval(tick, 5000);
-});
-onUnmounted(() => {
-  if (poll) clearInterval(poll);
-});
-
-function replace(agenda: EvalAgenda) {
-  const index = agendas.value.findIndex((a) => a.id === agenda.id);
-  if (index === -1) agendas.value.unshift(agenda);
-  else agendas.value[index] = agenda;
-}
-
-/**
- * Déplie ou replie. Un `Set` neuf à chaque fois : Vue ne suit pas les mutations
- * d'un `Set` derrière un `ref`, et muter celui en place n'afficherait rien.
- */
-function flip(current: Set<number>, id: number): Set<number> {
-  const next = new Set(current);
-  if (next.has(id)) next.delete(id);
-  else next.add(id);
-  return next;
-}
-
-function toggleAgenda(id: number) {
-  openAgendas.value = flip(openAgendas.value, id);
-}
-
-function togglePage(id: number) {
-  openPages.value = flip(openPages.value, id);
-}
-
-function mark(set: typeof busy, id: number, on: boolean) {
-  const next = new Set(set.value);
-  if (on) next.add(id);
-  else next.delete(id);
-  set.value = next;
-}
-
-async function act<T>(id: number, run: () => Promise<T>): Promise<T | null> {
-  error.value = '';
-  notice.value = '';
-  mark(busy, id, true);
-  try {
-    return await run();
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
-    return null;
-  } finally {
-    mark(busy, id, false);
-  }
-}
-
-// ───────────────────────────────────────────────────────────── la mesure
-
-/**
- * Le désaccord entre la brique et l'humain — l'erreur, dans un sens ou l'autre.
- *
- * C'est la seule chose que cette console cherche à faire voir : un lien retenu
- * qui n'est pas une sortie a coûté un appel payant pour rien, un lien écarté
- * qui en est une est une sortie que personne n'aurait jamais vue.
- */
-function disagrees(link: EvalLink): boolean {
-  return link.harvested !== (link.verdict === 'SORTIE');
-}
-
-/** Corrige le verdict d'un lien. C'est le geste que toute la page entoure. */
-async function setVerdict(link: EvalLink, verdict: EvalVerdict) {
-  if (link.verdict === verdict) return;
-  error.value = '';
-  mark(saving, link.id, true);
-  const before = link.verdict;
-  // Optimiste : le bouton répond tout de suite, sinon corriger deux cents
-  // liens serait insupportable. On revient en arrière si le serveur refuse.
-  link.verdict = verdict;
-  try {
-    const data = await api.patch<{ agenda: EvalAgenda }>(`/api/eval/links/${link.id}`, {
-      verdict,
-    });
-    replace(data.agenda);
-  } catch (e) {
-    link.verdict = before;
-    error.value = e instanceof Error ? e.message : 'Erreur';
-  } finally {
-    mark(saving, link.id, false);
-  }
-}
-
-// ─────────────────────────────────────────────────────────── les agendas
+// ── le corpus des agendas ──────────────────────────────────────────────
 
 async function addAgenda() {
-  error.value = '';
-  notice.value = '';
-  adding.value = true;
+  if (!newAgendaUrl.value.trim()) return;
   try {
-    const data = await api.post<{ agenda: EvalAgenda }>('/api/eval/agendas', {
-      url: form.value.url.trim(),
-      pages: form.value.pages,
-      label: form.value.label.trim(),
+    await api.post('/api/eval/agendas', {
+      url: newAgendaUrl.value.trim(),
+      pages: newAgendaPages.value,
     });
-    replace(data.agenda);
-    openAgendas.value = new Set([...openAgendas.value, data.agenda.id]);
-    form.value = { url: '', pages: form.value.pages, label: '' };
-    notice.value = 'Agenda mis en file : le worker le relèvera à son prochain passage.';
+    newAgendaUrl.value = '';
+    await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
-  } finally {
-    adding.value = false;
+    fail(e);
   }
 }
 
-async function analyze(agenda: EvalAgenda) {
-  if (
-    agenda.stats.reviewed > 0 &&
-    !confirm(
-      `Relancer l'analyse effacera les ${agenda.stats.reviewed} verdict(s) que vous avez donné(s).\n\n` +
-        "Ils décrivaient la page telle qu'elle était : elle va être retéléchargée, " +
-        "elle a pu changer, et les garder les rattacherait à un HTML qu'ils n'ont jamais décrit.",
-    )
-  ) {
+async function capture(kind: 'agendas' | 'readings', id: number) {
+  try {
+    await api.post(`/api/eval/${kind}/${id}/capture`);
+    notice.value = 'Capture mise en file : le worker la prendra à sa prochaine passe.';
+    await load();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function removeAgenda(agenda: EvalAgenda) {
+  if (!confirm(`Retirer « ${agenda.label || agenda.url} » du corpus, avec ses étiquettes ?`)) return;
+  try {
+    await api.delete(`/api/eval/agendas/${agenda.id}`);
+    if (open.value?.id === agenda.id) open.value = null;
+    await load();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function openAgenda(agenda: EvalAgenda) {
+  if (open.value?.id === agenda.id) {
+    open.value = null;
     return;
   }
-  const data = await act(agenda.id, () =>
-    api.post<{ agenda: EvalAgenda }>(`/api/eval/agendas/${agenda.id}/analyze`),
-  );
-  if (data) replace(data.agenda);
-}
-
-async function validate(agenda: EvalAgenda) {
-  const data = await act(agenda.id, () =>
-    api.post<{ agenda: EvalAgenda }>(`/api/eval/agendas/${agenda.id}/validate`),
-  );
-  if (data) {
-    replace(data.agenda);
-    notice.value = 'Vérité de référence enregistrée : cet agenda compte désormais dans la mesure.';
-  }
-}
-
-async function remove(agenda: EvalAgenda) {
-  if (!confirm(`Supprimer « ${title(agenda)} » et tout ce qui a été relevé dessus ?`)) return;
-  const done = await act(agenda.id, () => api.delete(`/api/eval/agendas/${agenda.id}`));
-  if (done) agendas.value = agendas.value.filter((a) => a.id !== agenda.id);
-}
-
-function openAdd(page: EvalAgendaPage) {
-  addingTo.value = addingTo.value === page.id ? null : page.id;
-  newLink.value = { url: '', text: '' };
-}
-
-async function addLink(page: EvalAgendaPage) {
-  error.value = '';
-  savingLink.value = true;
   try {
-    const data = await api.post<{ agenda: EvalAgenda }>(`/api/eval/pages/${page.id}/links`, {
-      url: newLink.value.url.trim(),
-      text: newLink.value.text.trim(),
-      verdict: 'SORTIE',
-    });
-    replace(data.agenda);
-    newLink.value = { url: '', text: '' };
+    const body = await api.get<{ agenda: EvalAgenda; runId: number }>(
+      `/api/eval/agendas/${agenda.id}`,
+    );
+    open.value = body.agenda;
+    openRunId.value = body.runId;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
-  } finally {
-    savingLink.value = false;
+    fail(e);
+  }
+}
+
+/** Les liens du relevé affiché, avec l'étiquette qu'ils portent déjà. */
+function rows(page: EvalAgenda['agendaPages'][number]) {
+  const labelled = new Map(page.links.map((l) => [l.url, l]));
+  const seenUrls = new Set<string>();
+  const out: { result: EvalLinkResult | null; label: (typeof page.links)[number] | null }[] = [];
+  for (const result of page.results ?? []) {
+    // La ligne technique de la pagination n'est pas un lien.
+    if (result.position < 0) continue;
+    seenUrls.add(result.url);
+    out.push({ result, label: labelled.get(result.url) ?? null });
+  }
+  // Les étiquettes que le relevé ne porte pas : un lien ajouté à la main, ou
+  // une sortie que la brique ne trouve plus. Les cacher reviendrait à effacer
+  // la mesure la plus intéressante.
+  for (const label of page.links) {
+    if (!seenUrls.has(label.url)) out.push({ result: null, label });
+  }
+  return out;
+}
+
+/** Ce que le relevé affiché a trouvé comme page suivante. */
+function foundNext(page: EvalAgenda['agendaPages'][number]): string {
+  return (page.results ?? []).find((r) => r.position < 0)?.selectReason ?? '';
+}
+
+async function labelLink(pageId: number, url: string, text: string, verdict: EvalVerdict) {
+  try {
+    await api.put(`/api/eval/pages/${pageId}/links`, { url, text, verdict, source: 'PAGE' });
+    await refreshOpen();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function unlabel(id: number) {
+  try {
+    await api.delete(`/api/eval/links/${id}`);
+    await refreshOpen();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** Demande l'adresse de la vraie page suivante, et l'étiquette. */
+function askNext(pageId: number) {
+  const answer = window.prompt('Adresse de la vraie page suivante :');
+  if (answer === null) return;
+  void labelNext(pageId, answer.trim());
+}
+
+async function labelNext(pageId: number, expected: string | null) {
+  try {
+    await api.patch(`/api/eval/pages/${pageId}/next`, { expected });
+    await refreshOpen();
+  } catch (e) {
+    fail(e);
   }
 }
 
 /**
- * Donne le même verdict à tous les écartés d'un motif. Un raccourci, et une
- * lame à double tranchant.
+ * Étiqueter d'un coup tous les liens qu'un relevé a écartés sous un motif.
  *
- * Soixante-seize écartés se lisent mal un par un, et la plupart sont du bruit
- * évident. Mais trancher en masse un motif qu'on n'a pas lu fabrique un rappel
- * flatteur — d'où la confirmation qui nomme le motif et le compte, et le fait
- * que ça ne touche jamais les liens retenus.
+ * L'outil coupe dans les deux sens, et c'est assumé : expédier un motif qu'on
+ * n'a pas lu fabrique un rappel flatteur. D'où l'obligation de viser un motif
+ * précis plutôt que « tout le reste ».
  */
-async function bulk(page: EvalAgendaPage, agendaId: number, verdict: EvalVerdict) {
-  const cible = reason.value
-    ? `les ${reasons(page).find((r) => r.key === reason.value)?.count ?? 0} lien(s) « ${reason.value} »`
-    : `les ${counts(page).dropped} lien(s) écarté(s) de cette page`;
-  if (
-    !confirm(
-      `Marquer « ${EVAL_VERDICT_LABELS[verdict]} » ${cible} ?\n\n` +
-        "Rien ne sera touché parmi les liens retenus. Ne le faites que sur un motif " +
-        "dont vous avez lu assez de lignes pour savoir ce qu'il contient : trancher " +
-        'en masse ce qu\'on n\'a pas lu fabrique un rappel flatteur.',
-    )
-  ) {
+async function bulk(pageId: number, reason: string, verdict: EvalVerdict) {
+  if (!openRunId.value) return;
+  if (!confirm(`Étiqueter « ${EVAL_VERDICT_LABELS[verdict]} » tous les liens écartés sous « ${reason} » ?`))
     return;
-  }
-  const data = await act(agendaId, () =>
-    api.post<{ agenda: EvalAgenda; count: number }>(`/api/eval/pages/${page.id}/verdict`, {
+  try {
+    const body = await api.post<{ labelled: number }>(`/api/eval/pages/${pageId}/bulk`, {
+      runId: openRunId.value,
       verdict,
-      reason: reason.value || undefined,
-    }),
-  );
-  if (data) {
-    replace(data.agenda);
-    notice.value = `${data.count} lien(s) marqué(s) « ${EVAL_VERDICT_LABELS[verdict]} ».`;
+      reason,
+    });
+    notice.value = `${body.labelled} étiquette(s) posée(s).`;
+    await refreshOpen();
+  } catch (e) {
+    fail(e);
   }
 }
 
-async function removeLink(agendaId: number, linkId: number) {
-  const data = await act(agendaId, () =>
-    api.delete<{ agenda: EvalAgenda }>(`/api/eval/links/${linkId}`),
-  );
-  if (data) replace(data.agenda);
-}
-
-// ──────────────────────────────────────────────────────────── affichage
-
-function title(agenda: EvalAgenda) {
-  return agenda.label || agenda.url;
-}
-
-function statusLabel(status: EvalAgendaStatus) {
-  return EVAL_STATUS_LABELS[status];
-}
-
-function percent(value: number | null) {
-  return value === null ? '—' : `${Math.round(value * 100)} %`;
-}
-
-function when(value: string | null) {
-  if (!value) return '';
-  return new Date(value).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
-}
-
-function counts(page: EvalAgendaPage) {
-  const kept = page.links.filter((l) => l.harvested).length;
-  return {
-    kept,
-    dropped: page.links.length - kept,
-    todo: page.links.filter((l) => !l.reviewed).length,
-    diff: page.links.filter(disagrees).length,
-  };
-}
-
-/** Le compte du filtre `key` sur cette page — pour la pastille du bouton. */
-function tally(page: EvalAgendaPage, key: FilterKey): number {
-  if (key === 'all') return page.links.length;
-  return counts(page)[key];
-}
-
-/** Les motifs de rejet présents sur cette page, du plus fréquent au moins. */
-function reasons(page: EvalAgendaPage): { key: string; count: number }[] {
-  const tally = new Map<string, number>();
-  for (const link of page.links) {
-    if (link.harvested || !link.dropReason) continue;
-    tally.set(link.dropReason, (tally.get(link.dropReason) ?? 0) + 1);
+/** Les motifs de rejet du relevé affiché, avec leur compte. */
+function reasons(page: EvalAgenda['agendaPages'][number]) {
+  const counts = new Map<string, number>();
+  for (const result of page.results ?? []) {
+    if (result.position < 0 || result.harvested || !result.dropReason) continue;
+    counts.set(result.dropReason, (counts.get(result.dropReason) ?? 0) + 1);
   }
-  return [...tally.entries()]
-    .map(([key, count]) => ({ key, count }))
-    .sort((a, b) => b.count - a.count);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
 }
 
-function visible(page: EvalAgendaPage): EvalLink[] {
-  let links = page.links;
-  if (filter.value === 'kept') links = links.filter((l) => l.harvested);
-  else if (filter.value === 'dropped') links = links.filter((l) => !l.harvested);
-  else if (filter.value === 'todo') links = links.filter((l) => !l.reviewed);
-  else if (filter.value === 'diff') links = links.filter(disagrees);
-  if (reason.value && filter.value === 'dropped') {
-    links = links.filter((l) => l.dropReason === reason.value);
-  }
-  return links;
+async function refreshOpen() {
+  if (!open.value) return;
+  const id = open.value.id;
+  const body = await api.get<{ agenda: EvalAgenda; runId: number }>(`/api/eval/agendas/${id}`);
+  open.value = body.agenda;
+  openRunId.value = body.runId;
+  await load();
 }
 
-function pageSummary(page: EvalAgendaPage) {
-  if (page.error) return page.error;
-  const { kept } = counts(page);
-  return `${page.links.length} lien(s) relevé(s), ${kept} retenu(s) par la brique`;
-}
-
-/**
- * La vérification de la pagination, page par page.
- *
- * Trois cas, et le troisième est celui que le banc existe pour attraper : le
- * site offre visiblement une suite, et `next_page()` ne la voit pas — parce
- * qu'elle n'est pas déclarée en `rel="next"`. Cette page-là ne sera jamais
- * suivie, et rien ailleurs ne le signale.
- */
-function pagination(page: EvalAgendaPage): { tone: 'ok' | 'bad' | 'todo'; text: string } | null {
-  if (page.error) return null;
-  // Le constat, factuel : ce que `next_page()` a trouvé. Ce n'est pas un
-  // jugement — c'est l'humain qui tranche, juste en dessous.
-  const trouve = page.nextUrl
-    ? `L'étage 3 suivrait ${page.nextUrl}`
-    : "L'étage 3 n'a trouvé aucun « rel=next » sur cette page";
-  if (!page.nextVerdict) return { tone: 'todo', text: trouve };
-  if (page.nextVerdict === 'CORRECT') {
-    return {
-      tone: 'ok',
-      text: page.nextUrl ? `${trouve} — et c'est bien la suite.` : `${trouve}, et il n'y en a pas.`,
-    };
-  }
-  const attendu = page.nextExpected ? ` La vraie suite est ${page.nextExpected}.` : '';
-  return {
-    tone: 'bad',
-    text:
-      page.nextVerdict === 'MANQUEE'
-        ? `${trouve} — alors qu'il y a bien une suite.${attendu} Ratage de pagination.`
-        : `${trouve} — qui n'est pas la suite.${attendu} Il court après une fausse page.`,
-  };
-}
-
-/**
- * Les réponses proposées, qui dépendent de ce que la brique a trouvé.
- *
- * Sans `rel="next"`, « fausse » n'a pas de sens : on ne court après rien.
- */
-function nextChoices(page: EvalAgendaPage): { key: EvalNextVerdict; label: string }[] {
-  const juste = page.nextUrl ? "C'est bien la suite" : "Il n'y a pas de suite";
-  const choix: { key: EvalNextVerdict; label: string }[] = [
-    { key: 'CORRECT', label: juste },
-    { key: 'MANQUEE', label: 'Il a raté la suite' },
-  ];
-  if (page.nextUrl) choix.push({ key: 'FAUSSE', label: "Ce n'est pas la suite" });
-  return choix;
-}
-
-/** La page dont on saisit l'adresse de la vraie suite, et ce qui est tapé. */
-const expectingFor = ref<number | null>(null);
-const expected = ref('');
-
-/**
- * Enregistre le verdict de pagination d'une page.
- *
- * `CORRECT` se pose d'un clic. Les deux autres ouvrent un champ facultatif :
- * savoir que la brique s'est trompée ne dit pas ce qu'elle aurait dû trouver, et
- * c'est cette adresse-là qui permettra de réparer `next_page()`.
- */
-async function setNext(page: EvalAgendaPage, agendaId: number, verdict: EvalNextVerdict) {
-  if (verdict !== 'CORRECT' && expectingFor.value !== page.id) {
-    expectingFor.value = page.id;
-    expected.value = page.nextExpected;
-    // Premier clic : on ouvre le champ. Le second, sur le même bouton,
-    // enregistre — avec ou sans adresse, elle reste facultative.
-    if (page.nextVerdict !== verdict) return;
-  }
-  const data = await act(agendaId, () =>
-    api.patch<{ agenda: EvalAgenda }>(`/api/eval/pages/${page.id}/next`, {
-      verdict,
-      expected: verdict === 'CORRECT' ? '' : expected.value.trim(),
-    }),
-  );
-  if (data) {
-    replace(data.agenda);
-    expectingFor.value = null;
-    expected.value = '';
-  }
-}
-
-/** Ce que la moisson a manqué en pages, dit en une phrase. */
-function pagesVerdict(agenda: EvalAgenda): string {
-  const { pagesAsked, pagesRead, stop } = agenda.stats;
-  const manque = `${pagesAsked} page(s) demandée(s), ${pagesRead} lue(s).`;
-  if (stop === 'sans_suite') {
-    return `${manque} L'étage 3 n'a trouvé aucun « rel=next » sur la dernière — s'il y a bien une suite, c'est un ratage de la pagination, et parcourir les pages fait partie de son travail.`;
-  }
-  if (stop === 'injoignable') {
-    return `${manque} La page suivante a refusé la lecture : ce n'est pas la brique qu'il faut accuser.`;
-  }
-  if (stop === 'boucle') {
-    return `${manque} Le « rel=next » de la dernière renvoyait vers une page déjà lue : cet agenda boucle.`;
-  }
-  return '';
-}
-
-function replaceReading(reading: EvalReading) {
-  const index = readings.value.findIndex((r) => r.id === reading.id);
-  if (index === -1) readings.value.unshift(reading);
-  else readings.value[index] = reading;
-  // Les taux se recalculent au serveur, sur l'ensemble du banc : les recopier
-  // ici en aurait fait une seconde vérité, qui aurait fini par diverger.
-  loadReadings(true);
-}
-
-function toggleReading(id: number) {
-  openReadings.value = flip(openReadings.value, id);
-}
+// ── le corpus de lecture ───────────────────────────────────────────────
 
 async function addReading() {
-  error.value = '';
-  notice.value = '';
-  addingRead.value = true;
+  if (!newReadingUrl.value.trim()) return;
   try {
-    const data = await api.post<{ reading: EvalReading }>('/api/eval/readings', {
-      url: readForm.value.url.trim(),
-      label: readForm.value.label.trim(),
-    });
-    replaceReading(data.reading);
-    openReadings.value = new Set([...openReadings.value, data.reading.id]);
-    readForm.value = { url: '', label: '' };
-    notice.value = 'Page mise en file : le worker la lira à son prochain passage.';
+    await api.post('/api/eval/readings', { url: newReadingUrl.value.trim() });
+    newReadingUrl.value = '';
+    await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
-  } finally {
-    addingRead.value = false;
-  }
-}
-
-/** Trancher un aspect. C'est le geste que cet onglet existe pour permettre. */
-async function setAspect(reading: EvalReading, key: string, value: string) {
-  const data = await act(reading.id, () =>
-    api.patch<{ reading: EvalReading }>(`/api/eval/readings/${reading.id}`, { [key]: value }),
-  );
-  if (data) replaceReading(data.reading);
-}
-
-async function analyzeReading(reading: EvalReading) {
-  if (
-    reading.judged &&
-    !confirm(
-      "Relancer la lecture effacera les trois verdicts.\n\nIls décrivaient la page telle " +
-        "qu'elle était : elle va être retéléchargée, et elle a pu changer.",
-    )
-  ) {
-    return;
-  }
-  const data = await act(reading.id, () =>
-    api.post<{ reading: EvalReading }>(`/api/eval/readings/${reading.id}/analyze`),
-  );
-  if (data) replaceReading(data.reading);
-}
-
-async function validateReading(reading: EvalReading) {
-  const data = await act(reading.id, () =>
-    api.post<{ reading: EvalReading }>(`/api/eval/readings/${reading.id}/validate`),
-  );
-  if (data) {
-    replaceReading(data.reading);
-    notice.value = 'Vérité de référence enregistrée : cette page compte dans la mesure.';
+    fail(e);
   }
 }
 
 async function removeReading(reading: EvalReading) {
-  if (!confirm(`Supprimer « ${reading.label || reading.url} » et ce qui en a été relevé ?`)) return;
-  const done = await act(reading.id, () => api.delete(`/api/eval/readings/${reading.id}`));
-  if (done) readings.value = readings.value.filter((r) => r.id !== reading.id);
-}
-
-/**
- * Les signaux gratuits d'une page, en clair.
- *
- * Ils ne décident de rien — la brique a déjà rendu ce qu'elle rend, et c'est ce
- * rendu qu'on mesure. Ils disent seulement **où regarder**, et le premier est
- * de loin le plus utile : un titre absent du texte extrait veut presque
- * toujours dire qu'un `<header>` a été décapé, et avec lui les dates.
- */
-function readFlags(r: EvalReading): { tone: 'bad' | 'warn'; text: string }[] {
-  const flags: { tone: 'bad' | 'warn'; text: string }[] = [];
-  // Le panier des abandons porte une précoche : la brique a dit non. Reste à
-  // dire si elle avait raison, et c'est précisément ce que personne n'a
-  // jamais vérifié.
-  if (r.origin === 'ABANDONNEE' && r.status !== 'QUEUED' && r.status !== 'RUNNING') {
-    flags.push(
-      r.tooShort
-        ? {
-            tone: 'warn',
-            text: `Le pipeline avait abandonné cette page (« ${r.runReason || 'sans motif'} »), et la relecture le confirme. Reste à dire s'il avait raison de le faire.`,
-          }
-        : {
-            tone: 'bad',
-            text: `Le pipeline avait abandonné cette page (« ${r.runReason || 'sans motif'} »), mais à la relecture elle passe le seuil. Soit le site a changé, soit l'abandon était une faute.`,
-          },
-    );
-  }
-  if (r.tooShort) {
-    flags.push({
-      tone: 'bad',
-      text: `Sous le seuil des 200 caractères : le pipeline aurait abandonné cette page avant le moindre appel payant.`,
-    });
-  }
-  if (r.heading && !r.h1InText) {
-    flags.push({
-      tone: 'bad',
-      text: `Le titre de la page — « ${r.heading} » — ne se retrouve pas dans le texte extrait. Un bloc a été décapé, et souvent les dates avec.`,
-    });
-  }
-  if (r.truncated) {
-    flags.push({
-      tone: 'warn',
-      text: 'Texte coupé au plafond : la fin de la page n’atteindra jamais le modèle.',
-    });
-  }
-  if (r.imageLooksLogo) {
-    flags.push({ tone: 'warn', text: "L'adresse de l'illustration ressemble à celle d'un logo." });
-  }
-  if (!r.imageUrl && !r.error) {
-    flags.push({ tone: 'warn', text: 'Aucune illustration retenue.' });
-  }
-  if (!r.dates.length && !r.error) {
-    flags.push({ tone: 'warn', text: 'Aucune date JSON-LD relevée.' });
-  }
-  if (r.swapped) {
-    flags.push({ tone: 'warn', text: `Échange de langue : la page lue est ${r.readUrl}` });
-  }
-  return flags;
-}
-
-// ──────────────────────────── peupler le banc avec ce que le pipeline a fait
-
-/**
- * Met en file un lot de pages tirées d'un panier.
- *
- * Deux paniers, et l'équilibre entre eux est **la** question de ce banc. Une
- * sortie approuvée est une page où l'étage 5 a réussi — son texte était
- * lisible, sinon elle ne serait jamais devenue une sortie. N'en prendre que
- * celles-là mesurerait la brique sur ses propres succès : on lirait 96 % de
- * textes corrects, et ça ne voudrait rien dire.
- */
-async function seedBucket(bucket: 'approuvees' | 'abandonnees', limit: number) {
-  error.value = '';
-  notice.value = '';
-  seeding.value = bucket;
+  if (!confirm(`Retirer « ${reading.label || reading.url} » du corpus, avec ses étiquettes ?`)) return;
   try {
-    const data = await api.post<{ added: number }>('/api/eval/seed', { bucket, limit });
-    notice.value = `${data.added} page(s) mise(s) en file : le worker les lira et les gèlera.`;
-    await Promise.all([loadReadings(true), loadSeed(true)]);
+    await api.delete(`/api/eval/readings/${reading.id}`);
+    await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
-  } finally {
-    seeding.value = '';
+    fail(e);
   }
 }
 
-/** L'équilibre des deux paniers dans le banc, qui est ce qu'il faut surveiller. */
-const readingMix = computed(() => {
-  const count = (origin: EvalReadingOrigin) =>
-    readings.value.filter((r) => r.origin === origin).length;
-  return {
-    APPROUVEE: count('APPROUVEE'),
-    ABANDONNEE: count('ABANDONNEE'),
-    MANUEL: count('MANUEL'),
-  };
-});
+/** Les trois étiquettes d'une page, saisies en clair. */
+const editing = ref<EvalReading | null>(null);
+const editImage = ref('');
+const editDates = ref('');
+const editMarkers = ref('');
 
-function originLabel(origin: EvalReadingOrigin) {
-  return EVAL_ORIGIN_LABELS[origin];
+function edit(reading: EvalReading) {
+  editing.value = reading;
+  editImage.value = reading.expectedImage ?? '';
+  editDates.value = (JSON.parse(reading.expectedDates ?? '[]') as string[]).join('\n');
+  editMarkers.value = (JSON.parse(reading.expectedMarkers ?? '[]') as string[]).join('\n');
 }
 
-/**
- * Depuis combien de temps le pipeline avait lu cette page.
- *
- * La fiche décrit la page de ce jour-là ; le banc la relit aujourd'hui, et
- * aucun HTML d'époque n'est conservé. Plus l'écart est grand, moins un
- * désaccord accuse le modèle.
- */
-function drift(readAt: string | null): string {
-  if (!readAt) return '';
-  const days = Math.round((Date.now() - new Date(readAt).getTime()) / 86400000);
-  if (days <= 0) return "lue par le pipeline aujourd'hui";
-  return `lue par le pipeline il y a ${days} jour${days > 1 ? 's' : ''}`;
+function lines(value: string): string[] {
+  return value
+    .split('\n')
+    .map((v) => v.trim())
+    .filter(Boolean);
 }
 
-/** La fiche approuvée, en lignes, pour la montrer à côté du texte. */
-function referenceRows(ref: EvalReference): { label: string; value: string }[] {
-  const tarif = ref.isFree ? 'gratuit' : ref.price === null ? '' : `${ref.price} €`;
-  const age =
-    ref.ageMin !== null && ref.ageMax !== null
-      ? `${ref.ageMin} à ${ref.ageMax} ans`
-      : ref.ageMin !== null
-        ? `dès ${ref.ageMin} ans`
-        : ref.ageMax !== null
-          ? `jusqu'à ${ref.ageMax} ans`
-          : '';
-  const dates = ref.isPermanent
-    ? "toute l'année"
-    : ref.dateStart && ref.dateEnd && ref.dateEnd !== ref.dateStart
-      ? `du ${ref.dateStart} au ${ref.dateEnd}`
-      : ref.dateStart;
-  const cadre = { INDOOR: 'intérieur', OUTDOOR: 'extérieur', BOTH: 'les deux' }[ref.setting] ?? '';
-  return [
-    { label: 'Titre', value: ref.title },
-    { label: 'Tarif', value: tarif },
-    { label: 'Âge', value: age },
-    { label: 'Dates', value: dates },
-    { label: 'Jours', value: ref.days.length ? `${ref.days.length} date(s)` : 'toute la plage' },
-    {
-      label: 'Horaires',
-      value: [ref.openTime, ref.closeTime].filter(Boolean).join(' – '),
-    },
-    { label: 'Intérieur / extérieur', value: cadre },
-    { label: 'Catégorie', value: ref.category },
-    { label: 'Lieu', value: ref.venueName },
-    {
-      label: 'Adresse',
-      value: [ref.venueAddress, ref.venuePostalCode, ref.venueCity].filter(Boolean).join(', '),
-    },
-  ].filter((row) => row.value);
-}
-
-// ──────────────────────────────────────── étage 6 : le banc d'extraction
-
-const openExtractions = ref(new Set<number>());
-
-/**
- * Les pages du banc de lecture qu'on peut envoyer à l'extraction.
- *
- * Lues, et pas sous le seuil : une page que l'étage 5 aurait abandonnée
- * n'atteint jamais l'étage 6 dans le pipeline, et la mettre au banc mesurerait
- * un appel qui n'a pas lieu.
- */
-const readyForExtraction = computed(() => {
-  const already = new Set(extractions.value.map((x) => x.reading.id));
-  return readings.value.filter(
-    (r) =>
-      (r.status === 'ANALYZED' || r.status === 'VALIDATED') &&
-      !r.tooShort &&
-      r.textChars > 0 &&
-      !already.has(r.id),
-  );
-});
-
-function replaceExtraction(extraction: EvalExtraction) {
-  const index = extractions.value.findIndex((x) => x.id === extraction.id);
-  if (index === -1) extractions.value.unshift(extraction);
-  else extractions.value[index] = extraction;
-  // Les taux se recalculent au serveur, sur l'ensemble du banc : les recopier
-  // ici en ferait une seconde vérité, qui finirait par diverger.
-  loadExtractions(true);
-}
-
-function toggleExtraction(id: number) {
-  openExtractions.value = flip(openExtractions.value, id);
-}
-
-/**
- * Met en file toutes les fiches lisibles du banc de lecture.
- *
- * C'est le seul geste du banc dont la dépense est proportionnelle au nombre de
- * pages — une extraction, un appel payant. D'où la confirmation, qui annonce le
- * compte : un clic de trop sur les autres boutons coûte une seconde, ici il
- * coûte de l'argent.
- *
- * Le compte affiché est celui que la console calcule sur ce qu'elle a en main ;
- * c'est le serveur qui tranche vraiment, et il rend combien de lignes ont été
- * créées — moins, si une page a été extraite depuis un autre onglet.
- */
-async function extractAll() {
-  const total = readyForExtraction.value.length;
-  if (!total) return;
-  if (
-    !confirm(
-      `Extraire ${total} fiche(s) ?\n\nC'est ${total} appel(s) au modèle : ` +
-        "l'étage 6 est le seul du banc dont la mesure se paie, et elle se paie par fiche.",
-    )
-  ) {
-    return;
-  }
-  error.value = '';
-  notice.value = '';
-  addingExtract.value = true;
+async function saveLabels(clear = false) {
+  const reading = editing.value;
+  if (!reading) return;
   try {
-    const data = await api.post<{ added: number }>('/api/eval/extractions/all', {
-      model: extractForm.value.model.trim(),
+    await api.patch(`/api/eval/readings/${reading.id}`, {
+      expectedImage: clear ? null : editImage.value.trim(),
+      expectedDates: clear ? null : lines(editDates.value),
+      expectedMarkers: clear ? null : lines(editMarkers.value),
     });
-    notice.value = `${data.added} extraction(s) mise(s) en file : le worker les traitera une par une.`;
-    await loadExtractions(true);
+    editing.value = null;
+    await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
-  } finally {
-    addingExtract.value = false;
+    fail(e);
   }
 }
 
-async function addExtraction() {
-  error.value = '';
-  notice.value = '';
-  addingExtract.value = true;
+/** Combien d'étiquettes une page porte : trois au plus, celles de l'étage 5. */
+function labelled(reading: EvalReading): number {
+  return [reading.expectedImage, reading.expectedDates, reading.expectedMarkers].filter(
+    (v) => v !== null,
+  ).length;
+}
+
+// ── peupler le corpus depuis ce que le pipeline a déjà fait ────────────
+
+async function pour(bucket: 'approuvees' | 'abandonnees' | 'illisibles' | 'liens') {
   try {
-    const data = await api.post<{ extraction: EvalExtraction }>('/api/eval/extractions', {
-      readingId: extractForm.value.readingId,
-      model: extractForm.value.model.trim(),
-    });
-    replaceExtraction(data.extraction);
-    openExtractions.value = new Set([...openExtractions.value, data.extraction.id]);
-    extractForm.value = { readingId: 0, model: '' };
-    notice.value = "Extraction mise en file. C'est le premier étage du banc qui se paie : un appel.";
+    const body = await api.post<{ added: number }>('/api/eval/seed', { bucket, limit: 25 });
+    notice.value = `${body.added} entrée(s) ajoutée(s) au corpus.`;
+    await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
-  } finally {
-    addingExtract.value = false;
+    fail(e);
   }
 }
 
-/** Trancher un aspect. C'est le geste que cet onglet existe pour permettre. */
-async function setField(x: EvalExtraction, key: string, value: EvalFieldVerdict) {
-  const data = await act(x.id, () =>
-    api.patch<{ extraction: EvalExtraction }>(`/api/eval/extractions/${x.id}`, {
-      verdicts: { [key]: value },
-    }),
-  );
-  if (data) replaceExtraction(data.extraction);
-}
-
-/** Les aspects qu'aucun instrument n'a signalés et que personne n'a tranchés. */
-function sweepable(x: EvalExtraction): EvalAspect[] {
-  return x.aspects.filter((a) => !a.flags.length && !x.verdicts[a.key]);
-}
-
-/** Les aspects que la fiche approuvée propose, et que personne n'a encore tranchés. */
-function proposable(x: EvalExtraction): EvalAspect[] {
-  return x.aspects.filter((a) => a.proposed && !x.verdicts[a.key]);
-}
-
-/**
- * Confirmer d'un coup ce que la fiche approuvée propose.
- *
- * Ce n'est pas un raccourci : approuver veut dire qu'un modérateur a vérifié
- * chaque champ, donc la proposition **est** une étiquette humaine. Le clic ne
- * fait que la reporter sur cette mesure-ci — et il reste un clic, parce qu'une
- * proposition qui s'écrirait toute seule redeviendrait indiscernable de
- * « personne n'a regardé ».
- */
-async function acceptProposals(x: EvalExtraction) {
-  const rest = proposable(x);
-  if (!rest.length) return;
-  const verdicts: Record<string, EvalFieldVerdict> = {};
-  for (const aspect of rest) verdicts[aspect.key] = aspect.proposed as EvalFieldVerdict;
-  const data = await act(x.id, () =>
-    api.patch<{ extraction: EvalExtraction }>(`/api/eval/extractions/${x.id}`, { verdicts }),
-  );
-  if (data) replaceExtraction(data.extraction);
-}
-
-/** Ceux qui restent à trancher, tous confondus. */
-function pending(x: EvalExtraction): EvalAspect[] {
-  return x.aspects.filter((a) => !x.verdicts[a.key]);
-}
-
-/**
- * « Le reste est juste » — mais seulement ce qu'aucun instrument n'a signalé.
- *
- * C'est le pendant de la précoche de l'étage 3, et il lui faut la même
- * prudence. Balayer aussi les aspects signalés annulerait le seul travail que
- * les instruments font : ils ont dit *où regarder*, et un bouton qui passe
- * par-dessus rend la mesure indiscernable de « personne n'a rien lu ».
- *
- * Le cas qu'il faut regarder deux fois reste le champ **vide** : dire qu'il
- * l'est à raison, c'est affirmer que la page n'en parle nulle part. C'est
- * l'affirmation la plus facile à faire à tort, et c'est elle qui porte le taux
- * de couverture.
- */
-async function sweep(x: EvalExtraction) {
-  const rest = sweepable(x);
-  if (!rest.length) return;
-  const verdicts: Record<string, EvalFieldVerdict> = {};
-  for (const aspect of rest) verdicts[aspect.key] = 'JUSTE';
-  const data = await act(x.id, () =>
-    api.patch<{ extraction: EvalExtraction }>(`/api/eval/extractions/${x.id}`, { verdicts }),
-  );
-  if (data) replaceExtraction(data.extraction);
-}
-
-async function analyzeExtraction(x: EvalExtraction) {
-  if (
-    Object.keys(x.verdicts).length &&
-    !confirm(
-      'Relancer effacera les verdicts déjà posés.\n\nIls décrivaient une fiche que le ' +
-        'modèle va réécrire — et un modèle ne répond jamais deux fois exactement pareil.',
-    )
-  ) {
-    return;
-  }
-  const data = await act(x.id, () =>
-    api.post<{ extraction: EvalExtraction }>(`/api/eval/extractions/${x.id}/analyze`),
-  );
-  if (data) replaceExtraction(data.extraction);
-}
-
-async function validateExtraction(x: EvalExtraction) {
-  const data = await act(x.id, () =>
-    api.post<{ extraction: EvalExtraction }>(`/api/eval/extractions/${x.id}/validate`),
-  );
-  if (data) {
-    replaceExtraction(data.extraction);
-    notice.value = 'Vérité de référence enregistrée : cette fiche compte dans la mesure.';
-  }
-}
-
-async function removeExtraction(x: EvalExtraction) {
-  if (!confirm('Supprimer cette extraction et les verdicts posés dessus ?')) return;
-  const done = await act(x.id, () => api.delete(`/api/eval/extractions/${x.id}`));
-  if (done) extractions.value = extractions.value.filter((e) => e.id !== x.id);
-}
-
-function flagLabel(key: string) {
-  return EVAL_FLAG_LABELS[key]?.label ?? key;
-}
-
-function flagHint(key: string) {
-  return EVAL_FLAG_LABELS[key]?.hint ?? '';
-}
-
-/**
- * Les réponses possibles, selon que le champ est rempli ou vide.
- *
- * Jamais quatre : « inventé » n'a aucun sens sur un champ vide, « manqué »
- * aucun sur un champ renseigné. Les montrer quand même ferait relire deux
- * réponses impossibles à chaque ligne — douze aspects sur trente fiches, ce
- * sont sept cents lectures pour rien.
- */
-function fieldChoices(aspect: EvalAspect) {
-  return EVAL_FIELD_CHOICES[aspect.filled ? 'filled' : 'empty'];
-}
-
-const current = computed(() => BRICKS.find((b) => b.no === tab.value)!);
+const corpusSize = computed(() => ({
+  agendas: agendas.value.length,
+  pages: agendas.value.reduce((n, a) => n + (a.pagesCaptured ?? 0), 0),
+  links: agendas.value.reduce((n, a) => n + (a.labels ?? 0), 0),
+  readings: readings.value.length,
+  readingLabels: readings.value.reduce((n, r) => n + labelled(r), 0),
+}));
 </script>
 
 <template>
   <div class="container page">
-    <nav class="row admin-nav">
-      <RouterLink to="/admin">Utilisateurs</RouterLink>
-      <RouterLink to="/admin/categories">Catégories</RouterLink>
-      <RouterLink to="/admin/zones">Zones</RouterLink>
-      <RouterLink to="/admin/evaluation">Banc d'évaluation</RouterLink>
+    <h1>Banc d’évaluation — le corpus</h1>
+    <nav class="row" style="gap: 1rem; margin-bottom: 1rem">
+      <RouterLink to="/admin/evaluation">Corpus et étiquettes</RouterLink>
+      <RouterLink to="/admin/evaluation/mesures">Mesures</RouterLink>
     </nav>
-    <h1>Banc d'évaluation</h1>
-    <p class="muted lede">
-      Mesurer ce que chaque brique rend vraiment, plutôt que d'espérer qu'elle rende ce qu'il faut.
-      Trois étages sont ouverts, et ils s'enchaînent : le <strong>dépouillement</strong> décide quels
-      liens partent au tri, la <strong>lecture</strong> décide ce que le modèle verra de la page, et
-      l'<strong>extraction</strong> remplit la fiche à partir de ce texte-là. Chacun mesuré sur la
-      sortie du précédent, gelée — c'est ce qui permet d'accuser le bon étage.
+
+    <p class="muted">
+      Une étiquette dit ce qu’une page <strong>contient</strong>, jamais si une
+      brique a eu raison. C’est ce qui la fait vivre des années : « la page
+      annonce 8 € » vaut pour toujours, « le tarif rendu est juste » périmait au
+      premier changement de prompt. La mesure, elle, est sur
+      <RouterLink to="/admin/evaluation/mesures">Mesures</RouterLink>.
     </p>
 
-    <nav class="tabs" aria-label="Les huit briques du scraper">
-      <button
-        v-for="brick in BRICKS"
-        :key="brick.no"
-        type="button"
-        class="tab"
-        :class="{ active: tab === brick.no, ready: OPEN_BRICKS.includes(brick.no) }"
-        :aria-current="tab === brick.no ? 'page' : undefined"
-        @click="tab = brick.no"
-      >
-        <span class="no">{{ brick.no }}</span>
-        <span class="name">{{ brick.name }}</span>
-      </button>
-    </nav>
+    <div class="tiles">
+      <div class="card tile">
+        <span class="value">{{ corpusSize.pages }}</span>
+        <span class="label">page(s) d’agenda gelée(s)</span>
+      </div>
+      <div class="card tile">
+        <span class="value">{{ corpusSize.links }}</span>
+        <span class="label">lien(s) étiqueté(s)</span>
+      </div>
+      <div class="card tile">
+        <span class="value">{{ corpusSize.readings }}</span>
+        <span class="label">page(s) au corpus de lecture</span>
+      </div>
+      <div class="card tile">
+        <span class="value">{{ corpusSize.readingLabels }}</span>
+        <span class="label">étiquette(s) de lecture</span>
+      </div>
+    </div>
 
+    <p v-if="notice" class="notice">{{ notice }}</p>
     <p v-if="error" class="error">{{ error }}</p>
-    <p v-if="notice" class="success">{{ notice }}</p>
+    <p v-if="loading" class="muted">Chargement…</p>
 
-    <!-- ─────────────────────────────────────────── 5. la lecture -->
-    <section v-if="tab === 5" class="brick3">
-      <div class="card intro">
-        <h2>5. Lecture — ce que la brique tire d'une fiche</h2>
-        <p>
-          L'étage 5 lit <strong>trois fois</strong> un même HTML : le texte qui part au modèle, les
-          dates que le site déclare en JSON-LD, et l'illustration. Et il en tire une décision — sous
-          deux cents caractères, la page est <strong>abandonnée</strong> avant le moindre appel
-          payant.
-        </p>
-        <p>
-          Trois verdicts plutôt qu'un, parce que les trois se ratent séparément et ne se réparent
-          pas au même endroit : un texte amputé accuse la liste des balises décapées
-          (<code>nav header footer aside form</code>), un texte tronqué accuse le plafond de
-          caractères, une illustration qui est le logo du site accuse le tamis des images.
-        </p>
-        <p class="rule">
-          <strong>Le signal à regarder en premier :</strong> quand le titre de la page ne se
-          retrouve pas dans le texte extrait, c'est qu'un bloc a été décapé — presque toujours un
-          <code>&lt;header&gt;</code>, et les dates et l'adresse sont parties avec. Le texte reste
-          non vide, rien ne proteste, et c'est l'extraction qu'on ira accuser de rendre une fiche
-          sans date.
-        </p>
+    <!-- ── Peupler ────────────────────────────────────────────────────── -->
+    <h2>Peupler depuis ce que le pipeline a déjà fait</h2>
+    <p class="muted small">
+      Quatre paniers, et l’équilibre entre eux est la question : ne prendre que
+      les réussites mesurerait la brique sur ses propres succès — on lirait 96 %
+      de textes corrects, et ça ne voudrait rien dire.
+    </p>
+    <div v-if="seed" class="row buckets">
+      <button class="btn ghost" :disabled="!seed.approuvees" @click="pour('approuvees')">
+        Sorties approuvées ({{ seed.approuvees }})
+      </button>
+      <button class="btn ghost" :disabled="!seed.abandonnees" @click="pour('abandonnees')">
+        Pages abandonnées ({{ seed.abandonnees }})
+      </button>
+      <button class="btn ghost" :disabled="!seed.illisibles" @click="pour('illisibles')">
+        Descriptions refusées ({{ seed.illisibles }})
+      </button>
+      <button class="btn ghost" :disabled="!seed.liens" @click="pour('liens')">
+        Étiquettes venues de la modération ({{ seed.liens }})
+      </button>
+    </div>
+    <p v-if="seed" class="muted small">
+      Le dernier panier n’apporte que des <strong>positifs</strong> : une page
+      devenue une sortie approuvée est une sortie, un modérateur l’a vérifiée
+      fiche en main. Il ne dira jamais qu’un lien n’en est pas une — il
+      raccourcit la relecture, il ne la remplace pas.
+    </p>
+
+    <!-- ── Les agendas ────────────────────────────────────────────────── -->
+    <h2>Agendas — étages 3 et 4</h2>
+    <div class="row add">
+      <input v-model="newAgendaUrl" type="url" placeholder="https://exemple.fr/agenda" />
+      <input v-model.number="newAgendaPages" type="number" min="1" max="10" title="Pages à geler" />
+      <button class="btn" @click="addAgenda()">Ajouter au corpus</button>
+    </div>
+
+    <div v-for="agenda in agendas" :key="agenda.id" class="card entry">
+      <div class="entry-head">
+        <button class="linklike strong" @click="openAgenda(agenda)">
+          {{ agenda.label || agenda.url }}
+        </button>
+        <span class="badge">{{ EVAL_CAPTURE_LABELS[agenda.capture] }}</span>
+        <span class="muted small">
+          {{ agenda.pagesCaptured }} page(s) gelée(s) · {{ agenda.labels }} étiquette(s)
+        </span>
+        <span class="spacer" />
+        <button
+          v-if="agenda.capture !== 'CAPTURED'"
+          class="linklike"
+          @click="capture('agendas', agenda.id)"
+        >
+          Geler
+        </button>
+        <button class="linklike" @click="removeAgenda(agenda)">Retirer</button>
       </div>
+      <p v-if="agenda.captureError" class="error small">{{ agenda.captureError }}</p>
 
-      <form class="card form add read-add" @submit.prevent="addReading">
-        <div class="row">
-          <div class="field grow">
-            <label for="read-url">Adresse d'une fiche</label>
-            <input
-              id="read-url"
-              v-model="readForm.url"
-              type="url"
-              required
-              placeholder="https://exemple.fr/agenda/le-spectacle"
-            />
-          </div>
-          <div class="field">
-            <label for="read-label">Nom (facultatif)</label>
-            <input id="read-label" v-model="readForm.label" type="text" maxlength="150" />
-          </div>
-          <div class="field submit">
-            <button class="btn" type="submit" :disabled="addingRead || !readForm.url.trim()">
-              {{ addingRead ? 'Envoi…' : 'Lire' }}
+      <!-- Le détail : les étiquettes, et un relevé en regard -->
+      <div v-if="open?.id === agenda.id" class="detail">
+        <p v-if="!openRunId" class="muted small">
+          Aucune mesure jouée : les liens de cette page ne sont pas encore
+          connus. Lancez-en une depuis
+          <RouterLink to="/admin/evaluation/mesures">Mesures</RouterLink>, ou
+          étiquetez à la main ce que vous savez déjà.
+        </p>
+        <p v-else class="muted small">
+          Relevé affiché : run #{{ openRunId }}. Il <strong>propose</strong>, il
+          n’écrit rien : une ligne n’entre au corpus que si vous cliquez.
+        </p>
+
+        <div v-for="page in open.agendaPages" :key="page.id" class="page-block">
+          <h4>
+            Page {{ page.pageNo }}
+            <span class="muted small">{{ page.chars }} caractères</span>
+            <a v-if="page.archived" :href="`/api/eval/pages/${page.id}/html`" target="_blank">
+              voir le HTML gelé
+            </a>
+          </h4>
+
+          <!-- La pagination -->
+          <div class="next">
+            <span class="muted small">Page suivante réelle :</span>
+            <code v-if="page.nextExpected">{{ page.nextExpected }}</code>
+            <em v-else-if="page.nextExpected === ''" class="muted">il n’y en a pas</em>
+            <em v-else class="muted">non étiquetée</em>
+            <span v-if="openRunId" class="muted small">
+              — le relevé a trouvé
+              <code v-if="foundNext(page)">{{ foundNext(page) }}</code>
+              <em v-else>rien</em>
+            </span>
+            <button class="linklike" @click="labelNext(page.id, foundNext(page))">
+              c’est juste
             </button>
-          </div>
-        </div>
-        <p class="hint pages-why">
-          Une <strong>fiche</strong>, pas un agenda : ce ne sont pas les mêmes pages, donc pas le
-          même corpus. Prenez-les dans les liens que l'étage 3 a retenus — ce sont exactement celles
-          que le pipeline lirait.
-        </p>
-      </form>
-
-      <div class="card baskets">
-        <h3>Ou peupler le banc avec ce que le pipeline a déjà fait</h3>
-        <p class="muted small-note">
-          Deux paniers, et l'équilibre entre eux est <strong>la</strong> question de ce banc. Une
-          sortie approuvée est une page où l'étage 5 a <em>réussi</em> : son texte était lisible,
-          sinon elle ne serait jamais devenue une sortie. N'en prendre que celles-là mesurerait la
-          brique sur ses propres succès — on lirait 96 % de textes corrects, et ça ne voudrait rien
-          dire. Les pages qu'il a <em>abandonnées</em> sont l'autre moitié, et personne n'a jamais
-          vérifié s'il avait raison.
-        </p>
-        <div class="basket-row">
-          <div class="basket">
-            <span class="basket-n">{{ seed ? seed.approuvees : '—' }}</span>
-            <span class="basket-t">sorties approuvées</span>
-            <p class="muted small-note">
-              Un modérateur a vérifié chaque champ : la fiche sert de
-              <strong>vérité de référence</strong> à l'onglet 6.
-            </p>
+            <button class="linklike" @click="labelNext(page.id, '')">il n’y a pas de suite</button>
             <button
-              class="btn small secondary"
-              type="button"
-              :disabled="!seed || !seed.approuvees || !!seeding"
-              @click="seedBucket('approuvees', 25)"
+              class="linklike"
+              @click="askNext(page.id)"
             >
-              {{ seeding === 'approuvees' ? 'Envoi…' : 'En prendre 25' }}
+              c’est celle-ci…
             </button>
           </div>
-          <div class="basket">
-            <span class="basket-n">{{ seed ? seed.abandonnees : '—' }}</span>
-            <span class="basket-t">pages abandonnées</span>
-            <p class="muted small-note">
-              L'étage 5 les a écartées comme « {{ seed ? seed.abandonReason : '…' }} ».
-              <strong>Le point aveugle</strong> : nul n'a vérifié ces abandons.
-            </p>
-            <button
-              class="btn small secondary"
-              type="button"
-              :disabled="!seed || !seed.abandonnees || !!seeding"
-              @click="seedBucket('abandonnees', 25)"
-            >
-              {{ seeding === 'abandonnees' ? 'Envoi…' : 'En prendre 25' }}
-            </button>
-          </div>
-          <div class="basket mix">
-            <span class="basket-t">Au banc aujourd'hui</span>
-            <ul>
-              <li>{{ readingMix.APPROUVEE }} approuvées</li>
-              <li :class="{ warn: readingMix.APPROUVEE > 0 && readingMix.ABANDONNEE === 0 }">
-                {{ readingMix.ABANDONNEE }} abandonnées
-              </li>
-              <li>{{ readingMix.MANUEL }} saisies à la main</li>
-            </ul>
-            <p v-if="readingMix.APPROUVEE > 0 && readingMix.ABANDONNEE === 0" class="muted small-note">
-              Que des succès : les taux qui en sortiront seront flatteurs et faux.
-            </p>
-          </div>
-        </div>
-        <p class="hint">
-          Les pages sont relues et gelées comme les autres. Le pipeline n'archive pas le HTML
-          d'époque : la console affiche donc depuis combien de temps il l'avait lue — plus l'écart
-          est grand, moins un désaccord accuse la brique.
-        </p>
-      </div>
 
-      <dl v-if="readStats && readStats.pages" class="stats card readstats">
-        <div>
-          <dt>Pages</dt>
-          <dd>{{ readStats.pages }}</dd>
-        </div>
-        <div :class="{ warn: readStats.judged < readStats.pages }">
-          <dt title="Les trois aspects tranchés">Jugées</dt>
-          <dd>{{ readStats.judged }} / {{ readStats.pages }}</dd>
-        </div>
-        <div class="rate">
-          <dt>Texte juste</dt>
-          <dd>{{ percent(readStats.textOk) }}</dd>
-        </div>
-        <div class="rate">
-          <dt>Illustration juste</dt>
-          <dd>{{ percent(readStats.imageOk) }}</dd>
-        </div>
-        <div class="rate">
-          <dt>Dates justes</dt>
-          <dd>{{ percent(readStats.datesOk) }}</dd>
-        </div>
-        <div :class="{ flag: readStats.ampute > 0 }">
-          <dt title="Le décapage a emporté une partie de la page">Amputés</dt>
-          <dd>{{ readStats.ampute }}</dd>
-        </div>
-        <div :class="{ flag: readStats.tronque > 0 }">
-          <dt title="Le plafond de caractères a coupé la fin">Tronqués</dt>
-          <dd>{{ readStats.tronque }}</dd>
-        </div>
-        <div :class="{ flag: readStats.abandonnees > 0 }">
-          <dt title="Sous le seuil : le pipeline les aurait abandonnées">Abandonnées</dt>
-          <dd>{{ readStats.abandonnees }}</dd>
-        </div>
-      </dl>
-
-      <p v-if="!readings.length" class="muted empty">
-        Aucune fiche au banc. Une trentaine suffit à savoir si l'étage 5 lit ce qu'il devrait lire.
-      </p>
-
-      <article v-for="r in readings" :key="r.id" class="card agenda">
-        <header class="agenda-head">
-          <button
-            type="button"
-            class="disclose"
-            :aria-expanded="openReadings.has(r.id)"
-            @click="toggleReading(r.id)"
-          >
-            <span class="caret" :class="{ open: openReadings.has(r.id) }" aria-hidden="true"
-              >▸</span
-            >
-            <span class="agenda-title">{{ r.label || r.url }}</span>
-          </button>
-          <span v-if="r.origin !== 'MANUEL'" class="pill origin" :class="r.origin.toLowerCase()">{{
-            originLabel(r.origin)
-          }}</span>
-          <span class="pill" :class="r.status.toLowerCase()">{{ statusLabel(r.status) }}</span>
-        </header>
-
-        <p class="agenda-url">
-          <a :href="r.url" target="_blank" rel="noopener noreferrer">{{ r.url }}</a>
-          <a
-            v-if="r.archived"
-            class="frozen"
-            :href="`/api/eval/readings/${r.id}/html`"
-            target="_blank"
-            rel="noopener noreferrer"
-            >voir le HTML gelé</a
-          >
-          <span v-if="r.readAt" class="muted small-note">{{ drift(r.readAt) }}</span>
-        </p>
-
-        <p v-if="r.error" class="error slim">{{ r.error }}</p>
-
-        <ul v-if="readFlags(r).length" class="flags">
-          <li v-for="(f, i) in readFlags(r)" :key="i" :class="f.tone">{{ f.text }}</li>
-        </ul>
-
-        <div v-if="openReadings.has(r.id) && !r.error" class="tree">
-          <div class="read-grid">
-            <section class="read-col">
-              <h4>Le texte — {{ r.textChars }} caractères</h4>
-              <pre class="extract">{{ r.text || '(vide)' }}</pre>
-            </section>
-            <section class="read-col">
-              <h4>Les dates JSON-LD</h4>
-              <ul v-if="r.dates.length" class="dates">
-                <li v-for="(d, i) in r.dates" :key="i">{{ d }}</li>
-              </ul>
-              <p v-else class="muted">Aucune.</p>
-
-              <h4>L'illustration</h4>
-              <template v-if="r.imageUrl">
-                <a :href="r.imageUrl" target="_blank" rel="noopener noreferrer" class="imgurl">{{
-                  r.imageUrl
-                }}</a>
-                <img :src="r.imageUrl" alt="" class="shot" loading="lazy" />
-              </template>
-              <p v-else class="muted">Aucune.</p>
-
-              <template v-if="r.reference">
-                <h4>Ce que le pipeline a publié depuis cette page</h4>
-                <p class="muted small-note">
-                  Du <strong>contexte</strong>, pas un verdict : les trois questions de cet étage
-                  portent sur ce que la page <em>contient</em>, cette fiche dit ce que la sortie
-                  <em>est</em>. Elle aide à juger si le texte porte bien la sortie — et c'est la
-                  vérité de référence de l'onglet 6, pas du 5.
-                </p>
-                <dl class="reference">
-                  <div v-for="row in referenceRows(r.reference)" :key="row.label">
-                    <dt>{{ row.label }}</dt>
-                    <dd>{{ row.value }}</dd>
-                  </div>
-                </dl>
-              </template>
-            </section>
-          </div>
-
-          <div v-for="aspect in EVAL_READ_ASPECTS" :key="aspect.key" class="aspect">
-            <span class="aspect-title">{{ aspect.title }}</span>
-            <span class="seg">
-              <button
-                v-for="c in aspect.choices"
-                :key="c.key"
-                type="button"
-                class="segb"
-                :class="{ on: r[aspect.key] === c.key }"
-                :aria-pressed="r[aspect.key] === c.key"
-                :title="c.hint"
-                :disabled="busy.has(r.id)"
-                @click="setAspect(r, aspect.key, c.key)"
-              >
-                {{ c.label }}
+          <!-- Les motifs de rejet, expédiables en groupe -->
+          <div v-if="reasons(page).length" class="row reasons">
+            <span class="muted small">Écartés par le relevé :</span>
+            <span v-for="[reason, count] in reasons(page)" :key="reason" class="reason">
+              {{ reason }} ({{ count }})
+              <button class="linklike" @click="bulk(page.id, reason, 'AUTRE')">
+                tout « autre chose »
               </button>
             </span>
-            <span v-if="!r[aspect.key]" class="pre">à juger</span>
           </div>
-        </div>
 
-        <div class="actions">
-          <button
-            class="btn small secondary"
-            type="button"
-            :disabled="busy.has(r.id) || r.status === 'RUNNING'"
-            @click="analyzeReading(r)"
-          >
-            {{ r.status === 'FAILED' ? 'Réessayer' : 'Relire' }}
-          </button>
-          <button
-            v-if="r.status === 'ANALYZED'"
-            class="btn small"
-            type="button"
-            :disabled="busy.has(r.id) || !r.judged"
-            :title="r.judged ? 'Figer la vérité de référence' : 'Les trois aspects doivent être tranchés'"
-            @click="validateReading(r)"
-          >
-            Valider la lecture
-          </button>
-          <span v-if="r.validatedAt" class="muted small-note">
-            Validé le {{ when(r.validatedAt) }} · {{ r.author.displayName }}
-          </span>
-          <button
-            class="btn small danger"
-            type="button"
-            :disabled="busy.has(r.id)"
-            @click="removeReading(r)"
-          >
-            Supprimer
-          </button>
-        </div>
-      </article>
-    </section>
-
-    <!-- ─────────────────────────────────────── 6. l'extraction -->
-    <section v-else-if="tab === 6" class="brick3">
-      <div class="card intro">
-        <h2>6. Extraction — champ par champ, jamais fiche par fiche</h2>
-        <p>
-          C'est ici que naissent <strong>intérieur / extérieur</strong>, l'âge, le tarif, le lieu :
-          l'étage 5 ne rend qu'un texte, et tout le reste de la fiche est lu dedans par le modèle.
-          Une fiche jugée « fausse » d'un bloc ne dirait pas quel champ a lâché, donc pas quoi
-          réparer. Douze aspects tranchés séparément disent « le tarif se rate une fois sur trois »,
-          et ça, c'est une ligne de prompt à réécrire.
-        </p>
-        <p>
-          <strong>Trois instruments travaillent avant votre premier clic</strong>, et aucun ne coûte
-          d'étiquette. L'<em>ancrage</em> : toute valeur rendue doit se retrouver dans le texte —
-          c'est le seul qui attrape une invention, et il l'attrape sans savoir ce qui est vrai. La
-          <em>cohérence</em> : un âge minimum au-dessus du maximum est faux sans qu'on ait rien lu.
-          L'<em>accord</em> : les dates rendues rencontrent-elles celles que l'étage 5 a relevées en
-          JSON-LD ? Deux lectures indépendantes qui se contredisent, l'une des deux se trompe.
-        </p>
-        <p class="rule">
-          <strong>Ce que les instruments ne savent pas faire :</strong> intérieur ou extérieur n'a
-          <em>aucun</em> ancrage possible. Une page ne l'écrit presque jamais — elle dit « au parc de
-          la Villette », « salle Jean-Vilar », et c'est le lecteur qui conclut. C'est l'aspect qui
-          coûtera toujours un humain, et mieux vaut le savoir que d'inventer une heuristique qui
-          donnerait l'illusion d'une mesure.
-        </p>
-        <p>
-          L'entrée est le <strong>texte gelé de l'étage 5</strong>, jamais la page. Retélécharger
-          mêlerait deux mesures : une fiche sans tarif dirait aussi bien « le modèle ne l'a pas vu »
-          que « la lecture l'avait déjà emporté avec un <code>&lt;aside&gt;</code> ». Le banc de
-          lecture a mesuré cela séparément, et l'a déjà dit.
-        </p>
-      </div>
-
-      <form class="card form add extract-add" @submit.prevent="addExtraction">
-        <div class="row">
-          <div class="field grow">
-            <label for="ex-reading">Une fiche déjà lue par l'étage 5</label>
-            <select id="ex-reading" v-model.number="extractForm.readingId" required>
-              <option :value="0" disabled>Choisir une page du banc de lecture…</option>
-              <option v-for="r in readyForExtraction" :key="r.id" :value="r.id">
-                {{ r.label || r.url }} — {{ r.textChars }} caractères
-              </option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="ex-model">Modèle (facultatif)</label>
-            <input
-              id="ex-model"
-              v-model="extractForm.model"
-              type="text"
-              maxlength="120"
-              placeholder="celui du scraper"
-            />
-          </div>
-          <div class="field submit">
-            <button
-              class="btn"
-              type="submit"
-              :disabled="addingExtract || !extractForm.readingId"
-            >
-              {{ addingExtract ? 'Envoi…' : 'Extraire' }}
-            </button>
-          </div>
-        </div>
-        <p class="hint pages-why">
-          La liste ne montre que les pages <strong>lues et au-dessus du seuil</strong> : une page que
-          l'étage 5 aurait abandonnée n'atteint jamais l'extraction dans le pipeline, et la mesurer
-          ici mesurerait un appel qui n'a pas lieu. Ajoutez-en d'abord dans l'onglet 5.
-        </p>
-        <p v-if="readyForExtraction.length > 1" class="bulk">
-          <button
-            class="btn small secondary"
-            type="button"
-            :disabled="addingExtract"
-            @click="extractAll"
-          >
-            Extraire les {{ readyForExtraction.length }} fiches de la liste
-          </button>
-          <span class="muted small-note">
-            Un appel payant par fiche — c'est le seul geste du banc dont la dépense suit le nombre
-            de pages. Le worker les traitera une par une, derrière tout ce qui est gratuit.
-          </span>
-        </p>
-      </form>
-
-      <dl v-if="extractStats && extractStats.fiches" class="stats card readstats">
-        <div>
-          <dt>Fiches</dt>
-          <dd>{{ extractStats.fiches }}</dd>
-        </div>
-        <div :class="{ warn: extractStats.judged < extractStats.fiches }">
-          <dt title="Tous les aspects tranchés">Jugées</dt>
-          <dd>{{ extractStats.judged }} / {{ extractStats.fiches }}</dd>
-        </div>
-        <div :class="{ flag: extractStats.inventions > 0 }">
-          <dt title="Une valeur rendue que la page ne dit nulle part">Inventions</dt>
-          <dd>{{ extractStats.inventions }}</dd>
-        </div>
-        <div :class="{ flag: extractStats.manques > 0 }">
-          <dt title="La page le disait, le champ est resté vide">Manqués</dt>
-          <dd>{{ extractStats.manques }}</dd>
-        </div>
-        <div>
-          <dt title="Le modèle a déclaré la page hors sujet">Écartées</dt>
-          <dd>{{ extractStats.ecartees }}</dd>
-        </div>
-        <div>
-          <dt title="Renvoyées comme programmes, à relire d'un bloc">Programmes</dt>
-          <dd>{{ extractStats.programmes }}</dd>
-        </div>
-        <div :class="{ warn: extractStats.bougees > 0 }">
-          <dt title="Comparées à une sortie approuvée, champ par champ">Avec référence</dt>
-          <dd>{{ extractStats.avecReference }} / {{ extractStats.fiches }}</dd>
-        </div>
-        <div :class="{ flag: extractStats.corriges > 0 }">
-          <dt title="Verdicts humains qui ont contredit la fiche approuvée">Corrigés</dt>
-          <dd>{{ extractStats.corriges }}</dd>
-        </div>
-        <div class="rate">
-          <dt title="Le premier étage du banc dont la mesure se paie">Coût</dt>
-          <dd>{{ extractStats.costUsd }} $</dd>
-        </div>
-      </dl>
-
-      <p v-if="extractStats && extractStats.confirmes" class="card confirm-note">
-        <strong>{{ extractStats.confirmes }}</strong> verdict(s) n'ont fait que confirmer la sortie
-        approuvée, <strong>{{ extractStats.corriges }}</strong> l'ont contredite. Le premier chiffre
-        mérite d'être regardé : une mesure entièrement confirmative reste vraie — un humain a
-        cliqué — mais elle dit surtout que le modèle et le modérateur sont d'accord, ce qui est plus
-        faible qu'une relecture indépendante. Les vrais renseignements sont dans les corrections.
-      </p>
-
-      <div v-if="extractStats && extractStats.judged" class="card scroller">
-        <h3>Les trois taux, aspect par aspect</h3>
-        <p class="muted small-note">
-          L'<strong>exactitude</strong> : parmi les valeurs qu'il a osé écrire, la part juste.
-          La <strong>couverture</strong> : parmi ce que la page offrait, la part rapportée juste —
-          c'est le chiffre qui demande vraiment un humain, il faut avoir lu la page pour savoir que
-          l'information y était. L'<strong>invention</strong> : la part de ses valeurs que la page ne
-          dit nulle part.
-        </p>
-        <table class="aspects">
-          <thead>
-            <tr>
-              <th>Aspect</th>
-              <th>Instrument</th>
-              <th>Renseigné</th>
-              <th>Exactitude</th>
-              <th>Couverture</th>
-              <th>Invention</th>
-              <th title="Fiches où un instrument a levé un drapeau">Signalés</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="a in extractStats.aspects" :key="a.key">
-              <th scope="row">{{ a.label }}</th>
-              <td class="muted">{{ a.instrument }}</td>
-              <td>{{ a.renseigne }}</td>
-              <td>{{ percent(a.exactitude) }}</td>
-              <td>{{ percent(a.couverture) }}</td>
-              <td :class="{ bad: (a.invention ?? 0) > 0 }">{{ percent(a.invention) }}</td>
-              <td>{{ a.signale }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <p v-if="!extractions.length" class="muted empty">
-        Aucune fiche au banc d'extraction. Une vingtaine suffit à savoir quels champs se ratent — et
-        c'est le premier étage dont la mesure coûte un appel par fiche.
-      </p>
-
-      <article v-for="x in extractions" :key="x.id" class="card agenda">
-        <header class="agenda-head">
-          <button
-            type="button"
-            class="disclose"
-            :aria-expanded="openExtractions.has(x.id)"
-            @click="toggleExtraction(x.id)"
-          >
-            <span class="caret" :class="{ open: openExtractions.has(x.id) }" aria-hidden="true"
-              >▸</span
-            >
-            <span class="agenda-title">{{ x.reading.label || x.reading.url }}</span>
-          </button>
-          <span class="pill" :class="x.status.toLowerCase()">{{ statusLabel(x.status) }}</span>
-        </header>
-
-        <p class="agenda-url">
-          <a :href="x.reading.url" target="_blank" rel="noopener noreferrer">{{ x.reading.url }}</a>
-          <span v-if="x.model" class="muted small-note">{{ x.model }}</span>
-          <span v-if="x.costUsd" class="muted small-note">
-            {{ x.costUsd }} $ · {{ x.inputTokens }} + {{ x.outputTokens }} jetons
-          </span>
-        </p>
-
-        <p v-if="x.error" class="error slim">{{ x.error }}</p>
-
-        <ul v-if="x.status === 'ANALYZED' || x.status === 'VALIDATED'" class="flags">
-          <li v-if="x.fiche.relevant === false" class="bad">
-            Le modèle a écarté cette page :
-            {{ x.fiche.skip_reason || x.fiche.skipReason || 'sans motif' }}
-          </li>
-          <li v-else-if="x.fiche.several === true" class="warn">
-            Rendue comme <strong>programme</strong> : le pipeline la relirait d'un bloc pour en
-            relever toutes les sorties.
-          </li>
-          <li v-if="x.reading.textVerdict && x.reading.textVerdict !== 'CORRECT'" class="warn">
-            L'étage 5 a jugé ce texte « {{ x.reading.textVerdict.toLowerCase() }} » : ce qui manque
-            ici peut n'avoir jamais atteint le modèle.
-          </li>
-          <li v-if="x.aspects.some((a) => a.flags.length)" class="warn">
-            {{ x.aspects.filter((a) => a.flags.length).length }} aspect(s) signalé(s) par les
-            instruments — c'est par là qu'il faut commencer.
-          </li>
-          <li v-if="x.pageMoved" class="bad">
-            Le titre approuvé ne se retrouve plus dans le texte : <strong>ce n'est plus la même
-            page</strong>. Les propositions de la fiche ont été retirées — elles accuseraient le
-            modèle d'un changement du site.
-          </li>
-          <li v-else-if="x.hasReference" class="ok">
-            Comparée à la sortie approuvée
-            <a v-if="x.reading.event" :href="`/sorties/${x.reading.event.id}`" target="_blank"
-              >« {{ x.reading.event.title }} »</a
-            >, dont un modérateur a vérifié chaque champ.
-            {{ x.aspects.filter((a) => a.proposed).length }} aspect(s) proposé(s).
-          </li>
-          <li v-if="pending(x).length" class="warn">
-            {{ pending(x).length }} aspect(s) restent à trancher.
-          </li>
-        </ul>
-
-        <div v-if="openExtractions.has(x.id) && !x.error" class="tree">
-          <div class="read-grid">
-            <section class="read-col">
-              <h4>Le texte que le modèle a reçu — {{ x.reading.textChars }} caractères</h4>
-              <p class="muted small-note">
-                Gelé par l'étage 5. C'est la pièce à conviction : « ce tarif est-il dans la page ? »
-                se juge ici, pas en rouvrant la vraie page — qui a pu changer.
-              </p>
-              <pre class="extract">{{ x.reading.text || '(vide)' }}</pre>
-              <template v-if="x.reading.dates.length">
-                <h4>Les dates JSON-LD de l'étage 5</h4>
-                <ul class="dates">
-                  <li v-for="(d, i) in x.reading.dates" :key="i">{{ d }}</li>
-                </ul>
-              </template>
-            </section>
-
-            <section class="read-col">
-              <h4>La fiche, champ par champ</h4>
-              <div v-for="a in x.aspects" :key="a.key" class="aspect field-aspect">
-                <div class="field-head">
-                  <span class="aspect-title">{{ a.label }}</span>
-                  <span class="instrument" :title="'Ce qui l’a examiné : ' + a.instrument">{{
-                    a.instrument
-                  }}</span>
-                </div>
-                <p class="field-value" :class="{ none: !a.filled }">
-                  {{ a.filled ? a.value : '(vide)' }}
-                </p>
-                <p v-if="a.flags.length" class="chips">
-                  <span v-for="f in a.flags" :key="f" class="chip bad" :title="flagHint(f)">{{
-                    flagLabel(f)
-                  }}</span>
-                </p>
-                <p v-if="a.because" class="because" :class="{ agree: a.proposed === 'JUSTE' }">
-                  <span v-if="a.proposed" class="chip ref">{{ a.proposed.toLowerCase() }}</span>
-                  {{ a.because }}
-                </p>
-                <span class="seg">
-                  <button
-                    v-for="c in fieldChoices(a)"
-                    :key="c.key"
-                    type="button"
-                    class="segb"
-                    :class="{
-                      on: x.verdicts[a.key] === c.key,
-                      proposed: !x.verdicts[a.key] && a.proposed === c.key,
-                    }"
-                    :aria-pressed="x.verdicts[a.key] === c.key"
-                    :title="a.proposed === c.key ? `${c.hint} — proposé par la fiche approuvée` : c.hint"
-                    :disabled="busy.has(x.id)"
-                    @click="setField(x, a.key, c.key)"
-                  >
-                    {{ c.label }}
-                  </button>
-                </span>
-                <span v-if="!x.verdicts[a.key]" class="pre">à juger</span>
-              </div>
-            </section>
-          </div>
-        </div>
-
-        <div class="actions">
-          <button
-            v-if="proposable(x).length"
-            class="btn small"
-            type="button"
-            :disabled="busy.has(x.id)"
-            :title="
-              'Reporte les ' +
-              proposable(x).length +
-              ' verdicts que propose la sortie approuvée. Ce n’est pas un raccourci : un modérateur a vérifié chaque champ, la proposition est déjà une étiquette humaine.'
-            "
-            @click="acceptProposals(x)"
-          >
-            Confirmer la fiche approuvée ({{ proposable(x).length }})
-          </button>
-          <button
-            v-if="sweepable(x).length"
-            class="btn small secondary"
-            type="button"
-            :disabled="busy.has(x.id)"
-            :title="
-              'Marque « juste » les ' +
-              sweepable(x).length +
-              ' aspects qu’aucun instrument n’a signalés. Les signalés restent à trancher un par un : ils sont exactement là où il faut regarder.'
-            "
-            @click="sweep(x)"
-          >
-            Le reste est juste ({{ sweepable(x).length }})
-          </button>
-          <button
-            class="btn small secondary"
-            type="button"
-            :disabled="busy.has(x.id) || x.status === 'RUNNING'"
-            @click="analyzeExtraction(x)"
-          >
-            {{ x.status === 'FAILED' ? 'Réessayer' : 'Extraire à nouveau' }}
-          </button>
-          <button
-            v-if="x.status === 'ANALYZED'"
-            class="btn small"
-            type="button"
-            :disabled="busy.has(x.id) || !x.judged"
-            :title="
-              x.judged ? 'Figer la vérité de référence' : 'Tous les aspects doivent être tranchés'
-            "
-            @click="validateExtraction(x)"
-          >
-            Valider la fiche
-          </button>
-          <span v-if="x.validatedAt" class="muted small-note">
-            Validé le {{ when(x.validatedAt) }} · {{ x.author.displayName }}
-          </span>
-          <button
-            class="btn small danger"
-            type="button"
-            :disabled="busy.has(x.id)"
-            @click="removeExtraction(x)"
-          >
-            Supprimer
-          </button>
-        </div>
-      </article>
-    </section>
-
-    <section v-else-if="tab !== 3" class="card waiting">
-      <h2>{{ current.no }}. {{ current.name }}</h2>
-      <p>{{ current.why }}</p>
-      <p class="muted">
-        Rien à mesurer ici pour l'instant : le banc s'est ouvert par les trois étages du milieu —
-        dépouiller, lire, extraire — parce qu'ils s'enchaînent et que la panne de chacun se déguise
-        en panne du suivant. Les autres viendront quand ceux-là auront donné leurs chiffres.
-      </p>
-    </section>
-
-    <section v-else class="brick3">
-      <div class="card intro">
-        <h2>3. Dépouillement — la brique précoche, vous corrigez</h2>
-        <p>
-          Le banc relève <strong>tous</strong> les liens de la page, puis appelle le vrai
-          <code>links_of</code> : ce qu'il retient est précoché « sortie », le reste « autre ». Il
-          ne reste qu'à corriger ce qui est faux, et ce sont ces corrections qui sont la mesure.
-        </p>
-        <p>
-          C'est ce qui donne les <strong>deux</strong> erreurs. Un lien retenu qui ne mène nulle
-          part a coûté un appel payant à l'étage 4 ; un lien écarté qui était une sortie est une
-          sortie que personne n'aurait jamais vue — et celle-là ne coûte rien, donc ne se voit
-          nulle part.
-        </p>
-        <dl class="verdicts">
-          <div v-for="v in VERDICTS" :key="v" :class="`v-${v.toLowerCase()}`">
-            <dt>{{ EVAL_VERDICT_LABELS[v] }}</dt>
-            <dd>{{ EVAL_VERDICT_HINTS[v] }}</dd>
-          </div>
-        </dl>
-      </div>
-
-      <form class="card form add" @submit.prevent="addAgenda">
-        <div class="row">
-          <div class="field grow">
-            <label for="eval-url">Adresse de l'agenda</label>
-            <input
-              id="eval-url"
-              v-model="form.url"
-              type="url"
-              required
-              placeholder="https://exemple.fr/agenda/"
-            />
-          </div>
-          <div class="field narrow">
-            <label for="eval-pages">Pages</label>
-            <input id="eval-pages" v-model.number="form.pages" type="number" min="1" max="10" />
-            <span class="hint">1re comprise</span>
-          </div>
-          <div class="field">
-            <label for="eval-label">Nom (facultatif)</label>
-            <input id="eval-label" v-model="form.label" type="text" maxlength="150" />
-          </div>
-          <div class="field submit">
-            <button class="btn" type="submit" :disabled="adding || !form.url.trim()">
-              {{ adding ? 'Envoi…' : 'Analyser' }}
-            </button>
-          </div>
-        </div>
-        <p class="hint pages-why">
-          Un nombre fixe, et non la règle de l'étage 3 qui suit sa pagination tant qu'il manque de
-          liens : ce qu'on mesure ici est <code>links_of</code> sur une page donnée. Ce que la
-          pagination donnerait est mesuré à part, page par page.
-        </p>
-      </form>
-
-      <p v-if="loading" class="muted">Chargement…</p>
-      <p v-else-if="!agendas.length" class="muted empty">
-        Aucun agenda au banc. Ajoutez-en un ci-dessus — une dizaine suffit à savoir si le
-        dépouillement voit ce qu'il devrait voir.
-      </p>
-
-      <article v-for="agenda in agendas" :key="agenda.id" class="card agenda">
-        <header class="agenda-head">
-          <button
-            type="button"
-            class="disclose"
-            :aria-expanded="openAgendas.has(agenda.id)"
-            @click="toggleAgenda(agenda.id)"
-          >
-            <span class="caret" :class="{ open: openAgendas.has(agenda.id) }" aria-hidden="true"
-              >▸</span
-            >
-            <span class="agenda-title">{{ title(agenda) }}</span>
-          </button>
-          <span class="pill" :class="agenda.status.toLowerCase()">
-            {{ statusLabel(agenda.status) }}
-          </span>
-        </header>
-
-        <p class="agenda-url">
-          <a :href="agenda.url" target="_blank" rel="noopener noreferrer">{{ agenda.url }}</a>
-          <span class="muted"> · {{ agenda.pages }} page(s) demandée(s)</span>
-        </p>
-
-        <p v-if="agenda.error" class="error slim">{{ agenda.error }}</p>
-        <p v-if="pagesVerdict(agenda)" class="pages-short">{{ pagesVerdict(agenda) }}</p>
-
-        <dl class="stats">
-          <div>
-            <dt>Relevés</dt>
-            <dd>{{ agenda.stats.links }}</dd>
-          </div>
-          <div>
-            <dt>Retenus</dt>
-            <dd>{{ agenda.stats.kept }}</dd>
-          </div>
-          <div>
-            <dt>Sorties</dt>
-            <dd>{{ agenda.stats.sorties }}</dd>
-          </div>
-          <div :class="{ flag: agenda.stats.keptWrong > 0 }">
-            <dt title="Ils ont coûté un appel à l'étage 4 pour rien">Retenus à tort</dt>
-            <dd>{{ agenda.stats.keptWrong }}</dd>
-          </div>
-          <div :class="{ flag: agenda.stats.missed > 0 }">
-            <dt title="Personne ne les aurait jamais vues">Sorties perdues</dt>
-            <dd>{{ agenda.stats.missed }}</dd>
-          </div>
-          <div :class="{ warn: agenda.stats.sousAgendas > 0 }">
-            <dt title="Le pipeline n'en fait rien aujourd'hui">Sous-agendas</dt>
-            <dd>{{ agenda.stats.sousAgendas }}</dd>
-          </div>
-          <div :class="{ flag: agenda.stats.pagesRead < agenda.stats.pagesAsked }">
-            <dt title="Parcourir les pages fait partie du travail de la brique">Pages lues</dt>
-            <dd>{{ agenda.stats.pagesRead }} / {{ agenda.stats.pagesAsked }}</dd>
-          </div>
-          <div :class="{ flag: agenda.stats.paginationManquee > 0 }">
-            <dt title="Le site offrait une suite, la brique ne l'a pas vue">Suites ratées</dt>
-            <dd>{{ agenda.stats.paginationManquee }}</dd>
-          </div>
-          <div :class="{ flag: agenda.stats.paginationFausse > 0 }">
-            <dt title="La brique a couru après une page qui n'était pas la suite">
-              Fausses suites
-            </dt>
-            <dd>{{ agenda.stats.paginationFausse }}</dd>
-          </div>
-          <div :class="{ warn: agenda.stats.reviewed < agenda.stats.links }">
-            <dt title="Tranchés par un humain, pas par la précoche">Revus</dt>
-            <dd>{{ agenda.stats.reviewed }} / {{ agenda.stats.links }}</dd>
-          </div>
-          <div class="rate">
-            <dt title="De ce que la brique donne à l'étage 4, la part qui est une sortie">
-              Précision
-            </dt>
-            <dd>{{ percent(agenda.stats.precision) }}</dd>
-          </div>
-          <div class="rate">
-            <dt title="La part qui mène quelque part de réel : sortie, pagination ou sous-agenda">
-              dont utiles
-            </dt>
-            <dd>{{ percent(agenda.stats.precisionUseful) }}</dd>
-          </div>
-          <div class="rate">
-            <dt>Rappel</dt>
-            <dd>{{ percent(agenda.stats.recall) }}</dd>
-          </div>
-        </dl>
-        <p v-if="agenda.stats.precision === null && agenda.status === 'ANALYZED'" class="hint">
-          <template v-if="agenda.stats.pagesJugees < agenda.stats.pagesRead">
-            <strong
-              >{{ agenda.stats.pagesRead - agenda.stats.pagesJugees }} page(s) attendent leur
-              verdict de pagination.</strong
-            >
-            Suivre les pages fait partie du travail de l'étage 3 : dites, pour chacune, si ce qu'il
-            a trouvé — ou n'a pas trouvé — est juste.
-          </template>
-          <template v-else-if="agenda.stats.reviewed < agenda.stats.links">
-            <strong
-              >{{ agenda.stats.links - agenda.stats.reviewed }} lien(s) portent encore la précoche
-              de la brique.</strong
-            >
-            Tant qu'ils n'ont pas été tranchés, le rappel ne pourrait dire que « personne n'a
-            regardé le reste » — c'est ce qui le ferait afficher 100 % à tort. Le filtre « À
-            revoir » les liste ; l'action de groupe permet d'en expédier un motif entier.
-          </template>
-          <template v-else>
-            Tout est relu. « Valider l'extraction » fige la vérité de référence et débloque les
-            taux.
-          </template>
-        </p>
-
-        <div class="actions">
-          <button
-            class="btn small secondary"
-            type="button"
-            :disabled="busy.has(agenda.id) || agenda.status === 'RUNNING'"
-            @click="analyze(agenda)"
-          >
-            {{ agenda.status === 'FAILED' ? 'Réessayer' : 'Relancer l’analyse' }}
-          </button>
-          <button
-            v-if="agenda.status === 'ANALYZED'"
-            class="btn small"
-            type="button"
-            :disabled="
-              busy.has(agenda.id) ||
-              agenda.stats.reviewed < agenda.stats.links ||
-              agenda.stats.pagesJugees < agenda.stats.pagesRead
-            "
-            :title="
-              agenda.stats.reviewed < agenda.stats.links
-                ? `${agenda.stats.links - agenda.stats.reviewed} lien(s) portent encore la précoche`
-                : 'Figer la vérité de référence'
-            "
-            @click="validate(agenda)"
-          >
-            Valider l’extraction
-          </button>
-          <span v-if="agenda.validatedAt" class="muted small-note">
-            Validé le {{ when(agenda.validatedAt) }} · {{ agenda.author.displayName }}
-          </span>
-          <button
-            class="btn small danger"
-            type="button"
-            :disabled="busy.has(agenda.id)"
-            @click="remove(agenda)"
-          >
-            Supprimer
-          </button>
-        </div>
-
-        <div v-if="openAgendas.has(agenda.id)" class="tree">
-          <p v-if="!agenda.agendaPages.length" class="muted">
-            Rien de relevé pour l'instant.
-            <span v-if="agenda.status === 'QUEUED'"
-              >Le worker passe toutes les trente secondes.</span
-            >
-          </p>
-
-          <section v-for="page in agenda.agendaPages" :key="page.id" class="page-node">
-            <button
-              type="button"
-              class="disclose page-head"
-              :aria-expanded="openPages.has(page.id)"
-              @click="togglePage(page.id)"
-            >
-              <span class="caret" :class="{ open: openPages.has(page.id) }" aria-hidden="true"
-                >▸</span
-              >
-              <span class="page-no">Page {{ page.pageNo }}</span>
-              <span class="page-sum" :class="{ bad: !!page.error }">{{ pageSummary(page) }}</span>
-              <span v-if="counts(page).diff" class="diff-badge"
-                >{{ counts(page).diff }} désaccord(s)</span
-              >
-              <span class="archive" :class="{ off: !page.archived }">
-                {{ page.archived ? 'archivée' : 'non archivée' }}
-              </span>
-            </button>
-
-            <div v-if="openPages.has(page.id)" class="page-body">
-              <p class="page-url">
-                <a :href="page.url" target="_blank" rel="noopener noreferrer">{{ page.url }}</a>
-                <a
-                  v-if="page.archived"
-                  class="frozen"
-                  :href="`/api/eval/pages/${page.id}/html`"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  >voir le HTML gelé</a
-                >
-              </p>
-
-              <div v-if="pagination(page)" class="pagcheck" :class="pagination(page)!.tone">
-                <p class="pag-text"><strong>Pagination :</strong> {{ pagination(page)!.text }}</p>
-                <div class="pag-choices">
-                  <button
-                    v-for="c in nextChoices(page)"
-                    :key="c.key"
-                    type="button"
-                    class="pagb"
-                    :class="{ on: page.nextVerdict === c.key }"
-                    :disabled="busy.has(agenda.id)"
-                    @click="setNext(page, agenda.id, c.key)"
-                  >
-                    {{ c.label }}
-                  </button>
-                </div>
-                <div v-if="expectingFor === page.id" class="pag-expected">
-                  <label :for="`exp-${page.id}`">
-                    Adresse de la vraie page suivante — facultatif, mais c'est ce qui permettra de
-                    réparer&nbsp;:
-                  </label>
-                  <div class="row">
-                    <input
-                      :id="`exp-${page.id}`"
-                      v-model="expected"
-                      type="url"
-                      placeholder="https://exemple.fr/sorties/page/2/"
-                    />
-                    <button type="button" class="btn small" @click="expectingFor = null">
-                      Fermer
-                    </button>
-                  </div>
-                  <p class="hint">
-                    Recliquez sur le bouton pour enregistrer. L'adresse est gardée telle quelle :
-                    savoir que la brique s'est trompée ne dit pas ce qu'elle aurait dû trouver.
-                  </p>
-                </div>
-              </div>
-
-              <div v-if="page.links.length" class="filters-bar">
-                <button
-                  v-for="f in FILTERS"
-                  :key="f.key"
-                  type="button"
-                  class="fbtn"
-                  :class="{ on: filter === f.key }"
-                  @click="filter = f.key"
-                >
-                  {{ f.label }}
-                  <span class="n">{{ tally(page, f.key) }}</span>
-                </button>
-                <template v-if="filter === 'dropped' && reasons(page).length">
-                  <span class="sep" aria-hidden="true">·</span>
-                  <button
-                    type="button"
-                    class="rbtn"
-                    :class="{ on: !reason }"
-                    @click="reason = ''"
-                  >
-                    Tous motifs
-                  </button>
-                  <button
-                    v-for="r in reasons(page)"
-                    :key="r.key"
-                    type="button"
-                    class="rbtn"
-                    :class="{ on: reason === r.key }"
-                    @click="reason = r.key"
-                  >
-                    {{ r.key }} <span class="n">{{ r.count }}</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="bulk"
-                    :disabled="busy.has(agenda.id)"
-                    :title="
-                      reason
-                        ? `Marquer « autre » tous les liens du motif « ${reason} »`
-                        : 'Marquer « autre » tous les écartés de cette page'
-                    "
-                    @click="bulk(page, agenda.id, 'AUTRE')"
-                  >
-                    Tout marquer « autre »
-                  </button>
-                </template>
-              </div>
-
-              <ul v-if="visible(page).length" class="links">
-                <li
-                  v-for="link in visible(page)"
-                  :key="link.id"
-                  :class="{
-                    diff: disagrees(link),
-                    manual: link.source === 'MANUAL',
-                    todo: !link.reviewed,
-                  }"
-                >
-                  <span class="tag" :class="link.harvested ? 'kept' : 'dropped'">
-                    {{
-                      link.source === 'MANUAL'
-                        ? 'ajouté'
-                        : link.harvested
-                          ? 'retenu'
-                          : link.dropReason || 'écarté'
-                    }}
-                  </span>
-                  <span class="link-body">
-                    <a :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.url }}</a>
-                    <span v-if="link.text" class="link-text">{{ link.text }}</span>
-                    <span v-if="link.context" class="link-context">{{ link.context }}</span>
-                  </span>
-                  <span
-                    v-if="!link.reviewed"
-                    class="pre"
-                    title="Encore la proposition de la brique : personne ne l'a tranché"
-                    >précoché</span
-                  >
-                  <span class="seg" :class="{ busy: saving.has(link.id) }">
+          <table class="links">
+            <thead>
+              <tr>
+                <th>Lien</th>
+                <th>Relevé</th>
+                <th>Étiquette</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in rows(page)" :key="row.result?.url ?? row.label?.url">
+                <td>
+                  <div class="link-text">{{ row.result?.text || row.label?.text || '(sans texte)' }}</div>
+                  <a :href="row.result?.url ?? row.label?.url" target="_blank" class="muted small">
+                    {{ row.result?.url ?? row.label?.url }}
+                  </a>
+                  <div v-if="row.result?.context" class="muted small ctx">{{ row.result.context }}</div>
+                </td>
+                <td class="small">
+                  <template v-if="row.result">
+                    <span v-if="row.result.harvested">retenu</span>
+                    <span v-else class="muted">écarté — {{ row.result.dropReason }}</span>
+                    <div v-if="row.result.selected !== null" class="muted">
+                      tri : {{ row.result.selected ? 'retenu' : 'écarté' }}
+                    </div>
+                  </template>
+                  <em v-else class="muted">absent du relevé</em>
+                </td>
+                <td>
+                  <div class="chips">
                     <button
                       v-for="v in VERDICTS"
                       :key="v"
-                      type="button"
-                      class="segb"
-                      :class="[`v-${v.toLowerCase()}`, { on: link.verdict === v }]"
-                      :aria-pressed="link.verdict === v"
+                      class="chip"
+                      :class="{ on: row.label?.verdict === v }"
                       :title="EVAL_VERDICT_HINTS[v]"
-                      @click="setVerdict(link, v)"
+                      @click="labelLink(page.id, row.result?.url ?? row.label!.url, row.result?.text ?? row.label?.text ?? '', v)"
                     >
                       {{ EVAL_VERDICT_LABELS[v] }}
                     </button>
-                  </span>
-                  <button
-                    v-if="link.source === 'MANUAL'"
-                    class="btn small ghost"
-                    type="button"
-                    title="Retirer cet ajout"
-                    @click="removeLink(agenda.id, link.id)"
-                  >
-                    Retirer
-                  </button>
-                </li>
-              </ul>
-              <p v-else class="muted none">
-                Rien sous ce filtre.
-                <template v-if="filter === 'kept' && !page.error">
-                  La brique n'a retenu aucun lien de cette page — si elle en montre pourtant, c'est
-                  exactement ce que le banc cherche à attraper : passez aux écartés.
-                </template>
-              </p>
-
-              <button class="btn small secondary add-link" type="button" @click="openAdd(page)">
-                {{ addingTo === page.id ? 'Fermer' : 'Ajouter un lien absent du HTML' }}
-              </button>
-
-              <form v-if="addingTo === page.id" class="form inline" @submit.prevent="addLink(page)">
-                <div class="row">
-                  <div class="field grow">
-                    <label :for="`link-url-${page.id}`">Adresse du lien</label>
-                    <input
-                      :id="`link-url-${page.id}`"
-                      v-model="newLink.url"
-                      type="url"
-                      required
-                      placeholder="https://exemple.fr/agenda/le-spectacle"
-                    />
-                  </div>
-                  <div class="field">
-                    <label :for="`link-text-${page.id}`">Intitulé (facultatif)</label>
-                    <input
-                      :id="`link-text-${page.id}`"
-                      v-model="newLink.text"
-                      type="text"
-                      maxlength="200"
-                    />
-                  </div>
-                  <div class="field submit">
-                    <button class="btn small" type="submit" :disabled="savingLink">
-                      {{ savingLink ? 'Ajout…' : 'Ajouter' }}
+                    <button v-if="row.label" class="linklike" @click="unlabel(row.label.id)">
+                      retirer
                     </button>
                   </div>
-                </div>
-                <p class="hint">
-                  Réservé à ce que le HTML ne porte pas — une carte rendue en JavaScript, par
-                  exemple. Tout le reste est déjà relevé : donnez-lui plutôt son verdict.
-                </p>
-              </form>
-            </div>
-          </section>
+                  <div v-if="row.label" class="muted small">
+                    {{ EVAL_LABEL_ORIGIN_LABELS[row.label.origin] }}
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-      </article>
-    </section>
+      </div>
+    </div>
+
+    <!-- ── Les pages de lecture ───────────────────────────────────────── -->
+    <h2>Pages — étages 5 et 6</h2>
+    <div class="row add">
+      <input v-model="newReadingUrl" type="url" placeholder="https://exemple.fr/spectacle" />
+      <button class="btn" @click="addReading()">Ajouter au corpus</button>
+    </div>
+
+    <div class="table-wrap card">
+      <table>
+        <thead>
+          <tr>
+            <th>Page</th>
+            <th>Origine</th>
+            <th>Capture</th>
+            <th>Étiquettes</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="reading in readings" :key="reading.id">
+            <td>
+              <div class="link-text">{{ reading.label || reading.url }}</div>
+              <a :href="reading.url" target="_blank" class="muted small">{{ reading.url }}</a>
+            </td>
+            <td :title="EVAL_ORIGIN_HINTS[reading.origin]" class="small">
+              {{ EVAL_ORIGIN_LABELS[reading.origin] }}
+            </td>
+            <td class="small">
+              {{ EVAL_CAPTURE_LABELS[reading.capture] }}
+              <button
+                v-if="reading.capture !== 'CAPTURED'"
+                class="linklike"
+                @click="capture('readings', reading.id)"
+              >
+                geler
+              </button>
+              <a v-else-if="reading.archived" :href="`/api/eval/readings/${reading.id}/html`" target="_blank">
+                HTML
+              </a>
+            </td>
+            <td class="num">
+              {{ labelled(reading) }}/3
+              <span v-if="reading.fiche" class="muted small"> · fiche</span>
+            </td>
+            <td>
+              <div class="row actions">
+                <button class="linklike" @click="edit(reading)">Étiqueter</button>
+                <button class="linklike" @click="removeReading(reading)">Retirer</button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- L'étiquetage d'une page -->
+    <div v-if="editing" class="card editor">
+      <h3>{{ editing.label || editing.url }}</h3>
+      <p class="muted small">
+        Ce que la page contient. Un champ vide veut dire « la page n’en porte
+        pas », et c’est une étiquette de plein droit : c’est elle qui permettra
+        de reconnaître une valeur inventée. Pour dire « je n’ai pas regardé »,
+        utilisez « Effacer les étiquettes ».
+      </p>
+      <label for="ed-img">Illustration de la page</label>
+      <input id="ed-img" v-model="editImage" type="url" placeholder="https://… (vide : aucune)" />
+
+      <label for="ed-dates">Dates annoncées — une par ligne</label>
+      <textarea id="ed-dates" v-model="editDates" rows="3" placeholder="2027-03-04"></textarea>
+
+      <label for="ed-mark">Fragments que le texte doit contenir — un par ligne</label>
+      <textarea
+        id="ed-mark"
+        v-model="editMarkers"
+        rows="4"
+        placeholder="Atelier modelage&#10;8 €&#10;77 rue de Varenne"
+      ></textarea>
+      <p class="muted small">
+        On ne demande pas de retaper le texte attendu : ce serait invivable et
+        personne ne le ferait deux fois. Quelques fragments suffisent à
+        distinguer un texte amputé d’un texte entier, qui est la question de cet
+        étage.
+      </p>
+
+      <div class="row">
+        <button class="btn" @click="saveLabels()">Enregistrer</button>
+        <button class="linklike" @click="saveLabels(true)">Effacer les étiquettes</button>
+        <button class="linklike" @click="editing = null">Annuler</button>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.admin-nav {
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-.lede {
-  max-width: 62ch;
-  margin-top: -0.4rem;
+h2 {
+  margin-top: 1.8rem;
 }
 
-/* ---- les huit onglets ---- */
-.tabs {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-  margin: 1.2rem 0 1rem;
-  border-bottom: 2px solid var(--line);
-  padding-bottom: 0.6rem;
-}
-.tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0.35rem 0.85rem 0.35rem 0.4rem;
-  font: inherit;
-  font-size: 0.88rem;
-  color: var(--ink-soft);
-  cursor: pointer;
-}
-.tab:hover {
-  border-color: var(--accent);
-  color: var(--ink);
-}
-.tab .no {
+.tiles {
   display: grid;
-  place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: 50%;
-  background: var(--line);
-  color: var(--ink-soft);
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-/* Le seul étage réellement mesuré se distingue même quand il n'est pas ouvert. */
-.tab.ready {
-  color: var(--ink);
-}
-.tab.ready .no {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-.tab.active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-dark);
-  font-weight: 600;
-}
-.tab.active .no {
-  background: var(--accent);
-  color: #fff;
-}
-
-.waiting h2,
-.intro h2 {
-  margin-top: 0;
-  font-size: 1.1rem;
-}
-.waiting p:last-child {
-  margin-bottom: 0;
-}
-.intro p {
-  max-width: 76ch;
-}
-
-/* ---- la légende des quatre verdicts ---- */
-.verdicts {
-  display: grid;
-  gap: 0.5rem;
-  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
-  margin: 1rem 0 0;
-}
-.verdicts > div {
-  border-left: 3px solid var(--a, var(--line));
-  padding: 0.35rem 0 0.35rem 0.7rem;
-}
-.verdicts dt {
-  font-weight: 700;
-  color: var(--a, var(--ink));
-  font-size: 0.88rem;
-}
-.verdicts dd {
-  margin: 0.1rem 0 0;
-  font-size: 0.82rem;
-  color: var(--ink-soft);
-  line-height: 1.4;
-}
-.v-sortie {
-  --a: var(--ok);
-}
-.v-pagination {
-  --a: var(--accent-dark);
-}
-.v-sous_agenda {
-  --a: var(--warn);
-}
-.v-autre {
-  --a: var(--ink-soft);
-}
-
-/* ---- ajout d'un agenda ---- */
-.add {
-  margin-top: 1rem;
-  max-width: none;
-}
-.add .row {
-  display: grid;
-  grid-template-columns: 1fr 7.5rem 14rem auto;
-  align-items: end;
-  gap: 0.9rem;
-}
-@media (max-width: 860px) {
-  .add .row {
-    grid-template-columns: 1fr 7.5rem;
-  }
-  .add .field.grow,
-  .add .field.submit {
-    grid-column: 1 / -1;
-  }
-}
-.field.submit .btn {
-  width: 100%;
-}
-.pages-why {
-  margin: 0.7rem 0 0;
-  max-width: 76ch;
-}
-.empty {
-  margin-top: 1.4rem;
-}
-
-/* ---- un agenda ---- */
-.agenda {
-  margin-top: 1rem;
-}
-.agenda-head {
-  display: flex;
-  align-items: center;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 0.8rem;
-  justify-content: space-between;
-}
-.disclose {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  color: var(--ink);
-  cursor: pointer;
-  text-align: left;
-}
-.caret {
-  display: inline-block;
-  color: var(--ink-soft);
-  transition: transform 0.15s ease;
-}
-.caret.open {
-  transform: rotate(90deg);
-}
-@media (prefers-reduced-motion: reduce) {
-  .caret {
-    transition: none;
-  }
-}
-.agenda-title {
-  font-weight: 700;
-  font-size: 1.02rem;
-}
-.agenda-url {
-  margin: 0.35rem 0 0.7rem;
-  font-size: 0.85rem;
-  word-break: break-all;
-}
-/* L'adresse, l'archive gelée et l'ancienneté de la lecture se suivent sur une
-   ligne : sans espacement explicite ils se collent, et « voir le HTML
-   gelélue par le pipeline il y a 39 jours » ne se lit plus. */
-.agenda-url > * + * {
-  margin-left: 0.7rem;
+  margin-bottom: 1.4rem;
 }
 
-/* Deux champs seulement, contre quatre pour un agenda : sans grille propre, le
-   nom se retrouvait écrasé sous le bouton. */
-.read-add .row {
-  grid-template-columns: 1fr 16rem auto;
-}
-@media (max-width: 860px) {
-  .read-add .row {
-    grid-template-columns: 1fr;
-  }
-}
-
-.pill {
-  flex: none;
-  border-radius: 999px;
-  padding: 0.15rem 0.65rem;
-  font-size: 0.76rem;
-  font-weight: 600;
-  background: var(--line);
-  color: var(--ink-soft);
-}
-.pill.queued,
-.pill.running {
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-.pill.analyzed {
-  background: var(--accent-soft);
-  color: var(--accent-dark);
-}
-.pill.validated {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-.pill.failed {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.stats {
-  display: flex;
-  gap: 1.4rem;
-  margin: 0 0 0.6rem;
-  flex-wrap: wrap;
-}
-.stats div {
+.tile {
+  padding: 0.9rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
-}
-.stats dt {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-soft);
-  white-space: nowrap;
-}
-.stats dd {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-/* Les deux erreurs sont le chiffre du banc : elles se voient, ou la page ne
-   sert à rien. */
-.stats .flag dd,
-.stats .flag dt {
-  color: var(--danger);
-}
-.stats .warn dd,
-.stats .warn dt {
-  color: var(--warn);
-}
-.stats .rate dd {
-  color: var(--accent-dark);
+  gap: 0.2rem;
 }
 
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  flex-wrap: wrap;
-  margin-top: 0.4rem;
-}
-.small-note {
-  font-size: 0.8rem;
-}
-.error.slim {
-  margin: 0.4rem 0;
-  font-size: 0.86rem;
+.tile .value {
+  font-size: 1.5rem;
+  font-weight: 700;
 }
 
-/* ---- l'arbre ---- */
-.tree {
-  margin-top: 1rem;
-  border-top: 1px solid var(--line);
-  padding-top: 0.8rem;
-}
-.page-node {
-  border-left: 2px solid var(--line);
-  padding-left: 0.9rem;
-  margin-bottom: 0.5rem;
-}
-.page-head {
-  width: 100%;
-  gap: 0.7rem;
-  padding: 0.3rem 0;
-  flex-wrap: wrap;
-}
-.page-no {
-  font-weight: 700;
-  font-size: 0.9rem;
-}
-.page-sum {
-  font-size: 0.85rem;
-  color: var(--ink-soft);
-}
-.page-sum.bad {
-  color: var(--danger);
-}
-.diff-badge {
-  font-size: 0.72rem;
-  font-weight: 700;
-  border-radius: 5px;
-  padding: 0.1rem 0.45rem;
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-.archive {
-  font-size: 0.72rem;
-  font-weight: 600;
-  border-radius: 5px;
-  padding: 0.1rem 0.4rem;
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-.archive.off {
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-.page-body {
-  padding: 0.3rem 0 0.8rem;
-}
-.page-url {
-  margin: 0 0 0.5rem;
-  font-size: 0.8rem;
-  word-break: break-all;
-}
-.frozen {
-  margin-left: 0.7rem;
-  white-space: nowrap;
-}
-
-.pagcheck {
-  margin: 0 0 0.7rem;
-  font-size: 0.83rem;
-  border-left: 3px solid var(--ok);
-  background: var(--ok-soft);
-  border-radius: 0 8px 8px 0;
-  padding: 0.5rem 0.7rem;
-  word-break: break-word;
-}
-.pagcheck.bad {
-  border-color: var(--danger);
-  background: var(--danger-soft);
-}
-/* Ni bon ni mauvais : on ne sait pas encore, et le dire est la seule réponse
-   honnête tant que personne n'a relu les liens de la page. */
-.pagcheck.todo {
-  border-color: var(--warn);
-  background: var(--warn-soft);
-}
-.pag-text {
-  margin: 0;
-}
-.pag-choices {
-  display: flex;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-  margin-top: 0.5rem;
-}
-.pagb {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0.2rem 0.7rem;
-  font: inherit;
-  font-size: 0.78rem;
-  color: var(--ink-soft);
-  cursor: pointer;
-}
-.pagb:hover:not(:disabled) {
-  border-color: var(--ink-soft);
-  color: var(--ink);
-}
-.pagb.on {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--card);
-  font-weight: 600;
-}
-.pag-expected {
-  margin-top: 0.6rem;
-  border-top: 1px dashed var(--line);
-  padding-top: 0.5rem;
-}
-.pag-expected label {
-  display: block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  margin-bottom: 0.3rem;
-}
-.pag-expected .row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-.pag-expected input {
-  flex: 1;
-  min-width: 0;
-}
-.pag-expected .hint {
-  margin: 0.4rem 0 0;
-}
-/* ---- onglet 5 : la lecture ---- */
-.readstats {
-  margin-top: 1rem;
-  padding: 1rem 1.2rem;
-}
-.flags {
-  list-style: none;
-  margin: 0.5rem 0 0.7rem;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-.flags li {
-  font-size: 0.84rem;
-  line-height: 1.45;
-  border-left: 3px solid var(--warn);
-  background: var(--warn-soft);
-  border-radius: 0 8px 8px 0;
-  padding: 0.4rem 0.7rem;
-}
-/* Les deux qui font perdre la page se distinguent des trois qui la dégradent. */
-.flags li.bad {
-  border-color: var(--danger);
-  background: var(--danger-soft);
-}
-.read-grid {
-  display: grid;
-  gap: 1.2rem;
-  grid-template-columns: 1.4fr 1fr;
-  margin-bottom: 1rem;
-}
-@media (max-width: 900px) {
-  .read-grid {
-    grid-template-columns: 1fr;
-  }
-}
-.read-col h4 {
-  margin: 0 0 0.4rem;
-  font-size: 0.86rem;
-  font-weight: 700;
-  color: var(--ink);
-}
-.read-col h4 + * + h4 {
-  margin-top: 1rem;
-}
-.extract {
-  margin: 0;
-  max-height: 22rem;
-  overflow: auto;
-  background: var(--bg);
-  border-radius: 8px;
-  padding: 0.7rem 0.8rem;
+.tile .label {
   font-size: 0.82rem;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.dates {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-}
-.dates li {
-  font-size: 0.78rem;
-  font-variant-numeric: tabular-nums;
-  background: var(--bg);
-  border-radius: 5px;
-  padding: 0.15rem 0.45rem;
-}
-.imgurl {
-  display: block;
-  font-size: 0.78rem;
-  word-break: break-all;
-  margin-bottom: 0.4rem;
-}
-.shot {
-  max-width: 100%;
-  max-height: 12rem;
-  border-radius: 8px;
-  background: var(--photo-bg);
-}
-.aspect {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  flex-wrap: wrap;
-  padding: 0.5rem 0;
-  border-top: 1px solid var(--line);
-}
-.aspect-title {
-  font-weight: 700;
-  font-size: 0.88rem;
-  min-width: 9rem;
-}
-.pages-short {
-  margin: 0.4rem 0 0.7rem;
-  font-size: 0.86rem;
-  line-height: 1.5;
-  border-left: 3px solid var(--danger);
-  background: var(--danger-soft);
-  border-radius: 0 8px 8px 0;
-  padding: 0.55rem 0.8rem;
+  color: var(--ink-soft);
 }
 
-/* ---- filtres ---- */
-.filters-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
+.add {
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.add input[type='url'] {
+  flex: 1;
+  min-width: 240px;
+}
+
+.add input[type='number'] {
+  width: 5rem;
+}
+
+.buckets {
+  gap: 0.6rem;
   flex-wrap: wrap;
   margin-bottom: 0.6rem;
 }
-.fbtn,
-.rbtn {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0.22rem 0.6rem;
-  font: inherit;
-  font-size: 0.78rem;
-  color: var(--ink-soft);
-  cursor: pointer;
-}
-.fbtn.on {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-dark);
-  font-weight: 600;
-}
-.rbtn.on {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--card);
-}
-.fbtn .n,
-.rbtn .n {
-  font-variant-numeric: tabular-nums;
-  opacity: 0.7;
-  margin-left: 0.2rem;
-}
-.sep {
-  color: var(--line);
-  margin: 0 0.2rem;
-}
-/* Le raccourci qui rend soixante-seize écartés tenables. Discret : c'est une
-   commodité, pas le geste que cette page existe pour permettre. */
-.bulk {
-  margin-left: auto;
-  background: none;
-  border: 1px dashed var(--line);
-  border-radius: 999px;
-  padding: 0.22rem 0.7rem;
-  font: inherit;
-  font-size: 0.78rem;
-  color: var(--ink-soft);
-  cursor: pointer;
-}
-.bulk:hover:not(:disabled) {
-  border-style: solid;
-  border-color: var(--ink-soft);
-  color: var(--ink);
-}
-.bulk:disabled {
-  opacity: 0.5;
-  cursor: default;
+
+.entry {
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 0.8rem;
 }
 
-/* ---- les liens ---- */
-.links {
-  list-style: none;
-  margin: 0 0 0.7rem;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-.links li {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.6rem;
-  padding: 0.4rem 0.6rem;
-  border-radius: 8px;
-  background: var(--bg);
-  font-size: 0.84rem;
-}
-/* Le désaccord entre la brique et l'humain : c'est la seule chose que cette
-   liste cherche à faire voir. */
-.links li.diff {
-  background: var(--danger-soft);
-}
-.links li.manual {
-  background: var(--accent-soft);
-}
-/* Un lien qui porte encore la précoche : rien n'est tranché tant que la barre
-   n'a pas disparu. Discret — c'est l'état par défaut de toute la page au
-   premier chargement. */
-.links li.todo {
-  border-left: 3px solid var(--warn);
-  padding-left: calc(0.6rem - 3px);
-}
-.pre {
-  flex: none;
-  align-self: center;
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--warn);
-  background: var(--warn-soft);
-  border-radius: 5px;
-  padding: 0.12rem 0.4rem;
-}
-.tag {
-  flex: none;
-  min-width: 7.5rem;
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-weight: 700;
-  border-radius: 5px;
-  padding: 0.15rem 0.4rem;
-  text-align: center;
-  background: var(--card);
-  color: var(--ink-soft);
-}
-.tag.kept {
-  color: var(--ok);
-}
-.link-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.12rem;
-  min-width: 0;
-  flex: 1;
-}
-.link-body a {
-  word-break: break-all;
-}
-.link-text {
-  font-weight: 600;
-}
-.link-context {
-  color: var(--ink-soft);
-  font-size: 0.78rem;
-}
-
-/* ---- les quatre boutons de verdict ---- */
-.seg {
-  display: flex;
-  flex: none;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--card);
-}
-.seg.busy {
-  opacity: 0.55;
-}
-.segb {
-  background: none;
-  border: 0;
-  border-right: 1px solid var(--line);
-  padding: 0.25rem 0.55rem;
-  font: inherit;
-  font-size: 0.75rem;
-  color: var(--ink-soft);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.segb:last-child {
-  border-right: 0;
-}
-.segb:hover {
-  background: var(--bg);
-  color: var(--ink);
-}
-.segb.on {
-  background: var(--a, var(--ink));
-  color: #fff;
-  font-weight: 700;
-}
-.none {
-  margin: 0.4rem 0 0.8rem;
-}
-.add-link {
-  margin-bottom: 0.5rem;
-}
-.form.inline {
-  background: var(--bg);
-  border-radius: 10px;
-  padding: 0.8rem;
-  max-width: none;
-}
-.form.inline .row {
-  display: grid;
-  grid-template-columns: 1fr 14rem auto;
-  align-items: end;
-  gap: 0.7rem;
-}
-@media (max-width: 720px) {
-  .form.inline .row {
-    grid-template-columns: 1fr;
-  }
-}
-.form.inline .hint {
-  margin: 0.6rem 0 0;
-  max-width: 70ch;
-}
-
-/* ---- étage 6 : la fiche, champ par champ ---- */
-
-/* Le lot au-dessous du formulaire, et pas dedans : ce n'est pas une variante du
-   bouton « Extraire », c'est un geste dont le prix suit le nombre de pages. */
-.bulk {
+.entry-head {
   display: flex;
   align-items: center;
   gap: 0.7rem;
   flex-wrap: wrap;
-  margin: 0.7rem 0 0;
-  padding-top: 0.7rem;
-  border-top: 1px solid var(--line);
-}
-.bulk .small-note {
-  flex: 1 1 22rem;
-  line-height: 1.45;
 }
 
-/* Trois colonnes de largeurs très inégales : la liste des pages est longue, le
-   nom d'un modèle tient en quinze caractères. En `flex`, comme les autres
-   formulaires du banc, le champ du milieu se retrouvait écrasé sous le bouton. */
-.extract-add .row {
-  display: grid;
-  grid-template-columns: 1fr 16rem auto;
-  align-items: end;
-  gap: 0.7rem;
-}
-@media (max-width: 860px) {
-  .extract-add .row {
-    grid-template-columns: 1fr;
-  }
+.spacer {
+  flex: 1;
 }
 
-/* Un tableau à sept colonnes ne rentre pas sur un téléphone : il défile dans
-   son propre cadre plutôt que de faire défiler la page entière. */
-.scroller {
+.badge {
+  font-size: 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  color: var(--ink-soft);
+}
+
+.detail {
   margin-top: 1rem;
-  padding: 1rem 1.2rem;
-}
-.scroller h3 {
-  margin: 0 0 0.3rem;
-  font-size: 0.95rem;
-}
-table.aspects {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.84rem;
-  display: block;
-  overflow-x: auto;
-}
-table.aspects th,
-table.aspects td {
-  text-align: right;
-  padding: 0.35rem 0.6rem;
-  border-bottom: 1px solid var(--line);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-table.aspects thead th {
-  font-size: 0.76rem;
-  color: var(--muted);
-  font-weight: 600;
-}
-table.aspects th[scope='row'],
-table.aspects thead th:first-child,
-table.aspects td:nth-child(2) {
-  text-align: left;
-  font-variant-numeric: normal;
-}
-table.aspects td.bad {
-  color: var(--danger);
-  font-weight: 700;
+  border-top: 1px solid var(--photo-bg);
+  padding-top: 0.8rem;
 }
 
-/* Un aspect ne tient pas sur une ligne comme les trois de l'étage 5 : il porte
-   une valeur, parfois des drapeaux, et ses réponses. D'où une colonne. */
-.field-aspect {
-  display: block;
-  padding: 0.6rem 0;
+.page-block {
+  margin-bottom: 1.4rem;
 }
-.field-head {
+
+.page-block h4 {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: 0.6rem;
+  margin: 0 0 0.5rem;
 }
-.instrument {
-  font-size: 0.72rem;
-  color: var(--muted);
-  font-style: italic;
+
+.next,
+.reasons {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+  font-size: 0.85rem;
 }
-.field-value {
-  margin: 0.15rem 0 0.35rem;
-  font-size: 0.86rem;
-  line-height: 1.45;
-  word-break: break-word;
+
+.reason {
+  border: 1px solid var(--photo-bg);
+  border-radius: 6px;
+  padding: 0.1rem 0.5rem;
 }
-/* `.none` et pas `.empty` : ce dernier existe déjà, pour le message d'une
-   liste vide — centré et aéré, ce qui n'a aucun sens sur une valeur de champ. */
-.field-value.none {
-  color: var(--muted);
-  font-style: italic;
+
+.links {
+  width: 100%;
+  font-size: 0.9rem;
 }
+
+.link-text {
+  font-weight: 600;
+}
+
+.ctx {
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-  margin: 0 0 0.4rem;
+  align-items: center;
 }
+
 .chip {
-  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid currentColor;
   border-radius: 999px;
-  padding: 0.1rem 0.5rem;
-  background: var(--bg);
-  cursor: help;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
 }
-.chip.bad {
-  background: var(--danger-soft);
-  color: var(--danger);
+
+.chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.editor {
+  padding: 1rem 1.2rem;
+  margin-top: 1rem;
+}
+
+.editor label {
+  display: block;
+  margin: 0.8rem 0 0.2rem;
+  font-size: 0.85rem;
   font-weight: 600;
 }
 
-/* ---- les deux paniers ---- */
-.baskets {
-  margin-top: 1rem;
-  padding: 1rem 1.2rem;
+.editor input,
+.editor textarea {
+  width: 100%;
+  box-sizing: border-box;
 }
-.baskets h3 {
-  margin: 0 0 0.3rem;
-  font-size: 0.95rem;
+
+.actions {
+  gap: 0.7rem;
 }
-.basket-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.8rem;
-  margin: 0.8rem 0 0;
+
+.table-wrap {
+  overflow-x: auto;
 }
-@media (max-width: 860px) {
-  .basket-row {
-    grid-template-columns: 1fr;
-  }
+
+.num {
+  text-align: right;
+  white-space: nowrap;
 }
-.basket {
-  background: var(--bg);
-  border-radius: 10px;
-  padding: 0.7rem 0.9rem;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.25rem;
+
+.small {
+  font-size: 0.85rem;
 }
-.basket-n {
-  font-size: 1.5rem;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-}
-.basket-t {
-  font-size: 0.8rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  color: var(--muted);
-}
-.basket p {
-  margin: 0.1rem 0 0.4rem;
-}
-.basket.mix ul {
-  list-style: none;
-  margin: 0.3rem 0 0;
+
+.linklike {
+  background: none;
+  border: none;
   padding: 0;
-  font-size: 0.86rem;
-  font-variant-numeric: tabular-nums;
+  font: inherit;
+  color: var(--accent-dark);
+  cursor: pointer;
+  text-decoration: underline;
 }
-.basket.mix li.warn {
-  color: var(--danger);
+
+.linklike.strong {
   font-weight: 700;
 }
 
-/* L'origine se lit avant le statut : elle dit de quel côté du tri la page
-   vient, ce qui commande la lecture de tout le reste. */
-.pill.origin {
-  background: var(--bg);
-  color: var(--muted);
-}
-.pill.origin.abandonnee {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.flags li.ok {
-  border-color: var(--c2, #2f855a);
-  background: var(--bg);
-}
-
-/* ---- la fiche approuvée, en regard ---- */
-.reference {
-  margin: 0.3rem 0 0;
-  display: grid;
-  gap: 0.15rem;
-  font-size: 0.82rem;
-}
-.reference div {
-  display: grid;
-  grid-template-columns: 9rem 1fr;
-  gap: 0.5rem;
-  padding: 0.2rem 0;
-  border-bottom: 1px solid var(--line);
-}
-.reference dt {
-  color: var(--muted);
-}
-.reference dd {
-  margin: 0;
-  word-break: break-word;
-}
-
-/* Le motif d'une proposition : il cite la valeur approuvée, sans quoi il
-   faudrait rouvrir la fiche publiée — le travail que la référence épargne. */
-.because {
-  margin: 0 0 0.4rem;
-  font-size: 0.78rem;
-  color: var(--muted);
-  line-height: 1.4;
-}
-.chip.ref {
-  background: var(--warn-soft);
-  color: var(--ink);
-  font-weight: 700;
-  text-transform: uppercase;
-  font-size: 0.66rem;
-  letter-spacing: 0.03em;
-  margin-right: 0.25rem;
-}
-.because.agree .chip.ref {
-  background: var(--bg);
-  color: var(--muted);
-}
-
-/* Un bouton que la fiche approuvée propose, mais que personne n'a encore
-   cliqué : souligné, jamais coché. La différence entre les deux est toute la
-   question de ce banc. */
-.segb.proposed {
-  box-shadow: inset 0 -2px 0 var(--warn);
-  font-weight: 700;
-}
-
-.confirm-note {
-  margin-top: 0.8rem;
-  padding: 0.8rem 1.2rem;
-  font-size: 0.84rem;
-  line-height: 1.55;
+.btn.ghost {
+  background: transparent;
+  color: var(--accent-dark);
+  border: 1px solid currentColor;
 }
 </style>

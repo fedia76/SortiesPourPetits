@@ -554,7 +554,7 @@ export const evalAgendaSchema = z.object({
   note: z.string().trim().max(2000).optional().default(''),
 });
 
-/** Ce qu'on peut changer d'un agenda déjà au banc, sans le ressaisir. */
+/** Ce qu'on peut changer d'une entrée du corpus sans la ressaisir. */
 export const evalAgendaUpdateSchema = z
   .object({
     label: z.string().trim().max(150),
@@ -574,60 +574,58 @@ export const evalAgendaUpdateSchema = z
  */
 export const EVAL_VERDICTS = ['SORTIE', 'PAGINATION', 'SOUS_AGENDA', 'AUTRE'] as const;
 
-/** La correction d'un humain sur un lien relevé. */
+/** L'étiquette qu'un humain pose sur un lien. */
 export const evalVerdictSchema = z.object({
   verdict: z.enum(EVAL_VERDICTS),
   note: z.string().trim().max(500).optional(),
 });
 
 /**
- * Le verdict de pagination d'une page, tranché par un humain.
+ * Un lien étiqueté à la main, tel que la console l'envoie.
  *
- * Il ne se déduit pas des étiquettes des liens : `next_page()` lit aussi le
- * `<link rel="next">` du `<head>`, qui n'est pas un `<a href>` et n'apparaît
- * donc dans aucune ligne. L'URL qu'il en tire était alors invérifiable.
- *
- * `expected` documente la vraie page suivante quand on la connaît — c'est ce
- * qu'il faut pour réparer, savoir que la brique s'est trompée ne disant pas ce
- * qu'elle aurait dû trouver.
- */
-export const evalNextSchema = z.object({
-  verdict: z.enum(['CORRECT', 'MANQUEE', 'FAUSSE']),
-  expected: z.union([scraperUrl, z.literal('')]).optional().default(''),
-});
-
-/**
- * Trancher d'un coup tous les liens écartés d'une page, ou d'un seul motif.
- *
- * Soixante-seize écartés se lisent mal un par un, et la plupart sont du bruit
- * évident : quinze liens vers Facebook, douze vers la racine du site. Les
- * expédier d'un clic laisse le temps là où il compte — sous « texte trop
- * court », le motif où se cachent les sorties perdues.
- *
- * L'outil coupe dans les deux sens, et c'est assumé : trancher en masse un
- * motif qu'on n'a pas lu fabrique un rappel flatteur. D'où le champ `reason`,
- * qui oblige à viser un groupe plutôt que « tout le reste ».
- */
-export const evalBulkVerdictSchema = z.object({
-  verdict: z.enum(EVAL_VERDICTS),
-  /** Le motif visé. Absent : tous les écartés de la page. */
-  reason: z.string().trim().max(60).optional(),
-});
-
-/**
- * Un lien ajouté à la main : ce que le HTML ne portait pas.
- *
- * Le relevé prend déjà tous les `<a href>` de la page ; cette route ne sert
- * plus qu'au cas résiduel mais réel — une carte rendue en JavaScript, qui
- * n'existe dans aucune ancre. Pas de `context` : l'humain donne une URL, pas
- * le texte qui l'entoure, et en fabriquer un ferait croire à l'étage 4 qu'il a
- * reçu quelque chose que le dépouillement ne lui aurait jamais donné.
+ * `url` suffit : le texte est un confort d'affichage. Un lien `MANUAL` est le
+ * seul moyen de décrire ce qu'aucun `links_of` ne trouvera jamais — une carte
+ * rendue en JavaScript, par exemple — et donc de mesurer ce manque.
  */
 export const evalLinkSchema = z.object({
   url: scraperUrl,
   text: z.string().trim().max(200).optional().default(''),
   verdict: z.enum(EVAL_VERDICTS).optional().default('SORTIE'),
   note: z.string().trim().max(500).optional().default(''),
+  source: z.enum(['PAGE', 'MANUAL']).optional().default('MANUAL'),
+});
+
+/**
+ * L'étiquette de pagination d'une page : l'adresse de la vraie suite.
+ *
+ * Trois états, et il en faut trois. `null` : personne n'a regardé. `""` : il
+ * n'y a pas de suite, et c'est une étiquette de plein droit. Une URL : la
+ * voici. Le verdict d'autrefois (CORRECT / MANQUEE / FAUSSE) n'est plus
+ * stocké : il se déduit de la comparaison avec ce qu'un run a trouvé, et vaut
+ * donc pour tous les runs au lieu d'un seul.
+ */
+export const evalNextSchema = z.object({
+  expected: z.union([scraperUrl, z.literal(''), z.null()]),
+});
+
+/**
+ * Étiqueter d'un coup les liens qu'un run a écartés sous un même motif.
+ *
+ * Soixante-seize écartés se lisent mal un par un, et la plupart sont du bruit
+ * évident : quinze liens vers Facebook, douze vers la racine du site. Les
+ * expédier d'un clic laisse le temps là où il compte — sous « texte trop
+ * court », le motif où se cachent les sorties perdues.
+ *
+ * L'outil coupe dans les deux sens, et c'est assumé : étiqueter en masse un
+ * motif qu'on n'a pas lu fabrique un rappel flatteur. D'où `reason`, qui
+ * oblige à viser un groupe plutôt que « tout le reste », et `runId`, qui dit
+ * de quel relevé viennent les liens qu'on étiquette.
+ */
+export const evalBulkVerdictSchema = z.object({
+  runId: z.number().int().positive(),
+  verdict: z.enum(EVAL_VERDICTS),
+  /** Le motif visé. Absent : tous les écartés du relevé. */
+  reason: z.string().trim().max(60).optional(),
 });
 
 /**
@@ -636,239 +634,198 @@ export const evalLinkSchema = z.object({
  * Un million de caractères de base64 font environ 750 ko compressés, soit
  * plusieurs mégaoctets de HTML — bien au-delà de tout agenda réel. Une page
  * plus grosse que ça est pathologique ; le worker la rapporte alors **sans**
- * son HTML plutôt que de faire échouer tout le compte rendu. La mesure tient,
- * seul le rejeu hors ligne s'en trouve privé pour cette page-là.
+ * son HTML plutôt que de faire échouer toute la capture.
  */
 export const EVAL_MAX_HTML_B64 = 1_000_000;
 
 /**
- * Ce que le worker rend d'un agenda : une entrée par page réellement
- * demandée, dans l'ordre de la pagination.
+ * Ce que le worker rend d'une **capture** : le HTML, et rien d'autre.
  *
- * Une page en erreur est une réponse — elle a été demandée, pas obtenue — et
- * porte donc zéro lien plutôt que de manquer du compte rendu.
+ * Ni liens ni page suivante : ceux-là sortent de `links_of` et de
+ * `next_page()`, donc d'une brique, donc d'un run. Les faire entrer ici
+ * remettrait dans le corpus ce que la séparation vient d'en sortir.
  */
-export const evalHarvestSchema = z.object({
+export const evalCaptureSchema = z.object({
   pages: z
     .array(
       z.object({
         pageNo: z.number().int().min(1).max(EVAL_MAX_PAGES),
         url: scraperUrl,
         chars: z.number().int().min(0).optional().default(0),
-        error: z.string().trim().max(1000).optional(),
-        /**
-         * Ce que `next_page()` a trouvé sur cette page — donc ce que l'étage 3
-         * saurait suivre. Vide quand la page ne déclare pas de suite, ce qui
-         * est une réponse : comparé aux liens étiquetés « pagination », c'est
-         * ce qui dit qu'un site se pagine d'une façon que le pipeline ignore.
-         */
-        nextUrl: z.union([scraperUrl, z.literal('')]).optional().default(''),
-        /**
-         * Le HTML servi, gzippé puis encodé en base64 par le worker.
-         *
-         * Il voyage compressé et sera écrit tel quel : c'est ce qui fait du
-         * banc un corpus gelé. Absent pour une page injoignable, ou trop
-         * lourde pour être archivée.
-         */
         html: z.string().max(EVAL_MAX_HTML_B64).optional(),
-        /**
-         * **Tous** les liens de la page, pas seulement la moisson : c'est ce
-         * qui permet de mesurer les deux erreurs. Le plafond est large parce
-         * qu'une page à méga-menu aligne trois cents liens avant d'arriver à
-         * son listing.
-         */
-        links: z
-          .array(
-            z.object({
-              url: scraperUrl,
-              text: z.string().trim().max(200).optional().default(''),
-              context: z.string().trim().max(1000).optional().default(''),
-              /** Le verdict du vrai `links_of` : la précoche. */
-              harvested: z.boolean().optional().default(false),
-              /** Pourquoi il a été écarté. Un libellé, pas une décision. */
-              reason: z.string().trim().max(60).optional().default(''),
-            }),
-          )
-          .max(600)
-          .optional()
-          .default([]),
       }),
     )
     .min(1)
     .max(EVAL_MAX_PAGES),
 });
 
-/** Clôture en échec : le worker n'a rien pu tirer de cet agenda. */
+/** Clôture en échec : le worker n'a rien pu capturer. */
 export const evalFailSchema = z.object({
   error: z.string().trim().min(1).max(2000),
 });
 
-// ─────────────────────────────────────────── banc de lecture (étage 5)
+// ─────────────────────────────────────────── corpus de lecture (étage 5)
 
-/** Une page ajoutée au banc de lecture. Une fiche, pas un agenda. */
+/** Une page ajoutée au corpus de lecture. Une fiche, pas un agenda. */
 export const evalReadingSchema = z.object({
   url: scraperUrl,
   label: z.string().trim().max(150).optional().default(''),
   note: z.string().trim().max(2000).optional().default(''),
 });
 
-export const EVAL_TEXT_VERDICTS = ['CORRECT', 'AMPUTE', 'TRONQUE', 'HORS_SUJET'] as const;
-export const EVAL_IMAGE_VERDICTS = ['CORRECTE', 'LOGO', 'MAUVAISE', 'MANQUANTE'] as const;
-export const EVAL_DATES_VERDICTS = ['CORRECTES', 'INCOMPLETES', 'FAUSSES', 'MANQUANTES'] as const;
-
 /**
- * Ce qu'un humain dit d'une lecture. Les trois aspects sont indépendants : on
- * peut trancher le texte sans avoir encore regardé l'illustration, et la page
- * n'est jugée que lorsque les trois le sont.
+ * Les étiquettes d'une page : ce qu'elle **contient**, et non ce que la brique
+ * en a tiré.
+ *
+ * Chacune a trois états. `null` : personne n'a regardé. Une valeur vide (`""`
+ * pour l'image, `[]` pour les dates) : la page n'en porte pas, et c'est une
+ * étiquette. Une valeur : la voici. Sans le second état, « pas d'image sur la
+ * page » et « pas encore étiqueté » seraient le même silence, et l'on ne
+ * pourrait plus reconnaître une image inventée.
  */
-export const evalReadingVerdictSchema = z
+export const evalReadingLabelSchema = z
   .object({
-    textVerdict: z.enum(EVAL_TEXT_VERDICTS),
-    imageVerdict: z.enum(EVAL_IMAGE_VERDICTS),
-    datesVerdict: z.enum(EVAL_DATES_VERDICTS),
+    expectedImage: z.union([scraperUrl, z.literal(''), z.null()]),
+    expectedDates: z.union([z.array(z.string().trim().max(40)).max(400), z.null()]),
+    /**
+     * Les fragments que le texte extrait doit contenir — le titre, le tarif,
+     * l'adresse. On ne demande pas de retaper le texte attendu : ce serait
+     * invivable et personne ne le ferait deux fois. On demande ce qui ne doit
+     * pas manquer, ce qui se coche en quelques secondes, et ça suffit à
+     * distinguer un texte amputé d'un texte entier — la question de cet étage.
+     */
+    expectedMarkers: z.union([z.array(z.string().trim().min(2).max(200)).max(40), z.null()]),
     note: z.string().trim().max(2000),
   })
-  .partial()
-  .refine((v) => Object.keys(v).length > 0, { message: 'Aucun verdict à enregistrer' });
+  .partial();
 
 /**
- * Ce que le worker rend d'une page lue.
+ * Ce que la page annonce, champ par champ : le corpus de l'étage 6.
  *
- * Le texte voyage en clair — il fait au plus quelques milliers de caractères et
- * c'est la pièce à conviction : sans lui, juger « le texte porte-t-il bien la
- * sortie ? » demanderait de rouvrir la page, donc de comparer à un HTML qui a
- * pu changer entre-temps.
+ * Une clé absente veut dire « personne n'a regardé ce champ » ; une clé
+ * présente et vide veut dire « la page n'en dit rien », ce qui est une
+ * étiquette et permet de reconnaître une valeur inventée.
  */
-export const evalReadSchema = z.object({
-  url: scraperUrl,
+export const evalFicheSchema = z.object({
+  expected: z.record(z.string().max(40), z.string().max(1000)),
+  note: z.string().trim().max(2000).optional().default(''),
+});
+
+// ──────────────────────────────────────────────────────────── les runs
+
+export const EVAL_STAGES = ['HARVEST', 'SELECT', 'READ', 'EXTRACT'] as const;
+
+/**
+ * Le lancement d'un run.
+ *
+ * `label` n'est pas du décor : c'est ce qui rend un point de la courbe lisible
+ * six mois plus tard — « après le correctif d'encodage » dit quelque chose,
+ * « run #47 » non.
+ */
+export const evalRunSchema = z.object({
+  stage: z.enum(EVAL_STAGES),
+  label: z.string().trim().max(150).optional().default(''),
+});
+
+export const evalRunListSchema = z.object({
+  stage: z.enum(EVAL_STAGES).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(30),
+});
+
+/** Ce que le worker déclare en prenant un run : de quoi il est le run. */
+export const evalRunClaimSchema = z.object({
+  codeRef: z.string().trim().max(60).optional().default(''),
+  model: z.string().trim().max(120).optional().default(''),
+  promptHash: z.string().trim().max(64).optional().default(''),
+  settings: z.record(z.string(), z.unknown()).optional().default({}),
+});
+
+/** Ce qu'un run de l'étage 3 ou 4 rend sur une page du corpus. */
+export const evalLinkResultSchema = z.object({
+  pageId: z.number().int().positive(),
+  /**
+   * Ce que `next_page()` a trouvé. Comparé à `nextExpected` du corpus, c'est
+   * la mesure de la pagination — et elle vaut pour tous les runs, là où le
+   * verdict figé ne valait que pour celui qui l'avait produit.
+   */
+  nextUrl: z.union([scraperUrl, z.literal('')]).optional().default(''),
   error: z.string().trim().max(1000).optional(),
+  links: z
+    .array(
+      z.object({
+        url: scraperUrl,
+        text: z.string().trim().max(200).optional().default(''),
+        context: z.string().trim().max(1000).optional().default(''),
+        harvested: z.boolean().optional().default(false),
+        reason: z.string().trim().max(60).optional().default(''),
+        /** Étage 4 seulement. Absent : ce lien n'a pas été soumis au tri. */
+        selected: z.boolean().optional(),
+        selectReason: z.string().trim().max(500).optional().default(''),
+      }),
+    )
+    .max(600)
+    .optional()
+    .default([]),
+});
+
+/** Ce qu'un run de l'étage 5 rend sur une page du corpus. */
+export const evalReadResultSchema = z.object({
+  readingId: z.number().int().positive(),
+  readUrl: z.union([scraperUrl, z.literal('')]).optional().default(''),
   swapped: z.boolean().optional().default(false),
-  text: z.string().max(20_000).optional().default(''),
+  text: z.string().max(200_000).optional().default(''),
   textChars: z.number().int().min(0).optional().default(0),
-  chars: z.number().int().min(0).optional().default(0),
-  heading: z.string().trim().max(200).optional().default(''),
   dates: z.array(z.string().trim().max(40)).max(400).optional().default([]),
   imageUrl: z.union([scraperUrl, z.literal('')]).optional().default(''),
+  heading: z.string().trim().max(200).optional().default(''),
   h1InText: z.boolean().optional().default(false),
   truncated: z.boolean().optional().default(false),
   tooShort: z.boolean().optional().default(false),
   imageLooksLogo: z.boolean().optional().default(false),
-  html: z.string().max(EVAL_MAX_HTML_B64).optional(),
+  error: z.string().trim().max(1000).optional(),
 });
 
-// ────────────────────────────────────── banc d'extraction (étage 6)
-
-/**
- * Les quatre verdicts d'un champ extrait, et pourquoi quatre.
- *
- * Le croisement avec « le modèle a-t-il rempli ce champ ? » donne les trois
- * taux qui comptent : l'exactitude de ce qu'il ose, sa couverture de ce que la
- * page offre, et son taux d'**invention**.
- *
- * `INVENTE` mérite sa propre valeur plutôt que d'être rangé sous `FAUX` : c'est
- * la faute propre à un modèle, celle qu'aucun code déterministe ne commet, et
- * c'est très exactement celle que l'ancrage sait pré-signaler sans coûter la
- * moindre étiquette. Les mélanger cacherait le seul chiffre qui dit si le
- * prompt tient le modèle.
- */
-export const EVAL_FIELD_VERDICTS = ['JUSTE', 'FAUX', 'INVENTE', 'MANQUE'] as const;
-
-/**
- * Trancher un aspect d'une fiche, ou plusieurs d'un coup.
- *
- * La clé est celle que `evaluation.audit_fiche` a donnée à l'aspect. Le serveur
- * ne tient pas la liste : elle est définie côté Python, elle bougera avec le
- * schéma d'extraction, et l'écrire ici en ferait une seconde vérité qui
- * finirait par diverger. Il vérifie seulement que la clé existe dans les
- * aspects de **cette** fiche — ce qui est la seule vérification qui ait un sens.
- */
-export const evalFieldVerdictSchema = z.object({
-  verdicts: z
-    .record(z.string().trim().min(1).max(40), z.enum(EVAL_FIELD_VERDICTS))
-    .refine((v) => Object.keys(v).length > 0, { message: 'Aucun verdict à enregistrer' }),
-  note: z.string().trim().max(2000).optional(),
-});
-
-/** Le modèle à interroger, quand on ne veut pas celui du scraper par défaut. */
-export const evalExtractionSchema = z.object({
+/** Ce qu'un run de l'étage 6 rend sur le texte d'une page du corpus. */
+export const evalExtractResultSchema = z.object({
   readingId: z.number().int().positive(),
-  model: z.string().trim().max(120).optional().default(''),
-});
-
-/**
- * Mettre en file **toutes** les fiches lisibles du banc de lecture.
- *
- * Pas de `readingId` : c'est le serveur qui tient la liste des pages
- * extractibles, et lui seul. Laisser la console énumérer les identifiants
- * ferait de sa copie une seconde vérité — elle en tient déjà une pour peupler
- * son menu, et deux listes finissent toujours par diverger.
- */
-export const evalExtractionAllSchema = z.object({
-  model: z.string().trim().max(120).optional().default(''),
-});
-
-/**
- * Ce que le worker rend d'une extraction : la fiche, ses aspects, et le prix.
- *
- * Les aspects arrivent tels que le Python les a calculés — libellé compris. Le
- * serveur ne les recompose pas : l'ancrage, la cohérence et l'accord sont des
- * instruments de `evaluation.audit_fiche`, et les réimplémenter en Node
- * donnerait la vérité d'une réimplémentation, c'est-à-dire aucune.
- */
-export const evalExtractSchema = z.object({
-  error: z.string().trim().max(2000).optional(),
-  model: z.string().trim().max(120).optional().default(''),
   fiche: z.record(z.string(), z.unknown()).optional().default({}),
   aspects: z
     .array(
       z.object({
-        key: z.string().trim().min(1).max(40),
-        label: z.string().trim().max(80),
-        value: z.string().max(4000).optional().default(''),
+        key: z.string().max(40),
+        label: z.string().max(120).optional().default(''),
+        value: z.string().max(2000).optional().default(''),
         filled: z.boolean().optional().default(false),
-        /** Ce qui l'a examiné : « ancrage », « cohérence », « aucun »… */
-        instrument: z.string().trim().max(60).optional().default(''),
-        /** Les défauts relevés. Des libellés, pas des verdicts. */
-        flags: z.array(z.string().trim().max(30)).max(8).optional().default([]),
-        /**
-         * Le verdict que la fiche approuvée **propose** pour ce champ, quand il
-         * y en a une. Vide quand elle ne peut pas trancher — la description,
-         * qui est une reformulation, ou un champ vide des deux côtés mais
-         * ancré dans la page.
-         *
-         * Proposé, jamais écrit : il n'entre dans `verdicts` que si un humain
-         * clique. Un verdict qui s'inscrirait tout seul redeviendrait
-         * indiscernable de « personne n'a regardé ».
-         */
-        proposed: z.enum(EVAL_FIELD_VERDICTS).or(z.literal('')).optional().default(''),
-        /** Pourquoi cette proposition, en clair. */
-        because: z.string().trim().max(200).optional().default(''),
+        instrument: z.string().max(60).optional().default(''),
+        flags: z.array(z.string().max(40)).max(20).optional().default([]),
       }),
     )
-    .max(40)
+    .max(60)
     .optional()
     .default([]),
-  /** Une fiche approuvée a servi de référence. */
-  hasReference: z.boolean().optional().default(false),
-  /**
-   * Le titre approuvé ne se retrouve plus dans le texte : ce n'est plus la même
-   * page, et toutes les propositions ont été retirées.
-   */
-  pageMoved: z.boolean().optional().default(false),
+  inputTokens: z.number().int().min(0).optional().default(0),
+  outputTokens: z.number().int().min(0).optional().default(0),
+  costUsd: z.number().min(0).optional().default(0),
+  error: z.string().trim().max(1000).optional(),
+});
+
+/** Clôture d'un run : son sort, et ce qu'il a coûté. */
+export const evalRunFinishSchema = z.object({
+  status: z.enum(['DONE', 'FAILED']),
+  error: z.string().trim().max(2000).optional(),
+  items: z.number().int().min(0).optional().default(0),
   inputTokens: z.number().int().min(0).optional().default(0),
   outputTokens: z.number().int().min(0).optional().default(0),
   costUsd: z.number().min(0).optional().default(0),
 });
 
 /**
- * Peupler le banc de lecture depuis ce que le pipeline a déjà fait.
+ * Peupler le corpus avec ce que le pipeline a déjà fait.
  *
- * Deux paniers, et l'équilibre entre eux est **la** question de ce banc :
- * `approuvees` sont les pages où l'étage 5 a réussi, `abandonnees` celles qu'il
- * a écartées sans que personne ne vérifie jamais s'il avait raison. Ne prendre
- * que les premières mesurerait la brique sur ses propres succès.
+ * Quatre paniers, et l'équilibre entre eux est la question de ce corpus : ne
+ * prendre que les réussites mesurerait la brique sur ses propres succès.
  */
 export const evalSeedSchema = z.object({
-  bucket: z.enum(['approuvees', 'abandonnees']),
-  limit: z.number().int().min(1).max(100).optional().default(25),
+  bucket: z.enum(['approuvees', 'abandonnees', 'illisibles', 'liens']),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(25),
 });

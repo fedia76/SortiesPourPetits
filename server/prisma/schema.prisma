@@ -69,20 +69,6 @@ enum ScraperRunStatus {
   FAILED
 }
 
-/// Où en est l'analyse d'un agenda du banc d'évaluation.
-///
-/// Les quatre premiers états sont ceux d'un travail que le worker réclame,
-/// exactement comme une exécution du scraper. `VALIDATED` est le seul que le
-/// worker ne produit jamais : il dit qu'un humain a relu la moisson, l'a
-/// complétée, et que ce qu'elle contient fait désormais **vérité**.
-enum EvalAgendaStatus {
-  QUEUED
-  RUNNING
-  ANALYZED
-  FAILED
-  VALIDATED
-}
-
 model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique
@@ -91,13 +77,15 @@ model User {
   role         Role     @default(USER)
   createdAt    DateTime @default(now())
 
-  events          Event[]          @relation("EventAuthor")
-  moderatedEvents Event[]          @relation("EventModerator")
+  events          Event[]       @relation("EventAuthor")
+  moderatedEvents Event[]       @relation("EventModerator")
   apiKeys         ApiKey[]
-  scraperRuns     ScraperRun[]     @relation("ScraperRunRequester")
-  evalAgendas     EvalAgenda[]     @relation("EvalAgendaAuthor")
-  evalReadings    EvalReading[]    @relation("EvalReadingAuthor")
-  evalExtractions EvalExtraction[] @relation("EvalExtractionAuthor")
+  scraperRuns     ScraperRun[]  @relation("ScraperRunRequester")
+  evalAgendas     EvalAgenda[]  @relation("EvalAgendaAuthor")
+  evalReadings    EvalReading[] @relation("EvalReadingAuthor")
+  evalFiches      EvalFiche[]   @relation("EvalFicheAuthor")
+  evalLinkLabels  EvalLink[]    @relation("EvalLinkLabeller")
+  evalRuns        EvalRun[]     @relation("EvalRunRequester")
 }
 
 /// Clé d'API pour les programmes tiers. La clé en clair n'est jamais stockée :
@@ -551,170 +539,195 @@ model ScrapedUrl {
 }
 
 // ════════════════════════════════════════════════════════ banc d'évaluation
+//
+// Trois choses, et elles vivaient dans les mêmes lignes. C'est ce mélange qui
+// rendait le banc incapable de faire ce pour quoi il existe :
+//
+//   * le **corpus** — une entrée gelée et ce qu'un humain dit qu'elle
+//     contient. Ça vit des années, ça ne dépend d'aucun modèle, et c'est la
+//     seule chose qui coûte cher à produire ;
+//   * un **run** — ce qu'une brique, à sa version du jour, rend sur ce
+//     corpus. Immuable, empilé, jamais écrasé ;
+//   * la **mesure** — la confrontation des deux. Calculée, jamais stockée.
+//
+// Avant cette séparation, rejouer un agenda supprimait ses pages, donc en
+// cascade tous les verdicts humains qu'il portait ; rejouer une page de
+// lecture réécrivait son texte et son HTML gelé, laissant des étiquettes qui
+// décrivaient un objet disparu. Autrement dit : mesurer deux fois était soit
+// impossible, soit mensonger — et « est-ce que ça s'améliore ? » restait sans
+// réponse.
+//
+// ## Ce que la séparation fait disparaître
+//
+// `reviewed` n'existe plus : une ligne d'étiquette existe **parce qu'**un
+// humain l'a posée, et son absence dit « personne n'a regardé » sans
+// ambiguïté. `hasReference` n'existe plus : une proposition est un run qu'on
+// affiche, pas un état qu'on stocke. `pageMoved` n'existe plus : un run rejoue
+// sur l'entrée gelée, jamais sur le web d'aujourd'hui.
+//
+// ## L'étiquette dit ce que la page contient, jamais si la brique a eu raison
+//
+// C'est la règle qui a présidé à tout ce qui suit, et elle change la nature
+// des étiquettes. « le tarif est JUSTE » juge une sortie de modèle : elle ne
+// veut rien dire sans elle, et elle périme au premier changement de prompt.
+// « la page annonce 8 € » décrit la page : elle vaut pour toujours, et
+// n'importe quel run se compare à elle tout seul.
+//
+// Les verdicts d'autrefois — CORRECT, AMPUTE, JUSTE, INVENTE — n'ont pas
+// disparu pour autant : ils sont **dérivés** au moment de la mesure, en
+// confrontant ce que le run a rendu à ce que le corpus déclare.
 
-/// Un agenda du banc d'évaluation : une page réelle dont on veut savoir ce
-/// que le dépouillement (étage 3) **aurait dû** en tirer.
+/// Où en est la **capture** d'une entrée du corpus — le gel de son HTML.
+///
+/// À ne pas confondre avec un run : capturer construit le corpus, mesurer
+/// l'interroge. Une entrée capturée l'est une fois pour toutes ; recapturer
+/// crée une nouvelle entrée plutôt que d'écraser celle qui porte les
+/// étiquettes.
+enum EvalCaptureStatus {
+  QUEUED
+  RUNNING
+  CAPTURED
+  FAILED
+}
+
+/// La brique qu'un run mesure. Les quatre qui ont une entrée gelable.
+///
+/// Les étages 1 et 7 en sont absents, et ce n'est pas un oubli : la découverte
+/// interroge le web vivant et l'attribution télécharge des pages candidates.
+/// Leurs runs ne seraient pas rejouables, donc pas comparables — ce qui est
+/// tout ce qu'on demande à un banc.
+enum EvalStage {
+  HARVEST
+  SELECT
+  READ
+  EXTRACT
+}
+
+enum EvalRunStatus {
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+}
+
+// ─────────────────────────────────────────────────────────── LE CORPUS
+
+/// Un agenda du corpus : une page réelle dont on veut savoir ce que le
+/// dépouillement **aurait dû** en tirer.
 ///
 /// Le principe tient en une phrase : déterminisme n'est pas justesse.
-/// `links_of` rend les mêmes liens à chaque fois, ce qui ne dit rien de
-/// savoir si ce sont les bons. Aucun signal gratuit ne peut répondre — il n'y
-/// a pas, dans le HTML, de déclaration de ce que le site considère comme ses
-/// propres fiches. Il faut donc un humain, une fois, pour compléter la
-/// moisson ; ensuite l'étiquette ne périme plus jamais, et la mesure se
-/// rejoue gratuitement.
-///
-/// L'extraction, elle, passe par le worker Python et par le vrai `links_of`.
-/// La refaire en Node donnerait la vérité d'une réimplémentation, c'est-à-dire
-/// aucune vérité du tout.
+/// `links_of` rend les mêmes liens à chaque fois, ce qui ne dit rien de savoir
+/// si ce sont les bons. Aucun signal gratuit ne peut répondre — il n'y a pas,
+/// dans le HTML, de déclaration de ce que le site considère comme ses propres
+/// fiches. Il faut donc un humain, une fois ; ensuite l'étiquette ne périme
+/// plus jamais et la mesure se rejoue gratuitement.
 model EvalAgenda {
-  id     Int              @id @default(autoincrement())
-  url    String           @unique @db.VarChar(500)
+  id    Int    @id @default(autoincrement())
+  url   String @unique @db.VarChar(500)
   /// Nom lisible pour la console. Vide : l'URL fait office de nom.
-  label  String           @default("")
-  status EvalAgendaStatus @default(QUEUED)
+  label String @default("")
 
-  /// Combien de pages dépouiller, la première comprise. C'est un réglage de
-  /// l'évaluation, pas celui du pipeline : ici on demande un nombre fixe, là
-  /// où l'étage 3 suit sa pagination tant qu'il manque de liens. Ce qu'on
-  /// mesure est `links_of` sur une page donnée, pas la politique qui décide
-  /// d'en ouvrir une de plus.
+  /// Combien de pages capturer, la première comprise. C'est un réglage du
+  /// corpus, pas celui du pipeline : ici on demande un nombre fixe, là où
+  /// l'étage 3 suit sa pagination tant qu'il manque de liens. Ce qu'on mesure
+  /// est `links_of` sur une page donnée, pas la politique qui décide d'en
+  /// ouvrir une de plus.
   pages Int @default(1)
 
-  error String? @db.Text
-  note  String  @default("") @db.Text
-
-  createdAt   DateTime  @default(now())
-  analyzedAt  DateTime?
-  validatedAt DateTime?
+  capture      EvalCaptureStatus @default(QUEUED)
+  captureError String?           @db.Text
+  capturedAt   DateTime?
+  note         String            @default("") @db.Text
+  createdAt    DateTime          @default(now())
 
   author      User @relation("EvalAgendaAuthor", fields: [createdById], references: [id])
   createdById Int
 
   agendaPages EvalAgendaPage[]
 
-  @@index([status])
+  @@index([capture])
 }
 
-/// Une page réellement téléchargée de cet agenda : la première, puis chaque
-/// `rel="next"` suivi. C'est le niveau auquel la console groupe les liens,
-/// parce que c'est le niveau auquel `links_of` travaille — une page, une
-/// moisson.
+/// Une page capturée d'un agenda : le HTML d'un jour, gelé, et ce qu'un humain
+/// dit de sa pagination.
 model EvalAgendaPage {
   id     Int    @id @default(autoincrement())
   /// Rang de la page dans la pagination : 1 pour l'agenda lui-même.
   pageNo Int
   url    String @db.VarChar(500)
 
-  /// Taille du HTML servi. Un effondrement d'un run à l'autre est le premier
-  /// signe qu'un site s'est mis à charger sa liste en JavaScript.
-  chars Int     @default(0)
-  /// Renseigné quand la page n'a pas pu être lue. Les liens sont alors vides,
-  /// et c'est une réponse : la page a été demandée, pas obtenue.
-  error String? @db.Text
+  /// Taille du HTML servi, au moment de la capture.
+  chars Int @default(0)
 
-  /// Le HTML servi ce jour-là, gzippé sur disque. **C'est ce qui fait du banc
-  /// un corpus gelé** plutôt qu'un instantané : sans lui, rejouer `links_of`
-  /// après l'avoir modifié obligerait à retélécharger, donc à comparer un
-  /// nouveau code à une nouvelle page — et l'écart ne dirait plus lequel des
-  /// deux a bougé.
+  /// Le HTML servi ce jour-là, gzippé sur disque. **C'est ce qui fait du
+  /// corpus un corpus** plutôt qu'un instantané : un run le rejoue hors ligne,
+  /// donc un écart entre deux runs ne peut venir que du code — jamais du site,
+  /// qui a pu changer entre-temps.
   ///
-  /// Nul quand la page était injoignable, ou trop lourde pour être archivée :
-  /// la mesure tient quand même, seul le rejeu hors ligne s'en trouve privé
-  /// pour cette page-là.
+  /// Écrit à la capture, **jamais réécrit**. Recapturer une page crée une
+  /// nouvelle entrée : sans quoi les étiquettes se retrouveraient à décrire un
+  /// HTML qui n'existe plus, ce qui est pire que de les avoir perdues.
   htmlPath String? @db.VarChar(255)
 
-  /// Ce que `next_page()` a trouvé sur cette page — donc ce que l'étage 3
-  /// saurait suivre. Comparé aux liens que l'humain étiquette `PAGINATION`,
-  /// c'est **la mesure de la pagination** : un agenda qui numérote ses pages
-  /// sans `rel="next"` n'est jamais suivi, et rien ailleurs ne le signale.
+  /// L'adresse de la vraie page suivante, telle qu'un humain la connaît.
   ///
-  /// Vide quand la page ne déclare pas de suite — ce qui est une réponse.
-  nextUrl String @default("") @db.VarChar(500)
-
-  /// Ce qu'un humain dit de cette pagination-là. Nul tant qu'il n'a rien dit.
-  ///
-  /// Il en faut un **au niveau de la page**, et pas seulement des étiquettes sur
-  /// les liens : `next_page()` lit aussi le `<link rel="next">` du `<head>`, qui
-  /// n'est pas un `<a href>` et n'apparaît donc dans aucune ligne. L'URL qu'il
-  /// en tire était alors invérifiable — la console demandait de l'étiqueter
-  /// « pagination » sans qu'aucune ligne ne puisse l'être.
-  nextVerdict EvalNextVerdict?
-
-  /// L'adresse de la vraie page suivante, quand l'humain la connaît.
-  ///
-  /// C'est ce qui manque pour réparer : savoir que l'étage 3 s'est trompé ne
-  /// dit pas ce qu'il aurait dû trouver. Une poignée de ces adresses dit tout
-  /// de suite si `next_page()` doit apprendre à lire une pagination numérotée.
-  nextExpected String @default("") @db.VarChar(500)
+  /// Trois états, et il en faut trois : `null` — personne n'a regardé ; `""` —
+  /// il n'y a pas de suite, et c'est une étiquette ; une URL — la voici. Le
+  /// verdict d'autrefois (CORRECT / MANQUEE / FAUSSE) se déduit de la
+  /// comparaison avec ce qu'un run a trouvé, au lieu d'être figé contre un
+  /// seul passage.
+  nextExpected String? @db.VarChar(500)
 
   agenda   EvalAgenda @relation(fields: [agendaId], references: [id], onDelete: Cascade)
   agendaId Int
 
-  links EvalLink[]
+  links           EvalLink[]
+  evalLinkResults EvalLinkResult[]
 
   @@unique([agendaId, pageNo])
   @@index([agendaId])
 }
 
-/// Un lien d'une page — **tous** les liens, pas seulement ceux que le
-/// dépouillement a retenus.
+/// Ce qu'un humain dit d'un lien d'une page d'agenda.
 ///
-/// C'est le croisement de deux colonnes qui porte la mesure :
+/// **Cette table ne contient que des étiquettes.** Une ligne existe parce
+/// qu'un humain l'a posée ; son absence dit que personne n'a regardé, sans
+/// ambiguïté possible. C'est ce qui remplace l'ancien `reviewed`, et c'est
+/// mieux qu'une colonne : on ne peut plus valider un agenda en n'ayant relu
+/// que la moisson, ce qui affichait autrefois un rappel de 100 % pour la
+/// seule raison que personne n'avait regardé le reste.
 ///
-/// * `harvested` — ce que le **vrai** `links_of` en a fait. C'est la précoche,
-///   et elle vient de la fonction de production, jamais d'une relecture de ses
-///   règles ;
-/// * `verdict` — ce qu'un humain dit que c'est réellement.
-///
-/// D'où les deux erreurs, là où ne montrer que la moisson n'en donnait qu'une :
-/// `harvested` sans `SORTIE` est un lien retenu pour rien, qui coûte un appel
-/// payant à l'étage 4 ; `SORTIE` sans `harvested` est une sortie perdue, que
-/// personne n'aurait jamais vue.
+/// Ce que la brique a fait de ce lien — retenu ou écarté, et pourquoi — est
+/// dans `EvalLinkResult`, une fois par run.
 model EvalLink {
-  id      Int            @id @default(autoincrement())
-  url     String         @db.VarChar(500)
-  /// Texte de l'ancre, tronqué à 150 caractères comme le fait `links_of`.
-  text    String         @default("") @db.VarChar(200)
-  /// Le texte qui entoure le lien sur la page — là où vivent la date et le
-  /// lieu. Renseigné pour les seuls liens retenus : c'est ce que l'étage 4
-  /// reçoit, et un lien écarté ne le lui donne jamais.
-  context String         @default("") @db.Text
-  /// `PAGE` : relevé dans le HTML. `MANUAL` : tapé par un humain, pour ce que
-  /// le HTML ne porte pas — une carte rendue en JavaScript, par exemple.
-  source  EvalLinkSource @default(PAGE)
+  id   Int    @id @default(autoincrement())
+  url  String @db.VarChar(500)
+  /// Texte de l'ancre au moment de l'étiquetage, pour que la console puisse
+  /// afficher la ligne sans rejouer quoi que ce soit.
+  text String @default("") @db.VarChar(200)
 
-  /// Le dépouillement l'a-t-il retenu ? La précoche que l'humain vient
-  /// corriger, et le verdict de `links_of` lui-même.
-  harvested  Boolean @default(false)
-  /// Pourquoi il a été écarté : « texte trop court », « hors domaine »…
-  /// Un libellé, pas une décision — il sert à ranger les rejets dans la
-  /// console, parce que les ratages se concentrent sous deux ou trois motifs.
-  dropReason String  @default("") @db.VarChar(60)
-  /// Rang dans le document, pour que la console liste les liens dans l'ordre
-  /// où ils se présentent sur la page.
-  position   Int     @default(0)
+  /// `PAGE` : le lien figure dans le HTML gelé. `MANUAL` : tapé par un humain,
+  /// pour ce que le HTML ne porte pas — une carte rendue en JavaScript, par
+  /// exemple. Un lien `MANUAL` étiqueté `SORTIE` est le seul moyen de mesurer
+  /// ce qu'aucun `links_of` ne pourra jamais trouver.
+  source EvalLinkSource @default(PAGE)
 
-  /// Ce que l'humain dit que ce lien est.
-  ///
-  /// Jamais nul : l'import y pose déjà la **précoche** de la brique. C'est
-  /// pratique et c'est un piège — un lien que personne n'a regardé porte quand
-  /// même une étiquette, d'où `reviewed` juste en dessous.
-  verdict EvalVerdict?
+  /// Ce que ce lien est. Jamais nul : la ligne n'existerait pas.
+  verdict EvalVerdict
 
-  /// Un humain a-t-il tranché ce lien, ou est-ce encore la précoche ?
-  ///
-  /// Sans cette colonne, rien ne distingue « la machine a deviné *autre* » de
-  /// « un humain a confirmé *autre* ». On pouvait alors valider un agenda en
-  /// n'ayant relu que la moisson, et le rappel affichait 100 % — non pas parce
-  /// que la brique n'avait rien raté, mais parce que personne n'avait regardé
-  /// le reste. C'est très exactement le mensonge que le banc existe pour
-  /// éviter, et il s'était glissé dedans.
-  reviewed   Boolean   @default(false)
-  reviewedAt DateTime?
+  /// D'où vient l'étiquette. `HUMAIN` : quelqu'un l'a tranchée dans la
+  /// console. `MODERATION` : la page pointée par ce lien est devenue une
+  /// sortie qu'un modérateur a approuvée — c'est un humain qui l'a vérifiée,
+  /// fiche en main, donc c'est une étiquette et non une supposition.
+  origin EvalLabelOrigin @default(HUMAIN)
 
-  /// Ce que l'humain a tapé pour expliquer sa correction, quand il l'a fait.
-  note    String   @default("") @db.Text
-  addedAt DateTime @default(now())
+  note       String   @default("") @db.Text
+  labelledAt DateTime @default(now())
+
+  /// Nul pour une étiquette venue de la modération : elle n'a pas d'auteur
+  /// dans la console.
+  labelledBy   User? @relation("EvalLinkLabeller", fields: [labelledById], references: [id])
+  labelledById Int?
 
   page   EvalAgendaPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
   pageId Int
@@ -722,37 +735,23 @@ model EvalLink {
   @@unique([pageId, url])
   @@index([pageId])
   @@index([verdict])
-  @@index([reviewed])
 }
 
-/// D'où vient un lien du banc : relevé sur la page, ou ajouté à la main.
 enum EvalLinkSource {
   PAGE
   MANUAL
 }
 
-/// Ce que la pagination d'une page vaut, dit par un humain.
+/// Qui a posé une étiquette.
 ///
-/// L'étage 3 ne se contente pas de lire une page : il suit la pagination. Ce
-/// verdict-là est donc une mesure de son travail au même titre que le tri des
-/// liens, et il lui faut ses propres valeurs — savoir qu'il s'est trompé ne dit
-/// pas s'il a raté une suite ou couru après une fausse.
-enum EvalNextVerdict {
-  /// Ce que la brique a trouvé — ou n'a pas trouvé — est juste.
-  CORRECT
-  /// Il y a une suite, la brique ne l'a pas vue.
-  MANQUEE
-  /// La brique a trouvé quelque chose qui n'est pas la suite.
-  FAUSSE
+/// Les deux valent : un modérateur qui approuve une sortie a vérifié chaque
+/// champ de la fiche, page ouverte à côté. C'est le même travail humain que
+/// dans la console du banc, simplement fait ailleurs et déjà payé.
+enum EvalLabelOrigin {
+  HUMAIN
+  MODERATION
 }
 
-/// Ce qu'un lien d'agenda est réellement, dit par un humain.
-///
-/// Quatre, parce que trois ne suffisent pas à décrire ce qu'un agenda contient.
-/// `SOUS_AGENDA` est le cas que personne ne comptait : « voir aussi les sorties
-/// en château », une page à facettes qui porte d'autres sorties sans être la
-/// page suivante. Le dépouillement la rend, la sélection l'écarte parce qu'on
-/// lui dit d'écarter les catégories, et ce qu'elle porte n'est jamais atteint.
 enum EvalVerdict {
   SORTIE
   PAGINATION
@@ -760,108 +759,66 @@ enum EvalVerdict {
   AUTRE
 }
 
-/// Une page du banc de **lecture** (étage 5).
-///
-/// L'étage 3 se mesure sur des agendas, celui-ci sur des **fiches** : ce ne
-/// sont pas les mêmes pages, donc pas le même corpus, donc pas la même table.
-///
-/// Ce qu'on y mesure, ce sont les trois lectures que l'étage fait d'un même
-/// HTML — le texte qui part au modèle, les dates que le site déclare, et
-/// l'illustration — plus la décision qui en découle : sous le seuil, la page
-/// est abandonnée avant le moindre appel payant.
+/// Une page du corpus de lecture : le HTML d'un jour, gelé, et ce qu'un humain
+/// dit qu'on doit pouvoir en tirer.
 model EvalReading {
-  id     Int              @id @default(autoincrement())
-  url    String           @unique @db.VarChar(500)
-  label  String           @default("")
-  status EvalAgendaStatus @default(QUEUED)
-  error  String?          @db.Text
-  note   String           @default("") @db.Text
+  id    Int    @id @default(autoincrement())
+  url   String @unique @db.VarChar(500)
+  label String @default("")
 
-  // ── ce que la brique a rendu
-  /// L'adresse réellement lue. Différente quand l'échange de langue a joué :
-  /// c'est elle qui serait proposée au site.
-  readUrl   String  @default("") @db.VarChar(500)
-  swapped   Boolean @default(false)
-  /// Le texte tel qu'il partirait au modèle. C'est la pièce à conviction :
-  /// sans lui, juger « le texte porte-t-il bien la sortie ? » demanderait de
-  /// rouvrir la page, donc de comparer à un HTML qui a pu changer.
-  text      String  @default("") @db.Text
-  textChars Int     @default(0)
-  /// Les dates JSON-LD, en JSON. Une liste vide est une réponse.
-  dates     String  @default("[]") @db.Text
-  imageUrl  String  @default("") @db.VarChar(500)
-  chars     Int     @default(0)
-  htmlPath  String? @db.VarChar(255)
+  capture      EvalCaptureStatus @default(QUEUED)
+  captureError String?           @db.Text
+  capturedAt   DateTime?
+  /// Taille du HTML capturé.
+  chars        Int               @default(0)
+  htmlPath     String?           @db.VarChar(255)
+  note         String            @default("") @db.Text
 
-  // ── les signaux gratuits : des libellés, pas des décisions
-  /// Le premier `h1` de la page, ou son `title` à défaut.
-  heading        String  @default("") @db.VarChar(200)
-  /// Ce titre se retrouve-t-il dans le texte extrait ? Non : le bloc qui le
-  /// portait a été décapé, et avec lui les dates et l'adresse le plus souvent.
-  h1InText       Boolean @default(false)
-  /// Le texte est au plafond : la fin de la page n'atteindra jamais le modèle.
-  truncated      Boolean @default(false)
-  /// Sous le seuil de l'étage 5 : la page serait **abandonnée** avant tout
-  /// appel payant. Le ratage le plus cher, et le plus silencieux.
-  tooShort       Boolean @default(false)
-  imageLooksLogo Boolean @default(false)
+  // ── les étiquettes : ce que la page contient, pas ce que la brique a rendu
+  //
+  //    Chacune a trois états — `null` : personne n'a regardé ; une valeur
+  //    vide : la page n'en porte pas, et c'est une étiquette ; une valeur :
+  //    la voici. Sans le second état, « pas d'image sur la page » et « pas
+  //    encore étiqueté » seraient le même silence.
 
-  // ── ce qu'un humain en dit. Nul tant qu'il n'a rien dit : la brique propose
-  //    dans la console, mais rien de sa proposition n'est écrit ici.
-  textVerdict  EvalTextVerdict?
-  imageVerdict EvalImageVerdict?
-  datesVerdict EvalDatesVerdict?
-
-  // ── d'où vient cette page
-  /// Saisie à la main, ou tirée d'un run — et de quel côté du tri.
-  origin EvalReadingOrigin @default(MANUEL)
-
-  /// La sortie **approuvée** que le pipeline a publiée depuis cette page.
+  /// L'illustration que la page porte vraiment, ou `""` si elle n'en a pas.
+  expectedImage   String? @db.VarChar(500)
+  /// Les dates que la page annonce, en JSON. `"[]"` : elle n'en annonce pas.
+  expectedDates   String? @db.Text
+  /// Quelques fragments que le texte extrait **doit** contenir — le titre, le
+  /// tarif, l'adresse. En JSON.
   ///
-  /// C'est la vérité de référence de l'étage 6 : approuver, sur ce site, veut
-  /// dire qu'un modérateur a vérifié chaque champ. Ce n'est donc pas une
-  /// précoche de plus mais une étiquette humaine déjà payée — y compris sur
-  /// `setting`, que nul instrument ne sait atteindre.
-  ///
-  /// Nulle pour une page saisie à la main, et pour toutes celles du panier des
-  /// abandons : par définition, elles n'ont produit aucune sortie.
-  event   Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
-  eventId Int?
+  /// On ne demande pas à un humain de retaper le texte attendu : ce serait
+  /// invivable et personne ne le ferait deux fois. On lui demande ce qui ne
+  /// doit pas manquer, ce qui se coche en quelques secondes depuis la page —
+  /// et ça suffit à distinguer un texte amputé d'un texte entier, qui est très
+  /// exactement la question de cet étage.
+  expectedMarkers String? @db.Text
 
-  /// Quand le pipeline avait lu cette page. Sert à mesurer la **dérive** : la
-  /// fiche décrit la page de ce jour-là, le banc la relit aujourd'hui, et aucun
-  /// HTML d'époque n'est conservé. Plus l'écart est grand, moins un désaccord
-  /// accuse le modèle.
-  readAt DateTime?
+  // ── d'où vient cette page, et pourquoi elle est au corpus
+  origin      EvalReadingOrigin @default(MANUEL)
+  /// La sortie approuvée que le pipeline avait publiée depuis cette page.
+  event       Event?            @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  eventId     Int?
+  /// Quand le pipeline avait lu cette page, et ce qu'il en avait décidé. C'est
+  /// de la provenance : ça dit pourquoi la page mérite d'être au corpus, ça ne
+  /// dit rien de ce qu'elle contient.
+  readAt      DateTime?
+  runDecision String            @default("") @db.VarChar(40)
+  runReason   String            @default("") @db.Text
 
-  /// Ce que le run avait décidé de cette page, et pourquoi — « page vide ou
-  /// illisible », le motif d'une erreur réseau. C'est la précoche du panier des
-  /// abandons : la brique a dit non, et personne ne l'a jamais vérifié.
-  runDecision String @default("") @db.VarChar(40)
-  runReason   String @default("") @db.Text
-
-  createdAt   DateTime  @default(now())
-  analyzedAt  DateTime?
-  validatedAt DateTime?
-
-  author      User @relation("EvalReadingAuthor", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  author      User     @relation("EvalReadingAuthor", fields: [createdById], references: [id])
   createdById Int
 
-  extraction EvalExtraction?
+  fiche              EvalFiche?
+  evalReadResults    EvalReadResult[]
+  evalExtractResults EvalExtractResult[]
 
-  @@index([status])
-  @@index([createdById])
+  @@index([capture])
   @@index([origin])
 }
 
-/// D'où vient une page du banc de lecture.
-///
-/// Deux paniers, et l'équilibre entre eux est **la** question de ce banc. Une
-/// sortie approuvée est une page où l'étage 5 a réussi : n'en prendre que
-/// celles-là mesurerait la brique sur ses propres succès, et donnerait 96 % de
-/// textes corrects qui ne voudraient rien dire. Les pages que la lecture a
-/// **abandonnées** sont l'autre moitié — personne n'a jamais vérifié si ces
-/// abandons étaient justifiés, et c'est très exactement son point aveugle.
 enum EvalReadingOrigin {
   /// Saisie à la main dans la console.
   MANUEL
@@ -869,146 +826,205 @@ enum EvalReadingOrigin {
   APPROUVEE
   /// L'étage 5 l'a écartée — page vide, illisible, ou injoignable.
   ABANDONNEE
+  /// Une fiche en est sortie, qu'un modérateur a refusée pour description
+  /// inutilisable. Le point aveugle de cet étage : la page n'était pas vide —
+  /// elle a passé le seuil, elle a coûté une extraction — mais son texte ne
+  /// valait rien. Rien ne capturait ce cas.
+  ILLISIBLE
 }
 
-/// Ce que vaut le texte qu'un étage 5 a tiré d'une page.
+/// Le corpus de l'extraction : ce que la page annonce, champ par champ.
 ///
-/// Trois façons de se tromper, et elles ne se réparent pas au même endroit :
-/// `AMPUTE` accuse la liste des balises décapées, `TRONQUE` le plafond de
-/// caractères, `HORS_SUJET` le fait d'avoir lu la mauvaise page.
-enum EvalTextVerdict {
-  CORRECT
-  AMPUTE
-  TRONQUE
-  HORS_SUJET
-}
+/// L'étiquette n'est plus « le tarif rendu est JUSTE » — un jugement qui n'a
+/// de sens que face à une fiche donnée, et qui périme au premier changement de
+/// prompt. Elle est « la page annonce 8 € », qui décrit la page et vaut pour
+/// toujours. Les quatre verdicts d'autrefois se **dérivent** alors tout seuls,
+/// pour n'importe quel run :
+///
+///   attendu renseigné, rendu identique   → JUSTE
+///   attendu renseigné, rendu différent   → FAUX
+///   attendu vide,      rendu renseigné   → INVENTE
+///   attendu renseigné, rendu vide        → MANQUE
+///
+/// C'est aussi ce qui permet à la modération de fournir des étiquettes sans
+/// rien savoir du banc : `EventCorrection.after` est très exactement « ce que
+/// la page annonce », vérifié par un humain la fiche sous les yeux.
+model EvalFiche {
+  id Int @id @default(autoincrement())
 
-/// Ce que vaut l'illustration retenue. `CORRECTE` vaut aussi pour « aucune
-/// image, et la page n'en a pas » — la brique a raison de n'en rendre aucune.
-enum EvalImageVerdict {
-  CORRECTE
-  LOGO
-  MAUVAISE
-  MANQUANTE
-}
-
-/// Ce que valent les dates JSON-LD relevées. `CORRECTES` vaut aussi pour
-/// « aucune, et la page n'en déclare pas ».
-enum EvalDatesVerdict {
-  CORRECTES
-  INCOMPLETES
-  FAUSSES
-  MANQUANTES
-}
-
-/// Une fiche du banc d'**extraction** (étage 6), adossée à une page du banc de
-/// lecture.
-///
-/// ## Pourquoi elle s'accroche à une lecture plutôt qu'à une URL
-///
-/// L'étage 6 ne lit pas une page : il lit le **texte** que l'étage 5 lui tend.
-/// Rejouer l'extraction sur la page vivante mêlerait deux mesures — une fiche
-/// sans tarif ne dirait plus si le modèle l'a raté ou si la lecture l'avait
-/// déjà emporté avec un `<aside>`. En partant du texte archivé, l'entrée est
-/// acquise, et une fiche fautive accuse bien cet étage-ci.
-///
-/// C'est aussi ce qui rend le banc économe : la page n'est téléchargée qu'une
-/// fois, par l'étage 5, et l'extraction se rejoue autant qu'on veut dessus.
-///
-/// ## Une seule extraction par page lue
-///
-/// Comparer deux modèles sur la même page demanderait de garder plusieurs
-/// fiches par lecture, donc une notion de campagne. Ce n'est pas ce dont le
-/// banc a besoin d'abord : ce qu'il faut savoir, c'est **quels champs se
-/// ratent**, et un seul passage le dit. Relancer écrase, et c'est dit dans la
-/// console.
-model EvalExtraction {
-  id     Int              @id @default(autoincrement())
-  status EvalAgendaStatus @default(QUEUED)
-  error  String?          @db.Text
-  note   String           @default("") @db.Text
-
-  /// Le modèle qui a répondu. Une mesure sans le nom du modèle ne se compare à
-  /// rien : c'est la première chose qui change entre deux campagnes.
-  model String @default("") @db.VarChar(120)
-
-  /// La fiche rendue, en JSON — les vingt-trois champs, entiers.
+  /// Ce que la page annonce, par champ, en JSON : `{"tarif": "8 €", …}`.
   ///
-  /// Y compris ceux qu'aucun aspect ne juge : c'est la pièce à conviction, et
-  /// une mesure dont on ne peut plus relire l'objet n'est pas vérifiable.
-  fiche String @default("{}") @db.Text
-
-  /// Les douze aspects, en JSON : libellé, valeur en clair, renseigné ou non,
-  /// quel instrument l'a examiné, et les défauts relevés.
+  /// En JSON plutôt qu'en table : la liste des champs est définie par
+  /// `evaluation.audit_fiche`, côté Python, et elle bougera. Une table
+  /// imposerait une migration à chaque champ ajouté, pour une mesure que le
+  /// serveur agrège de toute façon en mémoire.
   ///
-  /// En JSON plutôt qu'en table, et c'est un choix : la liste des aspects est
-  /// définie par `evaluation.audit_fiche`, côté Python, et elle bougera. Une
-  /// table imposerait une migration à chaque champ ajouté au schéma
-  /// d'extraction, pour une mesure qui tient en quelques dizaines de lignes et
-  /// que le serveur agrège de toute façon en mémoire.
-  aspects String @default("[]") @db.Text
+  /// Une clé absente veut dire « personne n'a regardé ce champ » ; une clé
+  /// présente et vide veut dire « la page n'en dit rien », ce qui est une
+  /// étiquette et permet de reconnaître une valeur inventée.
+  expected String @default("{}") @db.Text
 
-  /// Ce qu'un humain dit de chaque aspect, en JSON : `{"tarif": "JUSTE", …}`.
-  ///
-  /// Une clé absente veut dire « personne n'a encore regardé » — sans
-  /// ambiguïté, et c'est ce qui remplace le `reviewed` de l'étage 3. Les quatre
-  /// valeurs sont celles de `EvalFieldVerdict`.
-  verdicts String @default("{}") @db.Text
-
-  /// Une fiche approuvée a servi de référence, et les aspects portent donc des
-  /// verdicts **proposés**. Proposés, jamais écrits : un verdict qui
-  /// s'inscrirait tout seul redeviendrait indiscernable de « personne n'a
-  /// regardé », ce que ce banc existe pour éviter.
-  hasReference Boolean @default(false)
-
-  /// Le titre approuvé ne se retrouve plus dans le texte : la page a changé
-  /// depuis le run, et ce n'est plus la même. Toutes les propositions sont
-  /// alors retirées — elles accuseraient le modèle d'un changement du site.
-  pageMoved Boolean @default(false)
-
-  /// Ce que l'appel a coûté. Le premier étage du banc dont la mesure se paie :
-  /// le taire donnerait l'impression qu'elle est gratuite comme les autres.
-  inputTokens  Int   @default(0)
-  outputTokens Int   @default(0)
-  costUsd      Float @default(0)
-
-  createdAt   DateTime  @default(now())
-  analyzedAt  DateTime?
-  validatedAt DateTime?
+  note       String   @default("") @db.Text
+  labelledAt DateTime @default(now())
 
   reading   EvalReading @relation(fields: [readingId], references: [id], onDelete: Cascade)
   readingId Int         @unique
 
-  author      User @relation("EvalExtractionAuthor", fields: [createdById], references: [id])
+  author      User @relation("EvalFicheAuthor", fields: [createdById], references: [id])
   createdById Int
-
-  @@index([status])
-  @@index([createdById])
 }
 
-/// Ce qu'un humain dit d'un champ extrait.
+// ─────────────────────────────────────────────────────────────── LES RUNS
+
+/// Une exécution du banc : une brique, à une version donnée, sur un corpus.
 ///
-/// Quatre, et le croisement avec « le modèle a-t-il rempli ce champ ? » donne
-/// les trois taux qui comptent :
+/// Immuable. On n'écrase pas un run, on en ajoute un — c'est toute la
+/// différence avec ce qui existait avant, et c'est ce qui rend la question
+/// « est-ce que ça s'améliore ? » enfin posable.
 ///
-/// |                | la page le dit      | la page n'en dit rien |
-/// |----------------|---------------------|-----------------------|
-/// | **renseigné**  | JUSTE, ou FAUX      | **INVENTE**           |
-/// | **vide**       | **MANQUE**          | JUSTE (vide à raison) |
+/// Les colonnes de version ne sont pas du confort : sans elles, une courbe qui
+/// monte ou descend n'est attribuable à rien. Et elles sont irrattrapables
+/// après coup — un run déjà joué ne dira jamais ce qu'il était.
+model EvalRun {
+  id     Int           @id @default(autoincrement())
+  stage  EvalStage
+  status EvalRunStatus @default(QUEUED)
+  error  String?       @db.Text
+
+  /// Nom donné au run par qui l'a lancé — « après le correctif d'encodage ».
+  /// C'est ce qui rend un point de la courbe lisible six mois plus tard.
+  label String @default("") @db.VarChar(150)
+
+  // ── de quoi ce run est-il le run
+  /// La révision du dépôt qui tournait. Vide si le worker ne sait pas la dire.
+  codeRef    String @default("") @db.VarChar(60)
+  /// Le modèle interrogé, pour les deux étages qui en appellent un.
+  model      String @default("") @db.VarChar(120)
+  /// Empreinte du prompt : deux runs de même empreinte sont comparables sur
+  /// le modèle seul, deux runs d'empreintes différentes ne le sont pas.
+  promptHash String @default("") @db.VarChar(64)
+  /// Les réglages en vigueur, en JSON — plafonds, seuils, options.
+  settings   String @default("{}") @db.Text
+
+  // ── ce qu'il a coûté. Nul pour les étages de Python pur.
+  inputTokens  Int   @default(0)
+  outputTokens Int   @default(0)
+  costUsd      Float @default(0)
+
+  /// Nombre d'entrées du corpus soumises à ce run.
+  items Int @default(0)
+
+  queuedAt   DateTime  @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  requestedBy   User? @relation("EvalRunRequester", fields: [requestedById], references: [id])
+  requestedById Int?
+
+  linkResults    EvalLinkResult[]
+  readResults    EvalReadResult[]
+  extractResults EvalExtractResult[]
+
+  @@index([stage, queuedAt])
+  @@index([status])
+}
+
+/// Ce qu'un run des étages 3 et 4 a fait d'un lien d'une page.
 ///
-/// `INVENTE` mérite sa propre valeur plutôt que d'être rangé sous `FAUX` :
-/// c'est la faute propre à un modèle, celle qu'aucun code déterministe ne
-/// commet, et c'est très exactement celle que l'ancrage sait pré-signaler sans
-/// coûter la moindre étiquette. Les mélanger cacherait le seul chiffre qui dit
-/// si le prompt tient le modèle.
-enum EvalFieldVerdict {
-  /// La valeur rendue est celle de la page — ou le champ est vide, et la page
-  /// n'en dit rien.
-  JUSTE
-  /// Une valeur est rendue, la page en donne une autre.
-  FAUX
-  /// Une valeur est rendue, la page n'en donne aucune.
-  INVENTE
-  /// Aucune valeur rendue, alors que la page en donne une.
-  MANQUE
+/// Une ligne par lien **relevé par la brique**, étiqueté ou non : un lien que
+/// le run trouve et que le corpus ne connaît pas est un trou du corpus, et
+/// c'est une information — elle se lit dans la mesure sous « non étiqueté ».
+model EvalLinkResult {
+  id      Int    @id @default(autoincrement())
+  url     String @db.VarChar(500)
+  /// Texte et contexte tels que `links_of` les a rendus **ce jour-là**. Le
+  /// contexte est l'entrée de l'étage 4 : c'est ce qui permet de le mesurer
+  /// sur la sortie de l'étage 3, comme en production.
+  text    String @default("") @db.VarChar(200)
+  context String @default("") @db.Text
+
+  /// Étage 3 : le lien a-t-il été retenu par `links_of`, et sinon pourquoi.
+  harvested  Boolean @default(false)
+  dropReason String  @default("") @db.VarChar(60)
+  position   Int     @default(0)
+
+  /// Étage 4 : le modèle l'a-t-il retenu, et sur quel motif. Nuls pour un run
+  /// de l'étage 3, qui ne pose pas cette question.
+  selected     Boolean?
+  selectReason String   @default("") @db.Text
+
+  run    EvalRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId  Int
+  page   EvalAgendaPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  pageId Int
+
+  @@unique([runId, pageId, url])
+  @@index([runId])
+  @@index([pageId])
+}
+
+/// Ce qu'un run de l'étage 5 a tiré d'une page du corpus.
+model EvalReadResult {
+  id Int @id @default(autoincrement())
+
+  /// L'adresse réellement lue : différente quand l'échange de langue a joué.
+  readUrl String  @default("") @db.VarChar(500)
+  swapped Boolean @default(false)
+
+  /// Le texte tel qu'il partirait au modèle. La pièce à conviction : sans lui,
+  /// juger « le texte porte-t-il bien la sortie ? » demanderait de rouvrir la
+  /// page, donc de comparer à un HTML qui a pu changer.
+  text      String @default("") @db.Text
+  textChars Int    @default(0)
+  /// Les dates JSON-LD relevées, en JSON.
+  dates     String @default("[]") @db.Text
+  imageUrl  String @default("") @db.VarChar(500)
+
+  // ── les signaux gratuits : des constats, pas des verdicts
+  heading        String  @default("") @db.VarChar(200)
+  h1InText       Boolean @default(false)
+  truncated      Boolean @default(false)
+  tooShort       Boolean @default(false)
+  imageLooksLogo Boolean @default(false)
+
+  error String? @db.Text
+
+  run       EvalRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId     Int
+  reading   EvalReading @relation(fields: [readingId], references: [id], onDelete: Cascade)
+  readingId Int
+
+  @@unique([runId, readingId])
+  @@index([runId])
+  @@index([readingId])
+}
+
+/// Ce qu'un run de l'étage 6 a rendu sur le texte d'une page du corpus.
+model EvalExtractResult {
+  id Int @id @default(autoincrement())
+
+  /// La fiche rendue, en JSON — tous les champs, entiers. La pièce à
+  /// conviction : une mesure dont on ne peut plus relire l'objet n'est pas
+  /// vérifiable.
+  fiche   String @default("{}") @db.Text
+  /// Les aspects relevés par `evaluation.audit_fiche`, en JSON : libellé,
+  /// valeur en clair, renseigné ou non, l'instrument qui l'a examiné et les
+  /// défauts constatés. Des constats, jamais des verdicts — ceux-ci se
+  /// dérivent de la comparaison au corpus, au moment de la mesure.
+  aspects String @default("[]") @db.Text
+
+  inputTokens  Int   @default(0)
+  outputTokens Int   @default(0)
+  costUsd      Float @default(0)
+
+  error String? @db.Text
+
+  run       EvalRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId     Int
+  reading   EvalReading @relation(fields: [readingId], references: [id], onDelete: Cascade)
+  readingId Int
+
+  @@unique([runId, readingId])
+  @@index([runId])
+  @@index([readingId])
 }

@@ -153,60 +153,82 @@ class SppApi:
         self._post_json(f"/api/scraper/runs/{run_id}/finish", {"status": status, **counters})
 
     # --------------------------------------------------- banc d'évaluation
-    # Une seconde file, indépendante de celle des runs : le banc mesure ce que
-    # le pipeline rend, il ne le joue pas. Un agenda du banc n'a ni journal, ni
-    # coût, ni sortie soumise — seulement des liens à comparer plus tard à ce
-    # qu'un humain aura complété.
+    # Deux files, et elles ne font pas le même travail. **Capturer** construit
+    # le corpus : on télécharge, on gèle, on n'y revient plus. **Jouer un run**
+    # rejoue une brique sur ce corpus gelé, autant de fois qu'on veut — de
+    # sorte qu'un écart entre deux runs ne peut venir que du code.
+    #
+    # Aucune de ces routes ne touche au pipeline : le banc mesure ce que les
+    # briques rendent, il ne les fait pas tourner en production.
 
-    def next_harvest(self) -> dict[str, Any] | None:
-        """Réclame le prochain agenda du banc, ou None s'il n'y a rien."""
-        body = self._post_json("/api/eval/harvest/next")
-        return body.get("agenda")
+    def next_capture(self) -> dict[str, Any] | None:
+        """Réclame la prochaine entrée à geler, ou None s'il n'y a rien."""
+        body = self._post_json("/api/eval/capture/next")
+        return body.get("job")
 
-    def report_harvest(self, agenda_id: int, pages: list[dict[str, Any]]) -> None:
-        """Rend ce que le dépouillement a tiré de chaque page de l'agenda."""
-        self._post_json(f"/api/eval/harvest/{agenda_id}/pages", {"pages": pages})
+    def report_capture(self, kind: str, item_id: int, pages: list[dict[str, Any]]) -> None:
+        """Rend le HTML gelé. Aucun relevé de brique ne passe par ici."""
+        self._post_json(f"/api/eval/capture/{kind}/{item_id}", {"pages": pages})
 
-    def fail_harvest(self, agenda_id: int, error: str) -> None:
-        """Clôt un agenda en échec.
+    def fail_capture(self, kind: str, item_id: int, error: str) -> None:
+        """Clôt une capture en échec.
 
-        Sans cet appel il resterait « en cours » pour toujours et ne serait
-        plus jamais réclamé — même règle qu'une exécution du scraper, et pour
-        la même raison.
+        Sans cet appel, l'entrée resterait « en cours » pour toujours et ne
+        serait plus jamais réclamée — même règle qu'une exécution du scraper,
+        et pour la même raison.
         """
-        self._post_json(f"/api/eval/harvest/{agenda_id}/fail", {"error": error[:2000]})
+        self._post_json(f"/api/eval/capture/{kind}/{item_id}/fail", {"error": error[:2000]})
 
-    def next_reading(self) -> dict[str, Any] | None:
-        """Réclame la prochaine page du banc de lecture, ou None."""
-        body = self._post_json("/api/eval/reading/next")
-        return body.get("reading")
+    def next_eval_run(
+        self,
+        code_ref: str = "",
+        model: str = "",
+        prompt_hash: str = "",
+        settings: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Réclame un run en file, en déclarant **de quoi il est le run**.
 
-    def report_reading(self, reading_id: int, result: dict[str, Any]) -> None:
-        """Rend ce que l'étage 5 a tiré de la page."""
-        self._post_json(f"/api/eval/reading/{reading_id}/result", result)
-
-    def fail_reading(self, reading_id: int, error: str) -> None:
-        """Clôt une page en échec, pour qu'elle ne reste pas « en cours »."""
-        self._post_json(f"/api/eval/reading/{reading_id}/fail", {"error": error[:2000]})
-
-    def next_extraction(self) -> dict[str, Any] | None:
-        """Réclame la prochaine extraction du banc, ou None.
-
-        Le site envoie le **texte** avec le travail, et pas seulement une URL :
-        c'est celui que l'étage 5 a archivé, et le rejouer sur la page vivante
-        mêlerait deux variables — une fiche sans tarif ne dirait plus si c'est
-        le modèle qui l'a raté ou la lecture qui l'avait déjà emporté.
+        Ces quatre renseignements ne sont pas du confort : sans eux, une courbe
+        qui monte ou descend n'est attribuable à rien, et ils sont
+        irrattrapables après coup — un run déjà joué ne dira jamais ce qu'il
+        était.
         """
-        body = self._post_json("/api/eval/extraction/next")
-        return body.get("extraction")
+        body = self._post_json(
+            "/api/eval/runs/next",
+            {
+                "codeRef": code_ref,
+                "model": model,
+                "promptHash": prompt_hash,
+                "settings": settings or {},
+            },
+        )
+        return body.get("run")
 
-    def report_extraction(self, extraction_id: int, result: dict[str, Any]) -> None:
-        """Rend la fiche que l'étage 6 a tirée du texte, et ce qu'elle a coûté."""
-        self._post_json(f"/api/eval/extraction/{extraction_id}/result", result)
+    def next_eval_item(self, run_id: int) -> dict[str, Any] | None:
+        """L'entrée suivante d'un run, **avec son HTML gelé**.
 
-    def fail_extraction(self, extraction_id: int, error: str) -> None:
-        """Clôt une extraction en échec, pour qu'elle ne reste pas « en cours »."""
-        self._post_json(f"/api/eval/extraction/{extraction_id}/fail", {"error": error[:2000]})
+        C'est ce qui garantit le rejeu hors ligne : le worker ne retélécharge
+        rien, il rejoue la brique sur ce que le corpus a figé.
+        """
+        body = self._post_json(f"/api/eval/runs/{run_id}/next-item")
+        return body.get("item")
+
+    def report_eval_links(self, run_id: int, result: dict[str, Any]) -> None:
+        """Le relevé des étages 3 et 4 sur une page du corpus."""
+        self._post_json(f"/api/eval/runs/{run_id}/links", result)
+
+    def report_eval_read(self, run_id: int, result: dict[str, Any]) -> None:
+        """Le relevé de l'étage 5 sur une page du corpus."""
+        self._post_json(f"/api/eval/runs/{run_id}/read", result)
+
+    def report_eval_extract(self, run_id: int, result: dict[str, Any]) -> None:
+        """Le relevé de l'étage 6 sur le texte d'une page du corpus."""
+        self._post_json(f"/api/eval/runs/{run_id}/extract", result)
+
+    def finish_eval_run(self, run_id: int, status: str, **counters: Any) -> None:
+        """Clôt un run. C'est ce qu'on ne peut pas perdre : sans clôture, il
+        resterait « en cours » et le worker n'en prendrait plus d'autre."""
+        self._post_json(f"/api/eval/runs/{run_id}/finish", {"status": status, **counters})
 
     def known_urls(self, urls: list[str]) -> set[str]:
         """Parmi ces URLs, celles que le site a déjà vu analyser."""
