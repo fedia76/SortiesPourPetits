@@ -522,7 +522,28 @@ scraperRouter.get('/quality', async (req, res) => {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
-  const { configId, days } = parsed.data;
+  // Express 4 n'attend pas les gestionnaires asynchrones : une promesse
+  // rejetée ici ne rejoindrait pas le gestionnaire d'erreur de `index.ts`,
+  // elle deviendrait un `unhandledRejection`, et Node tuerait le processus.
+  // Une faute de SQL sur cette page suffisait donc à éteindre le site entier,
+  // ce qui est arrivé — un alias `signal`, mot réservé de MySQL. La page peut
+  // échouer ; le site, non.
+  try {
+    res.json(await qualityReport(parsed.data));
+  } catch (err) {
+    console.error('[scraper] mesure de qualité en échec :', err);
+    res.status(500).json({ error: 'Les mesures de qualité sont indisponibles' });
+  }
+});
+
+/** Le corps de la mesure. Séparé pour que la route puisse l'encadrer. */
+async function qualityReport({
+  configId,
+  days,
+}: {
+  configId?: number;
+  days?: number;
+}): Promise<Record<string, unknown>> {
   const since = days === undefined ? null : new Date(Date.now() - days * 86_400_000);
   const scope = Prisma.sql`
     ${configId === undefined ? Prisma.empty : Prisma.sql`AND r.configId = ${configId}`}
@@ -534,7 +555,7 @@ scraperRouter.get('/quality', async (req, res) => {
     // « en attente » sont comptées à part et n'entrent dans aucun taux —
     // personne ne les a jugées, les compter comme des échecs serait faux.
     prisma.$queryRaw<{ status: string; events: bigint }[]>`
-      SELECT e.status AS status, COUNT(DISTINCT e.id) AS events
+      SELECT e.status AS \`status\`, COUNT(DISTINCT e.id) AS \`events\`
       FROM ScraperRunItem i
       JOIN ScraperRun r ON r.id = i.runId
       JOIN Event e ON e.id = i.eventId
@@ -547,7 +568,7 @@ scraperRouter.get('/quality', async (req, res) => {
     // « sans motif », plutôt que d'être passées sous silence — un tableau qui
     // tait ce qu'il ignore laisse croire que la mesure est complète.
     prisma.$queryRaw<{ code: string | null; events: bigint }[]>`
-      SELECT e.rejectionCode AS code, COUNT(DISTINCT e.id) AS events
+      SELECT e.rejectionCode AS \`code\`, COUNT(DISTINCT e.id) AS \`events\`
       FROM ScraperRunItem i
       JOIN ScraperRun r ON r.id = i.runId
       JOIN Event e ON e.id = i.eventId
@@ -558,14 +579,14 @@ scraperRouter.get('/quality', async (req, res) => {
     // Ce que la modération corrige, champ par champ. La mesure la moins chère
     // du projet, et la seule qui désigne un champ plutôt qu'une fiche.
     prisma.$queryRaw<{ field: string; events: bigint }[]>`
-      SELECT c.field AS field, COUNT(DISTINCT e.id) AS events
+      SELECT c.field AS \`field\`, COUNT(DISTINCT e.id) AS \`events\`
       FROM EventCorrection c
       JOIN Event e ON e.id = c.eventId
       JOIN ScraperRunItem i ON i.eventId = e.id
       JOIN ScraperRun r ON r.id = i.runId
       WHERE 1 = 1 ${scope}
       GROUP BY c.field
-      ORDER BY events DESC
+      ORDER BY \`events\` DESC
     `,
 
     // Combien de fiches ont été retouchées, toutes corrections confondues.
@@ -573,7 +594,7 @@ scraperRouter.get('/quality', async (req, res) => {
     // qui compte le plus : une fiche approuvée **sans retouche** est la seule
     // preuve dont on dispose que l'étage 6 avait tout bon.
     prisma.$queryRaw<{ touched: bigint }[]>`
-      SELECT COUNT(DISTINCT e.id) AS touched
+      SELECT COUNT(DISTINCT e.id) AS \`touched\`
       FROM EventCorrection c
       JOIN Event e ON e.id = c.eventId
       JOIN ScraperRunItem i ON i.eventId = e.id
@@ -586,9 +607,9 @@ scraperRouter.get('/quality', async (req, res) => {
     // il est instructif — c'est un lien qu'un humain a dû reprendre.
     prisma.$queryRaw<{ signal: string | null; judged: bigint; approved: bigint }[]>`
       SELECT
-        e.sourceUrlSignal AS signal,
-        COUNT(DISTINCT CASE WHEN e.status <> 'PENDING' THEN e.id END) AS judged,
-        COUNT(DISTINCT CASE WHEN e.status = 'APPROVED' THEN e.id END) AS approved
+        e.sourceUrlSignal AS \`signal\`,
+        COUNT(DISTINCT CASE WHEN e.status <> 'PENDING' THEN e.id END) AS \`judged\`,
+        COUNT(DISTINCT CASE WHEN e.status = 'APPROVED' THEN e.id END) AS \`approved\`
       FROM ScraperRunItem i
       JOIN ScraperRun r ON r.id = i.runId
       JOIN Event e ON e.id = i.eventId
@@ -603,17 +624,17 @@ scraperRouter.get('/quality', async (req, res) => {
       { query: string; pages: bigint; submitted: bigint; judged: bigint; approved: bigint }[]
     >`
       SELECT
-        i.query AS query,
-        COUNT(*) AS pages,
-        COUNT(DISTINCT i.eventId) AS submitted,
-        COUNT(DISTINCT CASE WHEN e.status <> 'PENDING' THEN e.id END) AS judged,
-        COUNT(DISTINCT CASE WHEN e.status = 'APPROVED' THEN e.id END) AS approved
+        i.query AS \`query\`,
+        COUNT(*) AS \`pages\`,
+        COUNT(DISTINCT i.eventId) AS \`submitted\`,
+        COUNT(DISTINCT CASE WHEN e.status <> 'PENDING' THEN e.id END) AS \`judged\`,
+        COUNT(DISTINCT CASE WHEN e.status = 'APPROVED' THEN e.id END) AS \`approved\`
       FROM ScraperRunItem i
       JOIN ScraperRun r ON r.id = i.runId
       LEFT JOIN Event e ON e.id = i.eventId
       WHERE i.query IS NOT NULL AND i.query <> '' ${scope}
       GROUP BY i.query
-      ORDER BY approved DESC, submitted DESC
+      ORDER BY \`approved\` DESC, \`submitted\` DESC
       LIMIT 100
     `,
 
@@ -626,18 +647,18 @@ scraperRouter.get('/quality', async (req, res) => {
       SELECT
         LOWER(TRIM(LEADING 'www.' FROM
           SUBSTRING_INDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(i.url, '://', -1), '/', 1), ':', 1)
-        )) AS domain,
-        COUNT(*) AS pages,
-        COUNT(DISTINCT i.eventId) AS submitted,
-        COUNT(DISTINCT CASE WHEN e.status <> 'PENDING' THEN e.id END) AS judged,
-        COUNT(DISTINCT CASE WHEN e.status = 'APPROVED' THEN e.id END) AS approved
+        )) AS \`domain\`,
+        COUNT(*) AS \`pages\`,
+        COUNT(DISTINCT i.eventId) AS \`submitted\`,
+        COUNT(DISTINCT CASE WHEN e.status <> 'PENDING' THEN e.id END) AS \`judged\`,
+        COUNT(DISTINCT CASE WHEN e.status = 'APPROVED' THEN e.id END) AS \`approved\`
       FROM ScraperRunItem i
       JOIN ScraperRun r ON r.id = i.runId
       LEFT JOIN Event e ON e.id = i.eventId
       WHERE 1 = 1 ${scope}
-      GROUP BY domain
-      HAVING submitted > 0
-      ORDER BY approved DESC, submitted DESC
+      GROUP BY \`domain\`
+      HAVING \`submitted\` > 0
+      ORDER BY \`approved\` DESC, \`submitted\` DESC
       LIMIT 100
     `,
   ]);
@@ -673,7 +694,7 @@ scraperRouter.get('/quality', async (req, res) => {
         return b.lower - a.lower;
       });
 
-  res.json({
+  return {
     // Le vocabulaire voyage avec les chiffres : la page groupe les refus par
     // étage, et une seconde table côté client aurait divergé au premier motif
     // ajouté.
@@ -691,8 +712,8 @@ scraperRouter.get('/quality', async (req, res) => {
     signals: ranked(signals).map((s) => ({ ...s, signal: s.signal ?? '' })),
     queries: ranked(queries),
     domains: ranked(domains),
-  });
-});
+  };
+}
 
 scraperRouter.get('/stats', async (req, res) => {
   const parsed = scraperStatsSchema.safeParse(req.query);
