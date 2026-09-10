@@ -42,6 +42,11 @@ jobs:
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/server/dist/"
           rsync -az --delete server/prisma/ \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/server/prisma/"
+          # Les scripts d'exploitation : reprises de données, outillage. Ils ne
+          # sont pas compilés dans `dist/` et ne partaient donc pas — un
+          # `npm run` qui les vise échouait sur un fichier absent du VPS.
+          rsync -az --delete server/scripts/ \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/server/scripts/"
           rsync -az server/package.json server/package-lock.json \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/server/"
 
@@ -57,15 +62,35 @@ jobs:
             cd '${{ secrets.VPS_APP_DIR }}/server'
             npm ci --omit=dev
             npm run db:deploy
-            # Reprise des étiquettes de l'ancien banc dans le corpus.
-            # Idempotente : elle ne fait rien une fois passée.
-            npm run db:backfill-eval
           "
 
+      # Juste après la migration, et avant tout le reste : le code sur le
+      # disque et le schéma en base viennent de changer ensemble, et le
+      # processus qui tourne encore connaît l'ancien des deux.
       - name: Redémarrer l'API
         run: |
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
             'sudo systemctl restart sortiespourpetits-api'
+
+      # Les reprises de données viennent **après** le redémarrage, et ne
+      # peuvent pas faire échouer le déploiement.
+      #
+      # Elles étaient avant, et sous `set -e` : la reprise des étiquettes du
+      # banc a buté sur un fichier que le déploiement ne copiait pas, l'étape
+      # est tombée, et le redémarrage de l'API n'a jamais eu lieu. Le site est
+      # resté sur l'ancien code face à un schéma qui venait de changer — une
+      # panne bien plus grave que le confort qu'on cherchait à installer.
+      #
+      # Une reprise ratée se rejoue à la main ; un site à moitié déployé, non.
+      - name: Reprendre les données (sans bloquer le déploiement)
+        continue-on-error: true
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "
+            cd '${{ secrets.VPS_APP_DIR }}/server'
+            # Étiquettes de l'ancien banc d'extraction vers le corpus.
+            # Idempotente : elle ne fait rien une fois passée.
+            npm run db:backfill-eval || echo 'Reprise des étiquettes à rejouer à la main.'
+          "
 
       # Le scraper vient en dernier, après le redémarrage de l'API : un
       # problème de son côté ne doit jamais empêcher le site d'être livré.
