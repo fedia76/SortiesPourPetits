@@ -1,5 +1,5 @@
 import { EventStatus, Prisma, Role, Setting } from '@prisma/client';
-import { Router } from 'express';
+import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { hasRole, requireAuth } from '../middleware/auth';
 import { deletePhoto, photoUpload, savePhoto } from '../lib/upload';
@@ -10,7 +10,7 @@ import { dateFilter } from '../lib/dateWindow';
 import { areaFilter } from '../lib/areas';
 import { rankEvents } from '../lib/relevance';
 
-export const eventsRouter = Router();
+export const eventsRouter = safeRouter();
 
 type EventWithRelations = Prisma.EventGetPayload<{
   include: {

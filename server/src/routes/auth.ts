@@ -1,12 +1,12 @@
 import bcrypt from 'bcryptjs';
-import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
+import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { config } from '../config';
 import { requireAuth, signToken } from '../middleware/auth';
 import { loginSchema, registerSchema } from '../lib/validators';
 
-export const authRouter = Router();
+export const authRouter = safeRouter();
 
 const COOKIE_OPTIONS = {
   httpOnly: true,

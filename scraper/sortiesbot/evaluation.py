@@ -207,18 +207,18 @@ def audit_links(html: str, page_url: str) -> list[dict[str, Any]]:
     return out
 
 
-def harvest_agenda(url: str, pages: int, fetcher: Fetcher | None = None) -> list[dict[str, Any]]:
-    """Relève un agenda et ses pages suivantes. Une entrée par page demandée.
+def capture_pages(url: str, pages: int, fetcher: Fetcher | None = None) -> list[dict[str, Any]]:
+    """Gèle un agenda et ses pages suivantes. **Du HTML, et rien d'autre.**
 
-    Rend toujours au moins une entrée : une page injoignable en est une, avec
-    son motif et zéro lien. C'est la même distinction que fait l'étage 3 entre
-    `None` et la liste vide — sauf qu'ici les deux doivent **remonter**, parce
-    qu'une page qu'on n'a pas pu lire est un fait mesurable, pas un trou.
+    C'est la seule fonction du banc qui touche au réseau pour l'étage 3, et
+    c'est délibéré : capturer construit le corpus, mesurer l'interroge. Ni
+    liens ni page suivante ne sortent d'ici — ceux-là viennent de `links_of` et
+    de `next_page()`, donc d'une brique, donc d'un run. Les faire entrer dans
+    la capture remettrait dans le corpus ce que la séparation vient d'en sortir.
 
-    Les liens ne sont **pas** dédoublonnés d'une page à l'autre. `links_of`
-    travaille page par page, et c'est page par page que la vérité s'établit :
-    un lien présent sur les pages 1 et 2 a été vu deux fois, et fusionner les
-    deux ferait disparaître une moitié du travail qu'on cherche à noter.
+    La pagination est **suivie** pendant la capture, en revanche : il faut bien
+    savoir quelles pages geler. C'est le seul emploi de `next_page()` ici, et
+    il décide de ce qu'on archive, pas de ce qu'on mesure.
     """
     fetcher = fetcher or Fetcher()
     out: list[dict[str, Any]] = []
@@ -228,9 +228,6 @@ def harvest_agenda(url: str, pages: int, fetcher: Fetcher | None = None) -> list
 
     for page_no in range(1, max(1, pages) + 1):
         if page_no > 1:
-            # On ne suit que `rel="next"`, comme l'étage 3. Reconstruire
-            # « page 2 » à partir de liens numérotés reviendrait à inventer une
-            # URL, et le banc mentirait alors sur ce que le pipeline visite.
             following = next_page(html, current) if html else ""
             if not following or following in seen_pages:
                 break
@@ -240,33 +237,82 @@ def harvest_agenda(url: str, pages: int, fetcher: Fetcher | None = None) -> list
         try:
             html = fetcher.get_html(current)
         except FetchError as err:
-            out.append(
-                {"pageNo": page_no, "url": current, "chars": 0, "error": str(err), "links": []}
-            )
+            if page_no == 1:
+                raise
+            # Une page suivante injoignable arrête la capture sans la perdre :
+            # ce qui a déjà été gelé reste du corpus valable.
             break
 
-        entry: dict[str, Any] = {
-            "pageNo": page_no,
-            "url": current,
-            "chars": len(html),
-            # Ce que l'étage 3 saurait suivre depuis cette page. Comparé aux
-            # liens que l'humain étiquettera « pagination », c'est la mesure de
-            # la pagination : un agenda qui numérote ses pages sans `rel="next"`
-            # n'est jamais suivi, et rien aujourd'hui ne le signale.
-            "nextUrl": next_page(html, current),
-            "links": audit_links(html, current),
-        }
+        entry: dict[str, Any] = {"pageNo": page_no, "url": current, "chars": len(html)}
         packed = _archive(html)
         if packed:
             entry["html"] = packed
         out.append(entry)
 
     if not out:
-        # Défensif : `pages` est validé côté site, mais un agenda sans la
-        # moindre entrée laisserait la console incapable de dire ce qui s'est
-        # passé — et le compte rendu serait refusé.
-        out.append({"pageNo": 1, "url": url, "chars": 0, "error": "aucune page lue", "links": []})
+        raise FetchError("aucune page capturée")
     return out
+
+
+def capture_one(url: str, fetcher: Fetcher | None = None) -> list[dict[str, Any]]:
+    """Gèle une page seule, pour le corpus de lecture. Même contrat."""
+    return capture_pages(url, 1, fetcher=fetcher)
+
+
+def harvest_from_html(html: str, url: str) -> dict[str, Any]:
+    """Rejoue l'étage 3 sur un HTML gelé. Aucun accès au réseau.
+
+    C'est ce qui rend un run comparable au précédent : l'entrée n'a pas bougé,
+    donc un écart entre deux relevés ne peut venir que du code. Sans ce
+    découplage, on comparait un nouveau code à une nouvelle page et l'écart ne
+    disait plus lequel des deux avait changé.
+
+    Les liens ne sont pas dédoublonnés d'une page à l'autre : `links_of`
+    travaille page par page, et c'est page par page que la mesure s'établit.
+    """
+    return {
+        # Ce que l'étage 3 saurait suivre depuis cette page. Comparé à
+        # l'étiquette `nextExpected` du corpus, c'est la mesure de la
+        # pagination — et elle vaut pour tous les runs, là où le verdict figé
+        # ne valait que pour celui qui l'avait produit.
+        "nextUrl": next_page(html, url),
+        "links": audit_links(html, url),
+    }
+
+
+def select_from_html(
+    html: str,
+    url: str,
+    *,
+    provider: Any,
+    config: Any,
+    log: Any,
+) -> dict[str, Any]:
+    """Rejoue les étages 3 **puis** 4 sur un HTML gelé.
+
+    Le tri ne voit que ce que le dépouillement lui donne : le mesurer sur
+    l'ensemble de la page lui reprocherait des liens qu'il n'a jamais reçus.
+    On rejoue donc la chaîne comme en production, et chaque lien porte deux
+    réponses — retenu par `links_of`, puis retenu par le modèle.
+
+    Un lien que le dépouillement a écarté n'a pas de réponse du tri : il part
+    sans `selected`, et la mesure l'exclut de son dénominateur au lieu de le
+    compter contre l'étage 4.
+    """
+    releve = harvest_from_html(html, url)
+    links = links_of(html, url)
+    try:
+        kept = provider.select(url, links, config, log)
+    except Exception as err:  # noqa: BLE001 — remonté tel quel à la console
+        releve["error"] = f"{err.__class__.__name__} : {err}"
+        return releve
+
+    retenus = {link.url for link in kept}
+    for entry in releve["links"]:
+        # Seuls les liens soumis au tri portent une réponse.
+        if entry.get("harvested"):
+            entry["selected"] = entry["url"] in retenus
+    return releve
 
 
 # ═══════════════════════════════════════════════ étage 5 — la lecture d'une page
@@ -332,6 +378,21 @@ def read_page(url: str, fetcher: Fetcher | None = None) -> dict[str, Any]:
     except FetchError as err:
         out["error"] = str(err)
         return out
+    return read_from_html(html, url, fetcher=fetcher)
+
+
+def read_from_html(html: str, url: str, fetcher: Fetcher | None = None) -> dict[str, Any]:
+    """Rejoue l'étage 5 sur un HTML gelé.
+
+    Une réserve, et il faut la dire : l'**échange de langue** peut demander le
+    réseau. Il fait partie de l'étage — c'est lui qui décide quelle page est
+    finalement lue — et l'omettre mesurerait une autre page que celle que le
+    pipeline aurait choisie. C'est donc le seul endroit du rejeu qui n'est pas
+    hors ligne, il ne se déclenche que sur une page qui déclare une jumelle
+    française, et le run le consigne dans `swapped`.
+    """
+    fetcher = fetcher or Fetcher()
+    out: dict[str, Any] = {"url": url}
 
     # L'échange de langue fait partie de l'étage : c'est lui qui décide quelle
     # page est lue, et son adresse est celle qui sera proposée au site.
@@ -362,9 +423,6 @@ def read_page(url: str, fetcher: Fetcher | None = None) -> dict[str, Any]:
             "imageLooksLogo": bool(image) and bool(_LOGO_HINT.search(image)),
         }
     )
-    packed = _archive(html)
-    if packed:
-        out["html"] = packed
     return out
 
 

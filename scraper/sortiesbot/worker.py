@@ -28,7 +28,13 @@ from typing import Any, Callable
 
 from .api import ApiError, SppApi
 from .config import Config, ConfigError, Environment, config_from_api, load_dotenv
-from .evaluation import extract_page, harvest_agenda, read_page
+from .evaluation import (
+    capture_pages,
+    extract_page,
+    harvest_from_html,
+    read_from_html,
+    select_from_html,
+)
 from .harvest import Fetcher
 from .journal import RemoteJournal, RunLog, run_log_path
 from .ledger import Ledger, ledger_path
@@ -265,153 +271,153 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
             print(f"■ Exécution #{run_id} {done} — {payload['costUsd']} $", flush=True)
 
 
-def evaluate(agenda: dict[str, Any], api: SppApi, quiet: bool) -> None:
-    """Dépouille un agenda du banc d'évaluation, et le clôt quoi qu'il arrive.
+def capture(job: dict[str, Any], api: SppApi, quiet: bool) -> None:
+    """Gèle une entrée du corpus, et la clôt quoi qu'il arrive.
 
-    Beaucoup plus court qu'`execute`, et ça en dit long sur ce que coûte le
-    pipeline : ici il n'y a ni modèle, ni journal, ni mémoire, ni sortie
-    soumise. Seulement des pages téléchargées et `links_of` appelé dessus.
+    Capturer n'est pas mesurer : on télécharge, on archive le HTML, on n'en
+    tire aucun relevé. Ce que les briques rendent est l'affaire d'un run, qui
+    rejouera plus tard sur ce qui vient d'être gelé — et c'est ce découplage
+    qui rend deux runs comparables.
 
-    Le `finally` a la même raison qu'ailleurs : le site a déjà passé l'agenda
-    en RUNNING, et sans clôture il ne serait plus jamais réclamé.
+    Le `finally` a la même raison qu'ailleurs : le site a déjà passé l'entrée
+    en RUNNING, et sans clôture elle ne serait plus jamais réclamée.
     """
-    agenda_id = int(agenda["id"])
-    url = str(agenda["url"])
-    pages = int(agenda.get("pages") or 1)
+    kind = str(job.get("kind") or "agenda")
+    item_id = int(job["id"])
+    url = str(job["url"])
+    pages = int(job.get("pages") or 1)
     if not quiet:
-        print(f"▶ Banc — agenda #{agenda_id} : {url} ({pages} page(s))", flush=True)
+        print(f"▶ Corpus — {kind} #{item_id} : {url} ({pages} page(s))", flush=True)
 
     reported = False
     try:
-        found = harvest_agenda(url, pages, fetcher=Fetcher())
-        api.report_harvest(agenda_id, found)
+        gelees = capture_pages(url, pages, fetcher=Fetcher())
+        api.report_capture(kind, item_id, gelees)
         reported = True
         if not quiet:
-            total = sum(len(p.get("links") or []) for p in found)
-            print(f"■ Banc — agenda #{agenda_id} : {total} lien(s) sur {len(found)} page(s)", flush=True)
+            poids = sum(p.get("chars", 0) for p in gelees)
+            print(f"■ Corpus — {kind} #{item_id} : {len(gelees)} page(s), {poids} caractères", flush=True)
     except ApiError as err:
-        # Le compte rendu n'est pas passé. Tenter de clore par la même API a
-        # peu de chances d'aboutir, mais rien à casser si elle revient.
-        print(f"Compte rendu impossible pour l'agenda #{agenda_id} : {err}", file=sys.stderr, flush=True)
+        print(f"Capture non rendue pour {kind} #{item_id} : {err}", file=sys.stderr, flush=True)
     except Exception as err:  # noqa: BLE001 — la trace part dans la console du service
         traceback.print_exc()
         if not reported:
             try:
-                api.fail_harvest(agenda_id, f"{err.__class__.__name__} : {err}")
+                api.fail_capture(kind, item_id, f"{err.__class__.__name__} : {err}")
             except ApiError as api_err:
-                print(f"Clôture impossible de l'agenda #{agenda_id} : {api_err}", file=sys.stderr, flush=True)
+                print(f"Clôture impossible de {kind} #{item_id} : {api_err}", file=sys.stderr, flush=True)
 
 
-def read(reading: dict[str, Any], api: SppApi, quiet: bool) -> None:
-    """Rejoue l'étage 5 sur une page du banc, et la clôt quoi qu'il arrive.
+def _code_ref() -> str:
+    """La révision qui tourne, si le dépôt est là. Vide sinon, et c'est dit.
 
-    Une page injoignable n'est pas un échec du banc : c'est une réponse, et
-    `read_page` la rapporte avec son motif. L'échec, ici, c'est de ne pas
-    réussir à rendre compte — et le `finally` est là pour ça, comme ailleurs.
+    Sans elle, un point de la courbe ne s'attribue à rien. On ne la devine pas :
+    ou bien git répond, ou bien le run le déclare inconnu.
     """
-    reading_id = int(reading["id"])
-    url = str(reading["url"])
-    if not quiet:
-        print(f"▶ Banc — lecture #{reading_id} : {url}", flush=True)
-
     try:
-        result = read_page(url, fetcher=Fetcher())
-        api.report_reading(reading_id, result)
-        if not quiet:
-            if result.get("error"):
-                print(f"■ Banc — lecture #{reading_id} : {result['error']}", flush=True)
-            else:
-                print(
-                    f"■ Banc — lecture #{reading_id} : {result['textChars']} caractères, "
-                    f"{len(result['dates'])} date(s), illustration "
-                    f"{'oui' if result['imageUrl'] else 'non'}",
-                    flush=True,
-                )
-    except ApiError as err:
-        print(f"Compte rendu impossible pour la lecture #{reading_id} : {err}", file=sys.stderr, flush=True)
-    except Exception as err:  # noqa: BLE001 — la trace part dans la console du service
-        traceback.print_exc()
-        try:
-            api.fail_reading(reading_id, f"{err.__class__.__name__} : {err}")
-        except ApiError as api_err:
-            print(f"Clôture impossible de la lecture #{reading_id} : {api_err}", file=sys.stderr, flush=True)
+        import subprocess
 
-
-def extract(job: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> None:
-    """Rejoue l'étage 6 sur un texte du banc de lecture, et clôt quoi qu'il arrive.
-
-    Trois choses distinguent cette file des deux autres, et toutes les trois
-    tiennent au fait que c'est le **premier étage payant** que le banc mesure :
-
-    * l'entrée ne vient pas du web mais du site — c'est le texte que l'étage 5 a
-      archivé. Retélécharger la page mêlerait la mesure de deux étages ;
-    * il faut un fournisseur, donc une clé d'API, donc une configuration. Elle
-      est minimale et assumée : le banc mesure le **prompt d'extraction du
-      scraper**, pas celui d'une recherche particulière ;
-    * ce que l'appel a coûté part avec le compte rendu. Taire le prix ferait
-      croire que cette mesure-ci est gratuite comme les précédentes.
-    """
-    extraction_id = int(job["id"])
-    url = str(job["url"])
-    text = str(job.get("text") or "")
-    if not quiet:
-        print(f"▶ Banc — extraction #{extraction_id} : {url}", flush=True)
-
-    try:
-        # Le référentiel des catégories vient du site : le prompt impose au
-        # modèle de choisir dedans, et une liste inventée ici mesurerait autre
-        # chose que ce que le pipeline fait.
-        try:
-            categories = sorted(api.categories().keys())
-        except ApiError:
-            categories = []
-
-        config = Config(name="banc", theme="banc d'évaluation")
-        if job.get("model"):
-            config = dataclass_replace(config, extraction_model=str(job["model"]))
-        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
-        # Pas de journal : le banc ne rejoue pas un run, il mesure un appel. Le
-        # `RunLog` sans fichier ni console garde le fournisseur inchangé — c'est
-        # bien le vrai `provider.extract` qui travaille.
-        log = RunLog(None, verbose=False)
-        result = extract_page(
-            url,
-            text,
-            provider=provider,
-            config=config,
-            log=log,
-            categories=categories,
-            declared_dates=[str(d) for d in (job.get("dates") or [])],
-            # La sortie qu'un modérateur a approuvée depuis cette page, quand
-            # il y en a une. Une étiquette humaine déjà payée, champ par
-            # champ — elle propose un verdict, elle n'en écrit aucun.
-            reference=job.get("reference") or None,
+        out = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5, check=False,
         )
-        api.report_extraction(extraction_id, result)
-        if not quiet:
-            if result.get("error"):
-                print(f"■ Banc — extraction #{extraction_id} : {result['error']}", flush=True)
+        return out.stdout.strip()[:60] if out.returncode == 0 else ""
+    except Exception:  # noqa: BLE001 — un dépôt absent n'est pas une panne
+        return ""
+
+
+def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> None:
+    """Joue un run du banc : une brique, sur tout le corpus gelé.
+
+    Le worker ne télécharge rien ici. Chaque entrée arrive **avec son HTML**,
+    tel que la capture l'a figé, et la brique est rejouée dessus. Un écart
+    entre deux runs ne peut donc venir que du code — ce qui est toute la raison
+    d'être d'un banc.
+
+    Les étages 4 et 6 appellent le modèle et se paient ; les étages 3 et 5 sont
+    du Python pur. Le coût est compté et rendu à la clôture, parce qu'une
+    mesure dont on tait le prix passe pour gratuite.
+    """
+    run_id = int(run["id"])
+    stage = str(run["stage"])
+    if not quiet:
+        titre = run.get("label") or "sans étiquette"
+        print(f"▶ Banc — run #{run_id} · étage {stage} · « {titre} »", flush=True)
+
+    provider = None
+    config = None
+    log = RunLog(None, verbose=False)
+    if stage in ("SELECT", "EXTRACT"):
+        # Une configuration par défaut : le banc mesure la brique et son
+        # prompt, pas les plafonds d'une recherche particulière.
+        config = Config(name="banc", theme="sorties enfants")
+        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
+
+    traites = 0
+    status, error = "DONE", None
+    try:
+        while not _stop:
+            item = api.next_eval_item(run_id)
+            if not item:
+                break
+            html = str(item.get("html") or "")
+            if stage in ("HARVEST", "SELECT"):
+                page_id = int(item["pageId"])
+                url = str(item["url"])
+                if stage == "HARVEST":
+                    result = harvest_from_html(html, url)
+                else:
+                    result = select_from_html(
+                        html, url, provider=provider, config=config, log=log
+                    )
+                result["pageId"] = page_id
+                api.report_eval_links(run_id, result)
+            elif stage == "READ":
+                reading_id = int(item["readingId"])
+                result = read_from_html(html, str(item["url"]), fetcher=Fetcher())
+                result["readingId"] = reading_id
+                # `url` est l'adresse *lue* — celle que l'échange de langue a
+                # pu changer. Le site la range sous `readUrl` ; la clé `url`
+                # n'a pas de place dans son schéma.
+                result["readUrl"] = result.pop("url", "")
+                api.report_eval_read(run_id, result)
             else:
-                doubtful = sum(1 for a in result["aspects"] if a["flags"])
-                proposed = sum(1 for a in result["aspects"] if a.get("proposed"))
-                repere = (
-                    f", {proposed} proposé(s) par la fiche approuvée"
-                    if result.get("hasReference")
-                    else " (page changée depuis le run)" if result.get("pageMoved") else ""
+                reading_id = int(item["readingId"])
+                lecture = read_from_html(html, str(item["url"]), fetcher=Fetcher())
+                result = extract_page(
+                    str(item["url"]),
+                    lecture.get("text", ""),
+                    provider=provider,
+                    config=config,
+                    log=log,
+                    declared_dates=lecture.get("dates", []),
                 )
-                print(
-                    f"■ Banc — extraction #{extraction_id} : {doubtful} aspect(s) signalé(s)"
-                    f"{repere}, {result['costUsd']} $",
-                    flush=True,
-                )
+                result["readingId"] = reading_id
+                api.report_eval_extract(run_id, result)
+            traites += 1
     except ApiError as err:
-        print(f"Compte rendu impossible pour l'extraction #{extraction_id} : {err}", file=sys.stderr, flush=True)
+        status, error = "FAILED", str(err)
     except Exception as err:  # noqa: BLE001 — la trace part dans la console du service
         traceback.print_exc()
+        status, error = "FAILED", f"{err.__class__.__name__} : {err}"
+    finally:
+        usage = getattr(provider, "usage", None)
+        payload: dict[str, Any] = {
+            "items": traites,
+            "inputTokens": int(getattr(usage, "input_tokens", 0) or 0),
+            "outputTokens": int(getattr(usage, "output_tokens", 0) or 0),
+            "costUsd": round(float(getattr(usage, "total_usd", 0.0) or 0.0), 4),
+        }
+        if error:
+            payload["error"] = error
         try:
-            api.fail_extraction(extraction_id, f"{err.__class__.__name__} : {err}")
-        except ApiError as api_err:
-            print(f"Clôture impossible de l'extraction #{extraction_id} : {api_err}", file=sys.stderr, flush=True)
+            api.finish_eval_run(run_id, status, **payload)
+        except ApiError as err:
+            print(f"Clôture impossible du run #{run_id} : {err}", file=sys.stderr, flush=True)
+        if not quiet:
+            fin = "terminé" if status == "DONE" else f"en échec ({error})"
+            print(f"■ Banc — run #{run_id} {fin} — {traites} entrée(s), {payload['costUsd']} $", flush=True)
+
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -472,46 +478,33 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         # Les recherches d'abord, le banc ensuite : une recherche produit des
-        # sorties que des parents attendent, un agenda du banc attend un humain
-        # qui le relira quand il pourra. À file égale, c'est la recherche qui
-        # passe.
+        # sorties que des parents attendent, le banc attend un humain qui le
+        # relira quand il pourra. À file égale, c'est la recherche qui passe.
+        #
+        # Et dans le banc, **capturer avant mesurer** : un run joué sur un
+        # corpus incomplet mesure ce qu'on a sous la main, pas ce qu'on voulait
+        # mesurer. Geler est en outre gratuit, là où un run des étages 4 et 6
+        # se paie.
         try:
-            agenda = api.next_harvest()
-        except ApiError as err:
-            if not args.quiet:
-                print(f"Banc injoignable ({err}) — nouvelle tentative.", file=sys.stderr, flush=True)
-            agenda = None
-        if agenda:
-            evaluate(agenda, api, args.quiet)
-            if args.once:
-                return 0
-            continue
-
-        # Le banc de lecture en dernier : c'est la file la moins pressée des
-        # trois, une page qui attend son humain n'attend pas à la minute.
-        try:
-            reading = api.next_reading()
-        except ApiError as err:
-            if not args.quiet:
-                print(f"Banc injoignable ({err}) — nouvelle tentative.", file=sys.stderr, flush=True)
-            reading = None
-        if reading:
-            read(reading, api, args.quiet)
-            if args.once:
-                return 0
-            continue
-
-        # L'extraction en dernier, et pour une raison de plus que les autres :
-        # c'est la seule file du banc qui dépense de l'argent. Tout ce qui est
-        # gratuit passe avant.
-        try:
-            job = api.next_extraction()
+            job = api.next_capture()
         except ApiError as err:
             if not args.quiet:
                 print(f"Banc injoignable ({err}) — nouvelle tentative.", file=sys.stderr, flush=True)
             job = None
         if job:
-            extract(job, api, env, args.quiet)
+            capture(job, api, args.quiet)
+            if args.once:
+                return 0
+            continue
+
+        try:
+            run = api.next_eval_run(code_ref=_code_ref())
+        except ApiError as err:
+            if not args.quiet:
+                print(f"Banc injoignable ({err}) — nouvelle tentative.", file=sys.stderr, flush=True)
+            run = None
+        if run:
+            play_run(run, api, env, args.quiet)
             if args.once:
                 return 0
         elif args.once:

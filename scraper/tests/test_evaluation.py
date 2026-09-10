@@ -26,7 +26,8 @@ from sortiesbot.evaluation import (
     audit_links,
     extract_page,
     fiche_payload,
-    harvest_agenda,
+    capture_pages,
+    harvest_from_html,
     page_moved,
     propose_verdicts,
 )
@@ -68,6 +69,30 @@ class FakeFetcher:
         if url not in self.pages:
             raise FetchError("page inaccessible (ConnectionError)")
         return self.pages[url]
+
+
+def harvest_agenda(url: str, pages: int, fetcher) -> list[dict]:
+    """Capture puis rejeu, composés — ce que fait un premier run du banc.
+
+    La production sépare les deux gestes, et c'est le sujet de toute cette
+    architecture : geler construit le corpus, rejouer l'interroge. Les
+    assertions ci-dessous portent sur la chaîne complète, et cet adaptateur
+    évite de les réécrire toutes pour un découpage qui ne change rien à ce
+    qu'elles vérifient.
+    """
+    gelees = capture_pages(url, pages, fetcher=fetcher)
+    out = []
+    for page_gelee in gelees:
+        import base64
+        import gzip
+
+        html = (
+            gzip.decompress(base64.b64decode(page_gelee["html"])).decode("utf-8")
+            if page_gelee.get("html")
+            else fetcher.get_html(page_gelee["url"])
+        )
+        out.append({**page_gelee, **harvest_from_html(html, page_gelee["url"])})
+    return out
 
 
 def test_une_seule_page_demandee_une_seule_page_lue():
@@ -160,16 +185,17 @@ def test_sans_rel_next_on_s_arrete_meme_si_on_demandait_plus():
     assert fetcher.asked == [AGENDA]
 
 
-def test_une_page_injoignable_remonte_avec_son_motif():
-    """Le point qui compte : elle est rapportée, pas escamotée."""
+def test_une_page_injoignable_fait_echouer_la_capture_avec_son_motif():
+    """Le point qui compte : elle est rapportée, pas escamotée.
+
+    Elle ne fait plus une entrée de corpus sans HTML, en revanche : une entrée
+    que nul run ne pourra rejouer n'est pas du corpus, c'est du bruit. L'échec
+    remonte donc, et le site le range dans `captureError`.
+    """
     fetcher = FakeFetcher({})
 
-    out = harvest_agenda(AGENDA, 1, fetcher=fetcher)
-
-    assert len(out) == 1
-    assert out[0]["links"] == []
-    assert out[0]["chars"] == 0
-    assert "inaccessible" in out[0]["error"]
+    with pytest.raises(FetchError, match="inaccessible"):
+        capture_pages(AGENDA, 1, fetcher=fetcher)
 
 
 def test_une_page_suivante_injoignable_n_efface_pas_la_premiere():
@@ -178,9 +204,10 @@ def test_une_page_suivante_injoignable_n_efface_pas_la_premiere():
 
     out = harvest_agenda(AGENDA, 3, fetcher=fetcher)
 
-    assert len(out) == 2
+    # La première est gelée et exploitable ; la suivante, injoignable, n'entre
+    # simplement pas au corpus. Ce qui a été capturé reste valable.
+    assert len(out) == 1
     assert out[0]["links"] and not out[0].get("error")
-    assert out[1]["pageNo"] == 2 and out[1]["error"]
 
 
 def test_une_page_qui_se_declare_sa_propre_suite_ne_boucle_pas():
@@ -226,9 +253,8 @@ def test_le_html_part_avec_la_page_et_se_relit():
 def test_une_page_injoignable_n_emporte_aucune_archive():
     fetcher = FakeFetcher({})
 
-    out = harvest_agenda(AGENDA, 1, fetcher=fetcher)
-
-    assert "html" not in out[0]
+    with pytest.raises(FetchError):
+        capture_pages(AGENDA, 1, fetcher=fetcher)
 
 
 def test_une_page_demesuree_est_rapportee_sans_son_archive(monkeypatch):

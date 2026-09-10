@@ -57,6 +57,9 @@ jobs:
             cd '${{ secrets.VPS_APP_DIR }}/server'
             npm ci --omit=dev
             npm run db:deploy
+            # Reprise des étiquettes de l'ancien banc dans le corpus.
+            # Idempotente : elle ne fait rien une fois passée.
+            npm run db:backfill-eval
           "
 
       - name: Redémarrer l'API

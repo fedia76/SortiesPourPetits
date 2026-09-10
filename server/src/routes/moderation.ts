@@ -1,5 +1,5 @@
 import { Prisma, Role } from '@prisma/client';
-import { Router } from 'express';
+import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
 import { deletePhoto } from '../lib/upload';
@@ -14,7 +14,7 @@ import { hasCoordinates, hasPrice } from '../lib/incomplete';
 import { describeRejections } from '../lib/rejectionCodes';
 import { rankSimilar, significantWords, type SimilarityScore } from '../lib/similarity';
 
-export const moderationRouter = Router();
+export const moderationRouter = safeRouter();
 
 moderationRouter.use(requireRole(Role.MODERATOR));
 

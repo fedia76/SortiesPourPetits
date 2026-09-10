@@ -1,10 +1,10 @@
 import { Role } from '@prisma/client';
-import { Router } from 'express';
+import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
 import { updateRoleSchema } from '../lib/validators';
 
-export const adminRouter = Router();
+export const adminRouter = safeRouter();
 
 adminRouter.use(requireRole(Role.ADMIN));
 

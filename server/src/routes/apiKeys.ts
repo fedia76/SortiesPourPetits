@@ -1,10 +1,10 @@
 import { Role } from '@prisma/client';
-import { Router } from 'express';
+import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { generateApiKey, hasRole, requireRole } from '../middleware/auth';
 import { createApiKeySchema } from '../lib/validators';
 
-export const apiKeysRouter = Router();
+export const apiKeysRouter = safeRouter();
 
 apiKeysRouter.use(requireRole(Role.MODERATOR));
 
