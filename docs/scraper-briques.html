@@ -7,24 +7,36 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   Planche imprimable — A4 portrait, six feuilles.
+
+   Le format est la contrainte qui commande tout le reste : chaque `.sheet` est
+   une page A4 et rien ne la traverse. Les fiches portent `break-inside: avoid`
+   plutôt que de compter sur la seule hauteur — si une feuille déborde un jour,
+   elle passera à la suivante entière, elle ne se coupera pas en deux.
+
+   À l'écran, la même feuille est un rectangle blanc posé sur un fond gris :
+   ce qu'on voit est ce qui sortira de l'imprimante.
+   ═══════════════════════════════════════════════════════════════════════════ */
 :root {
   color-scheme: light dark;
   --sans: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
 
-  --paper: #F7F8FA;
-  --box: #FFFFFF;
-  --sunk: #EDF0F4;
-  --line: #DCE1E8;
+  --desk: #E7EAEF;
+  --paper: #FFFFFF;
+  --sunk: #F1F4F8;
+  --line: #D9DFE7;
+  --line-2: #E9EDF3;
   --ink: #101725;
   --ink-2: #38414F;
-  --muted: #626C7B;
+  --muted: #646E7D;
 
-  --c1: #2563EB; --c1s: #EAF0FE;
-  --c2: #0E9F6E; --c2s: #E5F6F0;
-  --c3: #7C3AED; --c3s: #F1EBFE;
-  --c4: #C2410C; --c4s: #FCEDE6;
-  --c5: #0891B2; --c5s: #E4F3F8;
+  --c1: #1D4ED8; --c1s: #E8EEFD;
+  --c2: #0B7A55; --c2s: #E3F4EE;
+  --c3: #6D28D9; --c3s: #EFE9FD;
+  --c4: #B4400C; --c4s: #FBEBE3;
+  --c5: #0E7490; --c5s: #E2F1F7;
   --c6: #BE185D; --c6s: #FCE9F1;
 
   --hub: #131A2B;
@@ -32,8 +44,9 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #101521; --box: #18202D; --sunk: #141B27;
-    --line: #2A3442; --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
+    --desk: #0B111C; --paper: #18202D; --sunk: #141B27;
+    --line: #2A3442; --line-2: #232C39;
+    --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
     --c1: #4A82E8; --c1s: #172234;
     --c2: #12A87B; --c2s: #10261F;
     --c3: #9068F0; --c3s: #1D1830;
@@ -44,8 +57,9 @@
   }
 }
 :root[data-theme="dark"] {
-  --paper: #101521; --box: #18202D; --sunk: #141B27;
-  --line: #2A3442; --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
+  --desk: #0B111C; --paper: #18202D; --sunk: #141B27;
+  --line: #2A3442; --line-2: #232C39;
+  --ink: #E7ECF3; --ink-2: #C3CCD8; --muted: #94A0AE;
   --c1: #4A82E8; --c1s: #172234;
   --c2: #12A87B; --c2s: #10261F;
   --c3: #9068F0; --c3s: #1D1830;
@@ -57,28 +71,41 @@
 
 * { box-sizing: border-box; }
 body {
-  margin: 0; background: var(--paper); color: var(--ink-2);
-  font-family: var(--sans); font-size: 15px; line-height: 1.5;
+  margin: 0; background: var(--desk); color: var(--ink-2);
+  font-family: var(--sans); font-size: 13px; line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
-img { max-width: 100%; }
-[hidden] { display: none !important; }
 b, strong { color: var(--ink); font-weight: 700; }
+i, em { font-style: italic; }
 code {
-  font-family: var(--mono); font-size: .87em; background: var(--sunk);
-  border: 1px solid var(--line); border-radius: 4px; padding: 0 .28em; color: var(--ink);
+  font-family: var(--mono); font-size: .86em; background: var(--sunk);
+  border: 1px solid var(--line-2); border-radius: 3px; padding: 0 .25em; color: var(--ink);
 }
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 .sprite symbol { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
-.wrap { padding: 26px 20px 60px; }
-.poster {
-  max-width: 1300px; margin: 0 auto 26px; background: var(--box);
-  border: 1px solid var(--line); border-radius: 18px; padding: 26px;
-  box-shadow: 0 1px 3px rgba(16,23,37,.06), 0 18px 44px -30px rgba(16,23,37,.35);
-  overflow-x: auto;
+/* ---- la feuille A4 ------------------------------------------------------ */
+.deck { padding: 24px 12px 40px; display: flex; flex-direction: column; align-items: center; gap: 20px; }
+.sheet {
+  /* La feuille est la page : 210 × 297 mm, marges comprises. Ce qu'on voit à
+     l'écran a donc exactement la largeur de colonne qu'aura l'impression. */
+  width: 210mm; min-height: 297mm; max-width: 100%;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 3px;
+  padding: 11mm; display: flex; flex-direction: column;
+  box-shadow: 0 1px 2px rgba(16,23,37,.05), 0 14px 34px -26px rgba(16,23,37,.5);
 }
-.inner { min-width: 1120px; }
+.sheet > * { flex: none; }
+.folio {
+  margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line-2);
+  display: flex; justify-content: space-between; align-items: baseline;
+  font: 500 9px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+}
+
+.hint {
+  width: 210mm; max-width: 100%; margin: 0 auto; font-size: 11.5px; color: var(--muted);
+  display: flex; gap: 8px; align-items: baseline; line-height: 1.5;
+}
+.hint b { font-weight: 700; }
 
 .c1 { --a: var(--c1); --as: var(--c1s); }
 .c2 { --a: var(--c2); --as: var(--c2s); }
@@ -87,80 +114,171 @@ code {
 .c5 { --a: var(--c5); --as: var(--c5s); }
 .c6 { --a: var(--c6); --as: var(--c6s); }
 
-/* ---- masthead ---- */
-.head { text-align: center; padding: 4px 10px 18px; }
-.head .kicker { font: 600 11px var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
-.head h1 { font-size: clamp(1.9rem, 1.2rem + 2vw, 2.6rem); font-weight: 800; letter-spacing: -.022em; color: var(--ink); margin: 0 0 6px; line-height: 1.08; text-wrap: balance; }
-.head p.sub { margin: 0 auto 16px; color: var(--muted); font-size: 1.02rem; font-weight: 500; max-width: 62ch; }
-.chips { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
-.legendchip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--sunk); border-radius: 999px; padding: 6px 14px 6px 10px; font-size: .82rem; font-weight: 600; color: var(--ink-2); }
-.dot { width: 11px; height: 11px; border-radius: 50%; background: var(--a); flex: none; }
+/* ---- bandeau ------------------------------------------------------------ */
+.head { text-align: center; padding: 0 8px 10px; }
+.head .kicker { font: 600 9.5px var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+.head h1 { font-size: 27px; font-weight: 800; letter-spacing: -.022em; color: var(--ink); margin: 0 0 5px; line-height: 1.06; }
+.head p.sub { margin: 0 auto 9px; color: var(--muted); font-size: 12.5px; font-weight: 500; max-width: 66ch; }
+.chips { display: flex; gap: 7px; justify-content: center; flex-wrap: wrap; }
+.legendchip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--sunk); border-radius: 999px; padding: 3px 10px 3px 7px; font-size: 10.5px; font-weight: 600; color: var(--ink-2); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--a); flex: none; }
 
-/* ---- deux colonnes : le partage des rôles + la chaîne ---- */
-.split { display: grid; gap: 16px; grid-template-columns: 330px 1fr; align-items: start; }
-
-.hub { background: var(--hub); border-radius: 14px; padding: 18px 20px; color: var(--hub-ink); }
-.hub h2 { margin: 0 0 12px; font-size: 1.05rem; font-weight: 700; text-align: center; letter-spacing: -.01em; color: var(--hub-ink); }
-.hub ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
-.hub li { display: flex; gap: 10px; align-items: flex-start; font-size: .85rem; line-height: 1.35; }
+/* ---- le partage des rôles ---------------------------------------------- */
+.hub { background: var(--hub); border-radius: 10px; padding: 11px 14px; color: var(--hub-ink); }
+.hub h2 { margin: 0 0 10px; font-size: 14px; font-weight: 700; text-align: center; color: var(--hub-ink); }
+.hub ol { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 22px; }
+.hub li { display: flex; gap: 8px; align-items: flex-start; font-size: 11.3px; line-height: 1.3; break-inside: avoid; margin-bottom: 5px; }
 .hub b { color: var(--hub-ink); font-weight: 800; }
-.hub .n { font: 700 10px var(--mono); background: rgba(255,255,255,.12); border-radius: 6px; padding: 3px 6px; flex: none; min-width: 22px; text-align: center; }
-.hub .n.paid { background: rgba(210,97,47,.34); }
-.hub .n.mix { background: rgba(144,104,240,.32); }
-.hub .note { margin: 14px 0 0; font-size: .8rem; line-height: 1.45; opacity: .8; border-top: 1px solid rgba(255,255,255,.14); padding-top: 11px; }
+.hub .n { font: 700 9px var(--mono); background: rgba(255,255,255,.13); border-radius: 5px; padding: 2px 5px; flex: none; min-width: 19px; text-align: center; }
+.hub .n.paid { background: rgba(210,97,47,.4); }
+.hub .n.mix { background: rgba(144,104,240,.38); }
+.hub .note { margin: 7px 0 0; font-size: 10.2px; line-height: 1.45; opacity: .82; border-top: 1px solid rgba(255,255,255,.15); padding-top: 8px; }
 
-figure { margin: 0; }
+/* ---- schémas ------------------------------------------------------------ */
+figure { margin: 0; break-inside: avoid; }
 figure svg { display: block; width: 100%; height: auto; }
-figcaption { margin-top: 9px; font-size: .79rem; color: var(--muted); line-height: 1.45; }
-.frame { background: var(--sunk); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px 14px; }
+figcaption { margin-top: 6px; font-size: 10px; color: var(--muted); line-height: 1.45; }
+.frame { background: var(--sunk); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 9px; break-inside: avoid; }
 
-.d-box rect { stroke-width: 1.8; }
-.d-t { fill: var(--ink); font: 700 13px var(--sans); }
-.d-n { font: 800 12px var(--mono); }
-.d-card { fill: var(--muted); font: 500 11.5px var(--sans); }
-.d-file { fill: var(--muted); font: 400 10.5px var(--mono); }
-.d-note { fill: var(--muted); font: 500 10.5px var(--mono); }
-.d-rail { stroke: var(--muted); stroke-width: 1.6; fill: none; opacity: .55; }
-.d-skip { stroke: var(--c3); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
-.d-skiplbl { fill: var(--c3); font: 600 10.5px var(--mono); }
+.d-t { fill: var(--ink); font: 700 12px var(--sans); }
+.d-n { font: 800 11px var(--mono); }
+.d-card { fill: var(--muted); font: 500 10.5px var(--sans); }
+.d-note { fill: var(--muted); font: 500 9px var(--mono); letter-spacing: .06em; }
+.d-rail { stroke: var(--muted); stroke-width: 1.4; fill: none; opacity: .5; }
+.d-skip { stroke: var(--c3); stroke-width: 1.4; fill: none; stroke-dasharray: 4 3; }
+.d-skiplbl { fill: var(--c3); font: 600 9.5px var(--mono); }
 .d-arrow { fill: var(--muted); }
-.d-sep { stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 3 4; }
+.d-sep { stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 3 4; }
 
-/* ---- cartes ---- */
-.grid8 { display: grid; gap: 13px; grid-template-columns: repeat(4, 1fr); margin-top: 18px; }
-.card { border: 2px solid var(--a); background: var(--box); border-radius: 14px; padding: 13px 15px 14px; }
-.card header { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
-.card .ico { width: 28px; height: 28px; border-radius: 8px; background: var(--as); color: var(--a); display: grid; place-items: center; flex: none; }
-.card .ico svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.card h3 { margin: 0; font-size: .96rem; font-weight: 700; color: var(--a); letter-spacing: -.01em; line-height: 1.25; }
-.card h3 b { font-weight: 800; color: inherit; }
-.card .io { display: block; font: 500 10.5px var(--mono); color: var(--muted); margin: 0 0 9px; padding-bottom: 8px; border-bottom: 1px dashed var(--line); line-height: 1.55; }
-.card .io span { color: var(--ink-2); }
-.card ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
-.card li { position: relative; padding-left: 13px; font-size: .835rem; line-height: 1.42; color: var(--ink-2); }
-.card li::before { content: ""; position: absolute; left: 0; top: .55em; width: 4px; height: 4px; border-radius: 50%; background: var(--a); opacity: .7; }
-.card .foot { margin: 10px 0 0; padding-top: 8px; border-top: 1px dashed var(--line); font: 400 10.5px var(--mono); color: var(--muted); word-break: break-word; }
-.chip { margin-left: auto; font: 600 9.5px var(--mono); letter-spacing: .07em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; white-space: nowrap; background: var(--as); color: var(--a); }
-
-/* ---- bandes ---- */
-.rowhead { display: flex; align-items: center; gap: 12px; margin: 26px 0 12px; }
-.rowhead h2 { margin: 0; font-size: 1.06rem; font-weight: 700; color: var(--ink); white-space: nowrap; }
+/* ---- titres de section -------------------------------------------------- */
+.rowhead { display: flex; align-items: center; gap: 9px; margin: 12px 0 8px; }
+.rowhead h2 { margin: 0; font-size: 14px; font-weight: 700; color: var(--ink); white-space: nowrap; }
 .rowhead .bar { height: 2px; background: var(--line); flex: 1; border-radius: 2px; }
-.rowhead .tagn { font: 700 11px var(--mono); color: var(--box); background: var(--ink); border-radius: 6px; padding: 3px 8px; }
+.rowhead .tagn { font: 700 10px var(--mono); color: var(--paper); background: var(--ink); border-radius: 5px; padding: 2px 7px; }
 
-.band { background: var(--sunk); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
-.bandgrid { display: grid; gap: 12px; grid-template-columns: repeat(3, 1fr); }
-.bandgrid .card { border-width: 1px; }
+/* ---- la fiche d'une brique --------------------------------------------- */
+.brick {
+  border: 1.6px solid var(--a); border-radius: 11px; background: var(--paper);
+  padding: 0 0 9px; margin-bottom: 11px; break-inside: avoid;
+}
+.brick > header {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 9px 12px 8px; background: var(--as); border-radius: 9px 9px 0 0;
+}
+.brick .num { font: 800 17px var(--mono); color: var(--a); line-height: 1; padding-top: 1px; min-width: 15px; }
+.brick .ico { width: 24px; height: 24px; border-radius: 6px; background: var(--paper); color: var(--a); display: grid; place-items: center; flex: none; }
+.brick .ico svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.brick .ttl { flex: 1; min-width: 0; }
+.brick h3 { margin: 0 0 2px; font-size: 15px; font-weight: 800; color: var(--a); letter-spacing: -.01em; line-height: 1.15; }
+.brick .io { margin: 0; font: 500 10px var(--mono); color: var(--muted); line-height: 1.5; }
+.brick .io span { color: var(--ink); font-weight: 600; }
+.brick .tags { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; text-align: right; }
+.chip { font: 700 8.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 3px 7px; border-radius: 999px; white-space: nowrap; background: var(--a); color: var(--paper); }
+.card-n { font: 500 9.5px var(--mono); color: var(--muted); white-space: nowrap; }
 
-.pull { border: 2px solid var(--c3); background: var(--c3s); border-radius: 14px; padding: 16px 18px; margin-top: 14px; }
-.pull h2 { margin: 0 0 8px; font-size: 1rem; font-weight: 700; color: var(--c3); }
-.pull p { margin: 0 0 8px; font-size: .89rem; }
+.cols { display: grid; grid-template-columns: 1.32fr 1fr; gap: 0; padding: 9px 12px 0; }
+.cols .col:first-child { padding-right: 13px; border-right: 1px dashed var(--line); }
+.cols .col:last-child { padding-left: 13px; }
+.cols h4 {
+  margin: 0 0 5px; font: 700 9px var(--mono); letter-spacing: .11em; text-transform: uppercase; color: var(--muted);
+}
+.cols h4 + ul { margin-bottom: 8px; }
+.cols ul:last-child { margin-bottom: 0; }
+.brick ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.brick li { position: relative; padding-left: 11px; font-size: 11.2px; line-height: 1.38; color: var(--ink-2); }
+.brick li::before { content: ""; position: absolute; left: 0; top: .5em; width: 3.5px; height: 3.5px; border-radius: 50%; background: var(--a); opacity: .75; }
+.brick li.drop::before { border-radius: 0; height: 1.6px; width: 6px; top: .62em; opacity: .9; }
+.brick li.fail::before { border-radius: 0; width: 4px; height: 4px; transform: rotate(45deg); top: .5em; }
+.brick .foot {
+  margin: 9px 12px 0; padding-top: 7px; border-top: 1px dashed var(--line);
+  font: 400 9.5px var(--mono); color: var(--muted); word-break: break-word; line-height: 1.5;
+}
+
+/* ---- encadrés ----------------------------------------------------------- */
+.pull { border: 1.6px solid var(--c3); background: var(--c3s); border-radius: 11px; padding: 12px 14px; break-inside: avoid; }
+.pull h2 { margin: 0 0 6px; font-size: 14px; font-weight: 700; color: var(--c3); }
+.pull p { margin: 0 0 6px; font-size: 12px; line-height: 1.45; }
 .pull p:last-child { margin-bottom: 0; }
 
-.posterfoot { max-width: 1300px; margin: 0 auto; font-size: .8rem; color: var(--muted); text-align: center; padding: 0 20px; line-height: 1.55; }
+.band { background: var(--sunk); border: 1px solid var(--line); border-radius: 11px; padding: 12px 13px; break-inside: avoid; }
+.stack { display: flex; flex-direction: column; gap: 10px; }
+.mini { border: 1px solid var(--line); border-radius: 9px; background: var(--paper); padding: 10px 12px 11px; break-inside: avoid; }
+.mini header { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.mini .ico { width: 22px; height: 22px; border-radius: 6px; background: var(--as); color: var(--a); display: grid; place-items: center; flex: none; }
+.mini .ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.mini h3 { margin: 0; font-size: 12.5px; font-weight: 700; color: var(--a); }
+.mini ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.mini li { position: relative; padding-left: 11px; font-size: 11.2px; line-height: 1.38; color: var(--ink-2); }
+.mini li::before { content: ""; position: absolute; left: 0; top: .5em; width: 3.5px; height: 3.5px; border-radius: 50%; background: var(--a); opacity: .75; }
 
+/* ---- comment lire une fiche -------------------------------------------- */
+.readme { border: 1px dashed var(--line); border-radius: 10px; padding: 10px 12px; break-inside: avoid; }
+.readme h2 { margin: 0 0 8px; font-size: 12.5px; font-weight: 700; color: var(--ink); }
+.readme dl { margin: 0; display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 6px 10px; align-items: baseline; }
+.readme dt { font: 700 9px var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.readme dd { margin: 0; font-size: 10.8px; line-height: 1.38; }
+
+.sign { font-size: 10.5px; color: var(--muted); line-height: 1.5; margin: 12px 0 0; }
+
+/* ---- écran étroit : la feuille cesse d'être une feuille -----------------
+   `screen` est indispensable : la boîte de page fait 188 mm, soit 710 px, donc
+   elle passe sous ce seuil — sans cette restriction, le papier héritait de la
+   mise en page téléphone, et six feuilles devenaient huit pages. */
+@media screen and (max-width: 780px) {
+  .deck { padding: 12px 8px 30px; }
+  .sheet { width: 100%; min-height: 0; padding: 14px 12px; }
+  .hint { width: 100%; }
+  .cols { grid-template-columns: 1fr; gap: 8px; }
+  .cols .col:first-child { padding-right: 0; border-right: 0; padding-bottom: 8px; border-bottom: 1px dashed var(--line); }
+  .cols .col:last-child { padding-left: 0; }
+  .hub ol { columns: 1; }
+}
+
+/* ---- impression --------------------------------------------------------- */
+@page { size: A4 portrait; margin: 11mm; }
+@media print {
+  /* Toujours en clair : le thème sombre est une commodité d'écran, il n'a
+     rien à faire sur du papier. Les valeurs sont reprises telles quelles
+     pour que l'impression ne dépende pas du réglage du système. */
+  :root, :root[data-theme="dark"] {
+    --desk: #FFFFFF; --paper: #FFFFFF; --sunk: #F2F4F8;
+    --line: #C9D1DB; --line-2: #E2E7EE;
+    --ink: #000000; --ink-2: #26303D; --muted: #5A6472;
+    --c1: #1D4ED8; --c1s: #E8EEFD;
+    --c2: #0B7A55; --c2s: #E3F4EE;
+    --c3: #6D28D9; --c3s: #EFE9FD;
+    --c4: #B4400C; --c4s: #FBEBE3;
+    --c5: #0E7490; --c5s: #E2F1F7;
+    --c6: #BE185D; --c6s: #FCE9F1;
+    /* Le bandeau sombre deviendrait un aplat d'encre : sur papier il passe
+       en clair, cerné, et garde exactement la même information. */
+    --hub: #F2F4F8; --hub-ink: #101725;
+  }
+  body { background: #fff; }
+  .deck { padding: 0; gap: 0; display: block; }
+  .hint { display: none; }
+  /* La boîte de page porte déjà les 11 mm de marge : la feuille s'y coule sans
+     rien ajouter, et son contenu retrouve exactement les 188 mm de colonne
+     qu'il a à l'écran. */
+  .sheet {
+    width: auto; min-height: 0; max-width: none;
+    border: 0; border-radius: 0; box-shadow: none; padding: 0;
+    break-after: page; display: block;
+  }
+  .sheet:last-child { break-after: auto; }
+  .folio { margin-top: 14px; }
+  .hub { border: 1px solid var(--line); }
+  .hub .n { background: #DDE3EC; color: #101725; }
+  .hub .n.paid { background: #FBEBE3; color: #B4400C; }
+  .hub .n.mix { background: #EFE9FD; color: #6D28D9; }
+  .hub .note { border-top-color: var(--line); opacity: 1; color: var(--ink-2); }
+  .chip { border: 1px solid var(--a); }
+  /* Rien ne se coupe en deux : c'est la seule règle qui compte à l'impression. */
+  .brick, .mini, .pull, .band, .frame, .readme, figure, .hub, .head, li { break-inside: avoid; }
+  h1, h2, h3, h4 { break-after: avoid; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
-@media (max-width: 760px) { .wrap { padding: 14px 10px 44px; } .poster { padding: 14px; border-radius: 12px; } }
 </style>
 </head>
 <body>
@@ -179,14 +297,17 @@ figcaption { margin-top: 9px; font-size: .79rem; color: var(--muted); line-heigh
 <symbol id="ic-gauge" viewBox="0 0 24 24"><path d="M3.6 17.4 a8.8 8.8 0 0 1 16.8 0"/><path d="M12 17.4 L16.2 11"/><circle cx="12" cy="17.4" r="1.5"/></symbol>
 </defs></svg>
 
-<div class="wrap">
-<div class="poster">
- <div class="inner">
+<div class="deck">
+
+<p class="hint"><b>Imprimer :</b> A4 portrait, marges par défaut, « graphiques d'arrière-plan » cochés. Six feuilles, aucune fiche à cheval sur deux pages.</p>
+
+<!-- ══════════════════════════════ FEUILLE 1 ══════════════════════════════ -->
+<section class="sheet">
 
   <div class="head">
-    <p class="kicker">SortiesPourPetits · scraper/sortiesbot</p>
+    <p class="kicker">SortiesPourPetits · scraper/sortiesbot · v2</p>
     <h1>Les huit briques du scraper</h1>
-    <p class="sub">Comment une recherche web devient une sortie en attente de modération — ce que chaque brique reçoit, ce qu'elle rend, qui travaille et qui paie.</p>
+    <p class="sub">Comment une recherche web devient une sortie en attente de modération. Pour chaque brique : ce qu'elle reçoit, ce qu'elle en fait, ce qu'elle écarte au passage, et ce qui arrive quand elle rate.</p>
     <div class="chips">
       <span class="legendchip c2"><span class="dot"></span>Python — gratuit</span>
       <span class="legendchip c4"><span class="dot"></span>Le modèle — facturé</span>
@@ -195,301 +316,473 @@ figcaption { margin-top: 9px; font-size: .79rem; color: var(--muted); line-heigh
     </div>
   </div>
 
-  <div class="split">
+  <div class="hub">
+    <h2>Le partage des rôles</h2>
+    <ol>
+      <li><span class="n paid">1</span><span>Le modèle <b>cherche</b> — il rend des requêtes, jamais des URL</span></li>
+      <li><span class="n mix">2</span><span>Quatre signaux gratuits <b>constatent</b> la nature d'une page</span></li>
+      <li><span class="n">3</span><span>Python <b>dépouille</b> l'agenda et <b>débruite</b> ses liens</span></li>
+      <li><span class="n paid">4</span><span>Le modèle <b>trie</b> ce qui reste, en répondant des numéros</span></li>
+      <li><span class="n">5</span><span>Python <b>lit</b> : texte, dates JSON-LD, illustration</span></li>
+      <li><span class="n paid">6</span><span>Le modèle <b>remplit</b> la fiche, 23 champs imposés</span></li>
+      <li><span class="n mix">7</span><span>Une cascade <b>remonte</b> à la page de l'organisateur</span></li>
+      <li><span class="n">8</span><span>Python <b>géocode, date, illustre</b> et propose la sortie</span></li>
+    </ol>
+    <p class="note">Trois appels au modèle par page au plus, bornés, sans outil et <b>sans boucle</b>. C'est ce découpage qui rend le coût prévisible — et c'est la raison pour laquelle aucune brique ne sait ce qui vient avant ou après elle.</p>
+  </div>
 
-    <div class="hub">
-      <h2>Le partage des rôles</h2>
-      <ul>
-        <li><span class="n paid">1</span><span>Le modèle <b>cherche</b> — il rend des requêtes, jamais des URL</span></li>
-        <li><span class="n mix">2</span><span>Quatre signaux gratuits <b>constatent</b> la nature d'une page</span></li>
-        <li><span class="n">3</span><span>Python <b>télécharge</b> l'agenda et en tire les liens</span></li>
-        <li><span class="n paid">4</span><span>Le modèle <b>trie</b> les liens, en répondant des numéros</span></li>
-        <li><span class="n">5</span><span>Python <b>lit</b> : texte, JSON-LD, illustration</span></li>
-        <li><span class="n paid">6</span><span>Le modèle <b>remplit</b> la fiche, schéma imposé</span></li>
-        <li><span class="n mix">7</span><span>Une cascade <b>remonte</b> à la page de l'organisateur</span></li>
-        <li><span class="n">8</span><span>Python <b>géocode, date, illustre</b> et propose la sortie</span></li>
-      </ul>
-      <p class="note">Trois appels au modèle par page au plus, bornés, sans outil et <b>sans boucle</b>. C'est ce découpage qui rend le coût prévisible — et c'est la raison pour laquelle aucune brique ne sait ce qui vient avant ou après elle.</p>
-    </div>
+  <div class="rowhead"><span class="tagn">↓</span><h2>La chaîne, et ce qu'elle coûte</h2><span class="bar"></span></div>
 
-    <div class="frame">
-      <figure>
-        <svg viewBox="0 0 1080 540" role="img" aria-label="La chaîne des huit briques : l'indentation dit la cardinalité — ce qui est plus à droite tourne plus souvent. La découverte tourne une fois par run, la reconnaissance une fois par URL, le dépouillement et la sélection une fois par agenda, la lecture et l'extraction une fois par page, l'attribution et la publication une fois par fiche.">
-          <defs>
-            <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-              <path d="M 0 1 L 9 5 L 0 9 z" class="d-arrow"/>
-            </marker>
-            <marker id="ar3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-              <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--c3)"/>
-            </marker>
-          </defs>
+  <div class="frame">
+    <figure>
+      <svg viewBox="0 0 710 512" role="img" aria-label="La chaîne des huit briques. L'indentation dit la cardinalité : ce qui est plus à droite tourne plus souvent. La découverte tourne une fois par run, la reconnaissance une fois par URL trouvée, le dépouillement et la sélection une fois par agenda, la lecture et l'extraction une fois par page retenue, l'attribution et la publication une fois par fiche. Une page reconnue comme sortie ou comme programme saute les étages trois et quatre.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" class="d-arrow"/></marker>
+          <marker id="ar3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--c3)"/></marker>
+        </defs>
 
-          <text x="48" y="16" class="d-note">L'INDENTATION DIT LA CARDINALITÉ — CE QUI EST PLUS À DROITE TOURNE PLUS SOUVENT</text>
-          <text x="620" y="16" class="d-note">COMBIEN DE FOIS</text>
-          <text x="860" y="16" class="d-note">OÙ C'EST</text>
+        <text x="16" y="10" class="d-note">CE QUI EST PLUS À DROITE TOURNE PLUS SOUVENT</text>
+        <text x="694" y="10" class="d-note" text-anchor="end">COMBIEN DE FOIS</text>
 
-          <!-- rails -->
-          <path class="d-rail" d="M 80 72 V 361"/>
-          <path class="d-rail" d="M 128 126 V 227"/>
-          <path class="d-rail" d="M 128 382 V 469"/>
+        <path class="d-rail" d="M 26 58 V 469"/>
+        <path class="d-rail" d="M 52 108 V 469"/>
+        <path class="d-rail" d="M 26 89 H 42"/>
+        <path class="d-rail" d="M 26 283 H 42"/>
+        <path class="d-rail" d="M 26 345 H 42"/>
+        <path class="d-rail" d="M 52 151 H 68"/>
+        <path class="d-rail" d="M 52 213 H 68"/>
+        <path class="d-rail" d="M 52 407 H 68"/>
+        <path class="d-rail" d="M 52 469 H 68"/>
 
-          <path class="d-rail" d="M 80 105 H 96"/>
-          <path class="d-rail" d="M 128 173 H 144"/>
-          <path class="d-rail" d="M 128 227 H 144"/>
-          <path class="d-rail" d="M 80 307 H 96"/>
-          <path class="d-rail" d="M 80 361 H 96"/>
-          <path class="d-rail" d="M 128 415 H 144"/>
-          <path class="d-rail" d="M 128 469 H 144"/>
+        <path class="d-skip" marker-end="url(#ar3)" d="M 272 89 H 330 V 283 H 278"/>
+        <text x="340" y="172" class="d-skiplbl">reconnue « sortie »</text>
+        <text x="340" y="186" class="d-skiplbl">ou « programme » :</text>
+        <text x="340" y="200" class="d-skiplbl">saute 3 et 4</text>
 
-          <!-- branche : sortie ou programme saute 3 et 4 -->
-          <path class="d-skip" marker-end="url(#ar3)" d="M 436 105 H 500 V 307 H 440"/>
-          <text x="510" y="196" class="d-skiplbl">sortie ou programme :</text>
-          <text x="510" y="211" class="d-skiplbl">saute 3 et 4</text>
+        <rect x="16" y="20" width="230" height="38" rx="8" fill="var(--c4s)" stroke="var(--c4)" stroke-width="1.6"/>
+        <text x="30" y="44" class="d-n" fill="var(--c4)">1</text><text x="52" y="44" class="d-t">Découverte</text>
+        <text x="694" y="44" class="d-card" text-anchor="end">1 fois par run</text>
 
-          <!-- 1 -->
-          <g class="d-box"><rect x="48" y="30" width="340" height="42" rx="10" fill="var(--c4s)" stroke="var(--c4)"/></g>
-          <text x="66" y="56" class="d-n" fill="var(--c4)">1</text>
-          <text x="90" y="56" class="d-t">Découverte</text>
-          <text x="620" y="56" class="d-card">1 fois par run</text>
-          <text x="860" y="56" class="d-file">stages/discovery.py</text>
+        <rect x="42" y="70" width="230" height="38" rx="8" fill="var(--c3s)" stroke="var(--c3)" stroke-width="1.6"/>
+        <text x="56" y="94" class="d-n" fill="var(--c3)">2</text><text x="78" y="94" class="d-t">Reconnaissance</text>
+        <text x="694" y="94" class="d-card" text-anchor="end">1 fois par URL trouvée</text>
 
-          <!-- 2 -->
-          <g class="d-box"><rect x="96" y="84" width="340" height="42" rx="10" fill="var(--c3s)" stroke="var(--c3)"/></g>
-          <text x="114" y="110" class="d-n" fill="var(--c3)">2</text>
-          <text x="138" y="110" class="d-t">Reconnaissance</text>
-          <text x="620" y="110" class="d-card">1 fois par URL trouvée</text>
-          <text x="860" y="110" class="d-file">stages/identification.py</text>
+        <text x="68" y="124" class="d-note">SI LA PAGE EST UN AGENDA</text>
 
-          <text x="144" y="146" class="d-note">SI LA PAGE EST UN AGENDA</text>
+        <rect x="68" y="132" width="230" height="38" rx="8" fill="var(--c2s)" stroke="var(--c2)" stroke-width="1.6"/>
+        <text x="82" y="156" class="d-n" fill="var(--c2)">3</text><text x="104" y="156" class="d-t">Dépouillement</text>
+        <text x="694" y="156" class="d-card" text-anchor="end">1 fois par agenda</text>
 
-          <!-- 3 -->
-          <g class="d-box"><rect x="144" y="152" width="340" height="42" rx="10" fill="var(--c2s)" stroke="var(--c2)"/></g>
-          <text x="162" y="178" class="d-n" fill="var(--c2)">3</text>
-          <text x="186" y="178" class="d-t">Dépouillement</text>
-          <text x="620" y="178" class="d-card">1 fois par agenda</text>
-          <text x="860" y="178" class="d-file">stages/harvest.py</text>
+        <rect x="68" y="194" width="230" height="38" rx="8" fill="var(--c4s)" stroke="var(--c4)" stroke-width="1.6"/>
+        <text x="82" y="218" class="d-n" fill="var(--c4)">4</text><text x="104" y="218" class="d-t">Sélection</text>
+        <text x="694" y="218" class="d-card" text-anchor="end">1 fois par agenda</text>
 
-          <!-- 4 -->
-          <g class="d-box"><rect x="144" y="206" width="340" height="42" rx="10" fill="var(--c4s)" stroke="var(--c4)"/></g>
-          <text x="162" y="232" class="d-n" fill="var(--c4)">4</text>
-          <text x="186" y="232" class="d-t">Sélection</text>
-          <text x="620" y="232" class="d-card">1 fois par agenda</text>
-          <text x="860" y="232" class="d-file">stages/selection.py</text>
+        <line x1="16" y1="240" x2="694" y2="240" class="d-sep"/>
+        <text x="16" y="256" class="d-note">PUIS, POUR CHAQUE PAGE RETENUE</text>
 
-          <line x1="48" y1="268" x2="1040" y2="268" class="d-sep"/>
-          <text x="48" y="284" class="d-note">PUIS, POUR CHAQUE PAGE RETENUE</text>
+        <rect x="42" y="264" width="230" height="38" rx="8" fill="var(--c2s)" stroke="var(--c2)" stroke-width="1.6"/>
+        <text x="56" y="288" class="d-n" fill="var(--c2)">5</text><text x="78" y="288" class="d-t">Lecture</text>
+        <text x="694" y="288" class="d-card" text-anchor="end">1 fois par page</text>
 
-          <!-- 5 -->
-          <g class="d-box"><rect x="96" y="286" width="340" height="42" rx="10" fill="var(--c2s)" stroke="var(--c2)"/></g>
-          <text x="114" y="312" class="d-n" fill="var(--c2)">5</text>
-          <text x="138" y="312" class="d-t">Lecture</text>
-          <text x="620" y="312" class="d-card">1 fois par page</text>
-          <text x="860" y="312" class="d-file">stages/reading.py</text>
+        <rect x="42" y="326" width="230" height="38" rx="8" fill="var(--c4s)" stroke="var(--c4)" stroke-width="1.6"/>
+        <text x="56" y="350" class="d-n" fill="var(--c4)">6</text><text x="78" y="350" class="d-t">Extraction</text>
+        <text x="694" y="350" class="d-card" text-anchor="end">1 fois par page → n fiches</text>
 
-          <!-- 6 -->
-          <g class="d-box"><rect x="96" y="340" width="340" height="42" rx="10" fill="var(--c4s)" stroke="var(--c4)"/></g>
-          <text x="114" y="366" class="d-n" fill="var(--c4)">6</text>
-          <text x="138" y="366" class="d-t">Extraction</text>
-          <text x="620" y="366" class="d-card">1 fois par page → n fiches</text>
-          <text x="860" y="366" class="d-file">stages/extraction.py</text>
+        <rect x="68" y="388" width="230" height="38" rx="8" fill="var(--c3s)" stroke="var(--c3)" stroke-width="1.6"/>
+        <text x="82" y="412" class="d-n" fill="var(--c3)">7</text><text x="104" y="412" class="d-t">Attribution</text>
+        <text x="694" y="412" class="d-card" text-anchor="end">1 fois par fiche</text>
 
-          <!-- 7 -->
-          <g class="d-box"><rect x="144" y="394" width="340" height="42" rx="10" fill="var(--c3s)" stroke="var(--c3)"/></g>
-          <text x="162" y="420" class="d-n" fill="var(--c3)">7</text>
-          <text x="186" y="420" class="d-t">Attribution</text>
-          <text x="620" y="420" class="d-card">1 fois par fiche</text>
-          <text x="860" y="420" class="d-file">stages/attribution.py</text>
+        <rect x="68" y="450" width="230" height="38" rx="8" fill="var(--c1s)" stroke="var(--c1)" stroke-width="1.6"/>
+        <text x="82" y="474" class="d-n" fill="var(--c1)">8</text><text x="104" y="474" class="d-t">Publication</text>
+        <text x="694" y="474" class="d-card" text-anchor="end">1 fois par fiche</text>
 
-          <!-- 8 -->
-          <g class="d-box"><rect x="144" y="448" width="340" height="42" rx="10" fill="var(--c1s)" stroke="var(--c1)"/></g>
-          <text x="162" y="474" class="d-n" fill="var(--c1)">8</text>
-          <text x="186" y="474" class="d-t">Publication</text>
-          <text x="620" y="474" class="d-card">1 fois par fiche</text>
-          <text x="860" y="474" class="d-file">stages/publication.py</text>
+        <path class="d-rail" marker-end="url(#ar)" d="M 183 488 V 504 H 296"/>
+        <text x="306" y="508" class="d-card">en attente de modération</text>
+      </svg>
+      <figcaption>L'ordre n'existe qu'à un seul endroit : <code>orchestrator.py</code>, méthode <code>Run.chain()</code>. Les huit appels s'y suivent de haut en bas, et leur indentation dit combien de fois chacun tourne. Une brique plus à droite, c'est un coût multiplié par tout ce qui précède — c'est là qu'il faut regarder avant d'ajouter quoi que ce soit.</figcaption>
+    </figure>
+  </div>
 
-          <path class="d-rail" marker-end="url(#ar)" d="M 314 490 V 516 H 620"/>
-          <text x="632" y="520" class="d-card">→ en attente de modération</text>
-        </svg>
-        <figcaption>L'ordre n'existe qu'à un seul endroit : <code>orchestrator.py</code>, méthode <code>Run.chain()</code>. Les huit appels s'y suivent de haut en bas, et leur indentation dit combien de fois chacun tourne. Une brique de plus à droite, c'est un coût multiplié par tout ce qui précède — c'est là qu'il faut regarder avant d'ajouter quoi que ce soit.</figcaption>
-      </figure>
-    </div>
+  <div class="folio"><span>Les huit briques du scraper · v2</span><span>1 / 6</span></div>
+</section>
 
+<!-- ══════════════════════════════ FEUILLE 2 ══════════════════════════════ -->
+<section class="sheet">
+  <div class="rowhead"><span class="tagn">?</span><h2>Comment lire les huit fiches</h2><span class="bar"></span></div>
+
+  <div class="readme">
+    <dl>
+      <dt>reçoit → rend</dt><dd>Le contrat de la brique — tout ce que ses voisines savent d'elle.</dd>
+      <dt>ce qu'elle fait</dt><dd>Le travail, dans l'ordre où il a lieu.</dd>
+      <dt>ce qu'elle écarte</dt><dd>Ce qui n'ira pas plus loin — la colonne qui explique la facture.</dd>
+      <dt>quand ça rate</dt><dd><code>None</code> = question non posée ; <code>[]</code> = posée, réponse non.</dd>
+      <dt>en bas</dt><dd>Les fichiers, et les réglages qui bornent la brique.</dd>
+    </dl>
   </div>
 
   <div class="rowhead"><span class="tagn">1—4</span><h2>Trouver les pages qui portent une sortie</h2><span class="bar"></span></div>
 
-  <div class="grid8" style="grid-template-columns: repeat(4, 1fr)">
+  <article class="brick c4">
+    <header>
+      <span class="num">1</span>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-search"></use></svg></span>
+      <div class="ttl">
+        <h3>Découverte</h3>
+        <p class="io">reçoit <span>un thème, une zone, une période</span> → rend <span>des URL, et rien d'autre</span></p>
+      </div>
+      <div class="tags"><span class="chip">modèle</span><span class="card-n">1 × par run</span></div>
+    </header>
+    <div class="cols">
+      <div class="col">
+        <h4>Ce qu'elle fait</h4>
+        <ul>
+          <li><b>Deux modes, jamais mélangés.</b> En mode <i>recherche</i>, des requêtes partent à l'outil <code>web_search</code>. En mode <i>site</i>, les adresses sont données dans la configuration et <b>aucune recherche n'est lancée</b> — l'étage existe quand même, il ne coûte simplement rien.</li>
+          <li>Les requêtes viennent du YAML quand il en donne : le run est alors reproductible d'une semaine sur l'autre, donc comparable. Sinon un appel les formule, pour quelques dizaines de jetons — le plus petit appel du pipeline.</li>
+          <li>Deux prompts distincts : l'un <i>formule</i> les requêtes, l'autre les <i>lance</i> puis s'arrête net. Le journal garde celles qui sont réellement parties.</li>
+          <li>Le modèle n'écrit aucune URL : elles sont relevées dans le résultat de l'outil, jamais dans sa phrase.</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>Ce qu'elle écarte</h4>
+        <ul>
+          <li class="drop">Les pages au-delà de <code>max_agendas</code> : journalisées « ne sera pas ouverte », pour qu'un plafond atteint se voie.</li>
+          <li class="drop">Rien d'autre — et surtout <b>aucun jugement sur la nature d'une page</b>. Elle appartient à la page, pas à la façon dont on l'a trouvée : c'est l'étage 2 qui tranche.</li>
+        </ul>
+        <h4>Quand ça rate</h4>
+        <ul>
+          <li class="fail">Une recherche impossible lève <code>ProviderError</code> et <b>arrête le run</b> : sans point de départ, il n'y a rien à faire.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot">stages/discovery.py · <code>max_searches</code> 6 · <code>max_agendas</code> 6 · « des requêtes entrent, des URL sortent » — le seul contrat qu'un moteur ordinaire sait honorer, donc la condition pour en brancher un autre un jour.</p>
+  </article>
 
-    <article class="card c4">
-      <header>
-        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-search"></use></svg></span>
-        <h3><b>1.</b> Découverte</h3>
-        <span class="chip">modèle</span>
-      </header>
-      <p class="io">reçoit <span>thème, zone, période</span> → rend <span>des URL</span></p>
-      <ul>
-        <li>Deux modes, jamais mélangés : <b>recherche</b>, où le modèle lance une dizaine de requêtes <code>web_search</code> ; <b>site</b>, où l'adresse est donnée et où aucune recherche n'a lieu.</li>
-        <li>Deux prompts : l'un <i>formule</i> les requêtes, l'autre les <i>lance</i> puis s'arrête net.</li>
-        <li>Le modèle n'écrit aucune URL : elles sont relevées dans le résultat de l'outil.</li>
-        <li>Il ne classe rien non plus — la nature d'une page appartient à la page, pas à la façon dont on l'a trouvée.</li>
-      </ul>
-      <p class="foot">« des requêtes entrent, des URL sortent » — le seul contrat qu'un moteur ordinaire sait honorer, donc la condition pour en brancher un autre un jour.</p>
-    </article>
+  <article class="brick c3">
+    <header>
+      <span class="num">2</span>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-eye"></use></svg></span>
+      <div class="ttl">
+        <h3>Reconnaissance</h3>
+        <p class="io">reçoit <span>une URL trouvée</span> → rend <span>agenda · sortie · programme</span></p>
+      </div>
+      <div class="tags"><span class="chip">mixte</span><span class="card-n">1 × par URL</span></div>
+    </header>
+    <div class="cols">
+      <div class="col">
+        <h4>Ce qu'elle fait</h4>
+        <ul>
+          <li>Télécharge la page — <b>une fois pour toutes</b> : le <code>Fetcher</code> la garde pour le reste du run, et l'étage qui la redemandera ne coûtera ni requête ni seconde de politesse.</li>
+          <li>Une <b>cascade de quatre signaux gratuits</b>, du plus certain au plus flou : paramètres d'URL (<code>?page=</code>, <code>?filter[]=</code>), pagination <code>rel="next"</code>, JSON-LD, puis OpenGraph.</li>
+          <li>Compte les <b>titres distincts</b>, pas les objets <code>Event</code> : un spectacle joué douze fois en publie douze, et la page reste une sortie.</li>
+          <li>Le modèle n'est appelé que si les quatre se taisent, et sur un <b>condensé</b> de la page — quelques centaines de jetons, jamais la page entière.</li>
+          <li>Laisse au registre le condensé de la page et son verdict : c'est le corpus qui permettra, un jour, de se passer du cinquième signal.</li>
+          <li>Règle la <b>langue</b> ici et pas plus tard : une page anglaise est échangée contre sa jumelle française quand le site en déclare une. Un agenda anglais ne mène qu'à des fiches anglaises — corriger la racine corrige la branche.</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>Ce qu'elle écarte</h4>
+        <ul>
+          <li class="drop">Rien : elle <b>aiguille</b>. Un agenda part au dépouillement, une sortie et un programme sautent directement à la lecture.</li>
+          <li class="drop">Le cinquième signal est sauté si le budget est déjà atteint : on reste sur le repli plutôt que de payer.</li>
+        </ul>
+        <h4>Quand ça rate</h4>
+        <ul>
+          <li class="fail">Page injoignable → <code>None</code>. Ce n'est pas un verdict, c'est une question non posée : la page ne va nulle part.</li>
+          <li class="fail">Verdict <code>INCONNU</code> → traité <b>en agenda</b>, et c'est délibéré. L'erreur n'est pas symétrique : prendre une sortie pour un agenda coûte un appel de tri et se rattrape tout seul (le dépouillement ne donne rien, la page est relue pour elle-même) ; l'inverse coûte tous ses liens, sans rattrapage.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot">stages/identification.py · classify.py · language.py · <code>classify_model</code> · <code>INCONNU</code> est une réponse, pas une panne</p>
+  </article>
 
-    <article class="card c3">
-      <header>
-        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-eye"></use></svg></span>
-        <h3><b>2.</b> Reconnaissance</h3>
-        <span class="chip">mixte</span>
-      </header>
-      <p class="io">reçoit <span>une page</span> → rend <span>agenda · sortie · programme · inconnu</span></p>
-      <ul>
-        <li>Une cascade de quatre signaux <b>gratuits</b>, du plus certain au plus flou : paramètres d'URL (<code>?page=</code>, <code>?filter[]=</code>), pagination <code>rel="next"</code>, JSON-LD, OpenGraph.</li>
-        <li>On compte les <b>titres distincts</b>, pas les objets <code>Event</code> : un spectacle joué douze fois en publie douze.</li>
-        <li>Le modèle n'est appelé que si les quatre se taisent, et sur un condensé — pas sur la page.</li>
-        <li>Biais assumé : <b>dans le doute, agenda.</b> Se tromper dans ce sens coûte un appel ; dans l'autre, tous les liens de la page.</li>
-      </ul>
-      <p class="foot">classify.py · <code>INCONNU</code> est une réponse, pas une panne</p>
-    </article>
+  <div class="folio"><span>1—4 · trouver les pages</span><span>2 / 6</span></div>
+</section>
 
-    <article class="card c2">
-      <header>
-        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-list"></use></svg></span>
-        <h3><b>3.</b> Dépouillement</h3>
-        <span class="chip">python</span>
-      </header>
-      <p class="io">reçoit <span>un agenda</span> → rend <span>des liens et leur contexte</span></p>
-      <ul>
-        <li>Chaque lien part avec le texte qui l'entoure sur la page : c'est là que vivent la date et le lieu.</li>
-        <li>La pagination est suivie — <b>mais seulement tant qu'il manque de liens</b>. La deuxième page porte des sorties que la première n'a pas.</li>
-        <li>Le compte de liens est plafonné : au-delà, le compteur sature et ne mesure plus rien.</li>
-      </ul>
-      <p class="foot">harvest.py · aucun jeton consommé</p>
-    </article>
+<!-- ══════════════════════════════ FEUILLE 3 ══════════════════════════════ -->
+<section class="sheet">
 
-    <article class="card c4">
-      <header>
-        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-filter"></use></svg></span>
-        <h3><b>4.</b> Sélection</h3>
-        <span class="chip">modèle</span>
-      </header>
-      <p class="io">reçoit <span>des liens numérotés</span> → rend <span>des numéros</span></p>
-      <ul>
-        <li>La liste est <b>numérotée</b> et le modèle répond par des numéros : il ne voit jamais l'occasion d'écrire une URL, donc il ne peut pas en inventer une.</li>
-        <li>Il rend aussi <code>dropped_reason</code> — la phrase qui explique un tri qui ne retient rien.</li>
-        <li><code>[]</code> et <code>None</code> ne disent pas la même chose : le premier est un refus, le second une panne.</li>
-        <li>Le plus gros volume d'appels du pipeline, et le moins cher à l'unité.</li>
-      </ul>
-      <p class="foot">selection.py · tous les liens soumis sont journalisés, retenus ou non</p>
-    </article>
+  <article class="brick c2">
+    <header>
+      <span class="num">3</span>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-list"></use></svg></span>
+      <div class="ttl">
+        <h3>Dépouillement</h3>
+        <p class="io">reçoit <span>l'URL d'un agenda</span> → rend <span>des liens débruités et leur contexte</span></p>
+      </div>
+      <div class="tags"><span class="chip">python</span><span class="card-n">1 × par agenda</span></div>
+    </header>
+    <div class="cols">
+      <div class="col">
+        <h4>Ce qu'elle fait</h4>
+        <ul>
+          <li>Relève tous les <code>&lt;a href&gt;</code> de la page, puis en fait <b>une première sélection — en Python, donc gratuite</b>. C'est le travail réel de cette brique : la liste qui part au tri payant est déjà courte.</li>
+          <li>Attache à chaque lien retenu <b>le texte qui l'entoure</b> : on remonte jusqu'à quatre ancêtres pour trouver la carte de l'événement — celle qui apporte au moins 20 caractères de plus que le titre, sans dépasser 600, au-delà desquels on a attrapé la liste entière. On en garde 200 caractères. <b>C'est là que sont la date et le lieu</b>, donc c'est ce qui permettra de trier sans ouvrir la page.</li>
+          <li>Suit la pagination <code>rel="next"</code> — <b>mais seulement tant que la moisson est maigre</b>. Un agenda déjà riche s'arrête à sa première page ; un agenda pauvre va chercher plus loin. L'inverse exact d'un gaspillage : les liens partent ensuite au tri, qui est facturé.</li>
+          <li>Ne suit <b>que</b> <code>rel="next"</code> : reconstruire « page 2 » à partir de liens numérotés reviendrait à inventer une URL, ce qu'on s'interdit partout ailleurs.</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>Ce qu'elle écarte</h4>
+        <ul>
+          <li class="drop">Les <b>non-liens</b> : ancres <code>#</code>, <code>javascript:</code>, <code>mailto:</code>, <code>tel:</code>.</li>
+          <li class="drop">Tout ce qui <b>sort du domaine</b>. Sur un agenda, un lien sortant est un partenaire, un réseau social, de la publicité. Ces liens-là ne sont pas perdus pour autant : ils sont la matière première de l'étage 7.</li>
+          <li class="drop">Les <b>pages de service</b>, par leur chemin : mentions légales, CGU, contact, FAQ, newsletter, connexion, panier, compte, recherche, plan du site, <code>/tag/</code>, <code>/categorie/</code>, <code>/page/</code> — et la racine du site.</li>
+          <li class="drop">Les liens dont le <b>texte fait moins de 15 caractères</b> : ce n'est pas un titre de sortie, c'est un chevron ou un logo.</li>
+          <li class="drop">Les <b>doublons d'URL</b>, et tout ce qui dépasse <b>200 liens</b> : au-delà, le compteur sature et ne mesure plus rien.</li>
+        </ul>
+        <h4>Quand ça rate</h4>
+        <ul>
+          <li class="fail"><code>None</code> — agenda injoignable : rien n'en sortira, on abandonne la page.</li>
+          <li class="fail"><code>[]</code> — page lue qui ne mène nulle part : ce n'est probablement pas un agenda. Elle est déjà téléchargée, donc <b>relue comme une sortie</b>.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot">stages/harvest.py · harvest.links_of() · aucun jeton consommé · <code>MIN_TEXT</code> 15 · <code>CONTEXT_CHARS</code> 200 · <code>LINK_LIMIT</code> 200 · <code>max_next_pages</code> 2</p>
+  </article>
 
-  </div>
+  <article class="brick c4">
+    <header>
+      <span class="num">4</span>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-filter"></use></svg></span>
+      <div class="ttl">
+        <h3>Sélection</h3>
+        <p class="io">reçoit <span>des liens numérotés</span> → rend <span>des numéros, jamais des URL</span></p>
+      </div>
+      <div class="tags"><span class="chip">modèle</span><span class="card-n">1 × par agenda</span></div>
+    </header>
+    <div class="cols">
+      <div class="col">
+        <h4>Ce qu'elle fait</h4>
+        <ul>
+          <li>Reprend le tri là où l'étage 3 s'arrête : <b>celui-là retirait ce qui n'est certainement pas</b> une sortie, celui-ci choisit ce qui en est <b>probablement</b> une. Comprendre un intitulé demande un modèle ; le faire sur une liste plutôt que sur une page en fait le moins cher des trois appels.</li>
+          <li>Juge sur le <b>seul contexte</b> relevé à l'étage précédent — thème, zone, période — sans ouvrir une seule page.</li>
+          <li>La liste est <b>numérotée</b> et il répond par des numéros, avec un <code>why</code> par lien retenu. La correspondance numéro → lien se fait en Python : il ne voit jamais l'occasion d'écrire une URL, donc il ne peut pas en inventer une.</li>
+          <li>Rend aussi <code>dropped_reason</code> : la phrase qui explique un tri qui ne retient rien.</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>Ce qu'elle écarte</h4>
+        <ul>
+          <li class="drop">Tout ce qui n'est pas dans la zone, hors de la période, ou étranger au thème du run.</li>
+          <li class="drop">Le surplus : au plus <b>8 liens par agenda</b>. Un agenda très fourni ne fait pas exploser la suite.</li>
+          <li class="drop">Rien n'est perdu de vue pour autant : <b>tous les liens soumis sont journalisés</b>, retenus ou non, avec leur motif.</li>
+        </ul>
+        <h4>Quand ça rate</h4>
+        <ul>
+          <li class="fail"><code>None</code> — l'appel a échoué : on n'invente rien, l'agenda est abandonné.</li>
+          <li class="fail"><code>[]</code> — refus assumé : la page est peut-être une sortie mal reconnue, elle est <b>relue pour elle-même</b>. La lire coûte une extraction, l'ignorer coûterait la sortie.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot">stages/selection.py · le plus gros volume d'appels du pipeline, et le moins cher à l'unité · <code>max_links_per_agenda</code> 8</p>
+  </article>
 
+  <div class="folio"><span>1—4 · trouver les pages</span><span>3 / 6</span></div>
+</section>
+
+<!-- ══════════════════════════════ FEUILLE 4 ══════════════════════════════ -->
+<section class="sheet">
   <div class="rowhead"><span class="tagn">5—8</span><h2>Tirer une fiche de la page, et la proposer</h2><span class="bar"></span></div>
 
-  <div class="grid8">
+  <article class="brick c2">
+    <header>
+      <span class="num">5</span>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-doc"></use></svg></span>
+      <div class="ttl">
+        <h3>Lecture</h3>
+        <p class="io">reçoit <span>l'URL d'une page</span> → rend <span>texte, dates JSON-LD, illustration</span></p>
+      </div>
+      <div class="tags"><span class="chip">python</span><span class="card-n">1 × par page</span></div>
+    </header>
+    <div class="cols">
+      <div class="col">
+        <h4>Ce qu'elle fait</h4>
+        <ul>
+          <li>C'est le <b>dernier point où une page peut être abandonnée sans avoir rien coûté</b>, et c'est pour ça que les trois filtres sont ici et nulle part ailleurs. Passé cet étage, le modèle est appelé et la page est payée.</li>
+          <li>Télécharge <b>poliment</b> : <code>robots.txt</code> lu et respecté, une requête par seconde et par hôte, 5 Mo au maximum, un <i>User-Agent</i> qui nous identifie et une adresse pour nous écrire.</li>
+          <li>Lit <b>trois fois le même HTML</b>, et une seule de ces lectures part au modèle : le texte, plafonné à 8 000 caractères. Les dates JSON-LD et l'illustration <code>og:image</code> ne le voient jamais — d'où <code>PageContent</code>, qui les rend ensemble plutôt que de laisser l'appelant les oublier en chemin.</li>
+          <li>Dernier point où l'adresse peut encore changer : la jumelle française remplace la page anglaise, et c'est <b>son</b> adresse qui sera proposée au site. Les deux filtres se rejouent alors sur elle — l'autre adresse n'a pas la même mémoire.</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>Ce qu'elle écarte</h4>
+        <ul>
+          <li class="drop"><b>Domaine bloqué</b> — c'est un réglage, pas un jugement : la page n'est pas mémorisée, retirer le domaine suffit à la lire.</li>
+          <li class="drop"><b>Déjà vue lors d'un run précédent</b> (<code>ScrapedUrl</code>). Une page de <i>programme</i> échappe à ce filtre, et c'est le but : le programme d'un festival s'étoffe, ce sont ses sorties qui se mémorisent une à une.</li>
+          <li class="drop"><b>Moins de 200 caractères</b> : mur de cookies, page vide, redirection JavaScript. Inutile de payer une extraction là-dessus.</li>
+        </ul>
+        <h4>Quand ça rate</h4>
+        <ul>
+          <li class="fail">Page inaccessible → <code>None</code>, motif journalisé, <b>rien de mémorisé</b> : un site en panne aujourd'hui répondra peut-être demain.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot">stages/reading.py · harvest.py · language.py · <code>MIN_PAGE_CHARS</code> 200 · <code>max_page_chars</code> 8 000 · <code>CRAWL_DELAY</code> 1 s · <code>MAX_BYTES</code> 5 Mo</p>
+  </article>
 
-    <article class="card c2">
-      <header>
-        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-doc"></use></svg></span>
-        <h3><b>5.</b> Lecture</h3>
-        <span class="chip">python</span>
-      </header>
-      <p class="io">reçoit <span>une URL</span> → rend <span>texte, dates JSON-LD, image</span></p>
-      <ul>
-        <li>Le téléchargement respecte <code>robots.txt</code> et un délai par hôte — partout, y compris pour les vérifications de l'étage 7.</li>
-        <li>L'illustration est relevée <b>dans le HTML</b>, jamais devinée.</li>
-        <li>Une page anglaise est échangée contre sa jumelle française quand le site en déclare une.</li>
-      </ul>
-      <p class="foot">reading.py · harvest.py · language.py</p>
-    </article>
+  <article class="brick c4">
+    <header>
+      <span class="num">6</span>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-form"></use></svg></span>
+      <div class="ttl">
+        <h3>Extraction</h3>
+        <p class="io">reçoit <span>le texte d'une page</span> → rend <span>une fiche, ou plusieurs</span></p>
+      </div>
+      <div class="tags"><span class="chip">modèle</span><span class="card-n">1 × par page → n fiches</span></div>
+    </header>
+    <div class="cols">
+      <div class="col">
+        <h4>Ce qu'elle fait</h4>
+        <ul>
+          <li>Un appel, <b>sans outil</b>, avec un schéma JSON de <b>23 champs imposé côté fournisseur</b> : un champ qui n'y figure pas ne <i>peut</i> pas être rempli.</li>
+          <li>Deux gabarits qui s'excluent : une page porte <b>une</b> sortie, ou un programme entier en porte plusieurs. Le retour est une liste dans les deux cas, pour que la publication ne connaisse qu'un seul chemin.</li>
+          <li>Les dates sont bornées <i>et</i> détaillées — <code>weekdays</code> et <code>dates</code> à côté de <code>date_start</code>. Sans elles, un spectacle du dimanche devient une plage continue, donc proposé un jeudi.</li>
+          <li><code>several: true</code> est le seul champ qui puisse <b>renvoyer la page en arrière</b> : elle n'est pas une sortie, elle en porte plusieurs — elle est requalifiée et relue comme un programme.</li>
+          <li>Seul étage dont le coût dépend de la longueur de la page. C'est ce qui justifie le plafond de 8 000 caractères de l'étage précédent.</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>Ce qu'elle écarte</h4>
+        <ul>
+          <li class="drop"><code>relevant: false</code> avec son <code>skip_reason</code>, plutôt qu'une fiche fausse : <b>mieux vaut une fiche de moins</b>. Le motif part au journal et à la mémoire.</li>
+          <li class="drop">Sur un programme, une entrée qui ne convient pas n'est simplement pas dans la liste rendue.</li>
+        </ul>
+        <h4>Quand ça rate</h4>
+        <ul>
+          <li class="fail">Appel en échec → liste vide, page reportée en <code>error</code> et <b>non mémorisée</b> : le prochain run réessaiera.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot">stages/extraction.py · le schéma vit dans providers/anthropic_provider.py · <code>extraction_model</code></p>
+  </article>
 
-    <article class="card c4">
-      <header>
-        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-form"></use></svg></span>
-        <h3><b>6.</b> Extraction</h3>
-        <span class="chip">modèle</span>
-      </header>
-      <p class="io">reçoit <span>le texte d'une page</span> → rend <span>une fiche, ou plusieurs</span></p>
-      <ul>
-        <li>Le schéma est imposé côté fournisseur : un champ qui n'y figure pas ne <i>peut</i> pas être rempli.</li>
-        <li>Deux gabarits qui s'excluent — une page porte une sortie, ou un programme entier en porte plusieurs.</li>
-        <li><code>relevant: false</code> avec son motif, plutôt qu'une fiche fausse. Mieux vaut une fiche de moins.</li>
-        <li>Les dates sont bornées <i>et</i> détaillées : « jusqu'au 23 octobre » décrit une sortie en cours, pas une sortie de deux jours.</li>
-      </ul>
-      <p class="foot">extraction.py · le schéma vit dans providers/anthropic_provider.py</p>
-    </article>
+  <div class="folio"><span>5—8 · de la page à la sortie</span><span>4 / 6</span></div>
+</section>
 
-    <article class="card c3">
-      <header>
-        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-anchor"></use></svg></span>
-        <h3><b>7.</b> Attribution</h3>
-        <span class="chip">mixte</span>
-      </header>
-      <p class="io">reçoit <span>une fiche et sa page</span> → rend <span>l'URL de l'organisateur</span></p>
-      <ul>
-        <li>Un atelier du musée Rodin n'est pas une information de l'agrégateur qui l'a republié.</li>
-        <li>Cascade : JSON-LD → domaine du lieu → texte du lien → le moteur, en dernier et payant.</li>
-        <li>La page candidate est <b>ouverte et lue</b> avant d'être retenue : une source fausse est pire qu'une source absente.</li>
-        <li>Jamais une URL demandée au modèle — une URL inventée qui répond en 200 est indétectable.</li>
-      </ul>
-      <p class="foot">attribution.py · <code>found</code> n'est vrai que si <code>checked</code> l'est</p>
-    </article>
+<!-- ══════════════════════════════ FEUILLE 5 ══════════════════════════════ -->
+<section class="sheet">
 
-    <article class="card c1">
-      <header>
-        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-send"></use></svg></span>
-        <h3><b>8.</b> Publication</h3>
-        <span class="chip">python</span>
-      </header>
-      <p class="io">reçoit <span>une fiche</span> → rend <span>une sortie en attente</span></p>
-      <ul>
-        <li>Géocodage, dates, photo redimensionnée, puis <code>POST /api/events</code> avec une clé d'API — comme n'importe quel programme tiers.</li>
-        <li>Les sorties arrivent <b>en attente de modération</b>, jamais publiées directement.</li>
-        <li>Ce qu'un import n'a pas su déterminer part avec une valeur convenue — adresse <code>(0, 0)</code>, tarif <code>-1</code> — plutôt que de faire perdre la sortie. La modération les signale et bloque l'approbation.</li>
-      </ul>
-      <p class="foot">publication.py · api.py · geocode.py · photo.py</p>
-    </article>
+  <article class="brick c3">
+    <header>
+      <span class="num">7</span>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-anchor"></use></svg></span>
+      <div class="ttl">
+        <h3>Attribution</h3>
+        <p class="io">reçoit <span>une fiche et la page qui la portait</span> → rend <span>l'URL de la source, vérifiée</span></p>
+      </div>
+      <div class="tags"><span class="chip">mixte</span><span class="card-n">1 × par fiche</span></div>
+    </header>
+    <div class="cols">
+      <div class="col">
+        <h4>Ce qu'elle fait</h4>
+        <ul>
+          <li>Une recherche remonte surtout des <b>agrégateurs</b>, et c'est normal : ils indexent tout et sortent en tête. Mais un atelier du musée Rodin n'est pas une information de l'agrégateur qui l'a republié — le parent qui clique veut les horaires à jour, la billetterie, l'annulation du jour.</li>
+          <li>Une <b>cascade, du certain au flou</b> : ① le JSON-LD déjà téléchargé (<code>url</code>, <code>sameAs</code>, <code>offers.url</code>) ; ② le domaine du lieu — « Musée Rodin » ↔ <code>musee-rodin.fr</code> ; ③ le texte du lien — « site officiel », « réserver » ; ④ le moteur, en dernier, et le seul à coûter (~0,001 $, coupable par <code>source_search: false</code>).</li>
+          <li>La page candidate est <b>ouverte et lue avant d'être retenue</b>. Elle doit parler de cette sortie : l'essentiel du titre s'y retrouve, ou son lieu et une de ses dates. Un titre est souvent reformulé, donc on exige les mots, pas la phrase.</li>
+          <li>La candidate passe elle aussi par sa version française <b>avant</b> vérification : le contrôle porte sur un titre et des dates écrits en français.</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>Ce qu'elle écarte</h4>
+        <ul>
+          <li class="drop">Toute candidate qui ne parle pas de cette sortie : <code>found</code> n'est vrai que si <code>checked</code> l'est. Une <b>source fausse est pire qu'une source absente</b> — elle a l'air d'une réponse, le modérateur la croit, et le parent atterrit sur un spectacle qui n'existe plus.</li>
+          <li class="drop">Les autres agrégateurs, et la page lue elle-même : remonter de l'un à l'autre n'apprend rien.</li>
+          <li class="drop">Au-delà d'une poignée de candidates ouvertes : chacune est un téléchargement et une seconde de politesse envers son hôte.</li>
+        </ul>
+        <h4>Quand ça rate</h4>
+        <ul>
+          <li class="fail">Aucune source vérifiée → la sortie part avec <b>la page lue</b>. C'est l'état d'avant cet étage, et il reste correct.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot">stages/attribution.py · <b>jamais une URL demandée au modèle</b> : une URL inventée qui répond en 200 est indétectable — toute adresse qui sort d'ici a été lue dans un HTML ou rendue par un moteur</p>
+  </article>
 
-  </div>
+  <article class="brick c1">
+    <header>
+      <span class="num">8</span>
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-send"></use></svg></span>
+      <div class="ttl">
+        <h3>Publication</h3>
+        <p class="io">reçoit <span>une fiche</span> → rend <span>une sortie en attente de modération</span></p>
+      </div>
+      <div class="tags"><span class="chip">python</span><span class="card-n">1 × par fiche</span></div>
+    </header>
+    <div class="cols">
+      <div class="col">
+        <h4>Ce qu'elle fait</h4>
+        <ul>
+          <li>Le plus long des huit : géocodage Photon (OpenStreetMap, sans clé), calendrier résolu en croisant l'annonce et les dates JSON-LD, catégorie rattachée à celles du site, illustration téléchargée et redimensionnée, puis <code>POST /api/events</code> avec une clé d'API — comme n'importe quel programme tiers.</li>
+          <li>Tourne <b>une fois par fiche</b> et non par page : c'est ce qui permet de voir laquelle des vingt sorties d'un festival a échoué au géocodage.</li>
+          <li><b>Deux URLs, jamais confondues.</b> Le site reçoit la meilleure en <code>sourceUrl</code> — celle que le parent ouvrira — et la page réellement lue en <code>foundOnUrl</code>, pour le modérateur qui veut savoir d'où ça vient. La mémoire, elle, s'indexe sur la page lue : c'est elle qu'un prochain run retrouvera.</li>
+          <li>Ce qui n'a pas pu être déterminé part avec une <b>valeur convenue</b> plutôt que de faire perdre la sortie : adresse non géocodée en <code>(0, 0)</code>, tarif introuvable à <code>-1</code>. Le site connaît la convention, la modération les signale et bloque l'approbation.</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h4>Ce qu'elle écarte</h4>
+        <ul>
+          <li class="drop">La fiche jugée <code>relevant: false</code> à l'étage 6, avec son motif.</li>
+          <li class="drop">Le <b>doublon</b> : sur un programme, l'unité mémorisée est la sortie (adresse + titre), pas la page — sinon un programme lu une fois ne serait plus jamais relu.</li>
+          <li class="drop">Le <b>hors zone</b> : un code postal connu qui ne commence pas comme la zone du run. Un spectacle de l'Oise s'était retrouvé dans un run Île-de-France.</li>
+          <li class="drop">Le <b>hors période</b>, et la catégorie inconnue du site.</li>
+        </ul>
+        <h4>Quand ça rate</h4>
+        <ul>
+          <li class="fail">L'API refuse → la sortie est journalisée avec son motif ; le run continue.</li>
+          <li class="fail">Le <b>dry-run est le défaut</b> : rien ne part au site tant qu'on ne le demande pas explicitement.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot">stages/publication.py · api.py · geocode.py · photo.py · schedule.py · payload.py · statut <code>PENDING</code>, jamais publié directement</p>
+  </article>
+
+  <div class="folio"><span>5—8 · de la page à la sortie</span><span>5 / 6</span></div>
+</section>
+
+<!-- ══════════════════════════════ FEUILLE 6 ══════════════════════════════ -->
+<section class="sheet">
+
+  <div class="rowhead"><span class="tagn">=</span><h2>La règle qui traverse les huit briques</h2><span class="bar"></span></div>
 
   <div class="pull">
-    <h2>La règle qui traverse les huit briques</h2>
-    <p><b>Chaque signal gratuit qui tranche est un appel payant qu'on ne fait pas.</b> C'est la cascade de la reconnaissance, c'est celle de l'attribution, et c'est pourquoi ces deux briques sont dites « mixtes » plutôt que « modèle » : elles ne paient que lorsque le HTML ne suffit plus.</p>
+    <p><b>Chaque signal gratuit qui tranche est un appel payant qu'on ne fait pas.</b> C'est la cascade de la reconnaissance, c'est celle de l'attribution, et c'est pourquoi ces deux briques sont dites « mixtes » plutôt que « modèle » : elles ne paient que lorsque le HTML ne suffit plus. C'est aussi, et surtout, le débruitage de l'étage 3 : ce qu'il retire — les liens sortants, les pages de service, les intitulés trop courts — n'arrive jamais jusqu'à l'étage 4, qui ne facture que ce qui reste.</p>
     <p><b>Et ce qui sort du modèle n'est jamais cru sur parole.</b> Il rend des numéros, pas des URL. La source qu'il désigne est ouverte et relue. L'illustration est relevée dans le HTML. À chaque endroit où une invention serait indétectable, la vérification est en Python — donc gratuite, donc systématique.</p>
+    <p><b>Enfin, une panne et un refus ne se rangent pas ensemble.</b> <code>None</code> abandonne la page, la liste vide la renvoie vers un autre chemin. Confondre les deux, c'est soit perdre des sorties, soit en inventer.</p>
   </div>
 
   <div class="rowhead"><span class="tagn">↺</span><h2>Ce qui borne un run, et ce qu'il laisse derrière lui</h2><span class="bar"></span></div>
 
   <div class="band">
-    <div class="bandgrid">
+    <div class="stack">
 
-      <article class="card c2">
+      <article class="mini c2">
         <header>
           <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-shield"></use></svg></span>
           <h3>Les garde-fous</h3>
         </header>
         <ul>
-          <li>Des plafonds à chaque étage : agendas ouverts, liens retenus par agenda, sorties par run.</li>
+          <li>Un plafond à chaque étage : pages ouvertes (<code>max_agendas</code>), pages de pagination suivies (<code>max_next_pages</code>), liens retenus par agenda (<code>max_links_per_agenda</code>), caractères lus (<code>max_page_chars</code>), sorties par run (<code>max_events</code>).</li>
+          <li>Un <b>budget en dollars</b> (<code>max_cost_usd</code>) consulté avant chaque page : atteint, le run s'arrête proprement et le dit.</li>
+          <li>Les doublons du run, le budget et le plafond de sorties tranchent <b>avant</b> qu'une page ne soit lue — donc avant qu'elle ne coûte.</li>
           <li>Le <b>dry-run est le défaut</b> : rien n'est envoyé au site tant qu'on ne le demande pas.</li>
           <li>Un run est clos <b>quoi qu'il arrive</b>, plantage compris — sans clôture il resterait « en cours » et bloquerait le suivant.</li>
-          <li>Les doublons du run, le budget et le plafond de sorties tranchent <i>avant</i> qu'une page ne soit lue.</li>
         </ul>
       </article>
 
-      <article class="card c1">
+      <article class="mini c1">
         <header>
           <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-db"></use></svg></span>
           <h3>La mémoire</h3>
         </header>
         <ul>
           <li><code>ScrapedUrl</code> — les pages déjà analysées, <b>communes à toutes les recherches</b> : ce qui empêche de relire, donc de repayer.</li>
-          <li>Elle évite aussi de reproposer ce qui a déjà été refusé.</li>
+          <li>Elle distingue le <b>définitif</b> du <b>provisoire</b> : une page hors sujet ne sera plus relue, un domaine bloqué ou un site en panne le sera.</li>
+          <li>Un programme s'y mémorise sortie par sortie, jamais page par page.</li>
           <li>Elle s'oublie par lot depuis la console — utile pour relire un site qui était en panne.</li>
         </ul>
       </article>
 
-      <article class="card c5">
+      <article class="mini c5">
         <header>
           <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-gauge"></use></svg></span>
           <h3>Les traces</h3>
@@ -497,20 +790,21 @@ figcaption { margin-top: 9px; font-size: .79rem; color: var(--muted); line-heigh
         <ul>
           <li>Le <b>journal</b> : chaque requête, chaque lien relevé <i>puis</i> retenu, chaque prompt, chaque jeton. Mille lignes pour un run, filtrables par étage et par page.</li>
           <li>Le <b>graphe</b> des huit briques et l'<b>arbre</b> requête → agenda → liens → sorties, dessinés depuis le même vocabulaire que le code.</li>
-          <li>Le <b>registre</b>, à part et jamais réécrit : ce qui doit survivre à l'oubli d'un journal.</li>
+          <li>Le <b>registre</b>, à part et jamais réécrit : ce qui doit survivre à l'oubli d'un journal — dont le condensé et le verdict de chaque page reconnue.</li>
+          <li><code>ScraperRun</code> et <code>ScraperRunItem</code> : les compteurs du run, et une ligne par page traitée avec sa décision et son motif.</li>
         </ul>
       </article>
 
     </div>
   </div>
 
- </div>
-</div>
+  <p class="sign">
+    Planche tenue à jour avec le code : le vocabulaire des étages vient de <code>sortiesbot/stages/__init__.py</code>, les plafonds de <code>config.py</code>, et la console d'administration dessine son graphe depuis la même source — c'est ce qui garantit qu'elle ne peut pas dater. Les chiffres de coût, eux, vieillissent : les vrais sont dans les colonnes de <code>ScraperRun</code>.<br>
+    Suite : <b>Le banc d'essai du scraper</b> — ce qu'on mesure sur chacune de ces briques, et pourquoi le rappel manque à l'appel.
+  </p>
 
-<p class="posterfoot">
-  Planche tenue à jour avec le code : le vocabulaire des étages vient de <code>sortiesbot/stages/__init__.py</code>, et la console d'administration dessine son graphe depuis la même source.<br>
-  Suite : <b>Le banc d'essai du scraper</b> — ce qu'on mesure sur chacune de ces briques, et pourquoi le rappel manque à l'appel.
-</p>
+  <div class="folio"><span>Les huit briques du scraper · v2</span><span>6 / 6</span></div>
+</section>
 
 </div>
 </body>

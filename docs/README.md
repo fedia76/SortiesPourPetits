@@ -11,13 +11,18 @@ marche, et pourquoi c'est fait comme ça*.
 
 | Document | Ce qu'il explique |
 |---|---|
-| [`scraper-briques.html`](scraper-briques.html) | **La planche à jour du pipeline** : les huit briques, ce que chacune reçoit et rend, qui travaille et qui paie, la cardinalité de chaque étage, les garde-fous et ce qu'un run laisse derrière lui. |
+| [`scraper-briques.html`](scraper-briques.html) | **La planche à jour du pipeline**, en six feuilles A4 imprimables : les huit briques, et pour chacune ce qu'elle reçoit et rend, ce qu'elle fait, **ce qu'elle écarte au passage** et ce qui arrive quand elle rate — plus la cardinalité de chaque étage, les garde-fous et ce qu'un run laisse derrière lui. |
 | [`scraper-evaluation.html`](scraper-evaluation.html) | **Comment mesurer ces huit briques** : l'unité évaluée et l'origine de l'étiquette pour chacune, pourquoi le rappel n'est aujourd'hui pas observable, les cinq façons d'en sortir, et l'ordre dans lequel s'y prendre. |
 | [`scraper-posters.html`](scraper-posters.html) | Deux planches d'une page, à lire d'un coup d'œil. **Le scraper, étage par étage** : les six briques, ce que chacune reçoit et rend, qui travaille et qui paie, les garde-fous et les plafonds. **Du run au modèle maison** : ce que la base de données garde déjà d'exploitable pour entraîner un modèle, ce qu'il faudrait reconstruire, et dans quel ordre s'y prendre. |
 | [`scraper-anatomie.html`](scraper-anatomie.html) | Le document long. Le partage Python / modèle et pourquoi aucun appel ne boucle, les six étages en détail, **où part l'argent** poste par poste, les économies à faire avant toute chose, ce qu'un modèle maison voudrait dire concrètement (distillation, cascade), et pourquoi ce n'est probablement pas l'extraction qu'il faudrait viser en premier. |
 | [`fabriquer-le-modele.html`](fabriquer-le-modele.html) | Le mode d'emploi, écrit pour quelqu'un qui ne connaît pas l'apprentissage automatique. Ce qu'« entraîner » veut dire, les trois familles de modèles envisageables (classifieur, étiqueteur de spans, générateur *fine-tuné*), lesquelles partent de zéro et lesquelles d'un modèle existant, puis le *fine-tune* étape par étape — et ce qui va mal se passer. |
 
 ## Leur statut
+
+`scraper-briques.html` s'imprime : chaque feuille est une page A4 portrait, et
+rien ne se coupe en deux — une fiche qui ne tient pas dans la place restante
+passe entière à la page suivante. Marges par défaut, graphiques d'arrière-plan
+activés, et le thème sombre reste à l'écran.
 
 Ce sont des **documents d'analyse, datés**, pas des spécifications. Les trois
 premiers ont été écrits fin août 2026, les deux planches sur les huit briques
