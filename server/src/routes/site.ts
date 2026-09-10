@@ -1,4 +1,4 @@
-import express, { Router } from 'express';
+import express from 'express';
 import path from 'path';
 import { config } from '../config';
 import { cached } from '../seo/cache';
@@ -8,6 +8,7 @@ import { pageOf, renderPage } from '../seo/pages';
 import { lastPublishedAt, listAreas, listSitemapEvents } from '../seo/query';
 import { EDIT_SUFFIX, PRIVATE_PREFIXES } from '../seo/routes';
 import { sitemapXml } from '../seo/sitemap';
+import { safeRouter } from '../lib/asyncRoutes';
 
 /**
  * Le site lui-même, servi par l'API.
@@ -23,7 +24,7 @@ import { sitemapXml } from '../seo/sitemap';
  * n'ont aucune raison de traverser Node. Le repli ci-dessous existe pour les
  * autres déploiements et pour le développement.
  */
-export const siteRouter = Router();
+export const siteRouter = safeRouter();
 
 /** Combien de temps l'accueil et le sitemap restent bons à resservir. */
 const HOME_TTL_MS = 60_000;

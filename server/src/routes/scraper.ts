@@ -1,5 +1,5 @@
 import { Prisma, Role } from '@prisma/client';
-import { Router } from 'express';
+import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { deletePhoto } from '../lib/upload';
 import { ATTRIBUTE_STAGE, buildAttribution } from '../lib/scraperAttribution';
@@ -25,7 +25,7 @@ import {
   scraperStatsSchema,
 } from '../lib/validators';
 
-export const scraperRouter = Router();
+export const scraperRouter = safeRouter();
 
 // Toute la console du scraper est réservée aux modérateurs — c'est aussi le
 // rôle que porte la clé d'API du worker.
@@ -522,12 +522,14 @@ scraperRouter.get('/quality', async (req, res) => {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
-  // Express 4 n'attend pas les gestionnaires asynchrones : une promesse
-  // rejetée ici ne rejoindrait pas le gestionnaire d'erreur de `index.ts`,
-  // elle deviendrait un `unhandledRejection`, et Node tuerait le processus.
-  // Une faute de SQL sur cette page suffisait donc à éteindre le site entier,
-  // ce qui est arrivé — un alias `signal`, mot réservé de MySQL. La page peut
-  // échouer ; le site, non.
+  // Le filet général est désormais posé (`lib/asyncRoutes.ts`) : une promesse
+  // rejetée rejoint le gestionnaire d'erreur de `index.ts` et rend un 500, au
+  // lieu de tuer le processus comme Express 4 le laissait faire — un alias
+  // `signal`, mot réservé de MySQL, avait ainsi éteint le site entier.
+  //
+  // Ce `try` reste pour une raison plus petite : dire à quoi la page a échoué.
+  // « Les mesures de qualité sont indisponibles » situe la panne ; « Erreur
+  // interne du serveur » laisse chercher.
   try {
     res.json(await qualityReport(parsed.data));
   } catch (err) {

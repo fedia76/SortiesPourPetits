@@ -1,10 +1,10 @@
 import { Prisma, Role } from '@prisma/client';
-import { Router } from 'express';
+import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
 import { categorySchema } from '../lib/validators';
 
-export const categoriesRouter = Router();
+export const categoriesRouter = safeRouter();
 
 /** Liste publique : utilisée par le formulaire de sortie et les filtres de recherche. */
 categoriesRouter.get('/', async (_req, res) => {

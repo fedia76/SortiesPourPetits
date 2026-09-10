@@ -47,7 +47,8 @@
  * un programme.
  */
 import { Prisma, Role } from '@prisma/client';
-import express, { Router } from 'express';
+import express from 'express';
+import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { deleteEvalPages, readEvalPage, saveEvalPage } from '../lib/evalPages';
 import { requireRole } from '../middleware/auth';
@@ -81,7 +82,7 @@ import {
   evalVerdictSchema,
 } from '../lib/validators';
 
-export const evalRouter = Router();
+export const evalRouter = safeRouter();
 
 // Le plancher : les routes du worker s'en contentent, la console exige plus.
 evalRouter.use(requireRole(Role.MODERATOR));

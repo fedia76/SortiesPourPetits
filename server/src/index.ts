@@ -3,6 +3,7 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { config } from './config';
 import { attachUser } from './middleware/auth';
+import { safe } from './lib/asyncRoutes';
 import { authRouter } from './routes/auth';
 import { eventsRouter } from './routes/events';
 import { moderationRouter } from './routes/moderation';
@@ -39,7 +40,9 @@ app.use(
   }),
 );
 
-app.use(attachUser);
+// Enrobé comme les routes : `attachUser` lit la base à chaque requête, et une
+// exception y aurait éteint le site avant même d'atteindre un gestionnaire.
+app.use(safe(attachUser));
 
 app.use('/uploads', express.static(config.uploadsDir, { maxAge: '7d', immutable: true }));
 

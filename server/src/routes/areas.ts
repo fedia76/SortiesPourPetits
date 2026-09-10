@@ -1,12 +1,12 @@
 import { Prisma, Role } from '@prisma/client';
-import { Router } from 'express';
+import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
 import { areaSchema } from '../lib/validators';
 import { areaFilter } from '../lib/areas';
 import { dateFilter, today } from '../lib/dateWindow';
 
-export const areasRouter = Router();
+export const areasRouter = safeRouter();
 
 /**
  * Liste publique des zones, avec le nombre de sorties visibles dans chacune.
