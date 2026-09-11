@@ -213,23 +213,6 @@ async function labelLink(pageId: number, url: string, text: string, verdict: Eva
 }
 
 /**
- * Décrire la sortie vers laquelle un lien mène.
- *
- * On n'écrit pas sur le lien : le lien dit ce qu'il **est**, la sortie dit ce
- * qu'elle est, et c'est la sortie que les étages 4, 5 et 6 lisent. Modifier
- * une date ici la modifie donc partout où cette sortie est annoncée — dans un
- * autre agenda, dans le corpus de lecture — parce que c'est une seule sortie.
- */
-async function decrire(sortieId: number, patch: Partial<EvalSortieFacts>) {
-  try {
-    await api.patch(`/api/eval/sorties/${sortieId}`, patch);
-    await refreshOpen();
-  } catch (e) {
-    fail(e);
-  }
-}
-
-/**
  * Créer au corpus la sortie vers laquelle un lien mène, et l'y attacher.
  *
  * Tant qu'elle n'existe pas, l'étage 4 n'a rien à quoi se comparer et le lien
@@ -245,15 +228,27 @@ async function creerSortie(linkId: number) {
   }
 }
 
-/** La valeur d'un champ de saisie, vidée de ses espaces. */
-function typed(event: Event): string {
-  return (event.target as HTMLInputElement).value.trim();
-}
-
-/** Un entier saisi, ou `null` si le champ est vide. */
-function typedInt(event: Event): number | null {
-  const raw = typed(event);
-  return raw === '' ? null : Number(raw);
+/**
+ * Ce que la sortie affirme, en une ligne.
+ *
+ * De la lecture seule, délibérément : la saisie est dans le groupe des
+ * sorties, parce que c'est là que la donnée vit. Afficher sans permettre de
+ * modifier est la seule façon de montrer la frontière au lieu de l'expliquer.
+ */
+function resume(sortie: EvalSortieFacts | null | undefined): string {
+  if (!sortie) return '';
+  const bouts: string[] = [];
+  if (sortie.dateStart) {
+    bouts.push(sortie.dateEnd && sortie.dateEnd !== sortie.dateStart
+      ? `du ${sortie.dateStart} au ${sortie.dateEnd}`
+      : `le ${sortie.dateStart}`);
+  }
+  if (sortie.postalCode) bouts.push(sortie.postalCode);
+  if (sortie.ageMin != null && sortie.ageMax != null) bouts.push(`${sortie.ageMin} à ${sortie.ageMax} ans`);
+  else if (sortie.ageMin != null) bouts.push(`dès ${sortie.ageMin} ans`);
+  else if (sortie.ageMax != null) bouts.push(`jusqu’à ${sortie.ageMax} ans`);
+  if (sortie.audience) bouts.push(EVAL_AUDIENCE_LABELS[sortie.audience]);
+  return bouts.length ? `— ${bouts.join(' · ')}` : '— rien d’affirmé';
 }
 
 async function unlabel(id: number) {
@@ -355,12 +350,29 @@ const editing = ref<EvalSortie | null>(null);
 const editImage = ref('');
 const editDates = ref('');
 const editMarkers = ref('');
+/**
+ * Ce que l'étage 4 juge. Saisi **ici**, sur la sortie, et nulle part ailleurs :
+ * c'est la sortie qui a une date et un lieu, pas le lien d'agenda qui y mène.
+ * Plusieurs agendas peuvent annoncer la même sortie.
+ */
+const editDateStart = ref('');
+const editDateEnd = ref('');
+const editPostalCode = ref('');
+const editAgeMin = ref<number | null>(null);
+const editAgeMax = ref<number | null>(null);
+const editAudience = ref<EvalAudience | null>(null);
 
 function edit(sortie: EvalSortie) {
   editing.value = sortie;
   editImage.value = sortie.expectedImage ?? '';
   editDates.value = (JSON.parse(sortie.expectedDates ?? '[]') as string[]).join('\n');
   editMarkers.value = (JSON.parse(sortie.expectedMarkers ?? '[]') as string[]).join('\n');
+  editDateStart.value = (sortie.dateStart ?? '').slice(0, 10);
+  editDateEnd.value = (sortie.dateEnd ?? '').slice(0, 10);
+  editPostalCode.value = sortie.postalCode ?? '';
+  editAgeMin.value = sortie.ageMin;
+  editAgeMax.value = sortie.ageMax;
+  editAudience.value = sortie.audience;
 }
 
 function lines(value: string): string[] {
@@ -378,6 +390,12 @@ async function saveLabels(clear = false) {
       expectedImage: clear ? null : editImage.value.trim(),
       expectedDates: clear ? null : lines(editDates.value),
       expectedMarkers: clear ? null : lines(editMarkers.value),
+      dateStart: clear ? null : editDateStart.value || null,
+      dateEnd: clear ? null : editDateEnd.value || null,
+      postalCode: clear ? null : editPostalCode.value.trim() || null,
+      ageMin: clear ? null : editAgeMin.value,
+      ageMax: clear ? null : editAgeMax.value,
+      audience: clear ? null : editAudience.value,
     });
     editing.value = null;
     await load();
@@ -670,80 +688,19 @@ const corpusSize = computed(() => ({
                     </div>
 
                     <!--
-                      Ces champs sont ceux de la **sortie**, pas du lien : les
-                      modifier les modifie partout où elle est annoncée. C'est
-                      voulu — c'est une seule sortie.
+                      La date, le lieu et l'âge **ne se saisissent pas ici**.
+                      Ils décrivent la sortie, pas le lien, et une seule sortie
+                      peut être annoncée par plusieurs agendas. Les offrir sur
+                      cette ligne laissait croire qu'ils lui appartenaient — ce
+                      qu'ils faisaient d'ailleurs, dans une version précédente,
+                      en double de ce que le corpus des sorties disait déjà.
+                      On y renvoie plutôt qu'on ne les recopie.
                     -->
                     <div v-else class="hints">
-                      <label class="hint">
-                        <span class="muted small">du</span>
-                        <input
-                          type="date"
-                          :value="row.label.sortie.dateStart ?? ''"
-                          title="Premier jour de la sortie."
-                          @change="decrire(row.label!.sortieId!, { dateStart: typed($event) || null })"
-                        />
-                      </label>
-                      <label class="hint">
-                        <span class="muted small">au</span>
-                        <input
-                          type="date"
-                          :value="row.label.sortie.dateEnd ?? ''"
-                          title="Dernier jour. Vide sur une date unique : une sortie qui dure est dans la fenêtre dès qu’elle la croise."
-                          @change="decrire(row.label!.sortieId!, { dateEnd: typed($event) || null })"
-                        />
-                      </label>
-                      <label class="hint">
-                        <span class="muted small">à</span>
-                        <input
-                          type="text"
-                          inputmode="numeric"
-                          placeholder="75012"
-                          size="6"
-                          :value="row.label.sortie.postalCode ?? ''"
-                          title="Le code postal, à cinq chiffres. Une ville en toutes lettres ne se compare à aucun département."
-                          @change="decrire(row.label!.sortieId!, { postalCode: typed($event) || null })"
-                        />
-                      </label>
-                      <label class="hint">
-                        <span class="muted small">de</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="120"
-                          size="3"
-                          :value="row.label.sortie.ageMin ?? ''"
-                          title="Âge minimum annoncé."
-                          @change="decrire(row.label!.sortieId!, { ageMin: typedInt($event) })"
-                        />
-                        <span class="muted small">à</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="120"
-                          size="3"
-                          :value="row.label.sortie.ageMax ?? ''"
-                          title="Âge maximum annoncé. Moins de 18 vaut jeune public, sans avoir à le cocher."
-                          @change="decrire(row.label!.sortieId!, { ageMax: typedInt($event) })"
-                        />
-                        <span class="muted small">ans</span>
-                      </label>
-                      <div class="chips">
-                        <button
-                          v-for="a in AUDIENCES"
-                          :key="a"
-                          class="chip tiny"
-                          :class="{ on: row.label.sortie.audience === a }"
-                          :title="EVAL_AUDIENCE_HINTS[a]"
-                          @click="
-                            decrire(row.label!.sortieId!, {
-                              audience: row.label!.sortie!.audience === a ? null : a,
-                            })
-                          "
-                        >
-                          {{ EVAL_AUDIENCE_LABELS[a] }}
-                        </button>
-                      </div>
+                      <a :href="`#sortie-${row.label.sortieId}`" class="linklike">
+                        voir la sortie
+                      </a>
+                      <span class="muted small">{{ resume(row.label.sortie) }}</span>
                     </div>
 
                     <!--
@@ -790,7 +747,7 @@ const corpusSize = computed(() => ({
           </tr>
         </thead>
         <tbody>
-          <tr v-for="sortie in sorties" :key="sortie.id">
+          <tr v-for="sortie in sorties" :id="`sortie-${sortie.id}`" :key="sortie.id">
             <td>
               <div class="link-text">{{ sortie.label || sortie.url }}</div>
               <a :href="sortie.url" target="_blank" class="muted small">{{ sortie.url }}</a>
@@ -835,6 +792,54 @@ const corpusSize = computed(() => ({
         de reconnaître une valeur inventée. Pour dire « je n’ai pas regardé »,
         utilisez « Effacer les étiquettes ».
       </p>
+      <fieldset class="faits">
+        <legend>Ce que l’étage 4 juge — la date, le lieu, l’âge</legend>
+        <p class="muted small">
+          Trois champs, et ils suffisent : c’est tout ce que le tri regarde.
+          Ils se lisent souvent dans la ligne de l’agenda, sans ouvrir la page.
+        </p>
+        <div class="row faits-ligne">
+          <label class="hint">
+            <span class="muted small">du</span>
+            <input v-model="editDateStart" type="date" />
+          </label>
+          <label class="hint">
+            <span class="muted small">au</span>
+            <input v-model="editDateEnd" type="date" title="Vide sur une date unique." />
+          </label>
+          <label class="hint">
+            <span class="muted small">à</span>
+            <input
+              v-model="editPostalCode"
+              type="text"
+              inputmode="numeric"
+              size="6"
+              placeholder="75012"
+              title="Cinq chiffres. Une ville en toutes lettres ne se compare à aucun département."
+            />
+          </label>
+          <label class="hint">
+            <span class="muted small">de</span>
+            <input v-model.number="editAgeMin" type="number" min="0" max="120" size="3" />
+            <span class="muted small">à</span>
+            <input v-model.number="editAgeMax" type="number" min="0" max="120" size="3" />
+            <span class="muted small">ans</span>
+          </label>
+        </div>
+        <div class="chips">
+          <button
+            v-for="a in AUDIENCES"
+            :key="a"
+            class="chip tiny"
+            :class="{ on: editAudience === a }"
+            :title="EVAL_AUDIENCE_HINTS[a]"
+            @click="editAudience = editAudience === a ? null : a"
+          >
+            {{ EVAL_AUDIENCE_LABELS[a] }}
+          </button>
+        </div>
+      </fieldset>
+
       <label for="ed-img">Illustration de la page</label>
       <input id="ed-img" v-model="editImage" type="url" placeholder="https://… (vide : aucune)" />
 
@@ -1009,6 +1014,25 @@ h2 {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+.faits {
+  border: 1px solid var(--border, #ddd);
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.faits legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0 0.4rem;
+}
+
+.faits-ligne {
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
 }
 
 .reste {
