@@ -862,7 +862,61 @@ export interface EvalLink {
   origin: EvalLabelOrigin;
   note: string;
   labelledAt: string;
+  /**
+   * Ce que le contexte du lien dit de la sortie — et **rien de plus**.
+   *
+   * Ces trois indices sont des faits sur la page, pas des jugements : ils ne
+   * disent pas si le lien avait sa place dans une recherche, ils donnent de
+   * quoi le déduire. C'est ce qui permet à une même étiquette de servir un run
+   * cantonné à la semaine prochaine et un run ouvert sur trois mois, sans
+   * qu'on ait à la réétiqueter — et c'est pourquoi « pertinente » n'est pas un
+   * verdict qu'on pose ici.
+   *
+   * Vide partout : le lien sera dit *indécidable*, jamais reproché au modèle.
+   */
+  dateHint: string | null;
+  placeHint: string | null;
+  audience: EvalAudience | null;
+  /**
+   * Ce que les indices donnent **pour le run affiché** — calculé par le
+   * serveur, jamais stocké. La même étiquette est pertinente sous une fenêtre
+   * et hors recherche sous une autre : c'est tout l'intérêt.
+   */
+  relevance?: EvalRelevance;
 }
+
+/** La pertinence d'un lien pour une recherche donnée. Toujours dérivée. */
+export type EvalRelevance = 'PERTINENTE' | 'HORS_RECHERCHE' | 'INDECIDABLE';
+
+export const EVAL_RELEVANCE_LABELS: Record<EvalRelevance, string> = {
+  PERTINENTE: 'dans la recherche',
+  HORS_RECHERCHE: 'hors recherche',
+  INDECIDABLE: 'indécidable',
+};
+
+export const EVAL_RELEVANCE_HINTS: Record<EvalRelevance, string> = {
+  PERTINENTE: 'Le tri doit la retenir : ne pas le faire compte comme une sortie manquée.',
+  HORS_RECHERCHE:
+    'Le tri a raison de l’écarter. La retenir compte comme du bruit — une lecture payée pour rien.',
+  INDECIDABLE:
+    'Les indices ne suffisent pas à trancher pour cette recherche : ce lien n’entre dans aucun ' +
+    'dénominateur, et rien n’est reproché au modèle.',
+};
+
+/** À qui la sortie s'adresse, tel que la page l'annonce. */
+export type EvalAudience = 'ENFANTS' | 'ADULTES' | 'INDETERMINE';
+
+export const EVAL_AUDIENCE_LABELS: Record<EvalAudience, string> = {
+  ENFANTS: 'jeune public',
+  ADULTES: 'adultes',
+  INDETERMINE: 'non dit',
+};
+
+export const EVAL_AUDIENCE_HINTS: Record<EvalAudience, string> = {
+  ENFANTS: 'La page l’annonce pour les enfants ou les familles.',
+  ADULTES: 'La page l’annonce pour un public adulte — écartée dans toute recherche.',
+  INDETERMINE: 'La page ne dit rien du public. N’écarte rien.',
+};
 
 /** Ce qu'un run a relevé sur un lien : le relevé, jamais l'étiquette. */
 export interface EvalLinkResult {
@@ -887,6 +941,32 @@ export interface EvalHarvestScore {
   precision: number | null;
 }
 
+/**
+ * Le tri fait trois métiers, et se mesure donc sur trois colonnes de plus.
+ *
+ * `rightlyDropped` est du travail bien fait qui n'apparaissait nulle part :
+ * une sortie hors fenêtre ou pour adultes que le modèle a eu raison d'écarter,
+ * et que l'ancienne mesure comptait comme une faute. `undecidable` est ce que
+ * le corpus ne permet pas de trancher — hors de tout dénominateur, affiché
+ * pour qu'on sache ce qu'on ignore. `cappedPages` compte les pages où le tri a
+ * retenu exactement son plafond : elles sortent du rappel, parce qu'on ne
+ * peut pas y distinguer un mauvais jugement d'un quota atteint.
+ */
+export interface EvalSelectScore extends EvalHarvestScore {
+  rightlyDropped: number;
+  undecidable: number;
+  cappedPages: number;
+}
+
+/** Ce que la recherche d'un run demandait — ce sous quoi le tri a été joué. */
+export interface EvalRunScope {
+  dateFrom?: string;
+  dateTo?: string;
+  postalPrefixes?: string[];
+  maxLinks?: number;
+  theme?: string;
+}
+
 export interface EvalAgendaPage {
   id: number;
   pageNo: number;
@@ -897,7 +977,7 @@ export interface EvalAgendaPage {
   nextExpected: string | null;
   links: EvalLink[];
   results?: EvalLinkResult[];
-  score?: { harvest: EvalHarvestScore; select: EvalHarvestScore | null };
+  score?: { harvest: EvalHarvestScore; select: EvalSelectScore | null };
   labels?: number;
 }
 
@@ -968,7 +1048,10 @@ export interface EvalReading {
 
 /** Le résumé chiffré d'un run, calculé à la lecture et jamais stocké. */
 export type EvalScore =
-  | ({ kind: 'links' } & EvalHarvestScore & {
+  | ({ kind: 'links' } & EvalHarvestScore &
+      // Les trois colonnes du tri ne viennent que des runs de tri : le
+      // dépouillement ne juge pas la pertinence, et il ne prétend pas le faire.
+      Partial<Pick<EvalSelectScore, 'rightlyDropped' | 'undecidable' | 'cappedPages'>> & {
         pagination: { correct: number; missed: number; wrong: number; unjudged: number };
       })
   | {

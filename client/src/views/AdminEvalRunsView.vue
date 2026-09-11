@@ -106,9 +106,19 @@ function headline(score: EvalScore | undefined): number | null {
   return score.rate;
 }
 
+/**
+ * Ce que le chiffre de tête mesure, dit sans raccourci.
+ *
+ * « Rappel du tri » était un mensonge court : le tri écarte aussi *à raison* —
+ * une sortie hors fenêtre, un concert pour adultes — et compter ces refus
+ * comme des oublis faisait baisser le chiffre à mesure que la recherche se
+ * précisait. Il ne compte plus que les sorties **pertinentes pour cette
+ * recherche**, et seulement sur les pages où le plafond ne lui a pas lié les
+ * mains. D'où un nom plus long, mais qui dit ce qu'il compte.
+ */
 function headlineLabel(stageValue: EvalStage): string {
   if (stageValue === 'HARVEST') return 'rappel';
-  if (stageValue === 'SELECT') return 'rappel du tri';
+  if (stageValue === 'SELECT') return 'sorties pertinentes retenues';
   if (stageValue === 'READ') return 'textes entiers';
   return 'champs justes';
 }
@@ -121,6 +131,13 @@ function detail(run: EvalRun): string {
     return (
       `${s.found} trouvée(s) · ${s.missed} manquée(s) · ${s.noise} bruit · ` +
       `précision ${pct(s.precision)}` +
+      // Du travail bien fait, qui n'apparaissait nulle part : ces refus-là
+      // étaient comptés comme des oublis.
+      (s.rightlyDropped ? ` · ${s.rightlyDropped} écartée(s) à raison` : '') +
+      (s.undecidable ? ` · ${s.undecidable} indécidable(s)` : '') +
+      (s.cappedPages
+        ? ` · ${s.cappedPages} page(s) au plafond, hors du taux`
+        : '') +
       (s.unlabelled ? ` · ${s.unlabelled} lien(s) sans étiquette` : '')
     );
   }

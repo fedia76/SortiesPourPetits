@@ -715,6 +715,34 @@ model EvalLink {
   /// Ce que ce lien est. Jamais nul : la ligne n'existerait pas.
   verdict EvalVerdict
 
+  // ── ce que la sortie est, tel que le contexte du lien le montre ────────
+  //
+  // `verdict` dit ce que le lien **est** — stable, indépendant de toute
+  // recherche. Ces trois-là disent ce que la sortie est, et c'est d'eux que
+  // la **pertinence se dérive** au moment de la mesure.
+  //
+  // Pourquoi dériver plutôt qu'étiqueter « pertinente » : la pertinence n'est
+  // pas une propriété du lien. Le même atelier est pertinent pour « musées
+  // Île-de-France » et hors sujet pour « spectacles Seine-Maritime ». En faire
+  // une étiquette la rendrait fausse au premier changement de configuration —
+  // exactement la péremption que la séparation corpus / run a supprimée.
+  //
+  // Trois états chacun, comme partout ailleurs dans le corpus : `null`,
+  // personne n'a regardé ; vide, l'agenda n'affiche rien, et c'est une
+  // étiquette ; une valeur, la voici. Un indice vide ne peut jamais écarter
+  // une sortie — il la rend *indécidable*, et l'indécidable ne compte dans
+  // aucun dénominateur. C'est la règle que le prompt de l'étage 4 s'applique
+  // à lui-même : « dans le doute sur une date ou un lieu que le contexte
+  // n'indique pas, retiens le lien ». La mesure ne peut pas être plus sévère
+  // que la consigne.
+
+  /// La date que l'agenda affiche à côté du lien, en `YYYY-MM-DD`.
+  dateHint  String?       @db.VarChar(40)
+  /// La ville ou le code postal que l'agenda affiche. Une ville en toutes
+  /// lettres ne situe rien de sûr : la mesure ne l'utilise pas pour écarter.
+  placeHint String?       @db.VarChar(120)
+  audience  EvalAudience?
+
   /// D'où vient l'étiquette. `HUMAIN` : quelqu'un l'a tranchée dans la
   /// console. `MODERATION` : la page pointée par ce lien est devenue une
   /// sortie qu'un modérateur a approuvée — c'est un humain qui l'a vérifiée,
@@ -750,6 +778,19 @@ enum EvalLinkSource {
 enum EvalLabelOrigin {
   HUMAIN
   MODERATION
+}
+
+/**
+ * Pour qui est la sortie, d'après ce que le contexte du lien montre.
+ * `INDETERMINE` est une étiquette de plein droit, pas un silence : le contexte
+ * d'un lien ne dit presque jamais le public, et prétendre le savoir
+ * fabriquerait de faux reproches contre le tri. Le silence, lui, est l'absence
+ * de valeur — `null`.
+ */
+enum EvalAudience {
+  ENFANTS
+  ADULTES
+  INDETERMINE
 }
 
 enum EvalVerdict {
