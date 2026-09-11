@@ -103,14 +103,20 @@ export type Audience = 'ENFANTS' | 'ADULTES' | 'INDETERMINE';
  * exactement la péremption que la séparation corpus / run a supprimée
  * ailleurs. On étiquette donc des faits, et la pertinence se **dérive**.
  */
+export type Verdict = 'SORTIE' | 'PAGINATION' | 'SOUS_AGENDA' | 'AUTRE';
+
 export interface LabelledLink {
   url: string;
-  verdict: 'SORTIE' | 'PAGINATION' | 'SOUS_AGENDA' | 'AUTRE';
-  /** `YYYY-MM-DD` si l'agenda l'affiche, `''` s'il n'affiche rien, `null` si personne n'a regardé. */
-  dateHint?: string | null;
-  /** Ville ou code postal si l'agenda l'affiche. Mêmes trois états. */
-  placeHint?: string | null;
-  audience?: Audience | null;
+  /** Ce que le lien **est**. La question de l'étage 3, et rien d'autre. */
+  verdict: Verdict;
+  /**
+   * La sortie vers laquelle il mène, quand quelqu'un l'a décrite.
+   *
+   * Un lien ne décrit pas une sortie, il y mène : ce qu'elle est appartient à
+   * la sortie, qui le dit une fois pour les étages 4, 5 et 6. Nul sur un lien
+   * `SORTIE` veut dire que personne ne l'a encore décrite.
+   */
+  sortie?: SortieFacts | null;
 }
 
 export interface HarvestedLink {
@@ -207,47 +213,102 @@ export interface RunScope {
 export type Relevance = 'PERTINENTE' | 'HORS_RECHERCHE' | 'INDECIDABLE';
 
 /**
- * La pertinence d'un lien pour **cette** recherche, dérivée de ses indices.
+ * Ce qu'une sortie **est**, dit une fois pour les étages 4, 5 et 6.
  *
- * Le principe : on n'écarte que sur ce que le corpus **affirme**. Un indice
- * vide — l'agenda n'affichait pas la date — ne peut pas rendre une sortie hors
- * recherche, il la rend indécidable, et l'indécidable ne compte dans aucun
- * dénominateur. C'est la même règle que le prompt de l'étage 4 applique
- * lui-même : « dans le doute sur une date ou un lieu que le contexte n'indique
- * pas, retiens le lien ». La mesure ne peut pas être plus sévère que la
- * consigne.
+ * Des faits, pas leur mise en forme : une date se compare à une fenêtre, un
+ * code postal à des préfixes. La prose de `EvalFiche` — « dès 3 ans », « du 20
+ * au 22 septembre » — sert à l'étage 6, qui compare des chaînes à des chaînes.
+ *
+ * `null` partout : personne n'a regardé.
  */
-export function relevanceOf(label: LabelledLink, scope: RunScope): Relevance {
+export interface SortieFacts {
+  /** `YYYY-MM-DD`. `dateEnd` nul sur une date unique. */
+  dateStart?: string | null;
+  dateEnd?: string | null;
+  postalCode?: string | null;
+  ageMin?: number | null;
+  ageMax?: number | null;
+  audience?: Audience | null;
+}
+
+/**
+ * L'âge d'où se déduit le public, quand personne ne l'a dit explicitement.
+ *
+ * Un seuil est une convention, pas une vérité — il est ici pour que la moisson
+ * depuis la modération serve à quelque chose : `Event` porte `ageMin`/`ageMax`
+ * mais aucune colonne « public ». Sans cette déduction, l'essentiel du corpus
+ * arriverait sans public déclaré et le critère ne jouerait jamais.
+ */
+const MAJORITE = 18;
+
+export function audienceOf(sortie: SortieFacts): Audience | null {
+  if (sortie.audience) return sortie.audience;
+  if (sortie.ageMin != null && sortie.ageMin >= MAJORITE) return 'ADULTES';
+  if (sortie.ageMax != null && sortie.ageMax < MAJORITE) return 'ENFANTS';
+  return null;
+}
+
+/**
+ * La pertinence d'un lien pour **cette** recherche, dérivée de la sortie vers
+ * laquelle il mène.
+ *
+ * ## Ce qu'on mesure, et ce qu'on ne mesure pas
+ *
+ * On juge **si l'objectif est atteint**, pas si l'étage avait les moyens de
+ * l'atteindre. L'étage 4 ne voit que le contexte du lien et sa consigne lui
+ * dit de retenir dans le doute : un lien au contexte muet qu'il a gardé, et
+ * qui s'avère être un concert pour adultes, compte donc comme du **bruit**.
+ * Il n'est pas fautif — et la lecture a quand même été payée pour rien.
+ *
+ * Ce n'est pas une sévérité gratuite. Un banc qui absout l'étage 4 parce que
+ * l'agenda était avare ne dit plus rien de ce qu'il faut corriger ; celui-ci
+ * dit « l'objectif n'est pas atteint », et la correction — donner à l'étage 4
+ * davantage que le contexte — se décide ensuite, au vu du chiffre.
+ *
+ * ## Le seul silence qui compte
+ *
+ * `INDECIDABLE` ne veut plus dire « le contexte n'affichait rien ». Il veut
+ * dire : **personne n'a décrit cette sortie**. Il n'y a alors rien à quoi
+ * comparer, donc rien à conclure — ni pour, ni contre. C'est une dette de
+ * corpus, pas un jugement, et elle se solde en étiquetant.
+ */
+export function relevanceOf(
+  label: { verdict: Verdict; sortie?: SortieFacts | null },
+  scope: RunScope,
+): Relevance {
   if (label.verdict !== 'SORTIE') return 'HORS_RECHERCHE';
 
-  // Un public déclaré adulte suffit à écarter, et c'est le seul des trois
-  // indices qui tranche à lui seul : il ne dépend pas des réglages du run.
-  if (label.audience === 'ADULTES') return 'HORS_RECHERCHE';
+  const sortie = label.sortie;
+  if (!sortie) return 'INDECIDABLE';
+
+  if (audienceOf(sortie) === 'ADULTES') return 'HORS_RECHERCHE';
 
   let decidable = false;
 
-  if (label.dateHint) {
-    const day = label.dateHint.slice(0, 10);
-    if (scope.dateFrom && day < scope.dateFrom) return 'HORS_RECHERCHE';
-    if (scope.dateTo && day > scope.dateTo) return 'HORS_RECHERCHE';
+  // Une sortie occupe une plage, pas un point : celle du 15 septembre au
+  // 15 décembre est dans une fenêtre qui s'arrête au 11 octobre. La comparer
+  // par son seul premier jour l'écarterait à tort dès que la fenêtre
+  // commencerait après son ouverture.
+  if (sortie.dateStart) {
+    const debut = sortie.dateStart.slice(0, 10);
+    const fin = (sortie.dateEnd ?? sortie.dateStart).slice(0, 10);
+    if (scope.dateTo && debut > scope.dateTo) return 'HORS_RECHERCHE';
+    if (scope.dateFrom && fin < scope.dateFrom) return 'HORS_RECHERCHE';
     if (scope.dateFrom || scope.dateTo) decidable = true;
   }
 
-  if (label.placeHint && scope.postalPrefixes?.length) {
-    const digits = label.placeHint.replace(/\D/g, '');
-    // Une ville en toutes lettres n'a pas de chiffres : on ne sait pas la
-    // situer, donc on ne l'écarte pas. Mieux vaut un indécidable qu'un
-    // reproche inventé.
-    if (digits) {
-      if (!scope.postalPrefixes.some((p) => digits.startsWith(p))) return 'HORS_RECHERCHE';
+  if (sortie.postalCode && scope.postalPrefixes?.length) {
+    const chiffres = sortie.postalCode.replace(/\D/g, '');
+    if (chiffres) {
+      if (!scope.postalPrefixes.some((p) => chiffres.startsWith(p))) return 'HORS_RECHERCHE';
       decidable = true;
     }
   }
 
-  if (label.audience === 'ENFANTS') decidable = true;
+  if (audienceOf(sortie) === 'ENFANTS') decidable = true;
 
-  // Rien d'affirmé, rien à conclure : le corpus ne permet pas de dire si ce
-  // lien avait sa place dans cette recherche.
+  // La sortie est décrite, mais rien de ce qu'elle affirme ne rencontre les
+  // réglages de ce run : il n'y a pas de quoi trancher.
   return decidable ? 'PERTINENTE' : 'INDECIDABLE';
 }
 

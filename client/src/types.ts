@@ -863,26 +863,31 @@ export interface EvalLink {
   note: string;
   labelledAt: string;
   /**
-   * Ce que le contexte du lien dit de la sortie — et **rien de plus**.
+   * La sortie vers laquelle ce lien mène.
    *
-   * Ces trois indices sont des faits sur la page, pas des jugements : ils ne
-   * disent pas si le lien avait sa place dans une recherche, ils donnent de
-   * quoi le déduire. C'est ce qui permet à une même étiquette de servir un run
-   * cantonné à la semaine prochaine et un run ouvert sur trois mois, sans
-   * qu'on ait à la réétiqueter — et c'est pourquoi « pertinente » n'est pas un
-   * verdict qu'on pose ici.
-   *
-   * Vide partout : le lien sera dit *indécidable*, jamais reproché au modèle.
+   * Un lien ne décrit pas une sortie, il y mène : ce qu'elle est — sa date,
+   * son lieu, son âge — appartient à la sortie, qui le dit une fois pour les
+   * étages 4, 5 et 6. `null` sur un lien « une sortie » veut dire que
+   * personne ne l'a encore décrite.
    */
-  dateHint: string | null;
-  placeHint: string | null;
-  audience: EvalAudience | null;
+  sortieId: number | null;
+  sortie?: EvalSortieFacts | null;
   /**
-   * Ce que les indices donnent **pour le run affiché** — calculé par le
-   * serveur, jamais stocké. La même étiquette est pertinente sous une fenêtre
-   * et hors recherche sous une autre : c'est tout l'intérêt.
+   * Ce que la sortie donne **pour le run affiché** — calculé par le serveur,
+   * jamais stocké. La même sortie est pertinente sous une fenêtre et hors
+   * recherche sous une autre : c'est tout l'intérêt de ne pas l'étiqueter.
    */
   relevance?: EvalRelevance;
+}
+
+/** Ce que l'étage 4 juge d'une sortie : sa date, son lieu, son âge. */
+export interface EvalSortieFacts {
+  dateStart: string | null;
+  dateEnd: string | null;
+  postalCode: string | null;
+  ageMin: number | null;
+  ageMax: number | null;
+  audience: EvalAudience | null;
 }
 
 /** La pertinence d'un lien pour une recherche donnée. Toujours dérivée. */
@@ -997,16 +1002,16 @@ export interface EvalAgenda {
   labels?: number;
 }
 
-export type EvalReadingOrigin = 'MANUEL' | 'APPROUVEE' | 'ABANDONNEE' | 'ILLISIBLE';
+export type EvalSortieOrigin = 'MANUEL' | 'APPROUVEE' | 'ABANDONNEE' | 'ILLISIBLE';
 
-export const EVAL_ORIGIN_LABELS: Record<EvalReadingOrigin, string> = {
+export const EVAL_ORIGIN_LABELS: Record<EvalSortieOrigin, string> = {
   MANUEL: 'saisie à la main',
   APPROUVEE: 'sortie approuvée',
   ABANDONNEE: 'page abandonnée',
   ILLISIBLE: 'description refusée',
 };
 
-export const EVAL_ORIGIN_HINTS: Record<EvalReadingOrigin, string> = {
+export const EVAL_ORIGIN_HINTS: Record<EvalSortieOrigin, string> = {
   MANUEL: 'Quelqu’un l’a ajoutée au corpus depuis cette console.',
   APPROUVEE: 'Le pipeline en a tiré une sortie qu’un modérateur a approuvée.',
   ABANDONNEE: 'L’étage 5 l’a écartée — page vide, illisible ou injoignable.',
@@ -1021,7 +1026,7 @@ export const EVAL_ORIGIN_HINTS: Record<EvalReadingOrigin, string> = {
  * Chaque étiquette a trois états. `null` : personne n'a regardé. Une valeur
  * vide : la page n'en porte pas, et c'est une étiquette. Une valeur : la voici.
  */
-export interface EvalReading {
+export interface EvalSortie {
   id: number;
   url: string;
   label: string;
@@ -1036,7 +1041,19 @@ export interface EvalReading {
   expectedDates: string | null;
   /** JSON d'un tableau de fragments que le texte doit contenir. */
   expectedMarkers: string | null;
-  origin: EvalReadingOrigin;
+  /**
+   * Ce que l'étage 4 juge, en **faits** — pas dans la prose de la fiche.
+   * Une date se compare à une fenêtre, un code postal à des préfixes ; « du 20
+   * au 22 septembre » ne se compare qu'à une autre chaîne, et c'est le métier
+   * de l'étage 6.
+   */
+  dateStart: string | null;
+  dateEnd: string | null;
+  postalCode: string | null;
+  ageMin: number | null;
+  ageMax: number | null;
+  audience: EvalAudience | null;
+  origin: EvalSortieOrigin;
   eventId: number | null;
   readAt: string | null;
   runDecision: string;
@@ -1044,6 +1061,31 @@ export interface EvalReading {
   createdAt: string;
   author?: { id: number; displayName: string };
   fiche?: { id: number; expected: string; labelledAt: string } | null;
+}
+
+/**
+ * Ce qu'il reste à faire à la main, compté.
+ *
+ * La modération paie la précision — parmi ce que le scraper a proposé, ce
+ * qu'un humain a validé. Elle ne paiera jamais le rappel : ce qu'il a raté
+ * n'apparaît pas dans ce qu'il a proposé, par construction. Ces deux comptes
+ * ne raccourcissent pas ce travail, ils l'affichent — un coût qu'on découvre
+ * au fil de l'eau fait abandonner un banc au bout de trois semaines.
+ */
+export interface EvalReste {
+  /** Par page d'agenda : les liens relevés que personne n'a tranchés. */
+  jamaisRegardes: { pageId: number; url: string; label: string; manquants: number }[];
+  /**
+   * Les liens dont on sait que c'est une sortie, mais dont rien n'est affirmé.
+   * `sortieId` nul : la sortie est à créer. Renseigné : elle est à décrire.
+   */
+  sansSortie: {
+    id: number;
+    url: string;
+    text: string;
+    sortieId: number | null;
+    page: { id: number; pageNo: number; agenda: { id: number; label: string } };
+  }[];
 }
 
 /** Le résumé chiffré d'un run, calculé à la lecture et jamais stocké. */

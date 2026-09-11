@@ -46,7 +46,7 @@
  * porte sa clé d'API : exiger l'administration obligerait à donner ce rôle à
  * un programme.
  */
-import { Prisma, Role } from '@prisma/client';
+import { Prisma, Role, type EvalAudience, type EvalVerdict } from '@prisma/client';
 import express from 'express';
 import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
@@ -76,8 +76,8 @@ import {
   evalLinkSchema,
   evalNextSchema,
   evalReadResultSchema,
-  evalReadingLabelSchema,
-  evalReadingSchema,
+  evalSortieLabelSchema,
+  evalSortieSchema,
   evalRunClaimSchema,
   evalRunFinishSchema,
   evalRunListSchema,
@@ -260,7 +260,11 @@ evalRouter.get('/agendas/:id(\\d+)', admin, async (req, res) => {
       author: { select: { id: true, displayName: true } },
       agendaPages: {
         orderBy: { pageNo: 'asc' },
-        include: { links: { orderBy: { id: 'asc' } } },
+        // Chaque lien porte la sortie vers laquelle il mène : c'est elle que
+        // la console fait modifier, et c'est d'elle que la pertinence vient.
+        include: {
+          links: { orderBy: { id: 'asc' }, include: { sortie: { select: FAITS_SORTIE } } },
+        },
       },
     },
   });
@@ -304,11 +308,11 @@ evalRouter.get('/agendas/:id(\\d+)', admin, async (req, res) => {
         // pour qu'il n'y ait qu'une seule règle et qu'elle ne dérive pas.
         links: page.links.map((link) => ({
           ...link,
-          relevance: relevanceOf(link as LabelledLink, scope),
+          relevance: relevanceOf(labelled(link), scope),
         })),
         /** Le relevé du run affiché, s'il y en a un. */
         results: byPage.get(page.id) ?? [],
-        score: scorePage(page.links, byPage.get(page.id) ?? [], scope),
+        score: scorePage(page.links.map(labelled), byPage.get(page.id) ?? [], scope),
       })),
     },
     runId,
@@ -317,15 +321,68 @@ evalRouter.get('/agendas/:id(\\d+)', admin, async (req, res) => {
 });
 
 function scorePage(
-  labels: unknown[],
+  labels: LabelledLink[],
   results: { url: string; harvested: boolean; selected: boolean | null }[],
   scope: RunScope = {},
 ) {
-  const typed = labels as LabelledLink[];
   return {
-    harvest: harvestScore(typed, results),
-    select: results.some((r) => r.selected !== null) ? selectScore(typed, results, scope) : null,
+    harvest: harvestScore(labels, results),
+    select: results.some((r) => r.selected !== null) ? selectScore(labels, results, scope) : null,
   };
+}
+
+/**
+ * Ce qu'on lit d'une sortie pour mesurer l'étage 4 : ses faits, et rien de
+ * plus. Ni le titre, ni le tarif, ni le texte attendu — ils appartiennent au
+ * corpus et servent aux étages 5 et 6. Chaque étage lit son sous-ensemble.
+ */
+const FAITS_SORTIE = {
+  dateStart: true,
+  dateEnd: true,
+  postalCode: true,
+  ageMin: true,
+  ageMax: true,
+  audience: true,
+} as const;
+
+type SortieRow = {
+  dateStart: Date | null;
+  dateEnd: Date | null;
+  postalCode: string | null;
+  ageMin: number | null;
+  ageMax: number | null;
+  audience: EvalAudience | null;
+};
+
+/**
+ * Une ligne de la base, sous la forme que la mesure compare.
+ *
+ * Les colonnes `DATE` reviennent en `Date` calées sur minuit UTC : les rendre
+ * en `YYYY-MM-DD` ici garde `evalMetrics` pur — il compare des jours, jamais
+ * des instants, et n'a donc aucun fuseau où se tromper.
+ */
+function labelled<T extends { url: string; verdict: EvalVerdict; sortie?: SortieRow | null }>(
+  link: T,
+): LabelledLink {
+  const s = link.sortie;
+  return {
+    url: link.url,
+    verdict: link.verdict,
+    sortie: s
+      ? {
+          dateStart: jour(s.dateStart),
+          dateEnd: jour(s.dateEnd),
+          postalCode: s.postalCode,
+          ageMin: s.ageMin,
+          ageMax: s.ageMax,
+          audience: s.audience,
+        }
+      : null,
+  };
+}
+
+function jour(value: Date | null): string | null {
+  return value ? value.toISOString().slice(0, 10) : null;
 }
 
 /**
@@ -375,14 +432,23 @@ evalRouter.put('/pages/:pageId(\\d+)/links', admin, async (req, res) => {
     res.status(404).json({ error: 'Page introuvable' });
     return;
   }
-  const { url, text, verdict, note, source, dateHint, placeHint, audience } = parsed.data;
-  // Les indices ne s'écrivent que si le corps les porte : un étiquetage rapide
-  // du verdict ne doit pas effacer une date qu'on avait relevée.
-  const hints = {
-    ...(dateHint === undefined ? {} : { dateHint }),
-    ...(placeHint === undefined ? {} : { placeHint }),
-    ...(audience === undefined ? {} : { audience }),
-  };
+  const { url, text, verdict, note, source } = parsed.data;
+  // Un lien « sortie » rejoint la sortie du corpus qui porte la même adresse,
+  // s'il y en a une. La jointure se fait donc toute seule dans le cas courant
+  // — une sortie déjà moissonnée depuis la modération — sans qu'on ait à la
+  // désigner à la main.
+  //
+  // On ne **crée** pas la sortie au passage : ce serait mettre au corpus, et
+  // donc mettre en file de capture, deux cents pages que personne n'a demandé
+  // à décrire. Le lien reste sans sortie, il est dit indécidable, et il
+  // apparaît dans la liste de travail — où un bouton la crée pour de bon.
+  //
+  // Tout autre verdict détache : une pagination ne mène pas à une sortie, et
+  // laisser un vieux rattachement la ferait compter comme telle.
+  const sortie =
+    verdict === 'SORTIE'
+      ? await prisma.evalSortie.findUnique({ where: { url }, select: { id: true } })
+      : null;
   const link = await prisma.evalLink.upsert({
     where: { pageId_url: { pageId, url } },
     create: {
@@ -394,9 +460,15 @@ evalRouter.put('/pages/:pageId(\\d+)/links', admin, async (req, res) => {
       source,
       origin: 'HUMAIN',
       labelledById: req.user!.id,
-      ...hints,
+      sortieId: sortie?.id ?? null,
     },
-    update: { verdict, note, labelledAt: new Date(), labelledById: req.user!.id, ...hints },
+    update: {
+      verdict,
+      note,
+      labelledAt: new Date(),
+      labelledById: req.user!.id,
+      sortieId: sortie?.id ?? null,
+    },
   });
   res.json({ link });
 });
@@ -515,33 +587,33 @@ evalRouter.get('/pages/:id(\\d+)/html', admin, async (req, res) => {
 
 // ─────────────────────────────────────────────── corpus de lecture (ét. 5/6)
 
-evalRouter.get('/readings', admin, async (_req, res) => {
-  const readings = await prisma.evalReading.findMany({
+evalRouter.get('/sorties', admin, async (_req, res) => {
+  const sorties = await prisma.evalSortie.findMany({
     orderBy: { createdAt: 'desc' },
     include: {
       author: { select: { id: true, displayName: true } },
       fiche: { select: { id: true, expected: true, labelledAt: true } },
     },
   });
-  res.json({ readings: readings.map(serializeReading) });
+  res.json({ sorties: sorties.map(serializeSortie) });
 });
 
-function serializeReading<T extends { htmlPath: string | null; fiche?: unknown }>(reading: T) {
-  const { htmlPath, ...rest } = reading;
+function serializeSortie<T extends { htmlPath: string | null; fiche?: unknown }>(sortie: T) {
+  const { htmlPath, ...rest } = sortie;
   return { ...rest, archived: Boolean(htmlPath) };
 }
 
-evalRouter.post('/readings', admin, async (req, res) => {
-  const parsed = evalReadingSchema.safeParse(req.body);
+evalRouter.post('/sorties', admin, async (req, res) => {
+  const parsed = evalSortieSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
   try {
-    const reading = await prisma.evalReading.create({
+    const sortie = await prisma.evalSortie.create({
       data: { ...parsed.data, createdById: req.user!.id },
     });
-    res.status(201).json({ reading: serializeReading(reading) });
+    res.status(201).json({ sortie: serializeSortie(sortie) });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
       res.status(409).json({ error: 'Cette page est déjà au corpus' });
@@ -551,19 +623,66 @@ evalRouter.post('/readings', admin, async (req, res) => {
   }
 });
 
+/**
+ * Décrire la sortie vers laquelle un lien d'agenda mène.
+ *
+ * C'est le geste qui manquait. Un lien étiqueté « une sortie » dit ce qu'il
+ * est, pas ce qu'elle est : tant que personne ne l'a décrite, l'étage 4 n'a
+ * rien à quoi se comparer et le lien reste indécidable. Ce bouton crée la
+ * sortie au corpus — ou rejoint celle qui portait déjà l'adresse — et
+ * l'attache.
+ *
+ * La sortie n'est pas créée d'office à l'étiquetage : ce serait mettre en file
+ * de capture deux cents pages que personne n'a demandé à décrire.
+ */
+evalRouter.post('/links/:id(\\d+)/sortie', admin, async (req, res) => {
+  const link = await prisma.evalLink.findUnique({ where: { id: Number(req.params.id) } });
+  if (!link) {
+    res.status(404).json({ error: 'Étiquette introuvable' });
+    return;
+  }
+  if (link.verdict !== 'SORTIE') {
+    res.status(400).json({ error: 'Seul un lien étiqueté « une sortie » mène à une sortie' });
+    return;
+  }
+  // `upsert` sur l'adresse : deux agendas peuvent annoncer la même sortie, et
+  // c'est une seule sortie, décrite une seule fois.
+  const sortie = await prisma.evalSortie.upsert({
+    where: { url: link.url },
+    create: {
+      url: link.url,
+      label: link.text,
+      note: '',
+      origin: 'MANUEL',
+      createdById: req.user!.id,
+    },
+    update: {},
+  });
+  await prisma.evalLink.update({ where: { id: link.id }, data: { sortieId: sortie.id } });
+  res.status(201).json({ sortie: serializeSortie(sortie) });
+});
+
 /** Les étiquettes d'une page : ce qu'elle contient. */
-evalRouter.patch('/readings/:id(\\d+)', admin, async (req, res) => {
-  const parsed = evalReadingLabelSchema.safeParse(req.body);
+evalRouter.patch('/sorties/:id(\\d+)', admin, async (req, res) => {
+  const parsed = evalSortieLabelSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const { expectedDates, expectedMarkers, ...rest } = parsed.data;
+  const { expectedDates, expectedMarkers, dateStart, dateEnd, ...rest } = parsed.data;
   try {
-    const reading = await prisma.evalReading.update({
+    const sortie = await prisma.evalSortie.update({
       where: { id: Number(req.params.id) },
       data: {
         ...rest,
+        // Une colonne `DATE` attend un instant : on cale sur minuit UTC pour
+        // que le jour saisi soit le jour relu, sous n'importe quel fuseau.
+        ...(dateStart === undefined
+          ? {}
+          : { dateStart: dateStart === null ? null : new Date(`${dateStart}T00:00:00Z`) }),
+        ...(dateEnd === undefined
+          ? {}
+          : { dateEnd: dateEnd === null ? null : new Date(`${dateEnd}T00:00:00Z`) }),
         ...(expectedDates === undefined
           ? {}
           : { expectedDates: expectedDates === null ? null : JSON.stringify(expectedDates) }),
@@ -572,20 +691,20 @@ evalRouter.patch('/readings/:id(\\d+)', admin, async (req, res) => {
           : { expectedMarkers: expectedMarkers === null ? null : JSON.stringify(expectedMarkers) }),
       },
     });
-    res.json({ reading: serializeReading(reading) });
+    res.json({ sortie: serializeSortie(sortie) });
   } catch {
     res.status(404).json({ error: 'Page introuvable' });
   }
 });
 
-evalRouter.post('/readings/:id(\\d+)/capture', admin, async (req, res) => {
+evalRouter.post('/sorties/:id(\\d+)/capture', admin, async (req, res) => {
   const id = Number(req.params.id);
-  const reading = await prisma.evalReading.findUnique({ where: { id }, select: { capture: true } });
-  if (!reading) {
+  const sortie = await prisma.evalSortie.findUnique({ where: { id }, select: { capture: true } });
+  if (!sortie) {
     res.status(404).json({ error: 'Page introuvable' });
     return;
   }
-  if (reading.capture === 'CAPTURED') {
+  if (sortie.capture === 'CAPTURED') {
     res.status(409).json({
       error:
         'Cette page est déjà capturée. Recapturer réécrirait le HTML que les ' +
@@ -593,39 +712,39 @@ evalRouter.post('/readings/:id(\\d+)/capture', admin, async (req, res) => {
     });
     return;
   }
-  const updated = await prisma.evalReading.update({
+  const updated = await prisma.evalSortie.update({
     where: { id },
     data: { capture: 'QUEUED', captureError: null },
   });
-  res.json({ reading: serializeReading(updated) });
+  res.json({ sortie: serializeSortie(updated) });
 });
 
-evalRouter.delete('/readings/:id(\\d+)', admin, async (req, res) => {
+evalRouter.delete('/sorties/:id(\\d+)', admin, async (req, res) => {
   const id = Number(req.params.id);
-  const reading = await prisma.evalReading.findUnique({
+  const sortie = await prisma.evalSortie.findUnique({
     where: { id },
     select: { htmlPath: true },
   });
   try {
-    await prisma.evalReading.delete({ where: { id } });
+    await prisma.evalSortie.delete({ where: { id } });
   } catch {
     res.status(404).json({ error: 'Page introuvable' });
     return;
   }
-  await deleteEvalPages([reading?.htmlPath ?? null]);
+  await deleteEvalPages([sortie?.htmlPath ?? null]);
   res.json({ ok: true });
 });
 
-evalRouter.get('/readings/:id(\\d+)/html', admin, async (req, res) => {
-  const reading = await prisma.evalReading.findUnique({
+evalRouter.get('/sorties/:id(\\d+)/html', admin, async (req, res) => {
+  const sortie = await prisma.evalSortie.findUnique({
     where: { id: Number(req.params.id) },
     select: { htmlPath: true },
   });
-  if (!reading?.htmlPath) {
+  if (!sortie?.htmlPath) {
     res.status(404).json({ error: 'Aucune archive pour cette page' });
     return;
   }
-  const html = await readEvalPage(reading.htmlPath);
+  const html = await readEvalPage(sortie.htmlPath);
   if (html === null) {
     res.status(404).json({ error: 'Archive illisible' });
     return;
@@ -634,22 +753,22 @@ evalRouter.get('/readings/:id(\\d+)/html', admin, async (req, res) => {
 });
 
 /** Ce que la page annonce, champ par champ : le corpus de l'étage 6. */
-evalRouter.put('/readings/:id(\\d+)/fiche', admin, async (req, res) => {
+evalRouter.put('/sorties/:id(\\d+)/fiche', admin, async (req, res) => {
   const parsed = evalFicheSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const readingId = Number(req.params.id);
-  const reading = await prisma.evalReading.findUnique({ where: { id: readingId } });
-  if (!reading) {
+  const sortieId = Number(req.params.id);
+  const sortie = await prisma.evalSortie.findUnique({ where: { id: sortieId } });
+  if (!sortie) {
     res.status(404).json({ error: 'Page introuvable' });
     return;
   }
   const expected = JSON.stringify(parsed.data.expected);
   const fiche = await prisma.evalFiche.upsert({
-    where: { readingId },
-    create: { readingId, expected, note: parsed.data.note, createdById: req.user!.id },
+    where: { sortieId },
+    create: { sortieId, expected, note: parsed.data.note, createdById: req.user!.id },
     update: { expected, note: parsed.data.note, labelledAt: new Date() },
   });
   res.json({ fiche });
@@ -690,7 +809,7 @@ async function countRunnable(stage: 'HARVEST' | 'SELECT' | 'READ' | 'EXTRACT'): 
       where: { htmlPath: { not: null }, agenda: { capture: 'CAPTURED' } },
     });
   }
-  return prisma.evalReading.count({ where: { capture: 'CAPTURED', htmlPath: { not: null } } });
+  return prisma.evalSortie.count({ where: { capture: 'CAPTURED', htmlPath: { not: null } } });
 }
 
 evalRouter.get('/runs', admin, async (req, res) => {
@@ -748,14 +867,7 @@ async function scoreRun(runId: number, stage: string) {
     const [run, labels, results] = await Promise.all([
       prisma.evalRun.findUnique({ where: { id: runId }, select: { settings: true, stage: true } }),
       prisma.evalLink.findMany({
-        select: {
-          url: true,
-          verdict: true,
-          pageId: true,
-          dateHint: true,
-          placeHint: true,
-          audience: true,
-        },
+        select: { url: true, verdict: true, pageId: true, sortie: { select: FAITS_SORTIE } },
       }),
       prisma.evalLinkResult.findMany({
         where: { runId },
@@ -768,7 +880,7 @@ async function scoreRun(runId: number, stage: string) {
     // Le plafond se juge aussi par page — c'est par page que le tri l'applique,
     // et c'est page par page que `sumSelect` sait laquelle sortir du rappel.
     const pages = [...new Set(results.map((r) => r.pageId))].map((pageId) => ({
-      labels: labels.filter((l) => l.pageId === pageId) as LabelledLink[],
+      labels: labels.filter((l) => l.pageId === pageId).map(labelled),
       results: results.filter((r) => r.pageId === pageId),
     }));
     const pagination = await paginationScore(runId);
@@ -793,7 +905,7 @@ async function scoreRun(runId: number, stage: string) {
     const results = await prisma.evalReadResult.findMany({
       where: { runId },
       include: {
-        reading: {
+        sortie: {
           select: { expectedImage: true, expectedDates: true, expectedMarkers: true },
         },
       },
@@ -807,7 +919,7 @@ async function scoreRun(runId: number, stage: string) {
     let truncated = 0;
     let tooShort = 0;
     for (const row of results) {
-      const score = readScore(row.reading, row);
+      const score = readScore(row.sortie, row);
       if (score.textOk !== null) {
         textJudged += 1;
         if (score.textOk) textOk += 1;
@@ -843,11 +955,11 @@ async function scoreRun(runId: number, stage: string) {
 
   const results = await prisma.evalExtractResult.findMany({
     where: { runId },
-    include: { reading: { select: { fiche: { select: { expected: true } } } } },
+    include: { sortie: { select: { fiche: { select: { expected: true } } } } },
   });
   const tally = { JUSTE: 0, FAUX: 0, INVENTE: 0, MANQUE: 0, inconnu: 0 };
   for (const row of results) {
-    const expected = parseJson<Record<string, string>>(row.reading.fiche?.expected ?? null, {});
+    const expected = parseJson<Record<string, string>>(row.sortie.fiche?.expected ?? null, {});
     const aspects = parseJson<Aspect[]>(row.aspects, []);
     const score = extractScore(expected, Array.isArray(aspects) ? aspects : []);
     for (const key of Object.keys(tally) as (keyof typeof tally)[]) {
@@ -902,7 +1014,7 @@ async function runDetail(runId: number, stage: string) {
     const rows = await prisma.evalReadResult.findMany({
       where: { runId },
       include: {
-        reading: {
+        sortie: {
           select: {
             id: true,
             url: true,
@@ -915,28 +1027,28 @@ async function runDetail(runId: number, stage: string) {
       },
     });
     return rows.map((row) => ({
-      readingId: row.readingId,
-      url: row.reading.url,
-      label: row.reading.label,
+      sortieId: row.sortieId,
+      url: row.sortie.url,
+      label: row.sortie.label,
       textChars: row.textChars,
       error: row.error,
-      score: readScore(row.reading, row),
+      score: readScore(row.sortie, row),
     }));
   }
   if (stage === 'EXTRACT') {
     const rows = await prisma.evalExtractResult.findMany({
       where: { runId },
       include: {
-        reading: { select: { id: true, url: true, label: true, fiche: { select: { expected: true } } } },
+        sortie: { select: { id: true, url: true, label: true, fiche: { select: { expected: true } } } },
       },
     });
     return rows.map((row) => {
-      const expected = parseJson<Record<string, string>>(row.reading.fiche?.expected ?? null, {});
+      const expected = parseJson<Record<string, string>>(row.sortie.fiche?.expected ?? null, {});
       const aspects = parseJson<Aspect[]>(row.aspects, []);
       return {
-        readingId: row.readingId,
-        url: row.reading.url,
-        label: row.reading.label,
+        sortieId: row.sortieId,
+        url: row.sortie.url,
+        label: row.sortie.label,
         costUsd: row.costUsd,
         error: row.error,
         ...extractScore(expected, Array.isArray(aspects) ? aspects : []),
@@ -948,19 +1060,35 @@ async function runDetail(runId: number, stage: string) {
     select: { pageId: true, url: true, harvested: true, selected: true },
   });
   const pageIds = [...new Set(results.map((r) => r.pageId))];
+  // La même portée que le résumé du run. Sans elle, le détail page par page
+  // ignorerait la fenêtre et le plafond, et n'additionnerait donc pas au
+  // chiffre affiché juste au-dessus — un écart que personne ne saurait
+  // expliquer, et qui ferait douter des deux.
+  const run = await prisma.evalRun.findUnique({
+    where: { id: runId },
+    select: { settings: true, stage: true },
+  });
+  const scope = scopeOf(run);
   const pages = await prisma.evalAgendaPage.findMany({
     where: { id: { in: pageIds } },
-    select: { id: true, url: true, pageNo: true, agenda: { select: { label: true } }, links: true },
+    select: {
+      id: true,
+      url: true,
+      pageNo: true,
+      agenda: { select: { label: true } },
+      links: { select: { url: true, verdict: true, sortie: { select: FAITS_SORTIE } } },
+    },
   });
   return pages.map((page) => {
     const rows = results.filter((r) => r.pageId === page.id);
-    const labels = page.links as unknown as LabelledLink[];
+    const labels = page.links.map(labelled);
     return {
       pageId: page.id,
       url: page.url,
       pageNo: page.pageNo,
       label: page.agenda.label,
-      score: stage === 'SELECT' ? selectScore(labels, rows) : harvestScore(labels, rows),
+      score:
+        stage === 'SELECT' ? selectScore(labels, rows, scope) : harvestScore(labels, rows),
     };
   });
 }
@@ -983,16 +1111,16 @@ evalRouter.post('/capture/next', async (_req, res) => {
     res.json({ job: { kind: 'agenda', id: agenda.id, url: agenda.url, pages: agenda.pages } });
     return;
   }
-  const reading = await prisma.evalReading.findFirst({
+  const sortie = await prisma.evalSortie.findFirst({
     where: { capture: 'QUEUED' },
     orderBy: { createdAt: 'asc' },
   });
-  if (!reading) {
+  if (!sortie) {
     res.json({ job: null });
     return;
   }
-  await prisma.evalReading.update({ where: { id: reading.id }, data: { capture: 'RUNNING' } });
-  res.json({ job: { kind: 'reading', id: reading.id, url: reading.url, pages: 1 } });
+  await prisma.evalSortie.update({ where: { id: sortie.id }, data: { capture: 'RUNNING' } });
+  res.json({ job: { kind: 'sortie', id: sortie.id, url: sortie.url, pages: 1 } });
 });
 
 evalRouter.post('/capture/agenda/:id(\\d+)', bigBody, async (req, res) => {
@@ -1037,7 +1165,7 @@ evalRouter.post('/capture/agenda/:id(\\d+)', bigBody, async (req, res) => {
   res.json({ ok: true, pages: parsed.data.pages.length });
 });
 
-evalRouter.post('/capture/reading/:id(\\d+)', bigBody, async (req, res) => {
+evalRouter.post('/capture/sortie/:id(\\d+)', bigBody, async (req, res) => {
   const parsed = evalCaptureSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1047,7 +1175,7 @@ evalRouter.post('/capture/reading/:id(\\d+)', bigBody, async (req, res) => {
   const page = parsed.data.pages[0];
   const archived = page.html ? await saveEvalPage(page.html) : '';
   try {
-    await prisma.evalReading.update({
+    await prisma.evalSortie.update({
       where: { id },
       data: {
         capture: 'CAPTURED',
@@ -1064,7 +1192,7 @@ evalRouter.post('/capture/reading/:id(\\d+)', bigBody, async (req, res) => {
   res.json({ ok: true });
 });
 
-evalRouter.post('/capture/:kind(agenda|reading)/:id(\\d+)/fail', async (req, res) => {
+evalRouter.post('/capture/:kind(agenda|sortie)/:id(\\d+)/fail', async (req, res) => {
   const parsed = evalFailSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Requête invalide' });
@@ -1074,7 +1202,7 @@ evalRouter.post('/capture/:kind(agenda|reading)/:id(\\d+)/fail', async (req, res
   const data = { capture: 'FAILED' as const, captureError: parsed.data.error };
   try {
     if (req.params.kind === 'agenda') await prisma.evalAgenda.update({ where: { id }, data });
-    else await prisma.evalReading.update({ where: { id }, data });
+    else await prisma.evalSortie.update({ where: { id }, data });
     res.json({ ok: true });
   } catch {
     res.status(404).json({ error: 'Entrée introuvable' });
@@ -1153,23 +1281,23 @@ evalRouter.post('/runs/:id(\\d+)/next-item', async (req, res) => {
   // une variable ferait perdre à TypeScript la signature de `findMany`.
   const done =
     run.stage === 'READ'
-      ? await prisma.evalReadResult.findMany({ where: { runId }, select: { readingId: true } })
-      : await prisma.evalExtractResult.findMany({ where: { runId }, select: { readingId: true } });
-  const reading = await prisma.evalReading.findFirst({
+      ? await prisma.evalReadResult.findMany({ where: { runId }, select: { sortieId: true } })
+      : await prisma.evalExtractResult.findMany({ where: { runId }, select: { sortieId: true } });
+  const sortie = await prisma.evalSortie.findFirst({
     where: {
       capture: 'CAPTURED',
       htmlPath: { not: null },
-      id: { notIn: done.map((d) => d.readingId) },
+      id: { notIn: done.map((d) => d.sortieId) },
     },
     orderBy: { id: 'asc' },
   });
-  if (!reading) {
+  if (!sortie) {
     res.json({ item: null });
     return;
   }
-  const html = reading.htmlPath ? await readEvalPage(reading.htmlPath) : null;
+  const html = sortie.htmlPath ? await readEvalPage(sortie.htmlPath) : null;
   res.json({
-    item: { kind: 'reading', readingId: reading.id, url: reading.url, html: html ?? '' },
+    item: { kind: 'sortie', sortieId: sortie.id, url: sortie.url, html: html ?? '' },
   });
 });
 
@@ -1221,11 +1349,11 @@ evalRouter.post('/runs/:id(\\d+)/read', bigBody, async (req, res) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const { readingId, dates, error, ...rest } = parsed.data;
+  const { sortieId, dates, error, ...rest } = parsed.data;
   await prisma.evalReadResult.create({
     data: {
       runId: Number(req.params.id),
-      readingId,
+      sortieId,
       dates: JSON.stringify(dates),
       error: error ?? null,
       ...rest,
@@ -1240,11 +1368,11 @@ evalRouter.post('/runs/:id(\\d+)/extract', bigBody, async (req, res) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const { readingId, fiche, aspects, error, ...rest } = parsed.data;
+  const { sortieId, fiche, aspects, error, ...rest } = parsed.data;
   await prisma.evalExtractResult.create({
     data: {
       runId: Number(req.params.id),
-      readingId,
+      sortieId,
       fiche: JSON.stringify(fiche),
       aspects: JSON.stringify(aspects),
       error: error ?? null,
@@ -1317,11 +1445,30 @@ async function candidates(bucket: keyof typeof BUCKETS, limit: number) {
     where: BUCKETS[bucket].where,
     orderBy: { at: 'desc' },
     take: Math.min(limit * 8, 800),
-    select: { url: true, title: true, reason: true, decision: true, at: true, eventId: true },
+    select: {
+      url: true,
+      title: true,
+      reason: true,
+      decision: true,
+      at: true,
+      eventId: true,
+      // Les faits que l'étage 4 juge, tels qu'un modérateur les a validés.
+      // Sans eux la sortie arrive au corpus sans date ni lieu, donc
+      // indécidable — et la moisson n'aurait servi qu'aux étages 5 et 6.
+      event: {
+        select: {
+          dateStart: true,
+          dateEnd: true,
+          ageMin: true,
+          ageMax: true,
+          venue: { select: { postalCode: true } },
+        },
+      },
+    },
   });
   const seen = new Set<string>();
   const unique = rows.filter((row) => row.url && !seen.has(row.url) && seen.add(row.url));
-  const already = await prisma.evalReading.findMany({
+  const already = await prisma.evalSortie.findMany({
     where: { url: { in: unique.map((r) => r.url) } },
     select: { url: true },
   });
@@ -1355,6 +1502,81 @@ async function linkLabelCandidates(limit: number) {
   `;
 }
 
+/**
+ * Ce qu'il reste à faire à la main, compté.
+ *
+ * Un run modéré donne gratuitement la **précision** : parmi ce que le scraper
+ * a proposé, ce qu'un humain a validé. Le **rappel** — ce qu'il a raté — n'est
+ * visible nulle part dans ce qu'il a proposé, par construction. Il se paie en
+ * ouvrant les liens qu'il a laissés, et c'est l'essentiel du travail humain.
+ *
+ * Ces deux comptes ne raccourcissent pas ce travail : ils l'affichent. Un coût
+ * qu'on découvre au fil de l'eau fait abandonner un banc au bout de trois
+ * semaines ; un coût annoncé se planifie.
+ */
+evalRouter.get('/reste', admin, async (_req, res) => {
+  const [jamaisRegardes, sansSortie] = await Promise.all([
+    // 1. Les liens qu'un run a relevés et que personne n'a étiquetés. Tant
+    //    qu'ils sont là, le rappel de l'étage 3 est une illusion : on ne peut
+    //    pas savoir si une sortie s'y cache.
+    prisma.$queryRaw<{ pageId: number; url: string; label: string; manquants: bigint }[]>`
+      SELECT p.id AS pageId, p.url AS url, a.label AS label, COUNT(DISTINCT r.url) AS manquants
+      FROM EvalLinkResult r
+      JOIN EvalAgendaPage p ON p.id = r.pageId
+      JOIN EvalAgenda a ON a.id = p.agendaId
+      LEFT JOIN EvalLink l ON l.pageId = r.pageId AND l.url = r.url
+      WHERE r.position >= 0 AND l.id IS NULL
+      GROUP BY p.id, p.url, a.label
+      ORDER BY manquants DESC
+      LIMIT 50
+    `,
+    // 2. Les liens dont on sait que c'est une sortie, mais dont personne n'a
+    //    dit ce qu'elle est. L'étage 4 n'a rien à quoi se comparer : ils
+    //    comptent indécidables, ni pour ni contre.
+    //
+    //    Deux dettes, et elles se soldent différemment : ou bien aucune sortie
+    //    n'est attachée — il faut la créer —, ou bien elle l'est mais
+    //    n'affirme rien — il faut la décrire. La seconde est de loin la plus
+    //    courante : c'est l'état de toute sortie moissonnée avant que la
+    //    moisson ne recopie les faits. Ne lister que la première laisserait
+    //    l'essentiel du travail invisible, ce qui était tout le défaut qu'on
+    //    cherche à corriger.
+    prisma.evalLink.findMany({
+      where: {
+        verdict: 'SORTIE',
+        OR: [
+          { sortieId: null },
+          { sortie: { is: { dateStart: null, postalCode: null, audience: null, ageMax: null } } },
+        ],
+      },
+      select: {
+        id: true,
+        url: true,
+        text: true,
+        sortieId: true,
+        page: { select: { id: true, pageNo: true, agenda: { select: { id: true, label: true } } } },
+      },
+      orderBy: { id: 'asc' },
+      take: 200,
+    }),
+  ]);
+
+  res.json({
+    /** Par page d'agenda : combien de liens relevés que personne n'a tranchés. */
+    jamaisRegardes: jamaisRegardes.map((row) => ({
+      pageId: row.pageId,
+      url: row.url,
+      label: row.label,
+      manquants: Number(row.manquants),
+    })),
+    /**
+     * Les sorties reconnues mais dont rien n'est affirmé. `sortieId` nul : il
+     * faut la créer. Renseigné : elle existe, il faut la décrire.
+     */
+    sansSortie,
+  });
+});
+
 evalRouter.get('/seed', admin, async (_req, res) => {
   const [approuvees, abandonnees, illisibles, liens] = await Promise.all([
     candidates('approuvees', 100),
@@ -1385,6 +1607,15 @@ evalRouter.post('/seed', admin, async (req, res) => {
       res.status(409).json({ error: 'Aucune étiquette nouvelle à reprendre de la modération' });
       return;
     }
+    // La sortie du corpus qui porte la même adresse, s'il y en a une : le lien
+    // doit y mener, sinon il serait étiqueté « une sortie » sans que rien ne
+    // dise laquelle, et l'étage 4 le compterait indécidable alors que tout est
+    // là.
+    const sorties = await prisma.evalSortie.findMany({
+      where: { url: { in: rows.map((r) => r.url) } },
+      select: { id: true, url: true },
+    });
+    const parUrl = new Map(sorties.map((s) => [s.url, s.id]));
     const created = await prisma.evalLink.createMany({
       data: rows.map((row) => ({
         pageId: row.pageId,
@@ -1393,6 +1624,7 @@ evalRouter.post('/seed', admin, async (req, res) => {
         verdict: 'SORTIE' as const,
         source: 'PAGE' as const,
         origin: 'MODERATION' as const,
+        sortieId: parUrl.get(row.url) ?? null,
       })),
       skipDuplicates: true,
     });
@@ -1405,7 +1637,7 @@ evalRouter.post('/seed', admin, async (req, res) => {
     res.status(409).json({ error: 'Rien de nouveau dans ce panier' });
     return;
   }
-  const created = await prisma.evalReading.createMany({
+  const created = await prisma.evalSortie.createMany({
     data: rows.map((row) => ({
       url: row.url,
       label: (row.title ?? '').slice(0, 150),
@@ -1415,6 +1647,18 @@ evalRouter.post('/seed', admin, async (req, res) => {
       runDecision: row.decision.slice(0, 40),
       runReason: row.reason ?? '',
       createdById: req.user!.id,
+      // Les faits viennent de la fiche approuvée : une copie de colonnes, pas
+      // une analyse de prose. C'est ce qui rend cette moisson gratuite pour
+      // l'étage 4 autant que pour les étages 5 et 6.
+      dateStart: row.event?.dateStart ?? null,
+      dateEnd: row.event?.dateEnd ?? null,
+      ageMin: row.event?.ageMin ?? null,
+      ageMax: row.event?.ageMax ?? null,
+      postalCode: row.event?.venue?.postalCode || null,
+      // Voir la migration 0027 : approuvée sur ce site veut dire jeune public,
+      // et c'est un humain qui l'a tranché. Les deux autres paniers n'ont
+      // jamais été approuvés — on ne sait rien de leur public.
+      audience: BUCKETS[bucket].origin === 'APPROUVEE' ? ('ENFANTS' as const) : null,
     })),
     skipDuplicates: true,
   });

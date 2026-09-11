@@ -26,9 +26,11 @@ import type {
   EvalAgenda,
   EvalAudience,
   EvalRunScope,
+  EvalSortieFacts,
   EvalLink,
   EvalLinkResult,
-  EvalReading,
+  EvalSortie,
+  EvalReste,
   EvalSeedCounts,
   EvalVerdict,
 } from '../types';
@@ -49,8 +51,18 @@ const VERDICTS: EvalVerdict[] = ['SORTIE', 'PAGINATION', 'SOUS_AGENDA', 'AUTRE']
 const AUDIENCES: EvalAudience[] = ['ENFANTS', 'ADULTES', 'INDETERMINE'];
 
 const agendas = ref<EvalAgenda[]>([]);
-const readings = ref<EvalReading[]>([]);
+const sorties = ref<EvalSortie[]>([]);
 const seed = ref<EvalSeedCounts | null>(null);
+/**
+ * Ce qui reste à faire à la main, compté.
+ *
+ * Un run modéré donne la précision gratuitement : parmi ce que le scraper a
+ * proposé, ce qu'un humain a validé. Le rappel — ce qu'il a raté — n'est
+ * visible nulle part dans ce qu'il a proposé, et se paie en ouvrant les liens
+ * qu'il a laissés. L'afficher ne le raccourcit pas ; ça évite de le découvrir
+ * au fil de l'eau, ce qui est la façon dont on abandonne un banc.
+ */
+const reste = ref<EvalReste | null>(null);
 const open = ref<EvalAgenda | null>(null);
 const openRunId = ref(0);
 /**
@@ -67,7 +79,7 @@ const notice = ref('');
 
 const newAgendaUrl = ref('');
 const newAgendaPages = ref(1);
-const newReadingUrl = ref('');
+const newSortieUrl = ref('');
 
 async function load() {
   loading.value = true;
@@ -75,10 +87,10 @@ async function load() {
   try {
     const [a, r] = await Promise.all([
       api.get<{ agendas: EvalAgenda[] }>('/api/eval/agendas'),
-      api.get<{ readings: EvalReading[] }>('/api/eval/readings'),
+      api.get<{ sorties: EvalSortie[] }>('/api/eval/sorties'),
     ]);
     agendas.value = a.agendas;
-    readings.value = r.readings;
+    sorties.value = r.sorties;
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erreur';
   } finally {
@@ -86,6 +98,7 @@ async function load() {
   }
   try {
     seed.value = await api.get<EvalSeedCounts>('/api/eval/seed');
+    reste.value = await api.get<EvalReste>('/api/eval/reste');
   } catch {
     // Les paniers sont un confort : leur échec ne doit pas vider la page.
   }
@@ -113,7 +126,7 @@ async function addAgenda() {
   }
 }
 
-async function capture(kind: 'agendas' | 'readings', id: number) {
+async function capture(kind: 'agendas' | 'sorties', id: number) {
   try {
     await api.post(`/api/eval/${kind}/${id}/capture`);
     notice.value = 'Capture mise en file : le worker la prendra à sa prochaine passe.';
@@ -171,6 +184,10 @@ function rows(page: EvalAgenda['agendaPages'][number]) {
   return out;
 }
 
+const totalJamaisRegardes = computed(() =>
+  (reste.value?.jamaisRegardes ?? []).reduce((n, p) => n + p.manquants, 0),
+);
+
 /** La portée du run affiché, en une phrase. Vide s'il n'y a rien à dire. */
 const scopeText = computed(() => {
   const s = openScope.value;
@@ -196,15 +213,32 @@ async function labelLink(pageId: number, url: string, text: string, verdict: Eva
 }
 
 /**
- * Poser un indice sur une étiquette déjà là.
+ * Décrire la sortie vers laquelle un lien mène.
  *
- * Un indice n'est pas un jugement : il dit ce que la page annonce, et c'est la
- * mesure qui en déduit, run par run, si le lien avait sa place. Le corriger ne
- * touche donc pas au verdict — l'API n'écrit que ce que le corps porte.
+ * On n'écrit pas sur le lien : le lien dit ce qu'il **est**, la sortie dit ce
+ * qu'elle est, et c'est la sortie que les étages 4, 5 et 6 lisent. Modifier
+ * une date ici la modifie donc partout où cette sortie est annoncée — dans un
+ * autre agenda, dans le corpus de lecture — parce que c'est une seule sortie.
  */
-async function hint(id: number, patch: Partial<Pick<EvalLink, 'dateHint' | 'placeHint' | 'audience'>>) {
+async function decrire(sortieId: number, patch: Partial<EvalSortieFacts>) {
   try {
-    await api.patch(`/api/eval/links/${id}`, patch);
+    await api.patch(`/api/eval/sorties/${sortieId}`, patch);
+    await refreshOpen();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/**
+ * Créer au corpus la sortie vers laquelle un lien mène, et l'y attacher.
+ *
+ * Tant qu'elle n'existe pas, l'étage 4 n'a rien à quoi se comparer et le lien
+ * compte *indécidable* — ni pour, ni contre. C'est le geste qui solde cette
+ * dette, et c'est le seul travail que la modération ne paie pas d'avance.
+ */
+async function creerSortie(linkId: number) {
+  try {
+    await api.post(`/api/eval/links/${linkId}/sortie`, {});
     await refreshOpen();
   } catch (e) {
     fail(e);
@@ -214,6 +248,12 @@ async function hint(id: number, patch: Partial<Pick<EvalLink, 'dateHint' | 'plac
 /** La valeur d'un champ de saisie, vidée de ses espaces. */
 function typed(event: Event): string {
   return (event.target as HTMLInputElement).value.trim();
+}
+
+/** Un entier saisi, ou `null` si le champ est vide. */
+function typedInt(event: Event): number | null {
+  const raw = typed(event);
+  return raw === '' ? null : Number(raw);
 }
 
 async function unlabel(id: number) {
@@ -289,21 +329,21 @@ async function refreshOpen() {
 
 // ── le corpus de lecture ───────────────────────────────────────────────
 
-async function addReading() {
-  if (!newReadingUrl.value.trim()) return;
+async function addSortie() {
+  if (!newSortieUrl.value.trim()) return;
   try {
-    await api.post('/api/eval/readings', { url: newReadingUrl.value.trim() });
-    newReadingUrl.value = '';
+    await api.post('/api/eval/sorties', { url: newSortieUrl.value.trim() });
+    newSortieUrl.value = '';
     await load();
   } catch (e) {
     fail(e);
   }
 }
 
-async function removeReading(reading: EvalReading) {
-  if (!confirm(`Retirer « ${reading.label || reading.url} » du corpus, avec ses étiquettes ?`)) return;
+async function removeSortie(sortie: EvalSortie) {
+  if (!confirm(`Retirer « ${sortie.label || sortie.url} » du corpus, avec ses étiquettes ?`)) return;
   try {
-    await api.delete(`/api/eval/readings/${reading.id}`);
+    await api.delete(`/api/eval/sorties/${sortie.id}`);
     await load();
   } catch (e) {
     fail(e);
@@ -311,16 +351,16 @@ async function removeReading(reading: EvalReading) {
 }
 
 /** Les trois étiquettes d'une page, saisies en clair. */
-const editing = ref<EvalReading | null>(null);
+const editing = ref<EvalSortie | null>(null);
 const editImage = ref('');
 const editDates = ref('');
 const editMarkers = ref('');
 
-function edit(reading: EvalReading) {
-  editing.value = reading;
-  editImage.value = reading.expectedImage ?? '';
-  editDates.value = (JSON.parse(reading.expectedDates ?? '[]') as string[]).join('\n');
-  editMarkers.value = (JSON.parse(reading.expectedMarkers ?? '[]') as string[]).join('\n');
+function edit(sortie: EvalSortie) {
+  editing.value = sortie;
+  editImage.value = sortie.expectedImage ?? '';
+  editDates.value = (JSON.parse(sortie.expectedDates ?? '[]') as string[]).join('\n');
+  editMarkers.value = (JSON.parse(sortie.expectedMarkers ?? '[]') as string[]).join('\n');
 }
 
 function lines(value: string): string[] {
@@ -331,10 +371,10 @@ function lines(value: string): string[] {
 }
 
 async function saveLabels(clear = false) {
-  const reading = editing.value;
-  if (!reading) return;
+  const sortie = editing.value;
+  if (!sortie) return;
   try {
-    await api.patch(`/api/eval/readings/${reading.id}`, {
+    await api.patch(`/api/eval/sorties/${sortie.id}`, {
       expectedImage: clear ? null : editImage.value.trim(),
       expectedDates: clear ? null : lines(editDates.value),
       expectedMarkers: clear ? null : lines(editMarkers.value),
@@ -347,8 +387,8 @@ async function saveLabels(clear = false) {
 }
 
 /** Combien d'étiquettes une page porte : trois au plus, celles de l'étage 5. */
-function labelled(reading: EvalReading): number {
-  return [reading.expectedImage, reading.expectedDates, reading.expectedMarkers].filter(
+function labelled(sortie: EvalSortie): number {
+  return [sortie.expectedImage, sortie.expectedDates, sortie.expectedMarkers].filter(
     (v) => v !== null,
   ).length;
 }
@@ -369,8 +409,8 @@ const corpusSize = computed(() => ({
   agendas: agendas.value.length,
   pages: agendas.value.reduce((n, a) => n + (a.pagesCaptured ?? 0), 0),
   links: agendas.value.reduce((n, a) => n + (a.labels ?? 0), 0),
-  readings: readings.value.length,
-  readingLabels: readings.value.reduce((n, r) => n + labelled(r), 0),
+  sorties: sorties.value.length,
+  sortieLabels: sorties.value.reduce((n, r) => n + labelled(r), 0),
 }));
 </script>
 
@@ -400,11 +440,11 @@ const corpusSize = computed(() => ({
         <span class="label">lien(s) étiqueté(s)</span>
       </div>
       <div class="card tile">
-        <span class="value">{{ corpusSize.readings }}</span>
+        <span class="value">{{ corpusSize.sorties }}</span>
         <span class="label">page(s) au corpus de lecture</span>
       </div>
       <div class="card tile">
-        <span class="value">{{ corpusSize.readingLabels }}</span>
+        <span class="value">{{ corpusSize.sortieLabels }}</span>
         <span class="label">étiquette(s) de lecture</span>
       </div>
     </div>
@@ -440,6 +480,46 @@ const corpusSize = computed(() => ({
       fiche en main. Il ne dira jamais qu’un lien n’en est pas une — il
       raccourcit la relecture, il ne la remplace pas.
     </p>
+
+    <!-- ── Ce qui reste à faire à la main ─────────────────────────────── -->
+    <h2>Ce qui reste à la main</h2>
+    <p class="muted small">
+      La modération paie la <strong>précision</strong> : parmi ce que le
+      scraper a proposé, ce qu’un humain a validé. Elle ne paiera jamais le
+      <strong>rappel</strong> — ce qu’il a raté n’apparaît pas dans ce qu’il a
+      proposé. Ces deux listes sont ce qu’il coûte.
+    </p>
+    <div v-if="reste" class="card reste">
+      <div class="reste-ligne">
+        <strong>{{ totalJamaisRegardes }}</strong>
+        lien(s) relevés que personne n’a tranchés
+        <span class="muted small">
+          — tant qu’ils sont là, le rappel de l’étage 3 est une illusion : on ne
+          peut pas savoir si une sortie s’y cache.
+        </span>
+        <ul v-if="reste.jamaisRegardes.length" class="reste-detail">
+          <li v-for="page in reste.jamaisRegardes.slice(0, 5)" :key="page.pageId">
+            {{ page.manquants }} sur « {{ page.label || page.url }} »
+          </li>
+        </ul>
+      </div>
+      <div class="reste-ligne">
+        <strong>{{ reste.sansSortie.length }}</strong>
+        sortie(s) reconnues dont rien n’est affirmé
+        <span class="muted small">
+          — l’étage 4 n’a rien à quoi les comparer : elles comptent
+          <em>indécidables</em>, ni pour ni contre.
+        </span>
+        <ul v-if="reste.sansSortie.length" class="reste-detail">
+          <li v-for="lien in reste.sansSortie.slice(0, 5)" :key="lien.id">
+            <a :href="lien.url" target="_blank">{{ lien.text || lien.url }}</a>
+            <span class="muted small">
+              {{ lien.sortieId ? '— à décrire' : '— à créer' }}
+            </span>
+          </li>
+        </ul>
+      </div>
+    </div>
 
     <!-- ── Les agendas ────────────────────────────────────────────────── -->
     <h2>Agendas — étages 3 et 4</h2>
@@ -576,46 +656,100 @@ const corpusSize = computed(() => ({
                     </button>
                   </div>
                   <!--
-                    Les indices ne s'affichent que sur une sortie : sur une
-                    pagination ou un bandeau de navigation, ils n'auraient rien
-                    à qualifier.
+                    Un lien « une sortie » mène quelque part. Tant que personne
+                    n'a dit ce qu'il y a au bout, l'étage 4 n'a rien à quoi se
+                    comparer : on propose de la décrire plutôt que d'afficher
+                    des champs qui n'appartiendraient à rien.
                   -->
-                  <div v-if="row.label?.verdict === 'SORTIE'" class="hints">
-                    <label class="hint">
-                      <span class="muted small">le</span>
-                      <input
-                        type="date"
-                        :value="row.label.dateHint ?? ''"
-                        title="La date que le contexte du lien annonce. Vide : il n’en dit rien."
-                        @change="hint(row.label!.id, { dateHint: typed($event) || null })"
-                      />
-                    </label>
-                    <label class="hint">
-                      <span class="muted small">à</span>
-                      <input
-                        type="text"
-                        placeholder="75012, Vincennes…"
-                        :value="row.label.placeHint ?? ''"
-                        title="Le lieu que le contexte annonce. Un code postal se compare ; une ville en toutes lettres n’écartera rien."
-                        @change="hint(row.label!.id, { placeHint: typed($event) || null })"
-                      />
-                    </label>
-                    <div class="chips">
-                      <button
-                        v-for="a in AUDIENCES"
-                        :key="a"
-                        class="chip tiny"
-                        :class="{ on: row.label.audience === a }"
-                        :title="EVAL_AUDIENCE_HINTS[a]"
-                        @click="hint(row.label!.id, { audience: row.label!.audience === a ? null : a })"
-                      >
-                        {{ EVAL_AUDIENCE_LABELS[a] }}
+                  <template v-if="row.label?.verdict === 'SORTIE'">
+                    <div v-if="!row.label.sortie" class="hints">
+                      <span class="muted small">Sortie non décrite —</span>
+                      <button class="linklike" @click="creerSortie(row.label.id)">
+                        la décrire
                       </button>
                     </div>
+
                     <!--
-                      Ce que les indices donnent pour le run affiché. Ce n'est
-                      pas une étiquette de plus : c'est ce que le serveur en
-                      déduit, et il change avec la recherche qu'on regarde.
+                      Ces champs sont ceux de la **sortie**, pas du lien : les
+                      modifier les modifie partout où elle est annoncée. C'est
+                      voulu — c'est une seule sortie.
+                    -->
+                    <div v-else class="hints">
+                      <label class="hint">
+                        <span class="muted small">du</span>
+                        <input
+                          type="date"
+                          :value="row.label.sortie.dateStart ?? ''"
+                          title="Premier jour de la sortie."
+                          @change="decrire(row.label!.sortieId!, { dateStart: typed($event) || null })"
+                        />
+                      </label>
+                      <label class="hint">
+                        <span class="muted small">au</span>
+                        <input
+                          type="date"
+                          :value="row.label.sortie.dateEnd ?? ''"
+                          title="Dernier jour. Vide sur une date unique : une sortie qui dure est dans la fenêtre dès qu’elle la croise."
+                          @change="decrire(row.label!.sortieId!, { dateEnd: typed($event) || null })"
+                        />
+                      </label>
+                      <label class="hint">
+                        <span class="muted small">à</span>
+                        <input
+                          type="text"
+                          inputmode="numeric"
+                          placeholder="75012"
+                          size="6"
+                          :value="row.label.sortie.postalCode ?? ''"
+                          title="Le code postal, à cinq chiffres. Une ville en toutes lettres ne se compare à aucun département."
+                          @change="decrire(row.label!.sortieId!, { postalCode: typed($event) || null })"
+                        />
+                      </label>
+                      <label class="hint">
+                        <span class="muted small">de</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="120"
+                          size="3"
+                          :value="row.label.sortie.ageMin ?? ''"
+                          title="Âge minimum annoncé."
+                          @change="decrire(row.label!.sortieId!, { ageMin: typedInt($event) })"
+                        />
+                        <span class="muted small">à</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="120"
+                          size="3"
+                          :value="row.label.sortie.ageMax ?? ''"
+                          title="Âge maximum annoncé. Moins de 18 vaut jeune public, sans avoir à le cocher."
+                          @change="decrire(row.label!.sortieId!, { ageMax: typedInt($event) })"
+                        />
+                        <span class="muted small">ans</span>
+                      </label>
+                      <div class="chips">
+                        <button
+                          v-for="a in AUDIENCES"
+                          :key="a"
+                          class="chip tiny"
+                          :class="{ on: row.label.sortie.audience === a }"
+                          :title="EVAL_AUDIENCE_HINTS[a]"
+                          @click="
+                            decrire(row.label!.sortieId!, {
+                              audience: row.label!.sortie!.audience === a ? null : a,
+                            })
+                          "
+                        >
+                          {{ EVAL_AUDIENCE_LABELS[a] }}
+                        </button>
+                      </div>
+                    </div>
+
+                    <!--
+                      Ce que la sortie donne pour le run affiché. Ce n'est pas
+                      une étiquette de plus : c'est ce que le serveur en déduit,
+                      et il change avec la recherche qu'on regarde.
                     -->
                     <span
                       v-if="row.label.relevance"
@@ -625,7 +759,7 @@ const corpusSize = computed(() => ({
                     >
                       → {{ EVAL_RELEVANCE_LABELS[row.label.relevance] }}
                     </span>
-                  </div>
+                  </template>
                   <div v-if="row.label" class="muted small">
                     {{ EVAL_LABEL_ORIGIN_LABELS[row.label.origin] }}
                   </div>
@@ -640,8 +774,8 @@ const corpusSize = computed(() => ({
     <!-- ── Les pages de lecture ───────────────────────────────────────── -->
     <h2>Pages — étages 5 et 6</h2>
     <div class="row add">
-      <input v-model="newReadingUrl" type="url" placeholder="https://exemple.fr/spectacle" />
-      <button class="btn" @click="addReading()">Ajouter au corpus</button>
+      <input v-model="newSortieUrl" type="url" placeholder="https://exemple.fr/spectacle" />
+      <button class="btn" @click="addSortie()">Ajouter au corpus</button>
     </div>
 
     <div class="table-wrap card">
@@ -656,35 +790,35 @@ const corpusSize = computed(() => ({
           </tr>
         </thead>
         <tbody>
-          <tr v-for="reading in readings" :key="reading.id">
+          <tr v-for="sortie in sorties" :key="sortie.id">
             <td>
-              <div class="link-text">{{ reading.label || reading.url }}</div>
-              <a :href="reading.url" target="_blank" class="muted small">{{ reading.url }}</a>
+              <div class="link-text">{{ sortie.label || sortie.url }}</div>
+              <a :href="sortie.url" target="_blank" class="muted small">{{ sortie.url }}</a>
             </td>
-            <td :title="EVAL_ORIGIN_HINTS[reading.origin]" class="small">
-              {{ EVAL_ORIGIN_LABELS[reading.origin] }}
+            <td :title="EVAL_ORIGIN_HINTS[sortie.origin]" class="small">
+              {{ EVAL_ORIGIN_LABELS[sortie.origin] }}
             </td>
             <td class="small">
-              {{ EVAL_CAPTURE_LABELS[reading.capture] }}
+              {{ EVAL_CAPTURE_LABELS[sortie.capture] }}
               <button
-                v-if="reading.capture !== 'CAPTURED'"
+                v-if="sortie.capture !== 'CAPTURED'"
                 class="linklike"
-                @click="capture('readings', reading.id)"
+                @click="capture('sorties', sortie.id)"
               >
                 geler
               </button>
-              <a v-else-if="reading.archived" :href="`/api/eval/readings/${reading.id}/html`" target="_blank">
+              <a v-else-if="sortie.archived" :href="`/api/eval/sorties/${sortie.id}/html`" target="_blank">
                 HTML
               </a>
             </td>
             <td class="num">
-              {{ labelled(reading) }}/3
-              <span v-if="reading.fiche" class="muted small"> · fiche</span>
+              {{ labelled(sortie) }}/3
+              <span v-if="sortie.fiche" class="muted small"> · fiche</span>
             </td>
             <td>
               <div class="row actions">
-                <button class="linklike" @click="edit(reading)">Étiqueter</button>
-                <button class="linklike" @click="removeReading(reading)">Retirer</button>
+                <button class="linklike" @click="edit(sortie)">Étiqueter</button>
+                <button class="linklike" @click="removeSortie(sortie)">Retirer</button>
               </div>
             </td>
           </tr>
@@ -875,6 +1009,22 @@ h2 {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+.reste {
+  padding: 0.8rem 1rem;
+}
+
+.reste-ligne + .reste-ligne {
+  margin-top: 0.8rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border, #eee);
+}
+
+.reste-detail {
+  margin: 0.3rem 0 0;
+  padding-left: 1.2rem;
+  font-size: 0.82rem;
 }
 
 .relevance {
