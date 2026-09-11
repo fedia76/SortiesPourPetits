@@ -1,0 +1,25 @@
+-- D'où vient chaque champ d'une étiquette de fiche.
+--
+-- Le groupe 3 du corpus — ce qu'une sortie est — se remplit désormais tout
+-- seul depuis les fiches publiées et approuvées. L'hypothèse est qu'un
+-- modérateur qui clique « approuver » a vérifié chaque champ, fiche en main :
+-- sous cette hypothèse, un champ approuvé est une étiquette de plein droit,
+-- qu'il ait été corrigé ou simplement laissé passer.
+--
+-- La mesure les traite donc à égalité. Mais on note quand même la différence,
+-- parce qu'une hypothèse sur le comportement des gens vieillit :
+--
+--   CORRIGE        un modérateur a réécrit le champ. Indépendant du modèle.
+--   NON_CONTREDIT  le modèle l'a rendu, le modérateur l'a laissé passer.
+--   SAISIE         quelqu'un l'a tapé dans la console du banc.
+--
+-- Si un jour le taux de correction s'effondre sur tous les champs à la fois,
+-- c'est que l'hypothèse ne tient plus — et on ne pourra le voir que si on l'a
+-- notée. Ne rien noter la rendrait invérifiable pour toujours, ce qui coûte
+-- bien plus cher qu'une colonne.
+--
+-- En JSON plutôt qu'en table, pour la même raison qu'`expected` : la liste des
+-- champs est définie par `evaluation.audit_fiche`, côté Python, et elle
+-- bougera. Une table imposerait une migration à chaque champ ajouté.
+
+ALTER TABLE `EvalFiche` ADD COLUMN `origins` TEXT NOT NULL;

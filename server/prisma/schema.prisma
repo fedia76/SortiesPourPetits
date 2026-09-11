@@ -944,7 +944,48 @@ model EvalFiche {
   /// Une clé absente veut dire « personne n'a regardé ce champ » ; une clé
   /// présente et vide veut dire « la page n'en dit rien », ce qui est une
   /// étiquette et permet de reconnaître une valeur inventée.
+  /// Ce que la page annonce, **en faits**, dans la forme même que la brique
+  /// rend : `{"free": false, "price": 8, "ageMin": 3, "ageMax": null, …}`.
+  ///
+  /// Elle portait autrefois la mise en forme — « gratuit », « dès 3 ans » —,
+  /// parce que la mesure comparait les libellés que `audit_fiche` calcule pour
+  /// l'affichage. Or la donnée est structurée aux deux bouts : le modèle rend
+  /// `ageMin`, la sortie publiée porte la colonne `ageMin`. Comparer la prose
+  /// au milieu obligeait à réécrire en TypeScript un format défini en Python,
+  /// et un point-virgule déplacé faisait compter « faux » tous les tarifs.
+  ///
+  /// Une clé absente veut dire « personne n'a regardé ce champ » ; une clé
+  /// présente et vide veut dire « la page n'en dit rien », ce qui est une
+  /// étiquette et permet de reconnaître une valeur inventée.
   expected String @default("{}") @db.Text
+
+  /// L'ancienne étiquette, en toutes lettres, gardée telle quelle.
+  ///
+  /// Elle n'entre dans aucune mesure : on ne rouvre pas de la prose pour en
+  /// tirer des faits, c'est précisément ce qu'on vient d'arrêter de faire.
+  /// Elle reste lisible pour qu'un humain puisse retrouver ce qu'une étiquette
+  /// disait, le temps que le corpus se reconstruise — la plupart des fiches se
+  /// remoissonnent d'un clic. À supprimer quand ce sera fait.
+  expectedLegacy String? @db.Text
+
+  /// D'où vient chaque champ, en JSON : `{"tarif": "CORRIGE", …}`.
+  ///
+  /// `CORRIGE` — un modérateur a réécrit ce champ avant d'approuver. C'est une
+  /// étiquette indépendante du modèle, la plus forte qu'on ait.
+  /// `NON_CONTREDIT` — le modèle l'a rendu, le modérateur l'a laissé passer.
+  /// `SAISIE` — quelqu'un l'a tapé dans la console.
+  ///
+  /// **La mesure les traite à égalité.** L'hypothèse retenue est qu'approuver,
+  /// c'est avoir vérifié chaque champ, fiche en main ; sous cette hypothèse un
+  /// champ non contredit est une étiquette de plein droit.
+  ///
+  /// La distinction est conservée quand même, et c'est tout son intérêt : une
+  /// hypothèse sur le comportement des gens vieillit. Si un jour le taux de
+  /// correction s'effondre sur tous les champs à la fois, c'est qu'on n'aura
+  /// plus le droit de la tenir — et on ne pourra le voir que si on l'a notée.
+  /// La couler dans les données en ne notant rien la rendrait invérifiable
+  /// pour toujours, ce qui coûte plus cher qu'une colonne.
+  origins  String @default("{}") @db.Text
 
   note       String   @default("") @db.Text
   labelledAt DateTime @default(now())

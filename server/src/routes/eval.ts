@@ -60,7 +60,7 @@ import {
   selectScore,
   sumHarvest,
   sumSelect,
-  type Aspect,
+  type FicheRendue,
   type LabelledLink,
   type RunScope,
 } from '../lib/evalMetrics';
@@ -959,9 +959,12 @@ async function scoreRun(runId: number, stage: string) {
   });
   const tally = { JUSTE: 0, FAUX: 0, INVENTE: 0, MANQUE: 0, inconnu: 0 };
   for (const row of results) {
-    const expected = parseJson<Record<string, string>>(row.sortie.fiche?.expected ?? null, {});
-    const aspects = parseJson<Aspect[]>(row.aspects, []);
-    const score = extractScore(expected, Array.isArray(aspects) ? aspects : []);
+    // `row.fiche` est la fiche **structurée** que la brique a rendue — la
+    // pièce à conviction que le banc stockait déjà sans s'en servir pour
+    // mesurer. C'est elle qu'on compare, et plus la mise en forme.
+    const attendue = parseJson<FicheRendue>(row.sortie.fiche?.expected ?? null, {});
+    const rendue = parseJson<FicheRendue>(row.fiche, {});
+    const score = extractScore(attendue, rendue);
     for (const key of Object.keys(tally) as (keyof typeof tally)[]) {
       tally[key] += score.tally[key];
     }
@@ -1043,15 +1046,14 @@ async function runDetail(runId: number, stage: string) {
       },
     });
     return rows.map((row) => {
-      const expected = parseJson<Record<string, string>>(row.sortie.fiche?.expected ?? null, {});
-      const aspects = parseJson<Aspect[]>(row.aspects, []);
+      const attendue = parseJson<FicheRendue>(row.sortie.fiche?.expected ?? null, {});
       return {
         sortieId: row.sortieId,
         url: row.sortie.url,
         label: row.sortie.label,
         costUsd: row.costUsd,
         error: row.error,
-        ...extractScore(expected, Array.isArray(aspects) ? aspects : []),
+        ...extractScore(attendue, parseJson<FicheRendue>(row.fiche, {})),
       };
     });
   }
@@ -1440,6 +1442,105 @@ const BUCKETS = {
   },
 };
 
+/**
+ * Les sorties du corpus qui viennent d'une fiche approuvée et n'ont pas
+ * encore leur étiquette de fiche.
+ *
+ * C'est le groupe 3 du corpus — ce qu'une sortie **est**, champ par champ — et
+ * c'est la seule partie du banc qui se remplisse sans travail humain : le
+ * travail a déjà eu lieu, en modération, fiche sous les yeux.
+ */
+async function ficheCandidates(limit: number) {
+  return prisma.evalSortie.findMany({
+    where: { eventId: { not: null }, fiche: { is: null } },
+    select: {
+      id: true,
+      event: {
+        select: {
+          title: true,
+          description: true,
+          isFree: true,
+          price: true,
+          ageMin: true,
+          ageMax: true,
+          isPermanent: true,
+          dateStart: true,
+          dateEnd: true,
+          openTime: true,
+          closeTime: true,
+          setting: true,
+          category: { select: { name: true } },
+          venue: {
+            select: { name: true, address: true, postalCode: true, city: true },
+          },
+          /// Les jours de représentation que le site a retenus. Les
+          /// `weekdays` de la prose, eux, ne lui sont jamais parvenus.
+          dates: { select: { day: true } },
+          // Ce qu'un modérateur a réécrit avant d'approuver. Ça ne change pas
+          // la valeur — elle est déjà dans la fiche publiée — mais ça dit d'où
+          // elle vient, et c'est ce qui garde l'hypothèse vérifiable.
+          corrections: { select: { field: true } },
+        },
+      },
+    },
+    orderBy: { id: 'desc' },
+    take: limit,
+  });
+}
+
+/**
+ * Les noms de champ de la modération, vers ceux de la fiche.
+ *
+ * Presque l'identité — et c'est le signe que les deux bouts parlent enfin la
+ * même langue. Tant que l'étiquette était de la prose, il fallait passer par
+ * les libellés d'aspect (« tarif », « adresse ») ; maintenant qu'elle porte
+ * les faits, `price` répond à `price`.
+ */
+const CHAMP_VERS_FICHE: Record<string, keyof FicheRendue> = {
+  title: 'title',
+  description: 'description',
+  isFree: 'free',
+  price: 'price',
+  ageMin: 'ageMin',
+  ageMax: 'ageMax',
+  isPermanent: 'permanent',
+  dateStart: 'dateStart',
+  dateEnd: 'dateEnd',
+  openTime: 'openTime',
+  closeTime: 'closeTime',
+  setting: 'setting',
+  categoryId: 'category',
+  venueName: 'venueName',
+  venueAddress: 'venueAddress',
+  venueCity: 'venueCity',
+  venuePostalCode: 'venuePostalCode',
+};
+
+/**
+ * D'où vient chaque champ de l'étiquette.
+ *
+ * `CORRIGE` : un modérateur a réécrit ce champ avant d'approuver — une
+ * étiquette indépendante du modèle. `NON_CONTREDIT` : le modèle l'a rendu, le
+ * modérateur l'a laissé passer.
+ *
+ * La mesure les traite à égalité : l'hypothèse retenue est qu'approuver, c'est
+ * avoir vérifié. Mais la distinction est conservée pour que cette hypothèse
+ * reste vérifiable — si le taux de correction s'effondre un jour sur tous les
+ * champs à la fois, elle aura vieilli, et on ne pourra le voir que si on l'a
+ * notée.
+ */
+function provenances(
+  attendue: FicheRendue,
+  corriges: Iterable<string>,
+): Record<string, 'CORRIGE' | 'NON_CONTREDIT'> {
+  const changes = new Set(corriges);
+  const out: Record<string, 'CORRIGE' | 'NON_CONTREDIT'> = {};
+  for (const champ of Object.keys(attendue)) {
+    out[champ] = changes.has(champ) ? 'CORRIGE' : 'NON_CONTREDIT';
+  }
+  return out;
+}
+
 async function candidates(bucket: keyof typeof BUCKETS, limit: number) {
   const rows = await prisma.scraperRunItem.findMany({
     where: BUCKETS[bucket].where,
@@ -1578,17 +1679,19 @@ evalRouter.get('/reste', admin, async (_req, res) => {
 });
 
 evalRouter.get('/seed', admin, async (_req, res) => {
-  const [approuvees, abandonnees, illisibles, liens] = await Promise.all([
+  const [approuvees, abandonnees, illisibles, liens, fiches] = await Promise.all([
     candidates('approuvees', 100),
     candidates('abandonnees', 100),
     candidates('illisibles', 100),
     linkLabelCandidates(100),
+    ficheCandidates(100),
   ]);
   res.json({
     approuvees: approuvees.length,
     abandonnees: abandonnees.length,
     illisibles: illisibles.length,
     liens: liens.length,
+    fiches: fiches.length,
     abandonReason: ABANDON_REASON,
   });
 });
@@ -1629,6 +1732,61 @@ evalRouter.post('/seed', admin, async (req, res) => {
       skipDuplicates: true,
     });
     res.status(201).json({ added: created.count });
+    return;
+  }
+
+  if (bucket === 'fiches') {
+    const sorties = await ficheCandidates(limit);
+    if (!sorties.length) {
+      res.status(409).json({ error: 'Aucune fiche approuvée à reprendre' });
+      return;
+    }
+    let added = 0;
+    for (const sortie of sorties) {
+      const e = sortie.event;
+      if (!e) continue;
+      // Une copie de champs, pas une mise en forme : l'étiquette a exactement
+      // la forme que la brique rend, donc rien à faire concorder entre deux
+      // langages. `weekdays` reste absent — le site ne les reçoit pas, le
+      // pipeline s'en sert pour fabriquer les dates et les jette —, et une clé
+      // absente veut dire « personne n'a regardé », ce qui est la vérité.
+      const attendue: FicheRendue = {
+        relevant: true,
+        several: false,
+        title: e.title,
+        description: e.description,
+        free: e.isFree,
+        price: e.price === null ? null : Number(e.price),
+        ageMin: e.ageMin,
+        ageMax: e.ageMax,
+        permanent: e.isPermanent,
+        dateStart: e.dateStart ? e.dateStart.toISOString().slice(0, 10) : '',
+        dateEnd: e.dateEnd ? e.dateEnd.toISOString().slice(0, 10) : '',
+        dates: e.dates.map((d) => d.day.toISOString().slice(0, 10)),
+        openTime: e.openTime ?? '',
+        closeTime: e.closeTime ?? '',
+        setting: e.setting ?? '',
+        category: e.category.name,
+        venueName: e.venue.name,
+        venueAddress: e.venue.address,
+        venuePostalCode: e.venue.postalCode,
+        venueCity: e.venue.city,
+      };
+      const corriges = e.corrections
+        .map((c) => CHAMP_VERS_FICHE[c.field])
+        .filter((cle): cle is keyof FicheRendue => Boolean(cle));
+      await prisma.evalFiche.create({
+        data: {
+          sortieId: sortie.id,
+          expected: JSON.stringify(attendue),
+          origins: JSON.stringify(provenances(attendue, corriges)),
+          note: 'Reprise d’une fiche approuvée en modération.',
+          createdById: req.user!.id,
+        },
+      });
+      added += 1;
+    }
+    res.status(201).json({ added });
     return;
   }
 
