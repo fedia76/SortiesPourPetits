@@ -1158,5 +1158,7 @@ export interface EvalSeedCounts {
   abandonnees: number;
   illisibles: number;
   liens: number;
+  /** Sorties venues d'une fiche approuvée, dont la fiche reste à reprendre. */
+  fiches: number;
   abandonReason: string;
 }

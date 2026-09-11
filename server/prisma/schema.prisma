@@ -946,6 +946,25 @@ model EvalFiche {
   /// étiquette et permet de reconnaître une valeur inventée.
   expected String @default("{}") @db.Text
 
+  /// D'où vient chaque champ, en JSON : `{"tarif": "CORRIGE", …}`.
+  ///
+  /// `CORRIGE` — un modérateur a réécrit ce champ avant d'approuver. C'est une
+  /// étiquette indépendante du modèle, la plus forte qu'on ait.
+  /// `NON_CONTREDIT` — le modèle l'a rendu, le modérateur l'a laissé passer.
+  /// `SAISIE` — quelqu'un l'a tapé dans la console.
+  ///
+  /// **La mesure les traite à égalité.** L'hypothèse retenue est qu'approuver,
+  /// c'est avoir vérifié chaque champ, fiche en main ; sous cette hypothèse un
+  /// champ non contredit est une étiquette de plein droit.
+  ///
+  /// La distinction est conservée quand même, et c'est tout son intérêt : une
+  /// hypothèse sur le comportement des gens vieillit. Si un jour le taux de
+  /// correction s'effondre sur tous les champs à la fois, c'est qu'on n'aura
+  /// plus le droit de la tenir — et on ne pourra le voir que si on l'a notée.
+  /// La couler dans les données en ne notant rien la rendrait invérifiable
+  /// pour toujours, ce qui coûte plus cher qu'une colonne.
+  origins  String @default("{}") @db.Text
+
   note       String   @default("") @db.Text
   labelledAt DateTime @default(now())
 

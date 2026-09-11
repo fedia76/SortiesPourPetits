@@ -883,6 +883,6 @@ export const evalRunFinishSchema = z.object({
  * prendre que les réussites mesurerait la brique sur ses propres succès.
  */
 export const evalSeedSchema = z.object({
-  bucket: z.enum(['approuvees', 'abandonnees', 'illisibles', 'liens']),
+  bucket: z.enum(['approuvees', 'abandonnees', 'illisibles', 'liens', 'fiches']),
   limit: z.coerce.number().int().min(1).max(200).optional().default(25),
 });

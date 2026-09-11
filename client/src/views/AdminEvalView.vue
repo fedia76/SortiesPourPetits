@@ -413,7 +413,7 @@ function labelled(sortie: EvalSortie): number {
 
 // ── peupler le corpus depuis ce que le pipeline a déjà fait ────────────
 
-async function pour(bucket: 'approuvees' | 'abandonnees' | 'illisibles' | 'liens') {
+async function pour(bucket: 'approuvees' | 'abandonnees' | 'illisibles' | 'liens' | 'fiches') {
   try {
     const body = await api.post<{ added: number }>('/api/eval/seed', { bucket, limit: 25 });
     notice.value = `${body.added} entrée(s) ajoutée(s) au corpus.`;
@@ -491,9 +491,22 @@ const corpusSize = computed(() => ({
       <button class="btn ghost" :disabled="!seed.liens" @click="pour('liens')">
         Étiquettes venues de la modération ({{ seed.liens }})
       </button>
+      <button class="btn ghost" :disabled="!seed.fiches" @click="pour('fiches')">
+        Fiches approuvées à reprendre ({{ seed.fiches }})
+      </button>
     </div>
     <p v-if="seed" class="muted small">
-      Le dernier panier n’apporte que des <strong>positifs</strong> : une page
+      Le panier <strong>« fiches approuvées »</strong> remplit ce qu’une sortie
+      <em>est</em>, champ par champ, depuis ce qu’un modérateur a validé fiche
+      en main. C’est la seule partie du corpus qui ne coûte aucun travail
+      humain — il a déjà eu lieu, ailleurs. Les <em>jours de représentation</em>
+      restent en dehors : le site ne les reçoit pas, et les reconstituer
+      donnerait une étiquette amputée qui compterait « faux » à chaque sortie
+      récurrente.
+    </p>
+    <p v-if="seed" class="muted small">
+      Le panier <strong>« étiquettes venues de la modération »</strong> n’apporte
+      que des <strong>positifs</strong> : une page
       devenue une sortie approuvée est une sortie, un modérateur l’a vérifiée
       fiche en main. Il ne dira jamais qu’un lien n’en est pas une — il
       raccourcit la relecture, il ne la remplace pas.

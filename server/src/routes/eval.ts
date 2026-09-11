@@ -49,6 +49,7 @@
 import { Prisma, Role, type EvalAudience, type EvalVerdict } from '@prisma/client';
 import express from 'express';
 import { safeRouter } from '../lib/asyncRoutes';
+import { ficheAttendue, provenances } from '../lib/fichePubliee';
 import { prisma } from '../db';
 import { deleteEvalPages, readEvalPage, saveEvalPage } from '../lib/evalPages';
 import { requireRole } from '../middleware/auth';
@@ -1440,6 +1441,70 @@ const BUCKETS = {
   },
 };
 
+/**
+ * Les sorties du corpus qui viennent d'une fiche approuvée et n'ont pas
+ * encore leur étiquette de fiche.
+ *
+ * C'est le groupe 3 du corpus — ce qu'une sortie **est**, champ par champ — et
+ * c'est la seule partie du banc qui se remplisse sans travail humain : le
+ * travail a déjà eu lieu, en modération, fiche sous les yeux.
+ */
+async function ficheCandidates(limit: number) {
+  return prisma.evalSortie.findMany({
+    where: { eventId: { not: null }, fiche: { is: null } },
+    select: {
+      id: true,
+      event: {
+        select: {
+          title: true,
+          description: true,
+          isFree: true,
+          price: true,
+          ageMin: true,
+          ageMax: true,
+          isPermanent: true,
+          dateStart: true,
+          dateEnd: true,
+          openTime: true,
+          closeTime: true,
+          setting: true,
+          category: { select: { name: true } },
+          venue: {
+            select: { name: true, address: true, postalCode: true, city: true },
+          },
+          // Ce qu'un modérateur a réécrit avant d'approuver. Ça ne change pas
+          // la valeur — elle est déjà dans la fiche publiée — mais ça dit d'où
+          // elle vient, et c'est ce qui garde l'hypothèse vérifiable.
+          corrections: { select: { field: true } },
+        },
+      },
+    },
+    orderBy: { id: 'desc' },
+    take: limit,
+  });
+}
+
+/** Les noms de champ de la modération, vers les clés d'aspect de la fiche. */
+const CHAMP_VERS_ASPECT: Record<string, string> = {
+  title: 'titre',
+  description: 'description',
+  isFree: 'tarif',
+  price: 'tarif',
+  ageMin: 'age',
+  ageMax: 'age',
+  isPermanent: 'dates',
+  dateStart: 'dates',
+  dateEnd: 'dates',
+  openTime: 'horaires',
+  closeTime: 'horaires',
+  setting: 'cadre',
+  categoryId: 'categorie',
+  venueName: 'lieu',
+  venueAddress: 'adresse',
+  venueCity: 'adresse',
+  venuePostalCode: 'adresse',
+};
+
 async function candidates(bucket: keyof typeof BUCKETS, limit: number) {
   const rows = await prisma.scraperRunItem.findMany({
     where: BUCKETS[bucket].where,
@@ -1578,17 +1643,19 @@ evalRouter.get('/reste', admin, async (_req, res) => {
 });
 
 evalRouter.get('/seed', admin, async (_req, res) => {
-  const [approuvees, abandonnees, illisibles, liens] = await Promise.all([
+  const [approuvees, abandonnees, illisibles, liens, fiches] = await Promise.all([
     candidates('approuvees', 100),
     candidates('abandonnees', 100),
     candidates('illisibles', 100),
     linkLabelCandidates(100),
+    ficheCandidates(100),
   ]);
   res.json({
     approuvees: approuvees.length,
     abandonnees: abandonnees.length,
     illisibles: illisibles.length,
     liens: liens.length,
+    fiches: fiches.length,
     abandonReason: ABANDON_REASON,
   });
 });
@@ -1629,6 +1696,55 @@ evalRouter.post('/seed', admin, async (req, res) => {
       skipDuplicates: true,
     });
     res.status(201).json({ added: created.count });
+    return;
+  }
+
+  if (bucket === 'fiches') {
+    const sorties = await ficheCandidates(limit);
+    if (!sorties.length) {
+      res.status(409).json({ error: 'Aucune fiche approuvée à reprendre' });
+      return;
+    }
+    let added = 0;
+    for (const sortie of sorties) {
+      const e = sortie.event;
+      if (!e) continue;
+      const attendue = ficheAttendue({
+        title: e.title,
+        description: e.description,
+        isFree: e.isFree,
+        // `Decimal` en base : on le ramène au nombre que la mise en forme
+        // attend, sinon « 8 » s'écrirait « [object Object] ».
+        price: e.price === null ? null : Number(e.price),
+        ageMin: e.ageMin,
+        ageMax: e.ageMax,
+        isPermanent: e.isPermanent,
+        dateStart: e.dateStart ? e.dateStart.toISOString().slice(0, 10) : '',
+        dateEnd: e.dateEnd ? e.dateEnd.toISOString().slice(0, 10) : '',
+        openTime: e.openTime ?? '',
+        closeTime: e.closeTime ?? '',
+        setting: e.setting ?? '',
+        category: e.category.name,
+        venueName: e.venue.name,
+        venueAddress: e.venue.address,
+        venuePostalCode: e.venue.postalCode,
+        venueCity: e.venue.city,
+      });
+      const corriges = e.corrections
+        .map((c) => CHAMP_VERS_ASPECT[c.field])
+        .filter((cle): cle is string => Boolean(cle));
+      await prisma.evalFiche.create({
+        data: {
+          sortieId: sortie.id,
+          expected: JSON.stringify(attendue),
+          origins: JSON.stringify(provenances(attendue, corriges)),
+          note: 'Reprise d’une fiche approuvée en modération.',
+          createdById: req.user!.id,
+        },
+      });
+      added += 1;
+    }
+    res.status(201).json({ added });
     return;
   }
 
