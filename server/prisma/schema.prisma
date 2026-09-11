@@ -944,7 +944,29 @@ model EvalFiche {
   /// Une clé absente veut dire « personne n'a regardé ce champ » ; une clé
   /// présente et vide veut dire « la page n'en dit rien », ce qui est une
   /// étiquette et permet de reconnaître une valeur inventée.
+  /// Ce que la page annonce, **en faits**, dans la forme même que la brique
+  /// rend : `{"free": false, "price": 8, "ageMin": 3, "ageMax": null, …}`.
+  ///
+  /// Elle portait autrefois la mise en forme — « gratuit », « dès 3 ans » —,
+  /// parce que la mesure comparait les libellés que `audit_fiche` calcule pour
+  /// l'affichage. Or la donnée est structurée aux deux bouts : le modèle rend
+  /// `ageMin`, la sortie publiée porte la colonne `ageMin`. Comparer la prose
+  /// au milieu obligeait à réécrire en TypeScript un format défini en Python,
+  /// et un point-virgule déplacé faisait compter « faux » tous les tarifs.
+  ///
+  /// Une clé absente veut dire « personne n'a regardé ce champ » ; une clé
+  /// présente et vide veut dire « la page n'en dit rien », ce qui est une
+  /// étiquette et permet de reconnaître une valeur inventée.
   expected String @default("{}") @db.Text
+
+  /// L'ancienne étiquette, en toutes lettres, gardée telle quelle.
+  ///
+  /// Elle n'entre dans aucune mesure : on ne rouvre pas de la prose pour en
+  /// tirer des faits, c'est précisément ce qu'on vient d'arrêter de faire.
+  /// Elle reste lisible pour qu'un humain puisse retrouver ce qu'une étiquette
+  /// disait, le temps que le corpus se reconstruise — la plupart des fiches se
+  /// remoissonnent d'un clic. À supprimer quand ce sera fait.
+  expectedLegacy String? @db.Text
 
   /// D'où vient chaque champ, en JSON : `{"tarif": "CORRIGE", …}`.
   ///

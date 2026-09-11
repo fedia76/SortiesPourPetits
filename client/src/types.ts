@@ -1060,7 +1060,26 @@ export interface EvalSortie {
   runReason: string;
   createdAt: string;
   author?: { id: number; displayName: string };
-  fiche?: { id: number; expected: string; labelledAt: string } | null;
+  /**
+   * L'étiquette de la fiche : ce que la page annonce, **en faits**, dans la
+   * forme même que la brique rend — `{"free": false, "price": 8, …}`, en JSON.
+   *
+   * Elle portait autrefois la mise en forme (« gratuit », « dès 3 ans »),
+   * parce que la mesure comparait les libellés d'affichage. La donnée est
+   * structurée aux deux bouts : on compare les faits, et la mise en forme
+   * redevient de l'affichage.
+   *
+   * `expectedLegacy` garde l'ancienne valeur en toutes lettres. Elle n'entre
+   * dans aucune mesure — on ne rouvre pas de la prose pour en tirer des
+   * faits — et disparaîtra quand le corpus se sera reconstruit.
+   */
+  fiche?: {
+    id: number;
+    expected: string;
+    expectedLegacy: string | null;
+    origins: string;
+    labelledAt: string;
+  } | null;
 }
 
 /**

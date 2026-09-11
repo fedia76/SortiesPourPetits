@@ -563,27 +563,178 @@ export function readScore(labels: ReadLabels, out: ReadOutput): ReadScore {
 
 // ════════════════════════════════════════════════ étage 6 — l'extraction
 
-export interface Aspect {
-  key: string;
-  value: string;
+/**
+ * La fiche que l'étage 6 rend, telle que `evaluation.fiche_payload` l'envoie :
+ * les champs du modèle, en camelCase, **structurés**.
+ *
+ * ## Pourquoi on compare ça, et pas la prose
+ *
+ * Chaque champ est structuré aux deux bouts de la chaîne : le modèle rend
+ * `{"ageMin": 3, "ageMax": null}`, et la sortie publiée porte les colonnes
+ * `ageMin` / `ageMax`. Entre les deux, `audit_fiche` met en forme « dès 3 ans »
+ * — pour l'affichage humain, ce qui est son métier.
+ *
+ * La mesure comparait cette **mise en forme**. Ça marchait, tant que les deux
+ * côtés l'écrivaient pareil ; ça obligeait surtout à réécrire en TypeScript un
+ * format défini en Python, pour traverser un aplatissement dont personne
+ * n'avait besoin. Un point-virgule changé dans `audit_fiche` et tous les
+ * tarifs comptaient « faux ».
+ *
+ * On compare donc les faits. La mise en forme redevient ce qu'elle est : de
+ * l'affichage, et rien d'autre.
+ */
+export interface FicheRendue {
+  relevant?: boolean;
+  several?: boolean;
+  skipReason?: string;
+  title?: string;
+  description?: string;
+  free?: boolean;
+  price?: number | null;
+  ageMin?: number | null;
+  ageMax?: number | null;
+  permanent?: boolean;
+  dateStart?: string;
+  dateEnd?: string;
+  weekdays?: string[];
+  dates?: string[];
+  openTime?: string;
+  closeTime?: string;
+  setting?: string;
+  category?: string;
+  venueName?: string;
+  venueAddress?: string;
+  venueCity?: string;
+  venuePostalCode?: string;
+}
+
+/** Comment se compare un champ. Le repli ne vaut que pour de la prose. */
+type Genre = 'texte' | 'nombre' | 'booleen' | 'jour' | 'liste';
+
+/**
+ * Les aspects d'une fiche, et les champs que chacun recouvre.
+ *
+ * Le regroupement n'est pas cosmétique : `free` et `price` disent **un seul
+ * fait**, et les juger séparément compterait deux fois la même erreur. C'est
+ * la raison d'être de cette table, et la seule ; elle décrit le même découpage
+ * que `evaluation.audit_fiche`, mais en termes de champs plutôt que de chaînes.
+ */
+export const ASPECTS: { key: string; champs: [keyof FicheRendue, Genre][] }[] = [
+  { key: 'verdict', champs: [['relevant', 'booleen'], ['several', 'booleen']] },
+  { key: 'titre', champs: [['title', 'texte']] },
+  { key: 'description', champs: [['description', 'texte']] },
+  { key: 'tarif', champs: [['free', 'booleen'], ['price', 'nombre']] },
+  { key: 'age', champs: [['ageMin', 'nombre'], ['ageMax', 'nombre']] },
+  {
+    key: 'dates',
+    champs: [['permanent', 'booleen'], ['dateStart', 'jour'], ['dateEnd', 'jour']],
+  },
+  { key: 'jours', champs: [['weekdays', 'liste'], ['dates', 'liste']] },
+  { key: 'horaires', champs: [['openTime', 'texte'], ['closeTime', 'texte']] },
+  { key: 'cadre', champs: [['setting', 'texte']] },
+  { key: 'categorie', champs: [['category', 'texte']] },
+  { key: 'lieu', champs: [['venueName', 'texte']] },
+  {
+    key: 'adresse',
+    champs: [
+      ['venueAddress', 'texte'],
+      ['venuePostalCode', 'texte'],
+      ['venueCity', 'texte'],
+    ],
+  },
+];
+
+/** Une valeur qui ne dit rien : `null`, vide, ou une liste vide. */
+function muet(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  if (Array.isArray(value)) return value.length === 0;
+  // `false` et `0` **disent** quelque chose : gratuit, et zéro an.
+  return false;
+}
+
+/** Deux valeurs d'un même champ se valent-elles. */
+function pareil(a: unknown, b: unknown, genre: Genre): boolean {
+  if (muet(a) && muet(b)) return true;
+  if (muet(a) || muet(b)) return false;
+  switch (genre) {
+    case 'nombre':
+      return Number(a) === Number(b);
+    case 'booleen':
+      return Boolean(a) === Boolean(b);
+    case 'jour':
+      // Une date se compare à son jour : le corpus dit « 2026-09-20 », la
+      // brique peut rendre un instant.
+      return String(a).slice(0, 10) === String(b).slice(0, 10);
+    case 'liste': {
+      const gauche = [...(a as string[])].map(fold).sort();
+      const droite = [...(b as string[])].map(fold).sort();
+      return gauche.length === droite.length && gauche.every((v, i) => v === droite[i]);
+    }
+    default:
+      return fold(String(a)) === fold(String(b));
+  }
+}
+
+/**
+ * Le verdict d'un aspect, par comparaison champ à champ.
+ *
+ * Les quatre verdicts gardent exactement le sens qu'ils avaient :
+ *
+ *   attendu renseigné, rendu identique   → JUSTE
+ *   attendu renseigné, rendu différent   → FAUX
+ *   attendu vide,      rendu renseigné   → INVENTE
+ *   attendu renseigné, rendu vide        → MANQUE
+ *
+ * `null` quand **aucun** champ de l'aspect n'est présent dans l'étiquette :
+ * personne n'a regardé, et il n'y a rien à conclure. La dissymétrie entre une
+ * clé absente et une valeur vide reste le cœur de l'affaire — sans elle, « la
+ * page n'annonce pas de tarif » et « personne n'a vérifié le tarif » seraient
+ * le même silence, et une valeur inventée deviendrait invisible.
+ */
+export function verdictAspect(
+  aspect: { key: string; champs: [keyof FicheRendue, Genre][] },
+  attendue: FicheRendue,
+  rendue: FicheRendue,
+): FieldVerdict | null {
+  // Seuls les champs que l'étiquette **porte** sont jugés. Un champ absent
+  // n'est pas un vide : personne ne l'a regardé, et le comparer reprocherait à
+  // la brique d'avoir rendu quelque chose sur quoi le corpus se tait.
+  //
+  // C'est le cas des jours de représentation : l'étiquette reprise d'une
+  // sortie publiée porte `dates` mais jamais `weekdays`, que le site ne reçoit
+  // pas. Sans ce filtre, chaque sortie à récurrence compterait « faux ».
+  const juges = aspect.champs.filter(([champ]) => champ in attendue);
+  if (juges.length === 0) return null;
+
+  const attenduRempli = juges.some(([champ]) => !muet(attendue[champ]));
+  const renduRempli = juges.some(([champ]) => !muet(rendue[champ]));
+
+  if (!attenduRempli && !renduRempli) return 'JUSTE';
+  if (!attenduRempli) return 'INVENTE';
+  if (!renduRempli) return 'MANQUE';
+
+  const accord = juges.every(([champ, genre]) => pareil(attendue[champ], rendue[champ], genre));
+  return accord ? 'JUSTE' : 'FAUX';
 }
 
 /**
  * La fiche rendue, champ par champ, face à ce que la page annonce.
  *
  * C'est ici que le changement de nature des étiquettes paie : le corpus dit
- * « la page annonce 8 € », et n'importe quel run — d'hier, d'aujourd'hui, avec
- * un autre modèle ou un autre prompt — se compare à lui sans qu'un humain
- * n'ait à rouvrir quoi que ce soit.
+ * « la page annonce 8 € » sous la forme `{"free": false, "price": 8}`, et
+ * n'importe quel run — d'hier, d'aujourd'hui, avec un autre modèle ou un autre
+ * prompt — se compare à lui sans qu'un humain n'ait à rouvrir quoi que ce soit,
+ * et sans qu'aucune mise en forme n'ait à concorder entre deux langages.
  */
 export function extractScore(
-  expected: Record<string, string>,
-  aspects: Aspect[],
+  attendue: FicheRendue,
+  rendue: FicheRendue,
 ): { tally: VerdictTally; byField: Record<string, FieldVerdict | null> } {
   const tally = emptyTally();
   const byField: Record<string, FieldVerdict | null> = {};
-  for (const aspect of aspects) {
-    const verdict = verdictOf(expected[aspect.key], aspect.value ?? '');
+  for (const aspect of ASPECTS) {
+    const verdict = verdictAspect(aspect, attendue, rendue);
     byField[aspect.key] = verdict;
     if (verdict === null) tally.inconnu += 1;
     else tally[verdict] += 1;

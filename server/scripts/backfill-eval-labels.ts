@@ -18,19 +18,16 @@
  * relancer sans risque, et le laisser dans un déploiement.
  */
 import { PrismaClient } from '@prisma/client';
+import { ASPECTS, type FicheRendue } from '../src/lib/evalMetrics';
 
 const prisma = new PrismaClient();
-
-/** Un aspect tel que `evaluation.audit_fiche` le rend. */
-interface Aspect {
-  key?: unknown;
-  value?: unknown;
-}
 
 /** Une ligne de l'ancienne table, telle que la migration 0025 l'a laissée. */
 interface LegacyRow {
   sortieId: number;
   createdById: number;
+  /** La fiche rendue par la brique, **structurée**. Elle était là depuis le début. */
+  fiche: string;
   aspects: string;
   verdicts: string;
   note: string;
@@ -48,20 +45,32 @@ function parse<T>(raw: string, fallback: T): T {
   }
 }
 
-/** Ce que la page annonce, d'après les seuls aspects jugés justes. */
-export function expectedFrom(aspectsRaw: string, verdictsRaw: string): Record<string, string> {
-  const aspects = parse<Aspect[]>(aspectsRaw, []);
+/**
+ * Ce que la page annonce, d'après les seuls aspects jugés justes.
+ *
+ * On lit la fiche **structurée** de l'ancien run, pas les libellés que
+ * `audit_fiche` calculait pour l'affichage : une étiquette porte des faits, et
+ * relire de la prose pour en tirer des faits est exactement ce qu'on a arrêté
+ * de faire. Les champs se recopient donc tels quels.
+ *
+ * Le filtre reste le même : seul un aspect jugé `JUSTE` livre une étiquette.
+ * `FAUX`, `INVENTE` et `MANQUE` disaient que la brique s'était trompée sans
+ * jamais enregistrer ce qu'il aurait fallu trouver — ils restent perdus, et
+ * c'est précisément le défaut que la séparation corrige.
+ */
+export function expectedFrom(ficheRaw: string, verdictsRaw: string): FicheRendue {
+  const fiche = parse<Record<string, unknown>>(ficheRaw, {});
   const verdicts = parse<Record<string, string>>(verdictsRaw, {});
-  const expected: Record<string, string> = {};
-  for (const aspect of Array.isArray(aspects) ? aspects : []) {
-    const key = typeof aspect?.key === 'string' ? aspect.key : '';
-    if (!key || verdicts[key] !== 'JUSTE') continue;
-    // Une valeur vide jugée juste est une étiquette de plein droit : « la page
-    // n'en dit rien ». C'est elle qui permettra de reconnaître une valeur
-    // inventée, et la perdre reviendrait à ne plus pouvoir le faire.
-    expected[key] = typeof aspect.value === 'string' ? aspect.value : '';
+  const expected: Record<string, unknown> = {};
+  for (const aspect of ASPECTS) {
+    if (verdicts[aspect.key] !== 'JUSTE') continue;
+    for (const [champ] of aspect.champs) {
+      // Un champ absent de l'ancienne fiche reste absent : la clé dirait
+      // « quelqu'un a regardé » alors que personne n'a rien enregistré.
+      if (champ in fiche) expected[champ] = fiche[champ];
+    }
   }
-  return expected;
+  return expected as FicheRendue;
 }
 
 async function main(): Promise<void> {
@@ -69,6 +78,7 @@ async function main(): Promise<void> {
     SELECT
       l.sortieId    AS sortieId,
       l.createdById  AS createdById,
+      l.fiche        AS fiche,
       l.aspects      AS aspects,
       l.verdicts     AS verdicts,
       l.note         AS note,
@@ -86,7 +96,7 @@ async function main(): Promise<void> {
   let written = 0;
   let empty = 0;
   for (const row of legacy) {
-    const expected = expectedFrom(row.aspects, row.verdicts);
+    const expected = expectedFrom(row.fiche, row.verdicts);
     if (Object.keys(expected).length === 0) {
       // Aucun aspect n'avait été jugé juste : il n'y a rien à décrire de cette
       // page. Créer une ligne vide ferait croire à une étiquette.
