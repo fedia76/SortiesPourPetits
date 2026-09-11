@@ -56,9 +56,13 @@ import {
   extractScore,
   harvestScore,
   readScore,
+  relevanceOf,
   selectScore,
+  sumHarvest,
+  sumSelect,
   type Aspect,
   type LabelledLink,
+  type RunScope,
 } from '../lib/evalMetrics';
 import {
   evalAgendaSchema,
@@ -266,6 +270,13 @@ evalRouter.get('/agendas/:id(\\d+)', admin, async (req, res) => {
   }
 
   const runId = Number(req.query.runId) || (await latestRunId(['HARVEST', 'SELECT']));
+  const shown = runId
+    ? await prisma.evalRun.findUnique({
+        where: { id: runId },
+        select: { settings: true, stage: true },
+      })
+    : null;
+  const scope = scopeOf(shown);
   const pageIds = agenda.agendaPages.map((p) => p.id);
   const results = runId
     ? await prisma.evalLinkResult.findMany({
@@ -287,23 +298,55 @@ evalRouter.get('/agendas/:id(\\d+)', admin, async (req, res) => {
       agendaPages: agenda.agendaPages.map(({ htmlPath, ...page }) => ({
         ...page,
         archived: Boolean(htmlPath),
+        // La pertinence est **dérivée**, jamais stockée : c'est la même
+        // étiquette qui sert à tous les runs, et c'est la portée du run
+        // affiché qui tranche. On la calcule ici plutôt que dans la console,
+        // pour qu'il n'y ait qu'une seule règle et qu'elle ne dérive pas.
+        links: page.links.map((link) => ({
+          ...link,
+          relevance: relevanceOf(link as LabelledLink, scope),
+        })),
         /** Le relevé du run affiché, s'il y en a un. */
         results: byPage.get(page.id) ?? [],
-        score: scorePage(page.links, byPage.get(page.id) ?? []),
+        score: scorePage(page.links, byPage.get(page.id) ?? [], scope),
       })),
     },
     runId,
+    scope,
   });
 });
 
 function scorePage(
-  labels: { url: string; verdict: string }[],
+  labels: unknown[],
   results: { url: string; harvested: boolean; selected: boolean | null }[],
+  scope: RunScope = {},
 ) {
   const typed = labels as LabelledLink[];
   return {
     harvest: harvestScore(typed, results),
-    select: results.some((r) => r.selected !== null) ? selectScore(typed, results) : null,
+    select: results.some((r) => r.selected !== null) ? selectScore(typed, results, scope) : null,
+  };
+}
+
+/**
+ * Ce que la recherche d'un run demandait, relu depuis ses réglages.
+ *
+ * C'est ce qui permet de dériver la pertinence sans l'avoir étiquetée — et
+ * c'est pourquoi un run doit déclarer sa portée en se réclamant : sans elle,
+ * aucune date ni aucun département ne peut écarter quoi que ce soit, et tout
+ * devient indécidable.
+ */
+function scopeOf(run: { settings: string; stage: string } | null): RunScope {
+  if (!run || run.stage !== 'SELECT') return {};
+  const raw = parseJson<Record<string, unknown>>(run.settings, {});
+  const text = (k: string) => (typeof raw[k] === 'string' ? (raw[k] as string) : undefined);
+  return {
+    dateFrom: text('dateFrom'),
+    dateTo: text('dateTo'),
+    postalPrefixes: Array.isArray(raw.postalPrefixes)
+      ? (raw.postalPrefixes as unknown[]).map(String)
+      : undefined,
+    maxLinks: typeof raw.maxLinks === 'number' ? raw.maxLinks : undefined,
   };
 }
 
@@ -332,7 +375,14 @@ evalRouter.put('/pages/:pageId(\\d+)/links', admin, async (req, res) => {
     res.status(404).json({ error: 'Page introuvable' });
     return;
   }
-  const { url, text, verdict, note, source } = parsed.data;
+  const { url, text, verdict, note, source, dateHint, placeHint, audience } = parsed.data;
+  // Les indices ne s'écrivent que si le corps les porte : un étiquetage rapide
+  // du verdict ne doit pas effacer une date qu'on avait relevée.
+  const hints = {
+    ...(dateHint === undefined ? {} : { dateHint }),
+    ...(placeHint === undefined ? {} : { placeHint }),
+    ...(audience === undefined ? {} : { audience }),
+  };
   const link = await prisma.evalLink.upsert({
     where: { pageId_url: { pageId, url } },
     create: {
@@ -344,8 +394,9 @@ evalRouter.put('/pages/:pageId(\\d+)/links', admin, async (req, res) => {
       source,
       origin: 'HUMAIN',
       labelledById: req.user!.id,
+      ...hints,
     },
-    update: { verdict, note, labelledAt: new Date(), labelledById: req.user!.id },
+    update: { verdict, note, labelledAt: new Date(), labelledById: req.user!.id, ...hints },
   });
   res.json({ link });
 });
@@ -359,9 +410,10 @@ evalRouter.patch('/links/:id(\\d+)', admin, async (req, res) => {
   try {
     const link = await prisma.evalLink.update({
       where: { id: Number(req.params.id) },
+      // Seul ce que le corps porte est écrit : corriger la date d'un lien ne
+      // doit pas remettre son verdict en cause, ni l'inverse.
       data: {
-        verdict: parsed.data.verdict,
-        note: parsed.data.note ?? undefined,
+        ...parsed.data,
         origin: 'HUMAIN',
         labelledAt: new Date(),
         labelledById: req.user!.id,
@@ -693,35 +745,47 @@ evalRouter.delete('/runs/:id(\\d+)', admin, async (req, res) => {
 /** Le résumé chiffré d'un run, tel que la courbe l'affiche. */
 async function scoreRun(runId: number, stage: string) {
   if (stage === 'HARVEST' || stage === 'SELECT') {
-    const [labels, results] = await Promise.all([
-      prisma.evalLink.findMany({ select: { url: true, verdict: true, pageId: true } }),
+    const [run, labels, results] = await Promise.all([
+      prisma.evalRun.findUnique({ where: { id: runId }, select: { settings: true, stage: true } }),
+      prisma.evalLink.findMany({
+        select: {
+          url: true,
+          verdict: true,
+          pageId: true,
+          dateHint: true,
+          placeHint: true,
+          audience: true,
+        },
+      }),
       prisma.evalLinkResult.findMany({
         where: { runId },
         select: { url: true, harvested: true, selected: true, pageId: true },
       }),
     ]);
+    const scope = scopeOf(run);
     // Page par page : deux agendas différents peuvent porter la même URL, et
     // les mêler ferait compter une sortie de l'un comme manquée sur l'autre.
-    const total = { found: 0, missed: 0, noise: 0, unlabelled: 0 };
-    const pages = new Set(results.map((r) => r.pageId));
-    for (const pageId of pages) {
-      const pageLabels = labels.filter((l) => l.pageId === pageId) as LabelledLink[];
-      const pageResults = results.filter((r) => r.pageId === pageId);
-      const score =
-        stage === 'SELECT' ? selectScore(pageLabels, pageResults) : harvestScore(pageLabels, pageResults);
-      total.found += score.found;
-      total.missed += score.missed;
-      total.noise += score.noise;
-      total.unlabelled += score.unlabelled;
+    // Le plafond se juge aussi par page — c'est par page que le tri l'applique,
+    // et c'est page par page que `sumSelect` sait laquelle sortir du rappel.
+    const pages = [...new Set(results.map((r) => r.pageId))].map((pageId) => ({
+      labels: labels.filter((l) => l.pageId === pageId) as LabelledLink[],
+      results: results.filter((r) => r.pageId === pageId),
+    }));
+    const pagination = await paginationScore(runId);
+
+    if (stage === 'SELECT') {
+      return {
+        kind: 'links' as const,
+        ...sumSelect(pages.map((p) => selectScore(p.labels, p.results, scope))),
+        pagination,
+      };
     }
-    const sorties = total.found + total.missed;
-    const kept = total.found + total.noise;
+    // Le dépouillement ne juge pas la pertinence : lui faire dire « 0 écartée
+    // à raison » serait lui prêter un jugement qu'il ne porte pas.
     return {
       kind: 'links' as const,
-      ...total,
-      recall: sorties > 0 ? total.found / sorties : null,
-      precision: kept > 0 ? total.found / kept : null,
-      pagination: await paginationScore(runId),
+      ...sumHarvest(pages.map((p) => harvestScore(p.labels, p.results))),
+      pagination,
     };
   }
 

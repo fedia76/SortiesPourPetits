@@ -24,12 +24,19 @@ import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
 import type {
   EvalAgenda,
+  EvalAudience,
+  EvalRunScope,
+  EvalLink,
   EvalLinkResult,
   EvalReading,
   EvalSeedCounts,
   EvalVerdict,
 } from '../types';
 import {
+  EVAL_AUDIENCE_HINTS,
+  EVAL_AUDIENCE_LABELS,
+  EVAL_RELEVANCE_HINTS,
+  EVAL_RELEVANCE_LABELS,
   EVAL_CAPTURE_LABELS,
   EVAL_LABEL_ORIGIN_LABELS,
   EVAL_ORIGIN_HINTS,
@@ -39,12 +46,21 @@ import {
 } from '../types';
 
 const VERDICTS: EvalVerdict[] = ['SORTIE', 'PAGINATION', 'SOUS_AGENDA', 'AUTRE'];
+const AUDIENCES: EvalAudience[] = ['ENFANTS', 'ADULTES', 'INDETERMINE'];
 
 const agendas = ref<EvalAgenda[]>([]);
 const readings = ref<EvalReading[]>([]);
 const seed = ref<EvalSeedCounts | null>(null);
 const open = ref<EvalAgenda | null>(null);
 const openRunId = ref(0);
+/**
+ * Ce sous quoi le run affiché a joué le tri.
+ *
+ * Sans elle, « hors recherche » serait une accusation sans procès : le
+ * relecteur doit voir la fenêtre et la zone qui font écarter un lien, sinon il
+ * corrigera des étiquettes qui n'ont rien de faux.
+ */
+const openScope = ref<EvalRunScope>({});
 const loading = ref(true);
 const error = ref('');
 const notice = ref('');
@@ -124,11 +140,12 @@ async function openAgenda(agenda: EvalAgenda) {
     return;
   }
   try {
-    const body = await api.get<{ agenda: EvalAgenda; runId: number }>(
+    const body = await api.get<{ agenda: EvalAgenda; runId: number; scope: EvalRunScope }>(
       `/api/eval/agendas/${agenda.id}`,
     );
     open.value = body.agenda;
     openRunId.value = body.runId;
+    openScope.value = body.scope ?? {};
   } catch (e) {
     fail(e);
   }
@@ -154,6 +171,16 @@ function rows(page: EvalAgenda['agendaPages'][number]) {
   return out;
 }
 
+/** La portée du run affiché, en une phrase. Vide s'il n'y a rien à dire. */
+const scopeText = computed(() => {
+  const s = openScope.value;
+  const bouts: string[] = [];
+  if (s.dateFrom && s.dateTo) bouts.push(`du ${s.dateFrom} au ${s.dateTo}`);
+  if (s.postalPrefixes?.length) bouts.push(`départements ${s.postalPrefixes.join(', ')}`);
+  if (s.maxLinks) bouts.push(`au plus ${s.maxLinks} liens par page`);
+  return bouts.join(' · ');
+});
+
 /** Ce que le relevé affiché a trouvé comme page suivante. */
 function foundNext(page: EvalAgenda['agendaPages'][number]): string {
   return (page.results ?? []).find((r) => r.position < 0)?.selectReason ?? '';
@@ -166,6 +193,27 @@ async function labelLink(pageId: number, url: string, text: string, verdict: Eva
   } catch (e) {
     fail(e);
   }
+}
+
+/**
+ * Poser un indice sur une étiquette déjà là.
+ *
+ * Un indice n'est pas un jugement : il dit ce que la page annonce, et c'est la
+ * mesure qui en déduit, run par run, si le lien avait sa place. Le corriger ne
+ * touche donc pas au verdict — l'API n'écrit que ce que le corps porte.
+ */
+async function hint(id: number, patch: Partial<Pick<EvalLink, 'dateHint' | 'placeHint' | 'audience'>>) {
+  try {
+    await api.patch(`/api/eval/links/${id}`, patch);
+    await refreshOpen();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** La valeur d'un champ de saisie, vidée de ses espaces. */
+function typed(event: Event): string {
+  return (event.target as HTMLInputElement).value.trim();
 }
 
 async function unlabel(id: number) {
@@ -230,9 +278,12 @@ function reasons(page: EvalAgenda['agendaPages'][number]) {
 async function refreshOpen() {
   if (!open.value) return;
   const id = open.value.id;
-  const body = await api.get<{ agenda: EvalAgenda; runId: number }>(`/api/eval/agendas/${id}`);
+  const body = await api.get<{ agenda: EvalAgenda; runId: number; scope: EvalRunScope }>(
+    `/api/eval/agendas/${id}`,
+  );
   open.value = body.agenda;
   openRunId.value = body.runId;
+  openScope.value = body.scope ?? {};
   await load();
 }
 
@@ -430,6 +481,12 @@ const corpusSize = computed(() => ({
         <p v-else class="muted small">
           Relevé affiché : run #{{ openRunId }}. Il <strong>propose</strong>, il
           n’écrit rien : une ligne n’entre au corpus que si vous cliquez.
+          <template v-if="scopeText">
+            <br />
+            Recherche de ce run : {{ scopeText }}. C’est elle, et elle seule,
+            qui rend un lien « hors recherche » — les étiquettes, elles, ne
+            changent pas d’un run à l’autre.
+          </template>
         </p>
 
         <div v-for="page in open.agendaPages" :key="page.id" class="page-block">
@@ -517,6 +574,57 @@ const corpusSize = computed(() => ({
                     <button v-if="row.label" class="linklike" @click="unlabel(row.label.id)">
                       retirer
                     </button>
+                  </div>
+                  <!--
+                    Les indices ne s'affichent que sur une sortie : sur une
+                    pagination ou un bandeau de navigation, ils n'auraient rien
+                    à qualifier.
+                  -->
+                  <div v-if="row.label?.verdict === 'SORTIE'" class="hints">
+                    <label class="hint">
+                      <span class="muted small">le</span>
+                      <input
+                        type="date"
+                        :value="row.label.dateHint ?? ''"
+                        title="La date que le contexte du lien annonce. Vide : il n’en dit rien."
+                        @change="hint(row.label!.id, { dateHint: typed($event) || null })"
+                      />
+                    </label>
+                    <label class="hint">
+                      <span class="muted small">à</span>
+                      <input
+                        type="text"
+                        placeholder="75012, Vincennes…"
+                        :value="row.label.placeHint ?? ''"
+                        title="Le lieu que le contexte annonce. Un code postal se compare ; une ville en toutes lettres n’écartera rien."
+                        @change="hint(row.label!.id, { placeHint: typed($event) || null })"
+                      />
+                    </label>
+                    <div class="chips">
+                      <button
+                        v-for="a in AUDIENCES"
+                        :key="a"
+                        class="chip tiny"
+                        :class="{ on: row.label.audience === a }"
+                        :title="EVAL_AUDIENCE_HINTS[a]"
+                        @click="hint(row.label!.id, { audience: row.label!.audience === a ? null : a })"
+                      >
+                        {{ EVAL_AUDIENCE_LABELS[a] }}
+                      </button>
+                    </div>
+                    <!--
+                      Ce que les indices donnent pour le run affiché. Ce n'est
+                      pas une étiquette de plus : c'est ce que le serveur en
+                      déduit, et il change avec la recherche qu'on regarde.
+                    -->
+                    <span
+                      v-if="row.label.relevance"
+                      class="relevance"
+                      :class="row.label.relevance.toLowerCase()"
+                      :title="EVAL_RELEVANCE_HINTS[row.label.relevance]"
+                    >
+                      → {{ EVAL_RELEVANCE_LABELS[row.label.relevance] }}
+                    </span>
                   </div>
                   <div v-if="row.label" class="muted small">
                     {{ EVAL_LABEL_ORIGIN_LABELS[row.label.origin] }}
@@ -767,6 +875,57 @@ h2 {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+.relevance {
+  font-size: 0.74rem;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.relevance.pertinente {
+  color: var(--ok, #1a7f37);
+}
+
+.relevance.hors_recherche {
+  color: var(--muted, #666);
+}
+
+.relevance.indecidable {
+  color: var(--warn, #9a6700);
+}
+
+.chip.tiny {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.4rem;
+}
+
+/* Les indices sont en retrait du verdict : ils le qualifient, ils ne le
+   concurrencent pas. */
+.hints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0.2rem 0.6rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--border, #ddd);
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.hints input {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.1rem 0.3rem;
+}
+
+.hints input[type='text'] {
+  width: 9rem;
 }
 
 .editor {

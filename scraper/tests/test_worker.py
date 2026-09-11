@@ -398,3 +398,62 @@ def test_la_session_rejoue_la_connexion_mais_jamais_la_lecture():
     assert retry.status == 0
     # `None` vaut « toutes les méthodes » : le POST du worker en profite.
     assert retry.allowed_methods is None
+
+
+# ═══════════════════════════════ ce sous quoi le banc déclare jouer le tri
+
+
+def test_le_run_declare_la_fenetre_que_le_prompt_annonce():
+    """Le site mesure l'étage 4 sous la fenêtre déclarée : elle doit être la
+    vraie.
+
+    Si `render_select` et la déclaration divergeaient, le banc reprocherait au
+    modèle d'avoir écarté une sortie que la fenêtre annoncée excluait — une
+    mesure fausse, et fausse en silence. D'où cette vérification par le prompt
+    lui-même plutôt que par une copie des mêmes valeurs.
+    """
+    config = worker._bench_config()
+    scope = worker._scope(config)
+    prompt = config.render_select("https://exemple.fr/agenda", "1. a | b")
+
+    assert f"du {scope['dateFrom']} au {scope['dateTo']}" in prompt
+    assert scope["theme"] in prompt
+    assert f"Au plus {scope['maxLinks']}." in prompt
+    # Les préfixes sont la zone en chiffres : le prompt dit « Île-de-France »,
+    # le site a besoin de quoi la comparer à un code postal.
+    assert scope["postalPrefixes"] == config.postal_prefixes
+    assert config.area in prompt
+
+
+def test_le_run_est_joue_sous_la_configuration_qu_il_a_declaree(monkeypatch):
+    """Déclarer une fenêtre puis en jouer une autre serait pire que se taire.
+
+    Un run réclamé à 23 h 59 et joué à 00 h 01 changerait de fenêtre en cours
+    de route si chaque étape refabriquait sa configuration. La même instance
+    doit servir aux deux.
+    """
+    vues: list[Config] = []
+
+    class ApiDeclarante:
+        def __init__(self) -> None:
+            self.settings: dict | None = None
+
+        def next_eval_run(self, code_ref="", model="", prompt_hash="", settings=None):
+            self.settings = settings
+            return {"id": 7, "stage": "SELECT"}
+
+        def next_eval_item(self, run_id):
+            return None
+
+        def finish_eval_run(self, run_id, status, **payload):
+            pass
+
+    api = ApiDeclarante()
+    monkeypatch.setattr(worker, "get_provider", lambda config, **kw: vues.append(config))
+
+    bench = worker._bench_config()
+    run = api.next_eval_run(code_ref="", settings=worker._scope(bench))
+    worker.play_run(run, api, worker.Environment(api_url="https://exemple.fr", api_key="k", anthropic_key="k"), True, bench)
+
+    assert api.settings == worker._scope(bench)
+    assert vues == [bench]

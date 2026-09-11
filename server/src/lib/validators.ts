@@ -574,11 +574,32 @@ export const evalAgendaUpdateSchema = z
  */
 export const EVAL_VERDICTS = ['SORTIE', 'PAGINATION', 'SOUS_AGENDA', 'AUTRE'] as const;
 
+/**
+ * Les indices que le contexte d'un lien montre, et qui font dériver la
+ * pertinence au lieu de l'étiqueter.
+ *
+ * Trois états chacun : absent du corps (on ne touche pas), `null` (personne
+ * n'a regardé), une valeur — vide comprise, qui veut dire « l'agenda n'affiche
+ * rien » et qui est une étiquette de plein droit. Un indice vide ne peut
+ * jamais écarter une sortie : il la rend indécidable.
+ */
+const evalHints = {
+  /** La date affichée à côté du lien, en `YYYY-MM-DD`. */
+  dateHint: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal(''), z.null()]),
+  /** La ville ou le code postal affiché. */
+  placeHint: z.union([z.string().trim().max(120), z.null()]),
+  audience: z.union([z.enum(['ENFANTS', 'ADULTES', 'INDETERMINE']), z.null()]),
+};
+
 /** L'étiquette qu'un humain pose sur un lien. */
-export const evalVerdictSchema = z.object({
-  verdict: z.enum(EVAL_VERDICTS),
-  note: z.string().trim().max(500).optional(),
-});
+export const evalVerdictSchema = z
+  .object({
+    verdict: z.enum(EVAL_VERDICTS),
+    note: z.string().trim().max(500),
+    ...evalHints,
+  })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, { message: 'Rien à changer' });
 
 /**
  * Un lien étiqueté à la main, tel que la console l'envoie.
@@ -593,6 +614,9 @@ export const evalLinkSchema = z.object({
   verdict: z.enum(EVAL_VERDICTS).optional().default('SORTIE'),
   note: z.string().trim().max(500).optional().default(''),
   source: z.enum(['PAGE', 'MANUAL']).optional().default('MANUAL'),
+  dateHint: evalHints.dateHint.optional(),
+  placeHint: evalHints.placeHint.optional(),
+  audience: evalHints.audience.optional(),
 });
 
 /**
@@ -737,7 +761,20 @@ export const evalRunClaimSchema = z.object({
   codeRef: z.string().trim().max(60).optional().default(''),
   model: z.string().trim().max(120).optional().default(''),
   promptHash: z.string().trim().max(64).optional().default(''),
-  settings: z.record(z.string(), z.unknown()).optional().default({}),
+  settings: z
+    .object({
+      /** La fenêtre de la recherche jouée, en `YYYY-MM-DD`. */
+      dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      /** Les départements visés. */
+      postalPrefixes: z.array(z.string().max(5)).max(40).optional(),
+      /** Le plafond du tri : ce qui rend une page saturée indécidable. */
+      maxLinks: z.number().int().min(1).max(200).optional(),
+      theme: z.string().max(200).optional(),
+    })
+    .passthrough()
+    .optional()
+    .default({}),
 });
 
 /** Ce qu'un run de l'étage 3 ou 4 rend sur une page du corpus. */

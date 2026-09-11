@@ -308,6 +308,40 @@ def capture(job: dict[str, Any], api: SppApi, quiet: bool) -> None:
                 print(f"Clôture impossible de {kind} #{item_id} : {api_err}", file=sys.stderr, flush=True)
 
 
+def _bench_config() -> Config:
+    """La configuration du banc. Une seule, et toujours la même.
+
+    Le banc mesure une brique et son prompt, pas les plafonds d'une recherche
+    particulière : c'est pourquoi elle ne vient d'aucun fichier et ne se règle
+    pas. Elle est construite **avant** de réclamer un run, et la même instance
+    sert à le déclarer puis à le jouer — sinon un run réclamé le 31 à 23 h 59
+    serait joué sous la fenêtre du 1er, et sa mesure serait faussée d'un jour.
+    """
+    return Config(name="banc", theme="sorties enfants")
+
+
+def _scope(config: Config) -> dict[str, Any]:
+    """Ce sous quoi le tri a été joué, dit au site.
+
+    Le site ne peut pas deviner la fenêtre d'un run, et sans elle il ne sait
+    pas si une sortie écartée l'a été à raison — elle serait comptée contre le
+    modèle. D'où cette déclaration, faite *avant* de jouer et non reconstituée
+    après coup.
+
+    La fenêtre, le thème et le plafond sont mot pour mot ce que
+    `render_select` met dans le prompt. Les préfixes, eux, sont la zone
+    (« $area ») sous la seule forme que le site sache comparer à un code
+    postal : c'est la même contrainte, écrite en chiffres.
+    """
+    return {
+        "dateFrom": config.date_from.isoformat(),
+        "dateTo": config.date_to.isoformat(),
+        "postalPrefixes": list(config.postal_prefixes),
+        "maxLinks": config.max_links_per_agenda,
+        "theme": config.theme,
+    }
+
+
 def _code_ref() -> str:
     """La révision qui tourne, si le dépôt est là. Vide sinon, et c'est dit.
 
@@ -326,7 +360,13 @@ def _code_ref() -> str:
         return ""
 
 
-def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> None:
+def play_run(
+    run: dict[str, Any],
+    api: SppApi,
+    env: Environment,
+    quiet: bool,
+    bench: Config,
+) -> None:
     """Joue un run du banc : une brique, sur tout le corpus gelé.
 
     Le worker ne télécharge rien ici. Chaque entrée arrive **avec son HTML**,
@@ -348,9 +388,9 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
     config = None
     log = RunLog(None, verbose=False)
     if stage in ("SELECT", "EXTRACT"):
-        # Une configuration par défaut : le banc mesure la brique et son
-        # prompt, pas les plafonds d'une recherche particulière.
-        config = Config(name="banc", theme="sorties enfants")
+        # Celle-là même qui a été déclarée au moment de réclamer le run : le
+        # site mesurera le tri sous la fenêtre que le modèle a réellement vue.
+        config = bench
         provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
 
     traites = 0
@@ -497,14 +537,15 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             continue
 
+        bench = _bench_config()
         try:
-            run = api.next_eval_run(code_ref=_code_ref())
+            run = api.next_eval_run(code_ref=_code_ref(), settings=_scope(bench))
         except ApiError as err:
             if not args.quiet:
                 print(f"Banc injoignable ({err}) — nouvelle tentative.", file=sys.stderr, flush=True)
             run = None
         if run:
-            play_run(run, api, env, args.quiet)
+            play_run(run, api, env, args.quiet, bench)
             if args.once:
                 return 0
         elif args.once:

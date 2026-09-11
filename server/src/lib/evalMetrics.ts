@@ -80,9 +80,37 @@ export function accuracy(tally: VerdictTally): number | null {
 
 // ═════════════════════════════════════════════ étage 3 — le dépouillement
 
+/**
+ * Pour qui est la sortie, d'après ce que le contexte du lien montre.
+ *
+ * `INDETERMINE` est une étiquette de plein droit, pas un silence : le contexte
+ * d'un lien ne dit presque jamais le public, et prétendre le savoir fabriquerait
+ * de faux reproches. Le silence, lui, est l'absence de la colonne — `null`.
+ */
+export type Audience = 'ENFANTS' | 'ADULTES' | 'INDETERMINE';
+
+/**
+ * Ce qu'un humain dit d'un lien d'agenda.
+ *
+ * `verdict` dit **ce que le lien est** : c'est stable, ça ne dépend d'aucune
+ * recherche. Les trois indices disent **ce que la sortie est**, tels que le
+ * contexte du lien les montre — sa date, son lieu, son public.
+ *
+ * La distinction est le cœur de ce qui suit. « Pertinente » n'est pas une
+ * propriété du lien : le même atelier est pertinent pour « musées
+ * Île-de-France » et hors sujet pour « spectacles Seine-Maritime ». En faire
+ * une étiquette la rendrait fausse au premier changement de configuration —
+ * exactement la péremption que la séparation corpus / run a supprimée
+ * ailleurs. On étiquette donc des faits, et la pertinence se **dérive**.
+ */
 export interface LabelledLink {
   url: string;
   verdict: 'SORTIE' | 'PAGINATION' | 'SOUS_AGENDA' | 'AUTRE';
+  /** `YYYY-MM-DD` si l'agenda l'affiche, `''` s'il n'affiche rien, `null` si personne n'a regardé. */
+  dateHint?: string | null;
+  /** Ville ou code postal si l'agenda l'affiche. Mêmes trois états. */
+  placeHint?: string | null;
+  audience?: Audience | null;
 }
 
 export interface HarvestedLink {
@@ -159,25 +187,240 @@ export interface SelectedLink {
 }
 
 /**
- * Le tri, mesuré sur la moisson — comme en production.
+ * Ce que la recherche d'un run demandait, tel que le run l'a enregistré.
  *
- * L'étage 4 ne voit que ce que l'étage 3 lui donne : mesurer sa justesse sur
- * l'ensemble de la page lui reprocherait les liens qu'il n'a jamais vus. Le
- * dénominateur est donc ce qui lui a été soumis, et le rappel perdu en amont
- * se lit sur l'étage 3, où il se corrige.
+ * C'est ce qui permet de dériver la pertinence sans l'avoir étiquetée. Un
+ * champ absent veut dire « la recherche ne filtrait pas là-dessus », et la
+ * dimension correspondante ne peut alors écarter personne.
  */
-export function selectScore(labels: LabelledLink[], results: SelectedLink[]): HarvestScore {
+export interface RunScope {
+  /** Fenêtre de la recherche, en `YYYY-MM-DD`. */
+  dateFrom?: string;
+  dateTo?: string;
+  /** Préfixes de code postal visés — « 75 », « 76 »… */
+  postalPrefixes?: string[];
+  /** Nombre maximal de liens que le tri avait le droit de retenir. */
+  maxLinks?: number;
+}
+
+/** Ce qu'un lien vaut pour une recherche donnée. */
+export type Relevance = 'PERTINENTE' | 'HORS_RECHERCHE' | 'INDECIDABLE';
+
+/**
+ * La pertinence d'un lien pour **cette** recherche, dérivée de ses indices.
+ *
+ * Le principe : on n'écarte que sur ce que le corpus **affirme**. Un indice
+ * vide — l'agenda n'affichait pas la date — ne peut pas rendre une sortie hors
+ * recherche, il la rend indécidable, et l'indécidable ne compte dans aucun
+ * dénominateur. C'est la même règle que le prompt de l'étage 4 applique
+ * lui-même : « dans le doute sur une date ou un lieu que le contexte n'indique
+ * pas, retiens le lien ». La mesure ne peut pas être plus sévère que la
+ * consigne.
+ */
+export function relevanceOf(label: LabelledLink, scope: RunScope): Relevance {
+  if (label.verdict !== 'SORTIE') return 'HORS_RECHERCHE';
+
+  // Un public déclaré adulte suffit à écarter, et c'est le seul des trois
+  // indices qui tranche à lui seul : il ne dépend pas des réglages du run.
+  if (label.audience === 'ADULTES') return 'HORS_RECHERCHE';
+
+  let decidable = false;
+
+  if (label.dateHint) {
+    const day = label.dateHint.slice(0, 10);
+    if (scope.dateFrom && day < scope.dateFrom) return 'HORS_RECHERCHE';
+    if (scope.dateTo && day > scope.dateTo) return 'HORS_RECHERCHE';
+    if (scope.dateFrom || scope.dateTo) decidable = true;
+  }
+
+  if (label.placeHint && scope.postalPrefixes?.length) {
+    const digits = label.placeHint.replace(/\D/g, '');
+    // Une ville en toutes lettres n'a pas de chiffres : on ne sait pas la
+    // situer, donc on ne l'écarte pas. Mieux vaut un indécidable qu'un
+    // reproche inventé.
+    if (digits) {
+      if (!scope.postalPrefixes.some((p) => digits.startsWith(p))) return 'HORS_RECHERCHE';
+      decidable = true;
+    }
+  }
+
+  if (label.audience === 'ENFANTS') decidable = true;
+
+  // Rien d'affirmé, rien à conclure : le corpus ne permet pas de dire si ce
+  // lien avait sa place dans cette recherche.
+  return decidable ? 'PERTINENTE' : 'INDECIDABLE';
+}
+
+/**
+ * Le tri, mesuré sur ce qu'on lui a soumis — et sur ce qu'on lui a demandé.
+ *
+ * C'est ici que la mesure précédente était **fausse**, et pas seulement
+ * incomplète. L'étage 4 ne fait pas un métier mais trois : reconnaître une
+ * sortie, écarter ce qui sort de la recherche, et n'en garder qu'un nombre
+ * borné. Compter comme « manquée » toute sortie qu'il n'a pas retenue lui
+ * reprochait donc deux comportements corrects — un concert pour adultes
+ * écarté à raison, une sortie de l'an prochain hors fenêtre — et faisait
+ * baisser son rappel à mesure que la recherche se précisait.
+ *
+ * Chaque lien tombe désormais dans une case, et une seule :
+ *
+ * * **trouvée** — pertinente, et retenue. Ce qu'on veut ;
+ * * **manquée** — pertinente, et écartée. La vraie faute ;
+ * * **bruit** — hors recherche, et retenue. L'autre faute, qui coûte une
+ *   lecture payée pour rien ;
+ * * **écartée à raison** — hors recherche, et écartée. Le travail bien fait,
+ *   qui n'apparaissait nulle part ;
+ * * **indécidable** — le corpus ne permet pas de trancher. Hors de tout
+ *   dénominateur, et affiché pour qu'on sache ce qu'on ignore.
+ */
+export interface SelectScore extends HarvestScore {
+  /** Hors recherche, et écartée : le filtre a fait son travail. */
+  rightlyDropped: number;
+  /** Le corpus ne permet pas de dire si ce lien avait sa place. */
+  undecidable: number;
+  /**
+   * Pages dont le tri a retenu exactement son plafond.
+   *
+   * Sur celles-là, une sortie pertinente écartée peut l'avoir été par le
+   * plafond et non par un mauvais jugement — les deux sont indiscernables du
+   * relevé. Elles sortent donc du rappel, et leur nombre est affiché : un
+   * rappel calculé dessus mesurerait `max_links`, pas le modèle.
+   */
+  cappedPages: number;
+}
+
+export function selectScore(
+  labels: LabelledLink[],
+  results: SelectedLink[],
+  scope: RunScope = {},
+): SelectScore {
   const submitted = results.filter((r) => r.selected !== null);
-  // Les étiquettes sont restreintes à ce qui lui a été soumis, et pas
-  // seulement les résultats. Sans ce filtre, une sortie que l'étage 3 avait
-  // déjà perdue serait comptée « manquée » par l'étage 4, qui ne l'a jamais
-  // vue — on lui reprocherait la faute du précédent, et le rappel du tri
-  // baisserait chaque fois que le dépouillement s'améliorerait.
+  // Les étiquettes sont restreintes à ce qui lui a été soumis. Sans ce filtre,
+  // une sortie que l'étage 3 avait déjà perdue serait comptée « manquée » par
+  // l'étage 4, qui ne l'a jamais vue — on lui reprocherait la faute du
+  // précédent, et son rappel baisserait chaque fois que le dépouillement
+  // s'améliorerait.
   const seen = new Set(submitted.map((r) => r.url));
-  return harvestScore(
-    labels.filter((l) => seen.has(l.url)),
-    submitted.map((r) => ({ url: r.url, harvested: r.selected === true })),
-  );
+  const keptUrls = new Set(submitted.filter((r) => r.selected === true).map((r) => r.url));
+
+  // Le plafond : quand le tri a retenu exactement son quota, on ne peut pas
+  // distinguer « écarté à tort » de « tronqué ». La page ne compte alors pas
+  // dans le rappel.
+  const capped = scope.maxLinks !== undefined && keptUrls.size >= scope.maxLinks;
+
+  let found = 0;
+  let missed = 0;
+  let noise = 0;
+  let rightlyDropped = 0;
+  let undecidable = 0;
+
+  for (const label of labels) {
+    if (!seen.has(label.url)) continue;
+    const kept = keptUrls.has(label.url);
+    switch (relevanceOf(label, scope)) {
+      case 'PERTINENTE':
+        if (kept) found += 1;
+        else missed += 1;
+        break;
+      case 'HORS_RECHERCHE':
+        if (kept) noise += 1;
+        else rightlyDropped += 1;
+        break;
+      default:
+        undecidable += 1;
+    }
+  }
+
+  const unlabelled = [...keptUrls].filter(
+    (url) => !labels.some((l) => l.url === url),
+  ).length;
+
+  const pertinentes = found + missed;
+  const judgedKept = found + noise;
+  return {
+    found,
+    missed,
+    noise,
+    rightlyDropped,
+    undecidable,
+    unlabelled,
+    cappedPages: capped ? 1 : 0,
+    // Sur une page plafonnée, le rappel mesurerait le plafond : on ne le rend
+    // pas plutôt que de rendre un chiffre qui n'accuse personne de juste.
+    recall: capped || pertinentes === 0 ? null : found / pertinentes,
+    precision: judgedKept > 0 ? found / judgedKept : null,
+  };
+}
+
+/**
+ * Les scores d'un run, rassemblés depuis ceux de ses pages.
+ *
+ * Le rappel ne se calcule **pas** sur la somme des pages : les pages saturées
+ * en sortent. Les additionner d'abord ferait rentrer le plafond dans le
+ * dénominateur par la porte de derrière — une page où le tri a pris ses huit
+ * liens et en a laissé douze compterait douze manquées, alors qu'il n'avait
+ * plus le droit d'en prendre un seul. D'où deux comptes : celui qu'on affiche,
+ * qui dit ce qui s'est passé, et celui du rappel, qui ne retient que les pages
+ * où le modèle a eu les mains libres.
+ *
+ * La précision, elle, se calcule bien sur tout : ce que le tri a retenu, il
+ * l'a retenu de son plein gré, plafond ou pas.
+ */
+export function sumSelect(pages: SelectScore[]): SelectScore {
+  const total: SelectScore = {
+    found: 0,
+    missed: 0,
+    noise: 0,
+    unlabelled: 0,
+    rightlyDropped: 0,
+    undecidable: 0,
+    cappedPages: 0,
+    recall: null,
+    precision: null,
+  };
+  let recallFound = 0;
+  let recallMissed = 0;
+  for (const page of pages) {
+    total.found += page.found;
+    total.missed += page.missed;
+    total.noise += page.noise;
+    total.unlabelled += page.unlabelled;
+    total.rightlyDropped += page.rightlyDropped;
+    total.undecidable += page.undecidable;
+    total.cappedPages += page.cappedPages;
+    if (page.cappedPages === 0) {
+      recallFound += page.found;
+      recallMissed += page.missed;
+    }
+  }
+  const pertinentes = recallFound + recallMissed;
+  const kept = total.found + total.noise;
+  total.recall = pertinentes > 0 ? recallFound / pertinentes : null;
+  total.precision = kept > 0 ? total.found / kept : null;
+  return total;
+}
+
+/** Le même repli pour le dépouillement, qui n'a pas de plafond à écarter. */
+export function sumHarvest(pages: HarvestScore[]): HarvestScore {
+  const total: HarvestScore = {
+    found: 0,
+    missed: 0,
+    noise: 0,
+    unlabelled: 0,
+    recall: null,
+    precision: null,
+  };
+  for (const page of pages) {
+    total.found += page.found;
+    total.missed += page.missed;
+    total.noise += page.noise;
+    total.unlabelled += page.unlabelled;
+  }
+  const pertinentes = total.found + total.missed;
+  const kept = total.found + total.noise;
+  total.recall = pertinentes > 0 ? total.found / pertinentes : null;
+  total.precision = kept > 0 ? total.found / kept : null;
+  return total;
 }
 
 // ═══════════════════════════════════════════════════ étage 5 — la lecture
