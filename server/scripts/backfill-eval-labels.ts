@@ -29,7 +29,7 @@ interface Aspect {
 
 /** Une ligne de l'ancienne table, telle que la migration 0025 l'a laissée. */
 interface LegacyRow {
-  readingId: number;
+  sortieId: number;
   createdById: number;
   aspects: string;
   verdicts: string;
@@ -67,14 +67,14 @@ export function expectedFrom(aspectsRaw: string, verdictsRaw: string): Record<st
 async function main(): Promise<void> {
   const legacy = await prisma.$queryRaw<LegacyRow[]>`
     SELECT
-      l.readingId    AS readingId,
+      l.sortieId    AS sortieId,
       l.createdById  AS createdById,
       l.aspects      AS aspects,
       l.verdicts     AS verdicts,
       l.note         AS note,
       IFNULL(l.validatedAt, l.createdAt) AS labelledAt
     FROM \`_LegacyEvalExtraction\` l
-    LEFT JOIN \`EvalFiche\` f ON f.readingId = l.readingId
+    LEFT JOIN \`EvalFiche\` f ON f.sortieId = l.sortieId
     WHERE f.id IS NULL
   `;
 
@@ -95,7 +95,7 @@ async function main(): Promise<void> {
     }
     await prisma.evalFiche.create({
       data: {
-        readingId: row.readingId,
+        sortieId: row.sortieId,
         createdById: row.createdById,
         expected: JSON.stringify(expected),
         note: row.note ?? '',

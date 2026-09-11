@@ -413,16 +413,16 @@ def play_run(
                 result["pageId"] = page_id
                 api.report_eval_links(run_id, result)
             elif stage == "READ":
-                reading_id = int(item["readingId"])
+                sortie_id = int(item["sortieId"])
                 result = read_from_html(html, str(item["url"]), fetcher=Fetcher())
-                result["readingId"] = reading_id
+                result["sortieId"] = sortie_id
                 # `url` est l'adresse *lue* — celle que l'échange de langue a
                 # pu changer. Le site la range sous `readUrl` ; la clé `url`
                 # n'a pas de place dans son schéma.
                 result["readUrl"] = result.pop("url", "")
                 api.report_eval_read(run_id, result)
             else:
-                reading_id = int(item["readingId"])
+                sortie_id = int(item["sortieId"])
                 lecture = read_from_html(html, str(item["url"]), fetcher=Fetcher())
                 result = extract_page(
                     str(item["url"]),
@@ -432,7 +432,7 @@ def play_run(
                     log=log,
                     declared_dates=lecture.get("dates", []),
                 )
-                result["readingId"] = reading_id
+                result["sortieId"] = sortie_id
                 api.report_eval_extract(run_id, result)
             traites += 1
     except ApiError as err:

@@ -77,15 +77,15 @@ model User {
   role         Role     @default(USER)
   createdAt    DateTime @default(now())
 
-  events          Event[]       @relation("EventAuthor")
-  moderatedEvents Event[]       @relation("EventModerator")
+  events          Event[]      @relation("EventAuthor")
+  moderatedEvents Event[]      @relation("EventModerator")
   apiKeys         ApiKey[]
-  scraperRuns     ScraperRun[]  @relation("ScraperRunRequester")
-  evalAgendas     EvalAgenda[]  @relation("EvalAgendaAuthor")
-  evalReadings    EvalReading[] @relation("EvalReadingAuthor")
-  evalFiches      EvalFiche[]   @relation("EvalFicheAuthor")
-  evalLinkLabels  EvalLink[]    @relation("EvalLinkLabeller")
-  evalRuns        EvalRun[]     @relation("EvalRunRequester")
+  scraperRuns     ScraperRun[] @relation("ScraperRunRequester")
+  evalAgendas     EvalAgenda[] @relation("EvalAgendaAuthor")
+  evalSorties     EvalSortie[] @relation("EvalSortieAuthor")
+  evalFiches      EvalFiche[]  @relation("EvalFicheAuthor")
+  evalLinkLabels  EvalLink[]   @relation("EvalLinkLabeller")
+  evalRuns        EvalRun[]    @relation("EvalRunRequester")
 }
 
 /// Clé d'API pour les programmes tiers. La clé en clair n'est jamais stockée :
@@ -212,7 +212,7 @@ model Event {
   /// Ce qu'un modérateur a corrigé avant d'approuver cette fiche.
   corrections  EventCorrection[]
   /// Les pages du banc de lecture dont cette sortie est la vérité de référence.
-  evalReadings EvalReading[]
+  evalSorties  EvalSortie[]
   /// Les recherches de source demandées sur cette sortie depuis sa fiche.
   sourceHunts  ScraperRun[]      @relation("SourceHunt")
 
@@ -715,33 +715,24 @@ model EvalLink {
   /// Ce que ce lien est. Jamais nul : la ligne n'existerait pas.
   verdict EvalVerdict
 
-  // ── ce que la sortie est, tel que le contexte du lien le montre ────────
+  // ── vers quelle sortie ce lien mène ────────────────────────────────────
   //
-  // `verdict` dit ce que le lien **est** — stable, indépendant de toute
-  // recherche. Ces trois-là disent ce que la sortie est, et c'est d'eux que
-  // la **pertinence se dérive** au moment de la mesure.
+  // Un lien d'agenda ne décrit pas une sortie : il y mène. Ce qu'elle est —
+  // sa date, son lieu, son âge — appartient à `EvalSortie`, qui le dit une
+  // fois pour les étages 4, 5 et 6.
   //
-  // Pourquoi dériver plutôt qu'étiqueter « pertinente » : la pertinence n'est
-  // pas une propriété du lien. Le même atelier est pertinent pour « musées
-  // Île-de-France » et hors sujet pour « spectacles Seine-Maritime ». En faire
-  // une étiquette la rendrait fausse au premier changement de configuration —
-  // exactement la péremption que la séparation corpus / run a supprimée.
+  // Ce champ a remplacé trois colonnes (`dateHint`, `placeHint`, `audience`)
+  // qui redécrivaient ici, en plus pauvre, ce qu'`EvalSortie` disait déjà —
+  // et sans que rien ne joigne les deux descriptions. Leur contenu a été
+  // versé dans les sorties correspondantes.
   //
-  // Trois états chacun, comme partout ailleurs dans le corpus : `null`,
-  // personne n'a regardé ; vide, l'agenda n'affiche rien, et c'est une
-  // étiquette ; une valeur, la voici. Un indice vide ne peut jamais écarter
-  // une sortie — il la rend *indécidable*, et l'indécidable ne compte dans
-  // aucun dénominateur. C'est la règle que le prompt de l'étage 4 s'applique
-  // à lui-même : « dans le doute sur une date ou un lieu que le contexte
-  // n'indique pas, retiens le lien ». La mesure ne peut pas être plus sévère
-  // que la consigne.
-
-  /// La date que l'agenda affiche à côté du lien, en `YYYY-MM-DD`.
-  dateHint  String?       @db.VarChar(40)
-  /// La ville ou le code postal que l'agenda affiche. Une ville en toutes
-  /// lettres ne situe rien de sûr : la mesure ne l'utilise pas pour écarter.
-  placeHint String?       @db.VarChar(120)
-  audience  EvalAudience?
+  // Nul sur un lien étiqueté `SORTIE` veut dire : personne n'a encore décrit
+  // cette sortie. Le lien est alors *indécidable* pour l'étage 4 — il ne
+  // compte ni pour ni contre —, et il apparaît dans la liste de travail.
+  // Nul sur tout autre verdict est l'état normal : une pagination n'a pas de
+  // sortie derrière elle.
+  sortie   EvalSortie? @relation(fields: [sortieId], references: [id], onDelete: SetNull)
+  sortieId Int?
 
   /// D'où vient l'étiquette. `HUMAIN` : quelqu'un l'a tranchée dans la
   /// console. `MODERATION` : la page pointée par ce lien est devenue une
@@ -763,6 +754,7 @@ model EvalLink {
   @@unique([pageId, url])
   @@index([pageId])
   @@index([verdict])
+  @@index([sortieId])
 }
 
 enum EvalLinkSource {
@@ -781,11 +773,16 @@ enum EvalLabelOrigin {
 }
 
 /**
- * Pour qui est la sortie, d'après ce que le contexte du lien montre.
- * `INDETERMINE` est une étiquette de plein droit, pas un silence : le contexte
- * d'un lien ne dit presque jamais le public, et prétendre le savoir
- * fabriquerait de faux reproches contre le tri. Le silence, lui, est l'absence
- * de valeur — `null`.
+ * Pour qui la sortie est, d'après sa page.
+ * `INDETERMINE` est une étiquette de plein droit — « la page n'annonce aucun
+ * public » —, à distinguer du silence, qui est l'absence de valeur (`null`).
+ * Sans les deux états, « personne n'a regardé » et « la page n'en dit rien »
+ * se confondraient.
+ * Renseignée à part de `ageMin`/`ageMax` parce qu'une page peut afficher
+ * « jeune public » sans le moindre chiffre, et l'inverse. Quand elle est nulle,
+ * `audienceOf` la déduit de l'âge : c'est ce qui rend la moisson depuis la
+ * modération utile à l'étage 4, `Event` portant les âges mais aucun champ de
+ * public.
  */
 enum EvalAudience {
   ENFANTS
@@ -800,9 +797,18 @@ enum EvalVerdict {
   AUTRE
 }
 
-/// Une page du corpus de lecture : le HTML d'un jour, gelé, et ce qu'un humain
-/// dit qu'on doit pouvoir en tirer.
-model EvalReading {
+/// **Une sortie du corpus** : son HTML gelé, et ce qu'un humain dit qu'elle est.
+///
+/// C'est l'objet des étages 4, 5 et 6, et il n'y en a qu'un. Une sortie est
+/// décrite **une fois, complètement** ; chaque étage lit ensuite le
+/// sous-ensemble dont il répond, et ignore le reste — l'étage 4 regarde la
+/// date, le lieu et l'âge, jamais le tarif, qui est pourtant sur l'étiquette.
+///
+/// C'est ce qui manquait. L'étage 4 avait un temps ses propres « indices »
+/// posés sur le lien d'agenda : la même sortie s'y trouvait décrite une
+/// seconde fois, plus pauvrement, sans que rien ne joigne les deux. Un lien
+/// d'agenda ne décrit plus une sortie — il **pointe** vers elle.
+model EvalSortie {
   id    Int    @id @default(autoincrement())
   url   String @unique @db.VarChar(500)
   label String @default("")
@@ -836,31 +842,66 @@ model EvalReading {
   /// exactement la question de cet étage.
   expectedMarkers String? @db.Text
 
+  // ── ce que l'étage 4 juge : la date, le lieu, l'âge ────────────────────
+  //
+  // Stockés en **faits structurés**, et non dans la prose de `EvalFiche`.
+  // Celle-ci porte bien « du 2026-09-20 au 2026-09-22 », « dès 3 ans »,
+  // « 12 rue X, 75012, Paris » — mais ce sont des chaînes destinées à être
+  // comparées à ce que le modèle a rendu, et leur forme est définie en Python.
+  // Les relire ici demanderait d'écrire en TypeScript un analyseur du format
+  // d'un autre langage : deux implémentations d'une seule convention, qui
+  // divergeraient en silence au premier changement de rendu.
+  //
+  // Une date se compare à une fenêtre, un code postal à des préfixes, un âge
+  // à « jeune public ». Il faut donc les faits, pas leur mise en forme. C'est
+  // aussi ce qui rend la moisson depuis la modération gratuite : `Event` et
+  // `Venue` portent déjà ces colonnes, structurées, vérifiées par un humain.
+  //
+  // `null` partout : personne n'a regardé. La sortie est alors *indécidable*
+  // et n'entre dans aucun dénominateur — jamais un reproche au modèle.
+
+  /// Premier et dernier jour de la sortie. `dateEnd` nul sur une date unique.
+  dateStart  DateTime?     @db.Date
+  dateEnd    DateTime?     @db.Date
+  /// Le code postal, à cinq chiffres. Une ville en toutes lettres ne situe
+  /// rien de comparable : elle a sa place dans `EvalFiche`, pas ici.
+  postalCode String?       @db.VarChar(10)
+  /// L'âge annoncé. Les deux nuls sans être `audience` nulle veut dire que la
+  /// page annonce un public sans donner de tranche — « en famille ».
+  ageMin     Int?
+  ageMax     Int?
+  /// À qui la sortie s'adresse. Renseignée à part parce qu'une page peut
+  /// afficher « jeune public » sans le moindre chiffre, et l'inverse.
+  audience   EvalAudience?
+
   // ── d'où vient cette page, et pourquoi elle est au corpus
-  origin      EvalReadingOrigin @default(MANUEL)
+  origin      EvalSortieOrigin @default(MANUEL)
   /// La sortie approuvée que le pipeline avait publiée depuis cette page.
-  event       Event?            @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  event       Event?           @relation(fields: [eventId], references: [id], onDelete: SetNull)
   eventId     Int?
   /// Quand le pipeline avait lu cette page, et ce qu'il en avait décidé. C'est
   /// de la provenance : ça dit pourquoi la page mérite d'être au corpus, ça ne
   /// dit rien de ce qu'elle contient.
   readAt      DateTime?
-  runDecision String            @default("") @db.VarChar(40)
-  runReason   String            @default("") @db.Text
+  runDecision String           @default("") @db.VarChar(40)
+  runReason   String           @default("") @db.Text
 
   createdAt   DateTime @default(now())
-  author      User     @relation("EvalReadingAuthor", fields: [createdById], references: [id])
+  author      User     @relation("EvalSortieAuthor", fields: [createdById], references: [id])
   createdById Int
 
   fiche              EvalFiche?
   evalReadResults    EvalReadResult[]
   evalExtractResults EvalExtractResult[]
+  /// Les liens d'agenda qui mènent à cette sortie. Plusieurs agendas peuvent
+  /// annoncer la même : c'est une seule sortie, décrite une seule fois.
+  links              EvalLink[]
 
   @@index([capture])
   @@index([origin])
 }
 
-enum EvalReadingOrigin {
+enum EvalSortieOrigin {
   /// Saisie à la main dans la console.
   MANUEL
   /// Le pipeline en a tiré une sortie, qu'un modérateur a approuvée.
@@ -908,8 +949,8 @@ model EvalFiche {
   note       String   @default("") @db.Text
   labelledAt DateTime @default(now())
 
-  reading   EvalReading @relation(fields: [readingId], references: [id], onDelete: Cascade)
-  readingId Int         @unique
+  sortie   EvalSortie @relation(fields: [sortieId], references: [id], onDelete: Cascade)
+  sortieId Int        @unique
 
   author      User @relation("EvalFicheAuthor", fields: [createdById], references: [id])
   createdById Int
@@ -1030,14 +1071,14 @@ model EvalReadResult {
 
   error String? @db.Text
 
-  run       EvalRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
-  runId     Int
-  reading   EvalReading @relation(fields: [readingId], references: [id], onDelete: Cascade)
-  readingId Int
+  run      EvalRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId    Int
+  sortie   EvalSortie @relation(fields: [sortieId], references: [id], onDelete: Cascade)
+  sortieId Int
 
-  @@unique([runId, readingId])
+  @@unique([runId, sortieId])
   @@index([runId])
-  @@index([readingId])
+  @@index([sortieId])
 }
 
 /// Ce qu'un run de l'étage 6 a rendu sur le texte d'une page du corpus.
@@ -1060,12 +1101,12 @@ model EvalExtractResult {
 
   error String? @db.Text
 
-  run       EvalRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
-  runId     Int
-  reading   EvalReading @relation(fields: [readingId], references: [id], onDelete: Cascade)
-  readingId Int
+  run      EvalRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId    Int
+  sortie   EvalSortie @relation(fields: [sortieId], references: [id], onDelete: Cascade)
+  sortieId Int
 
-  @@unique([runId, readingId])
+  @@unique([runId, sortieId])
   @@index([runId])
-  @@index([readingId])
+  @@index([sortieId])
 }

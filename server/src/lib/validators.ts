@@ -583,20 +583,21 @@ export const EVAL_VERDICTS = ['SORTIE', 'PAGINATION', 'SOUS_AGENDA', 'AUTRE'] as
  * rien » et qui est une étiquette de plein droit. Un indice vide ne peut
  * jamais écarter une sortie : il la rend indécidable.
  */
-const evalHints = {
-  /** La date affichée à côté du lien, en `YYYY-MM-DD`. */
-  dateHint: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal(''), z.null()]),
-  /** La ville ou le code postal affiché. */
-  placeHint: z.union([z.string().trim().max(120), z.null()]),
-  audience: z.union([z.enum(['ENFANTS', 'ADULTES', 'INDETERMINE']), z.null()]),
-};
-
-/** L'étiquette qu'un humain pose sur un lien. */
+/**
+ * L'étiquette qu'un humain pose sur un lien : ce que le lien **est**, et vers
+ * quelle sortie il mène.
+ *
+ * Il ne décrit plus la sortie. La date, le lieu et le public ont brièvement
+ * vécu ici, en double de ce que le corpus des sorties disait déjà et sans que
+ * rien ne joigne les deux ; ils sont retournés sur la sortie, qui les dit une
+ * fois pour les étages 4, 5 et 6.
+ */
 export const evalVerdictSchema = z
   .object({
     verdict: z.enum(EVAL_VERDICTS),
     note: z.string().trim().max(500),
-    ...evalHints,
+    /** La sortie vers laquelle ce lien mène. `null` : la détacher. */
+    sortieId: z.union([z.number().int().positive(), z.null()]),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, { message: 'Rien à changer' });
@@ -614,9 +615,6 @@ export const evalLinkSchema = z.object({
   verdict: z.enum(EVAL_VERDICTS).optional().default('SORTIE'),
   note: z.string().trim().max(500).optional().default(''),
   source: z.enum(['PAGE', 'MANUAL']).optional().default('MANUAL'),
-  dateHint: evalHints.dateHint.optional(),
-  placeHint: evalHints.placeHint.optional(),
-  audience: evalHints.audience.optional(),
 });
 
 /**
@@ -691,7 +689,7 @@ export const evalFailSchema = z.object({
 // ─────────────────────────────────────────── corpus de lecture (étage 5)
 
 /** Une page ajoutée au corpus de lecture. Une fiche, pas un agenda. */
-export const evalReadingSchema = z.object({
+export const evalSortieSchema = z.object({
   url: scraperUrl,
   label: z.string().trim().max(150).optional().default(''),
   note: z.string().trim().max(2000).optional().default(''),
@@ -707,7 +705,7 @@ export const evalReadingSchema = z.object({
  * page » et « pas encore étiqueté » seraient le même silence, et l'on ne
  * pourrait plus reconnaître une image inventée.
  */
-export const evalReadingLabelSchema = z
+export const evalSortieLabelSchema = z
   .object({
     expectedImage: z.union([scraperUrl, z.literal(''), z.null()]),
     expectedDates: z.union([z.array(z.string().trim().max(40)).max(400), z.null()]),
@@ -720,8 +718,30 @@ export const evalReadingLabelSchema = z
      */
     expectedMarkers: z.union([z.array(z.string().trim().min(2).max(200)).max(40), z.null()]),
     note: z.string().trim().max(2000),
+
+    // ── ce que l'étage 4 juge : la date, le lieu, l'âge ────────────────────
+    //
+    // Des faits, dans la forme où ils se comparent — une date à une fenêtre,
+    // un code postal à des préfixes. La prose équivalente vit dans `EvalFiche`
+    // et sert à l'étage 6, qui compare des chaînes à des chaînes.
+    /** Premier et dernier jour. `dateEnd` nul sur une date unique. */
+    dateStart: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.null()]),
+    dateEnd: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.null()]),
+    /** Cinq chiffres, ou rien. Une ville en toutes lettres ne se compare pas. */
+    postalCode: z.union([z.string().regex(/^\d{5}$/), z.null()]),
+    ageMin: z.union([z.number().int().min(0).max(120), z.null()]),
+    ageMax: z.union([z.number().int().min(0).max(120), z.null()]),
+    audience: z.union([z.enum(['ENFANTS', 'ADULTES', 'INDETERMINE']), z.null()]),
   })
-  .partial();
+  .partial()
+  .refine((v) => v.dateStart == null || v.dateEnd == null || v.dateEnd >= v.dateStart, {
+    message: 'La sortie ne peut pas finir avant d’avoir commencé',
+    path: ['dateEnd'],
+  })
+  .refine((v) => v.ageMin == null || v.ageMax == null || v.ageMax >= v.ageMin, {
+    message: 'L’âge maximum ne peut pas être inférieur au minimum',
+    path: ['ageMax'],
+  });
 
 /**
  * Ce que la page annonce, champ par champ : le corpus de l'étage 6.
@@ -807,7 +827,7 @@ export const evalLinkResultSchema = z.object({
 
 /** Ce qu'un run de l'étage 5 rend sur une page du corpus. */
 export const evalReadResultSchema = z.object({
-  readingId: z.number().int().positive(),
+  sortieId: z.number().int().positive(),
   readUrl: z.union([scraperUrl, z.literal('')]).optional().default(''),
   swapped: z.boolean().optional().default(false),
   text: z.string().max(200_000).optional().default(''),
@@ -824,7 +844,7 @@ export const evalReadResultSchema = z.object({
 
 /** Ce qu'un run de l'étage 6 rend sur le texte d'une page du corpus. */
 export const evalExtractResultSchema = z.object({
-  readingId: z.number().int().positive(),
+  sortieId: z.number().int().positive(),
   fiche: z.record(z.string(), z.unknown()).optional().default({}),
   aspects: z
     .array(
