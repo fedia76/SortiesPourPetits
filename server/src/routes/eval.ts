@@ -54,6 +54,7 @@ import { deleteEvalPages, readEvalPage, saveEvalPage } from '../lib/evalPages';
 import { requireRole } from '../middleware/auth';
 import {
   couverture,
+  criteresParEtage,
   extractScore,
   harvestScore,
   readScore,
@@ -1662,6 +1663,18 @@ async function linkLabelCandidates(limit: number) {
  * qu'on découvre au fil de l'eau fait abandonner un banc au bout de trois
  * semaines ; un coût annoncé se planifie.
  */
+/**
+ * Ce que chaque étage cherche à savoir, et dans quels champs il le lit.
+ *
+ * Servi plutôt que recopié dans la console : c'est la liste même que les
+ * compteurs appliquent. Deux compteurs écrits à la main ont déjà menti, dont
+ * un qui annonçait « 6/6 » sur six champs choisis arbitrairement quand l'étage
+ * en juge douze.
+ */
+evalRouter.get('/criteres', admin, async (_req, res) => {
+  res.json({ etages: criteresParEtage() });
+});
+
 evalRouter.get('/reste', admin, async (_req, res) => {
   const [jamaisRegardes, sansSortie] = await Promise.all([
     // 1. Les liens qu'un run a relevés et que personne n'a étiquetés. Tant
