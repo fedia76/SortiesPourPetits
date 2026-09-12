@@ -24,6 +24,8 @@ import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
 import type {
   EvalAgenda,
+  EvalNature,
+  EvalPageNature,
   EvalSortieLabel,
   EvalAudience,
   EvalRunScope,
@@ -32,12 +34,15 @@ import type {
   EvalLinkResult,
   EvalSortie,
   EvalCriteres,
+  EvalLabelOrigin,
   EvalReste,
   EvalSeedCounts,
   EvalVerdict,
 } from '../types';
 import {
   EVAL_AUDIENCE_HINTS,
+  EVAL_NATURE_HINTS,
+  EVAL_NATURE_LABELS,
   EVAL_AUDIENCE_LABELS,
   EVAL_RELEVANCE_HINTS,
   EVAL_RELEVANCE_LABELS,
@@ -54,6 +59,11 @@ const AUDIENCES: EvalAudience[] = ['ENFANTS', 'ADULTES', 'INDETERMINE'];
 
 const agendas = ref<EvalAgenda[]>([]);
 const sorties = ref<EvalSortie[]>([]);
+/** Le corpus de l'étage 2 : ce qu'une page est, avant qu'on en fasse rien. */
+const natures = ref<EvalNature[]>([]);
+const newNatureUrl = ref('');
+const newNature = ref<EvalPageNature>('AGENDA');
+const NATURES: EvalPageNature[] = ['AGENDA', 'SORTIE', 'PROGRAMME', 'AUTRE'];
 const seed = ref<EvalSeedCounts | null>(null);
 /**
  * Ce qui reste à faire à la main, compté.
@@ -90,12 +100,14 @@ async function load() {
   loading.value = true;
   error.value = '';
   try {
-    const [a, r] = await Promise.all([
+    const [a, r, n] = await Promise.all([
       api.get<{ agendas: EvalAgenda[] }>('/api/eval/agendas'),
       api.get<{ sorties: EvalSortie[] }>('/api/eval/sorties'),
+      api.get<{ natures: EvalNature[] }>('/api/eval/natures'),
     ]);
     agendas.value = a.agendas;
     sorties.value = r.sorties;
+    natures.value = n.natures;
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erreur';
   } finally {
@@ -132,7 +144,7 @@ async function addAgenda() {
   }
 }
 
-async function capture(kind: 'agendas' | 'sorties', id: number) {
+async function capture(kind: 'agendas' | 'sorties' | 'natures', id: number) {
   try {
     await api.post(`/api/eval/${kind}/${id}/capture`);
     notice.value = 'Capture mise en file : le worker la prendra à sa prochaine passe.';
@@ -443,6 +455,60 @@ async function viderSorties() {
   }
 }
 
+/**
+ * Mettre une page au corpus de l'étage 2, avec ce qu'elle est.
+ *
+ * La nature est posée dès l'ajout : cette table ne contient que des étiquettes.
+ * Pour dire « je ne sais pas », on n'ajoute pas la page — un corpus qui
+ * contiendrait des lignes sans réponse ferait croire à un travail fait.
+ */
+async function addNature() {
+  const url = newNatureUrl.value.trim();
+  if (!url) return;
+  try {
+    await api.post('/api/eval/natures', { url, nature: newNature.value });
+    newNatureUrl.value = '';
+    notice.value = 'Page ajoutée. Elle sera gelée par le worker.';
+    await load();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** Corriger ce qu'on avait dit d'une page. */
+async function setNature(id: number, nature: EvalPageNature) {
+  try {
+    await api.patch(`/api/eval/natures/${id}`, { nature });
+    await load();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function removeNature(page: EvalNature) {
+  if (!confirm(`Retirer « ${page.label || page.url} » du corpus de l’étage 2 ?`)) return;
+  try {
+    await api.delete(`/api/eval/natures/${page.id}`);
+    await load();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/**
+ * D'où vient une étiquette de lien.
+ *
+ * La liste comptait une dette sans dire qui l'avait contractée. Or les deux
+ * origines ne se relisent pas pareil : ce qu'on a cliqué soi-même, on sait
+ * pourquoi ; ce qui vient de la modération a été tranché ailleurs, fiche en
+ * main, et n'a jamais été revu ici.
+ */
+function venue(origin: EvalLabelOrigin): string {
+  return origin === 'MODERATION'
+    ? 'repris d’une sortie approuvée en modération'
+    : 'cliqué dans cette console';
+}
+
 /** De quoi souligner ce qui est complet, et ce que personne n'a encore touché. */
 function pleine(part: { faits: number; total: number }): string {
   if (part.faits === 0) return 'vide';
@@ -540,12 +606,11 @@ async function pour(bucket: 'approuvees' | 'abandonnees' | 'illisibles' | 'liens
 }
 
 const corpusSize = computed(() => ({
+  natures: natures.value.length,
   agendas: agendas.value.length,
   pages: agendas.value.reduce((n, a) => n + (a.pagesCaptured ?? 0), 0),
   links: agendas.value.reduce((n, a) => n + (a.labels ?? 0), 0),
   sorties: sorties.value.length,
-  // Les sorties dont l'étiquette affirme au moins quelque chose. Compter les
-  // champs n'aurait pas de sens : ils ne pèsent pas le même travail.
   // Les sorties dont l'étiquette affirme au moins quelque chose. Compter les
   // champs n'aurait pas de sens : ils ne pèsent pas le même travail.
   sortieLabels: sorties.value.filter(
@@ -571,6 +636,10 @@ const corpusSize = computed(() => ({
     </p>
 
     <div class="tiles">
+      <div class="card tile">
+        <span class="value">{{ corpusSize.natures }}</span>
+        <span class="label">page(s) au corpus de l’étage 2</span>
+      </div>
       <div class="card tile">
         <span class="value">{{ corpusSize.pages }}</span>
         <span class="label">page(s) d’agenda gelée(s)</span>
@@ -665,23 +734,127 @@ const corpusSize = computed(() => ({
           </li>
         </ul>
       </div>
+      <!--
+        Deux dettes, et elles ne se soldent pas du même geste. Les mêler sous un
+        seul compte obligeait à ouvrir chaque ligne pour savoir laquelle on
+        avait sous les yeux.
+      -->
       <div class="reste-ligne">
-        <strong>{{ reste.sansSortie.length }}</strong>
-        sortie(s) reconnues dont rien n’est affirmé
-        <span class="muted small">
-          — l’étage 4 n’a rien à quoi les comparer : elles comptent
-          <em>indécidables</em>, ni pour ni contre.
-        </span>
-        <ul v-if="reste.sansSortie.length" class="reste-detail">
-          <li v-for="lien in reste.sansSortie.slice(0, 5)" :key="lien.id">
+        <strong>{{ reste.aCreer.length }}</strong>
+        lien(s) « une sortie » dont la sortie <strong>n’existe pas</strong> au corpus
+        <p class="muted small">
+          Quelqu’un a dit que ce lien mène à une sortie, mais rien ne la
+          représente au banc : il n’y a aucun objet à décrire. Le geste est de
+          <strong>la créer</strong>.
+        </p>
+        <ul v-if="reste.aCreer.length" class="reste-detail">
+          <li v-for="lien in reste.aCreer.slice(0, 5)" :key="lien.id">
             <a :href="lien.url" target="_blank">{{ lien.text || lien.url }}</a>
-            <span class="muted small">
-              {{ lien.sortieId ? '— à décrire' : '— à créer' }}
-            </span>
+            <span class="muted small">— {{ venue(lien.origin) }}</span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="reste-ligne">
+        <strong>{{ reste.aDecrire.length }}</strong>
+        lien(s) dont la sortie <strong>existe mais n’affirme rien</strong>
+        <p class="muted small">
+          L’objet est au corpus, son étiquette est vide : ni date, ni code
+          postal, ni âge, ni public. L’étage 4 n’a rien à quoi la comparer, elle
+          compte <em>indécidable</em> — ni pour ni contre le modèle. Le geste est
+          de <strong>la décrire</strong>, ou de laisser le bouton
+          « Étiqueter les sorties publiées » le faire quand elle vient du site.
+        </p>
+        <ul v-if="reste.aDecrire.length" class="reste-detail">
+          <li v-for="lien in reste.aDecrire.slice(0, 5)" :key="lien.id">
+            <a :href="lien.url" target="_blank">{{ lien.text || lien.url }}</a>
+            <span class="muted small">— {{ venue(lien.origin) }}</span>
           </li>
         </ul>
       </div>
     </div>
+
+    <!-- ── Ce qu'une page est ─────────────────────────────────────────── -->
+    <h2>Pages — étage 2 : ce qu’une page est</h2>
+    <p class="muted small">
+      La découverte rend des adresses sans rien en dire. L’étage 2 décide où
+      chacune va — <strong>en lisant la page</strong>, d’où le HTML gelé. Et
+      l’erreur n’y est pas symétrique : prendre une sortie pour un agenda coûte
+      un appel de tri et se rattrape tout seul ; prendre un agenda pour une
+      sortie coûte <strong>tous ses liens</strong>, sans rattrapage.
+    </p>
+    <p class="muted small">
+      Mettez-y aussi des <strong>contre-exemples</strong> — une page d’accueil,
+      un article, une billetterie. Sans eux, on ne mesurerait que les cas où
+      l’étage 2 a déjà raison.
+    </p>
+    <div class="row add">
+      <input v-model="newNatureUrl" type="url" placeholder="https://exemple.fr/une-page" />
+      <select v-model="newNature" :title="EVAL_NATURE_HINTS[newNature]">
+        <option v-for="n in NATURES" :key="n" :value="n">{{ EVAL_NATURE_LABELS[n] }}</option>
+      </select>
+      <button class="btn" @click="addNature()">Ajouter au corpus</button>
+    </div>
+
+    <div v-if="natures.length" class="table-wrap card">
+      <table>
+        <thead>
+          <tr>
+            <th>Page</th>
+            <th>Capture</th>
+            <th>C’est…</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="page in natures" :key="page.id">
+            <td>
+              <div class="link-text">{{ page.label || page.url }}</div>
+              <a :href="page.url" target="_blank" class="muted small">{{ page.url }}</a>
+            </td>
+            <td class="small">
+              {{ EVAL_CAPTURE_LABELS[page.capture] }}
+              <button
+                v-if="page.capture !== 'CAPTURED'"
+                class="linklike"
+                @click="capture('natures', page.id)"
+              >
+                geler
+              </button>
+              <a
+                v-else-if="page.archived"
+                :href="`/api/eval/natures/${page.id}/html`"
+                target="_blank"
+              >
+                HTML
+              </a>
+              <div v-if="page.captureError" class="error small">{{ page.captureError }}</div>
+            </td>
+            <td>
+              <div class="chips">
+                <button
+                  v-for="n in NATURES"
+                  :key="n"
+                  class="chip"
+                  :class="{ on: page.nature === n }"
+                  :title="EVAL_NATURE_HINTS[n]"
+                  @click="setNature(page.id, n)"
+                >
+                  {{ EVAL_NATURE_LABELS[n] }}
+                </button>
+              </div>
+            </td>
+            <td>
+              <button class="linklike" @click="removeNature(page)">Retirer</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p v-else class="muted small">
+      Rien encore. Ajoutez quelques pages de chaque sorte — y compris des
+      contre-exemples.
+    </p>
 
     <!-- ── Les agendas ────────────────────────────────────────────────── -->
     <h2>Agendas — étages 3 et 4</h2>
