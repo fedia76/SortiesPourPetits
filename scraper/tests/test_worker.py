@@ -7,6 +7,7 @@ Aucun réseau : l'API du site est simulée, comme dans test_pipeline.
 from __future__ import annotations
 
 import io
+from datetime import date
 
 import pytest
 
@@ -400,60 +401,86 @@ def test_la_session_rejoue_la_connexion_mais_jamais_la_lecture():
     assert retry.allowed_methods is None
 
 
-# ═══════════════════════════════ ce sous quoi le banc déclare jouer le tri
+# ═══════════════════════════════ ce sous quoi le banc joue le tri
 
 
-def test_le_run_declare_la_fenetre_que_le_prompt_annonce():
-    """Le site mesure l'étage 4 sous la fenêtre déclarée : elle doit être la
-    vraie.
+def test_le_worker_joue_la_recherche_que_le_run_declare():
+    """La console fixe la recherche, le worker obéit.
 
-    Si `render_select` et la déclaration divergeaient, le banc reprocherait au
-    modèle d'avoir écarté une sortie que la fenêtre annoncée excluait — une
-    mesure fausse, et fausse en silence. D'où cette vérification par le prompt
+    Le sens de la flèche compte. Le worker inventait autrefois une fenêtre et
+    la déclarait au site ; c'est désormais la console qui la fixe au lancement,
+    en dates absolues, et le worker la reçoit avec le run.
+
+    Ces valeurs servent **deux fois** : elles partent dans le prompt du tri, et
+    elles servent à juger ce qu'il a rendu. Venant de la même ligne en base,
+    elles ne peuvent plus se contredire — ce que ce test vérifie par le prompt
     lui-même plutôt que par une copie des mêmes valeurs.
     """
-    config = worker._bench_config()
-    scope = worker._scope(config)
+    run = {
+        "id": 7,
+        "stage": "SELECT",
+        "recherche": {
+            "dateFrom": "2027-03-01",
+            "dateTo": "2027-03-31",
+            "postalPrefixes": ["77", "78"],
+            "maxLinks": 3,
+            "theme": "ateliers",
+        },
+    }
+    config = worker._config_du_run(run, quiet=True)
+
+    assert config.date_from.isoformat() == "2027-03-01"
+    assert config.date_to.isoformat() == "2027-03-31"
+    assert config.postal_prefixes == ["77", "78"]
+    assert config.max_links_per_agenda == 3
+
     prompt = config.render_select("https://exemple.fr/agenda", "1. a | b")
-
-    assert f"du {scope['dateFrom']} au {scope['dateTo']}" in prompt
-    assert scope["theme"] in prompt
-    assert f"Au plus {scope['maxLinks']}." in prompt
-    # Les préfixes sont la zone en chiffres : le prompt dit « Île-de-France »,
-    # le site a besoin de quoi la comparer à un code postal.
-    assert scope["postalPrefixes"] == config.postal_prefixes
-    assert config.area in prompt
+    assert "du 2027-03-01 au 2027-03-31" in prompt
+    assert "ateliers" in prompt
+    assert "Au plus 3." in prompt
 
 
-def test_le_run_est_joue_sous_la_configuration_qu_il_a_declaree(monkeypatch):
-    """Déclarer une fenêtre puis en jouer une autre serait pire que se taire.
+def test_une_fenetre_absolue_ne_bouge_pas_avec_le_calendrier():
+    """C'est toute la raison des dates absolues.
 
-    Un run réclamé à 23 h 59 et joué à 00 h 01 changerait de fenêtre en cours
-    de route si chaque étape refabriquait sa configuration. La même instance
-    doit servir aux deux.
+    Une fenêtre relative — « les trente prochains jours » — ferait qu'un même
+    run ne mesure plus la même chose selon le jour où on le rejoue : il
+    mesurerait le calendrier plutôt que la brique.
     """
-    vues: list[Config] = []
+    run = {
+        "id": 8,
+        "stage": "SELECT",
+        "recherche": {
+            "dateFrom": "2020-01-01",
+            "dateTo": "2020-01-31",
+            "postalPrefixes": ["75"],
+            "maxLinks": 8,
+            "theme": "sorties enfants",
+        },
+    }
+    config = worker._config_du_run(run, quiet=True)
 
-    class ApiDeclarante:
-        def __init__(self) -> None:
-            self.settings: dict | None = None
+    # Une fenêtre de 2020 reste en 2020, six ans après.
+    assert config.date_from.year == 2020
+    assert config.date_to.isoformat() == "2020-01-31"
 
-        def next_eval_run(self, code_ref="", model="", prompt_hash="", settings=None):
-            self.settings = settings
-            return {"id": 7, "stage": "SELECT"}
 
-        def next_eval_item(self, run_id):
-            return None
+def test_un_run_sans_recherche_retombe_sur_le_banc():
+    """Ceux mis en file avant que la console ne déclare sa recherche.
 
-        def finish_eval_run(self, run_id, status, **payload):
-            pass
+    Les laisser échouer serait pire : ils ont un corpus à jouer, et une
+    configuration de repli dit au moins quelque chose de vrai — le prompt
+    annoncera fidèlement la fenêtre utilisée.
+    """
+    config = worker._config_du_run({"id": 9, "stage": "SELECT"}, quiet=True)
 
-    api = ApiDeclarante()
-    monkeypatch.setattr(worker, "get_provider", lambda config, **kw: vues.append(config))
+    assert config.theme == "sorties enfants"
+    assert config.date_from == date.today()
 
-    bench = worker._bench_config()
-    run = api.next_eval_run(code_ref="", settings=worker._scope(bench))
-    worker.play_run(run, api, worker.Environment(api_url="https://exemple.fr", api_key="k", anthropic_key="k"), True, bench)
 
-    assert api.settings == worker._scope(bench)
-    assert vues == [bench]
+def test_une_date_illisible_ne_fait_pas_echouer_le_run():
+    """Elle retombe sur le calcul relatif, et le prompt le dira."""
+    run = {"id": 10, "stage": "SELECT", "recherche": {"dateFrom": "hier", "dateTo": ""}}
+    config = worker._config_du_run(run, quiet=True)
+
+    assert config.date_from == date.today()

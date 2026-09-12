@@ -119,6 +119,13 @@ class Config:
     #: la garder ne coûte plus rien, et le site sait filtrer par date et par
     #: distance. Passer à false pour un run strictement cantonné à sa fenêtre.
     keep_out_of_scope: bool = True
+    #: Fenêtre **absolue**, imposée de l'extérieur : `("2026-09-12",
+    #: "2026-10-12")`. Vide — le cas normal en production —, elle se calcule
+    #: depuis `horizon_days` à partir d'aujourd'hui.
+    #:
+    #: Sert au banc : un run doit pouvoir rendre le même chiffre six mois plus
+    #: tard, ce qu'une fenêtre relative interdit.
+    window: tuple[str, str] = ("", "")
     #: Départements visés par la recherche. Sert au tri, et au filtre strict
     #: si `keep_out_of_scope` est désactivé.
     postal_prefixes: list[str] = field(default_factory=lambda: list(IDF_POSTAL_PREFIXES))
@@ -171,11 +178,33 @@ class Config:
 
     @property
     def date_from(self) -> date:
-        return date.today()
+        return self._impose(0) or date.today()
 
     @property
     def date_to(self) -> date:
-        return date.today() + timedelta(days=self.horizon_days)
+        return self._impose(1) or date.today() + timedelta(days=self.horizon_days)
+
+    def _impose(self, borne: int) -> date | None:
+        """La borne de la fenêtre imposée, si elle l'est. `None` sinon.
+
+        Une recherche de production part d'aujourd'hui et court sur
+        `horizon_days` : c'est ce qu'on veut d'un scraper qui tourne tous les
+        jours. Un **run du banc**, lui, doit pouvoir rendre le même chiffre six
+        mois plus tard — une fenêtre relative le ferait mesurer le calendrier
+        plutôt que la brique. La console lui en fixe donc une, en dates
+        absolues, et elle l'emporte.
+
+        Une date illisible est ignorée plutôt que de faire échouer le run :
+        elle retombe sur le calcul relatif, ce que le prompt annoncera
+        fidèlement.
+        """
+        brut = self.window[borne] if len(self.window) > borne else ""
+        if not brut:
+            return None
+        try:
+            return date.fromisoformat(brut[:10])
+        except ValueError:
+            return None
 
     def render_search(self, queries: list[str]) -> str:
         return Template(self.search_prompt).safe_substitute(

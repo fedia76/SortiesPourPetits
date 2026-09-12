@@ -184,23 +184,23 @@ class SppApi:
         code_ref: str = "",
         model: str = "",
         prompt_hash: str = "",
-        settings: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        """Réclame un run en file, en déclarant **de quoi il est le run**.
+        """Réclame un run en file, en déclarant **ce qu'on est**.
 
-        Ces quatre renseignements ne sont pas du confort : sans eux, une courbe
+        La révision, le modèle et l'empreinte du prompt : sans eux, une courbe
         qui monte ou descend n'est attribuable à rien, et ils sont
         irrattrapables après coup — un run déjà joué ne dira jamais ce qu'il
         était.
+
+        Ce qu'on **cherche**, en revanche, ne se déclare plus ici : ça vient du
+        run, fixé au lancement depuis la console, et ça revient dans la réponse
+        sous `recherche`. La fenêtre que le modèle reçoit et celle contre
+        laquelle on le juge sont ainsi la même ligne en base, et ne peuvent pas
+        diverger.
         """
         body = self._post_json(
             "/api/eval/runs/next",
-            {
-                "codeRef": code_ref,
-                "model": model,
-                "promptHash": prompt_hash,
-                "settings": settings or {},
-            },
+            {"codeRef": code_ref, "model": model, "promptHash": prompt_hash},
         )
         return body.get("run")
 

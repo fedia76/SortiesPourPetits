@@ -27,7 +27,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .api import ApiError, SppApi
-from .config import Config, ConfigError, Environment, config_from_api, load_dotenv
+from .config import (
+    IDF_POSTAL_PREFIXES,
+    Config,
+    ConfigError,
+    Environment,
+    config_from_api,
+    load_dotenv,
+)
 from .evaluation import (
     capture_pages,
     extract_page,
@@ -309,37 +316,47 @@ def capture(job: dict[str, Any], api: SppApi, quiet: bool) -> None:
 
 
 def _bench_config() -> Config:
-    """La configuration du banc. Une seule, et toujours la même.
+    """La configuration de repli du banc.
 
-    Le banc mesure une brique et son prompt, pas les plafonds d'une recherche
-    particulière : c'est pourquoi elle ne vient d'aucun fichier et ne se règle
-    pas. Elle est construite **avant** de réclamer un run, et la même instance
-    sert à le déclarer puis à le jouer — sinon un run réclamé le 31 à 23 h 59
-    serait joué sous la fenêtre du 1er, et sa mesure serait faussée d'un jour.
+    Ne sert plus qu'aux runs mis en file **avant** que la console ne déclare sa
+    recherche — ceux-là arrivent avec des réglages vides. Un run normal apporte
+    les siens : voir `_config_du_run`.
     """
     return Config(name="banc", theme="sorties enfants")
 
 
-def _scope(config: Config) -> dict[str, Any]:
-    """Ce sous quoi le tri a été joué, dit au site.
+def _config_du_run(run: dict[str, Any], quiet: bool) -> Config:
+    """La configuration **que le run déclare**, et non celle qu'on fabriquerait.
 
-    Le site ne peut pas deviner la fenêtre d'un run, et sans elle il ne sait
-    pas si une sortie écartée l'a été à raison — elle serait comptée contre le
-    modèle. D'où cette déclaration, faite *avant* de jouer et non reconstituée
-    après coup.
+    Le sens de la flèche compte. Avant, le worker inventait une fenêtre et la
+    déclarait au site ; désormais c'est la console qui la fixe au lancement, en
+    dates absolues, et le worker obéit.
 
-    La fenêtre, le thème et le plafond sont mot pour mot ce que
-    `render_select` met dans le prompt. Les préfixes, eux, sont la zone
-    (« $area ») sous la seule forme que le site sache comparer à un code
-    postal : c'est la même contrainte, écrite en chiffres.
+    Deux choses y gagnent. D'abord ces valeurs servent **deux fois** — elles
+    partent dans le prompt du tri, et elles servent à juger ce qu'il a rendu :
+    venant du même endroit, elles ne peuvent plus se contredire. Ensuite un run
+    devient rejouable à l'identique : une fenêtre relative aurait fait qu'un
+    même run ne mesure plus la même chose selon le jour où on le rejoue.
     """
-    return {
-        "dateFrom": config.date_from.isoformat(),
-        "dateTo": config.date_to.isoformat(),
-        "postalPrefixes": list(config.postal_prefixes),
-        "maxLinks": config.max_links_per_agenda,
-        "theme": config.theme,
-    }
+    recherche = run.get("recherche") or {}
+    if not recherche:
+        if not quiet:
+            print(
+                "  Run sans recherche déclarée — configuration de repli du banc.",
+                flush=True,
+            )
+        return _bench_config()
+
+    return Config(
+        name="banc",
+        theme=str(recherche.get("theme") or "sorties enfants"),
+        postal_prefixes=[str(p) for p in (recherche.get("postalPrefixes") or [])]
+        or list(IDF_POSTAL_PREFIXES),
+        max_links_per_agenda=int(recherche.get("maxLinks") or 8),
+        # La fenêtre est absolue : `Config` la calcule d'ordinaire depuis
+        # `horizon_days`, à partir d'aujourd'hui. On la lui impose.
+        window=(str(recherche.get("dateFrom") or ""), str(recherche.get("dateTo") or "")),
+    )
 
 
 def _code_ref() -> str:
@@ -360,13 +377,7 @@ def _code_ref() -> str:
         return ""
 
 
-def play_run(
-    run: dict[str, Any],
-    api: SppApi,
-    env: Environment,
-    quiet: bool,
-    bench: Config,
-) -> None:
+def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> None:
     """Joue un run du banc : une brique, sur tout le corpus gelé.
 
     Le worker ne télécharge rien ici. Chaque entrée arrive **avec son HTML**,
@@ -388,9 +399,10 @@ def play_run(
     config = None
     log = RunLog(None, verbose=False)
     if stage in ("SELECT", "EXTRACT"):
-        # Celle-là même qui a été déclarée au moment de réclamer le run : le
-        # site mesurera le tri sous la fenêtre que le modèle a réellement vue.
-        config = bench
+        # Celle que le run déclare. Le modèle recevra donc exactement la
+        # fenêtre contre laquelle le site le jugera — elles viennent de la même
+        # ligne en base, et ne peuvent pas diverger.
+        config = _config_du_run(run, quiet)
         provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
 
     traites = 0
@@ -537,15 +549,16 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             continue
 
-        bench = _bench_config()
         try:
-            run = api.next_eval_run(code_ref=_code_ref(), settings=_scope(bench))
+            # Le worker déclare **ce qu'il est** — sa révision —, plus ce qu'on
+            # cherche : ça vient du run, fixé au lancement depuis la console.
+            run = api.next_eval_run(code_ref=_code_ref())
         except ApiError as err:
             if not args.quiet:
                 print(f"Banc injoignable ({err}) — nouvelle tentative.", file=sys.stderr, flush=True)
             run = None
         if run:
-            play_run(run, api, env, args.quiet, bench)
+            play_run(run, api, env, args.quiet)
             if args.once:
                 return 0
         elif args.once:

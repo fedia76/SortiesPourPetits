@@ -1199,6 +1199,24 @@ export interface EvalDette {
   page: { id: number; pageNo: number; agenda: { id: number; label: string } };
 }
 
+/**
+ * La recherche sous laquelle un run de tri est joué.
+ *
+ * En **dates absolues** : une fenêtre relative ferait qu'un même run ne mesure
+ * plus la même chose selon le jour où on le rejoue.
+ *
+ * Ces valeurs servent deux fois — elles partent dans le prompt de l'étage 4, et
+ * elles servent à juger ce qu'il a rendu. Venant du même endroit, elles ne
+ * peuvent pas se contredire.
+ */
+export interface EvalRecherche {
+  dateFrom: string;
+  dateTo: string;
+  postalPrefixes: string[];
+  maxLinks: number;
+  theme: string;
+}
+
 /** Le résumé chiffré d'un run, calculé à la lecture et jamais stocké. */
 export type EvalScore =
   | ({ kind: 'links' } & EvalHarvestScore &

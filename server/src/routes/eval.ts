@@ -979,7 +979,7 @@ evalRouter.post('/runs', admin, async (req, res) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const { stage, label } = parsed.data;
+  const { stage, label, recherche } = parsed.data;
   const items = await countRunnable(stage);
   if (items === 0) {
     res.status(409).json({
@@ -988,7 +988,16 @@ evalRouter.post('/runs', admin, async (req, res) => {
     return;
   }
   const run = await prisma.evalRun.create({
-    data: { stage, label, items, requestedById: req.user!.id },
+    // La recherche est fixée **ici**, au lancement, et en dates absolues. Le
+    // worker la lira au lieu de la fabriquer : c'est la console qui décide sous
+    // quoi on mesure, pas la machine qui mesure.
+    data: {
+      stage,
+      label,
+      items,
+      requestedById: req.user!.id,
+      settings: JSON.stringify(recherche ?? {}),
+    },
   });
   res.status(201).json({ run });
 });
@@ -1431,6 +1440,13 @@ evalRouter.post('/runs/next', async (req, res) => {
     res.json({ run: null });
     return;
   }
+  // Le worker déclare **ce qu'il est** — sa révision, son modèle, l'empreinte
+  // de son prompt. Il ne déclare plus **ce qu'on cherche** : ça vient du run,
+  // fixé au lancement depuis la console. Sans quoi la recherche que le modèle
+  // reçoit et celle contre laquelle on le juge pourraient diverger.
+  //
+  // Un run mis en file avant ce changement porte des réglages vides : le worker
+  // retombe alors sur la configuration par défaut du banc, et le dit.
   const claimed = await prisma.evalRun.update({
     where: { id: run.id },
     data: {
@@ -1439,10 +1455,16 @@ evalRouter.post('/runs/next', async (req, res) => {
       codeRef: parsed.data.codeRef,
       model: parsed.data.model,
       promptHash: parsed.data.promptHash,
-      settings: JSON.stringify(parsed.data.settings),
     },
   });
-  res.json({ run: { id: claimed.id, stage: claimed.stage, label: claimed.label } });
+  res.json({
+    run: {
+      id: claimed.id,
+      stage: claimed.stage,
+      label: claimed.label,
+      recherche: parseJson<Record<string, unknown>>(claimed.settings, {}),
+    },
+  });
 });
 
 /**
@@ -1818,6 +1840,31 @@ async function linkLabelCandidates(limit: number) {
  * un qui annonçait « 6/6 » sur six champs choisis arbitrairement quand l'étage
  * en juge douze.
  */
+/**
+ * La recherche que le formulaire propose par défaut.
+ *
+ * Servie plutôt qu'écrite dans la console : c'est la configuration du banc, et
+ * elle doit être la même pour tous ceux qui lancent un run — sinon deux
+ * personnes mesureraient sous deux fenêtres sans s'en apercevoir.
+ *
+ * La fenêtre part d'aujourd'hui, mais elle est **figée en dates absolues** dès
+ * que le run est lancé : c'est ce qui rend un run rejouable à l'identique.
+ */
+evalRouter.get('/recherche', admin, async (_req, res) => {
+  const aujourdhui = new Date();
+  const dans = (jours: number) =>
+    new Date(aujourdhui.getTime() + jours * 86400000).toISOString().slice(0, 10);
+  res.json({
+    recherche: {
+      dateFrom: dans(0),
+      dateTo: dans(30),
+      postalPrefixes: ['75', '77', '78', '91', '92', '93', '94', '95'],
+      maxLinks: 8,
+      theme: 'sorties enfants',
+    },
+  });
+});
+
 evalRouter.get('/criteres', admin, async (_req, res) => {
   res.json({ etages: criteresParEtage() });
 });
