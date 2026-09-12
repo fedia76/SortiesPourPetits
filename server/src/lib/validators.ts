@@ -689,6 +689,33 @@ export const evalFailSchema = z.object({
 // ─────────────────────────────────────────── corpus de lecture (étage 5)
 
 /** Une page ajoutée au corpus de lecture. Une fiche, pas un agenda. */
+export const EVAL_NATURES = ['AGENDA', 'SORTIE', 'PROGRAMME', 'AUTRE'] as const;
+
+/**
+ * Une page mise au corpus de l'étage 2, avec ce qu'elle **est**.
+ *
+ * La nature est obligatoire dès la création : cette table ne contient que des
+ * étiquettes, et une ligne sans nature dirait « quelqu'un a regardé sans rien
+ * conclure », ce qui n'a pas de sens. Pour dire « je ne sais pas », on
+ * n'ajoute pas la page.
+ */
+export const evalNatureSchema = z.object({
+  url: scraperUrl,
+  nature: z.enum(EVAL_NATURES),
+  label: z.string().trim().max(150).optional().default(''),
+  note: z.string().trim().max(2000).optional().default(''),
+});
+
+/** Corriger ce qu'on avait dit d'une page. */
+export const evalNaturePatchSchema = z
+  .object({
+    nature: z.enum(EVAL_NATURES),
+    label: z.string().trim().max(150),
+    note: z.string().trim().max(2000),
+  })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, { message: 'Rien à changer' });
+
 export const evalSortieSchema = z.object({
   url: scraperUrl,
   label: z.string().trim().max(150).optional().default(''),

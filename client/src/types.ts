@@ -1103,6 +1103,55 @@ export interface EvalSortieLabel {
 }
 
 /**
+ * **Groupe 1 du corpus** : ce qu'une page *est*, avant qu'on en fasse quoi que
+ * ce soit. C'est la question de l'étage 2.
+ *
+ * L'erreur n'y est pas symétrique, et c'est ce qui rend la mesure utile :
+ * prendre une sortie pour un agenda coûte un appel de tri et se rattrape tout
+ * seul ; prendre un agenda pour une sortie coûte **tous ses liens**, sans
+ * rattrapage.
+ */
+export interface EvalNature {
+  id: number;
+  url: string;
+  label: string;
+  capture: EvalCaptureStatus;
+  captureError: string | null;
+  capturedAt: string | null;
+  chars: number;
+  archived: boolean;
+  /** Ce que la page est, d'après un humain. Jamais nul : c'est l'étiquette. */
+  nature: EvalPageNature;
+  note: string;
+  labelledAt: string;
+  createdAt: string;
+  author?: { id: number; displayName: string };
+}
+
+export type EvalPageNature = 'AGENDA' | 'SORTIE' | 'PROGRAMME' | 'AUTRE';
+
+export const EVAL_NATURE_LABELS: Record<EvalPageNature, string> = {
+  AGENDA: 'un agenda',
+  SORTIE: 'une sortie',
+  PROGRAMME: 'un programme',
+  AUTRE: 'autre chose',
+};
+
+export const EVAL_NATURE_HINTS: Record<EvalPageNature, string> = {
+  AGENDA:
+    'Une liste qui renvoie vers des fiches. Part au dépouillement. La prendre ' +
+    'pour une sortie coûte tous ses liens, sans rattrapage.',
+  SORTIE: 'La fiche d’un événement précis. Saute directement à la lecture.',
+  PROGRAMME:
+    'Un festival qui tient sur une page : plusieurs sorties reliées par des ' +
+    'ancres. Lue d’un bloc, on en attend plusieurs fiches.',
+  AUTRE:
+    'Ni l’un ni l’autre — une page d’accueil, un article, une billetterie. ' +
+    'Ces contre-exemples comptent : sans eux on ne mesurerait que les cas où ' +
+    'l’étage 2 a déjà raison.',
+};
+
+/**
  * Ce que chaque étage cherche à savoir, et dans quels champs de l'étiquette il
  * le lit. Servi par le serveur, jamais recopié : c'est la liste même que les
  * compteurs appliquent.
@@ -1128,16 +1177,26 @@ export interface EvalReste {
   /** Par page d'agenda : les liens relevés que personne n'a tranchés. */
   jamaisRegardes: { pageId: number; url: string; label: string; manquants: number }[];
   /**
-   * Les liens dont on sait que c'est une sortie, mais dont rien n'est affirmé.
-   * `sortieId` nul : la sortie est à créer. Renseigné : elle est à décrire.
+   * Le lien dit « une sortie », mais **aucune sortie n'existe au corpus**.
+   * L'objet est à créer avant de pouvoir rien en affirmer.
    */
-  sansSortie: {
-    id: number;
-    url: string;
-    text: string;
-    sortieId: number | null;
-    page: { id: number; pageNo: number; agenda: { id: number; label: string } };
-  }[];
+  aCreer: EvalDette[];
+  /**
+   * La sortie **existe**, mais son étiquette n'affirme rien que l'étage 4
+   * puisse lire — ni date, ni code postal, ni âge, ni public.
+   */
+  aDecrire: EvalDette[];
+}
+
+/** Un lien « une sortie » que l'étage 4 ne peut pas juger, et pourquoi. */
+export interface EvalDette {
+  id: number;
+  url: string;
+  text: string;
+  sortieId: number | null;
+  /** `HUMAIN` : cliqué dans la console. `MODERATION` : repris d'une sortie approuvée. */
+  origin: EvalLabelOrigin;
+  page: { id: number; pageNo: number; agenda: { id: number; label: string } };
 }
 
 /** Le résumé chiffré d'un run, calculé à la lecture et jamais stocké. */

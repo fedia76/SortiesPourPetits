@@ -77,6 +77,8 @@ import {
   evalEtiquetteSchema,
   evalLinkResultSchema,
   evalLinkSchema,
+  evalNatureSchema,
+  evalNaturePatchSchema,
   evalNextSchema,
   evalReadResultSchema,
   evalSortieLabelSchema,
@@ -843,6 +845,126 @@ evalRouter.delete('/sorties', admin, async (_req, res) => {
   res.json({ removed: total, handLabelled: saisies });
 });
 
+// ═══════════════════════ le corpus de l'étage 2 : ce qu'une page est
+//
+// La découverte rend des adresses sans rien en dire. L'étage 2 décide où
+// chacune va — agenda, sortie, programme, ou rien du tout — **en lisant la
+// page**. D'où le HTML gelé : une étiquette posée sur une adresse nue ne serait
+// rejouable contre rien.
+//
+// L'erreur n'y est pas symétrique, et c'est pourquoi la mesurer vaut le coup :
+// prendre une sortie pour un agenda se rattrape tout seul, prendre un agenda
+// pour une sortie coûte tous ses liens.
+
+evalRouter.get('/natures', admin, async (_req, res) => {
+  const natures = await prisma.evalNature.findMany({
+    orderBy: { createdAt: 'desc' },
+    include: { author: { select: { id: true, displayName: true } } },
+  });
+  res.json({
+    natures: natures.map(({ htmlPath, ...rest }) => ({ ...rest, archived: Boolean(htmlPath) })),
+  });
+});
+
+/**
+ * Mettre une page au corpus de l'étage 2, avec ce qu'elle est.
+ *
+ * La nature est obligatoire : cette table ne contient que des étiquettes. Pour
+ * dire « je ne sais pas », on n'ajoute pas la page.
+ */
+evalRouter.post('/natures', admin, async (req, res) => {
+  const parsed = evalNatureSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  try {
+    const nature = await prisma.evalNature.create({
+      data: { ...parsed.data, createdById: req.user!.id },
+    });
+    res.status(201).json({ nature: { ...nature, archived: false } });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      res.status(409).json({ error: 'Cette page est déjà au corpus' });
+      return;
+    }
+    throw e;
+  }
+});
+
+evalRouter.patch('/natures/:id(\\d+)', admin, async (req, res) => {
+  const parsed = evalNaturePatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  try {
+    const nature = await prisma.evalNature.update({
+      where: { id: Number(req.params.id) },
+      data: { ...parsed.data, labelledAt: new Date() },
+    });
+    res.json({ nature: { ...nature, archived: Boolean(nature.htmlPath) } });
+  } catch {
+    res.status(404).json({ error: 'Page introuvable' });
+  }
+});
+
+evalRouter.delete('/natures/:id(\\d+)', admin, async (req, res) => {
+  try {
+    const nature = await prisma.evalNature.findUnique({
+      where: { id: Number(req.params.id) },
+      select: { htmlPath: true },
+    });
+    await prisma.evalNature.delete({ where: { id: Number(req.params.id) } });
+    await deleteEvalPages([nature?.htmlPath ?? null]);
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: 'Page introuvable' });
+  }
+});
+
+/**
+ * Remettre une page en file de capture.
+ *
+ * Refusé si elle est déjà gelée : recapturer réécrirait le HTML que l'étiquette
+ * décrit, et l'étiquette se retrouverait à parler d'une page qui n'existe plus.
+ */
+evalRouter.post('/natures/:id(\\d+)/capture', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const nature = await prisma.evalNature.findUnique({ where: { id }, select: { capture: true } });
+  if (!nature) {
+    res.status(404).json({ error: 'Page introuvable' });
+    return;
+  }
+  if (nature.capture === 'CAPTURED') {
+    res.status(409).json({
+      error:
+        'Cette page est déjà capturée. Recapturer réécrirait le HTML que ' +
+        'l’étiquette décrit : créez plutôt une nouvelle entrée.',
+    });
+    return;
+  }
+  const updated = await prisma.evalNature.update({
+    where: { id },
+    data: { capture: 'QUEUED', captureError: null },
+  });
+  res.json({ nature: { ...updated, archived: Boolean(updated.htmlPath) } });
+});
+
+/** Le HTML gelé d'une page du corpus de l'étage 2. */
+evalRouter.get('/natures/:id(\\d+)/html', admin, async (req, res) => {
+  const nature = await prisma.evalNature.findUnique({
+    where: { id: Number(req.params.id) },
+    select: { htmlPath: true },
+  });
+  if (!nature?.htmlPath) {
+    res.status(404).json({ error: 'Aucun HTML gelé pour cette page' });
+    return;
+  }
+  const html = await readEvalPage(nature.htmlPath);
+  res.type('html').send(html);
+});
+
 // ═══════════════════════════════════════════════════════════════ LES RUNS
 
 /**
@@ -1175,12 +1297,23 @@ evalRouter.post('/capture/next', async (_req, res) => {
     where: { capture: 'QUEUED' },
     orderBy: { createdAt: 'asc' },
   });
-  if (!sortie) {
+  if (sortie) {
+    await prisma.evalSortie.update({ where: { id: sortie.id }, data: { capture: 'RUNNING' } });
+    res.json({ job: { kind: 'sortie', id: sortie.id, url: sortie.url, pages: 1 } });
+    return;
+  }
+  // Le corpus de l'étage 2 passe en dernier : c'est le plus récent, et le moins
+  // pressé — rien ne dépend de lui pour jouer un run.
+  const nature = await prisma.evalNature.findFirst({
+    where: { capture: 'QUEUED' },
+    orderBy: { createdAt: 'asc' },
+  });
+  if (!nature) {
     res.json({ job: null });
     return;
   }
-  await prisma.evalSortie.update({ where: { id: sortie.id }, data: { capture: 'RUNNING' } });
-  res.json({ job: { kind: 'sortie', id: sortie.id, url: sortie.url, pages: 1 } });
+  await prisma.evalNature.update({ where: { id: nature.id }, data: { capture: 'RUNNING' } });
+  res.json({ job: { kind: 'nature', id: nature.id, url: nature.url, pages: 1 } });
 });
 
 evalRouter.post('/capture/agenda/:id(\\d+)', bigBody, async (req, res) => {
@@ -1225,26 +1358,39 @@ evalRouter.post('/capture/agenda/:id(\\d+)', bigBody, async (req, res) => {
   res.json({ ok: true, pages: parsed.data.pages.length });
 });
 
-evalRouter.post('/capture/sortie/:id(\\d+)', bigBody, async (req, res) => {
+/**
+ * Le HTML gelé d'une page à une seule page — une sortie, ou une page du corpus
+ * de l'étage 2. Le geste est le même, seule la table change.
+ */
+async function rendreCapture(
+  table: 'sortie' | 'nature',
+  id: number,
+  page: { html?: string; chars: number },
+) {
+  const archived = page.html ? await saveEvalPage(page.html) : '';
+  const data = {
+    capture: 'CAPTURED' as const,
+    captureError: null,
+    capturedAt: new Date(),
+    chars: page.chars,
+    htmlPath: archived || null,
+  };
+  if (table === 'sortie') await prisma.evalSortie.update({ where: { id }, data });
+  else await prisma.evalNature.update({ where: { id }, data });
+}
+
+evalRouter.post('/capture/:kind(sortie|nature)/:id(\\d+)', bigBody, async (req, res) => {
   const parsed = evalCaptureSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const id = Number(req.params.id);
-  const page = parsed.data.pages[0];
-  const archived = page.html ? await saveEvalPage(page.html) : '';
   try {
-    await prisma.evalSortie.update({
-      where: { id },
-      data: {
-        capture: 'CAPTURED',
-        captureError: null,
-        capturedAt: new Date(),
-        chars: page.chars,
-        htmlPath: archived || null,
-      },
-    });
+    await rendreCapture(
+      req.params.kind as 'sortie' | 'nature',
+      Number(req.params.id),
+      parsed.data.pages[0],
+    );
   } catch {
     res.status(404).json({ error: 'Page introuvable' });
     return;
@@ -1252,7 +1398,7 @@ evalRouter.post('/capture/sortie/:id(\\d+)', bigBody, async (req, res) => {
   res.json({ ok: true });
 });
 
-evalRouter.post('/capture/:kind(agenda|sortie)/:id(\\d+)/fail', async (req, res) => {
+evalRouter.post('/capture/:kind(agenda|sortie|nature)/:id(\\d+)/fail', async (req, res) => {
   const parsed = evalFailSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Requête invalide' });
@@ -1262,6 +1408,7 @@ evalRouter.post('/capture/:kind(agenda|sortie)/:id(\\d+)/fail', async (req, res)
   const data = { capture: 'FAILED' as const, captureError: parsed.data.error };
   try {
     if (req.params.kind === 'agenda') await prisma.evalAgenda.update({ where: { id }, data });
+    else if (req.params.kind === 'nature') await prisma.evalNature.update({ where: { id }, data });
     else await prisma.evalSortie.update({ where: { id }, data });
     res.json({ ok: true });
   } catch {
@@ -1709,6 +1856,11 @@ evalRouter.get('/reste', admin, async (_req, res) => {
         url: true,
         text: true,
         sortieId: true,
+        // Qui a posé l'étiquette : `HUMAIN` — quelqu'un a cliqué « une sortie »
+        // dans la console ; `MODERATION` — le bouton « Liens d'agenda déjà
+        // tranchés » l'a reprise d'une sortie approuvée. Sans ça, la liste
+        // compte une dette sans dire d'où elle vient.
+        origin: true,
         sortie: { select: { expected: true, audience: true } },
         page: { select: { id: true, pageNo: true, agenda: { select: { id: true, label: true } } } },
       },
@@ -1720,16 +1872,24 @@ evalRouter.get('/reste', admin, async (_req, res) => {
   // fouiller du JSON en base coûterait une requête illisible et sans index
   // pour un filtre que le serveur fait en mémoire sans effort. À revoir si le
   // corpus dépasse quelques dizaines de milliers de sorties.
-  const sansFait = sansSortie
-    .filter((lien) => {
-      if (!lien.sortie) return true;
-      const e = parseJson<FicheRendue>(lien.sortie.expected, {});
-      return (
-        !e.dateStart && !e.venuePostalCode && !e.ageMax && lien.sortie.audience === null
-      );
-    })
-    .slice(0, 200)
-    .map(({ sortie, ...reste }) => reste);
+  // Deux dettes, et elles ne se soldent pas du même geste : ou bien la sortie
+  // n'existe pas au corpus — il faut la créer —, ou bien elle existe et
+  // n'affirme rien — il faut la décrire. Les mêler sous un seul compte obligeait
+  // à ouvrir chaque ligne pour savoir laquelle des deux on avait sous les yeux.
+  //
+  // Le tri se fait ici et non en SQL : les faits vivent dans l'étiquette, et
+  // fouiller du JSON en base coûterait une requête illisible et sans index pour
+  // un filtre que le serveur fait en mémoire sans effort. À revoir si le corpus
+  // dépasse quelques dizaines de milliers de sorties.
+  const muette = (lien: (typeof sansSortie)[number]) => {
+    if (!lien.sortie) return false;
+    const e = parseJson<FicheRendue>(lien.sortie.expected, {});
+    return !e.dateStart && !e.venuePostalCode && !e.ageMax && lien.sortie.audience === null;
+  };
+  const nu = ({ sortie, ...reste }: (typeof sansSortie)[number]) => reste;
+
+  const aCreer = sansSortie.filter((l) => !l.sortieId).slice(0, 200).map(nu);
+  const aDecrire = sansSortie.filter(muette).slice(0, 200).map(nu);
 
   res.json({
     /** Par page d'agenda : combien de liens relevés que personne n'a tranchés. */
@@ -1739,11 +1899,10 @@ evalRouter.get('/reste', admin, async (_req, res) => {
       label: row.label,
       manquants: Number(row.manquants),
     })),
-    /**
-     * Les sorties reconnues mais dont rien n'est affirmé. `sortieId` nul : il
-     * faut la créer. Renseigné : elle existe, il faut la décrire.
-     */
-    sansSortie: sansFait,
+    /** Le lien dit « une sortie », mais aucune sortie n'existe au corpus. */
+    aCreer,
+    /** La sortie existe, mais son étiquette n'affirme rien que l'étage 4 lise. */
+    aDecrire,
   });
 });
 

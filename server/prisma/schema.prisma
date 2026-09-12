@@ -84,6 +84,7 @@ model User {
   evalAgendas      EvalAgenda[] @relation("EvalAgendaAuthor")
   evalSorties      EvalSortie[] @relation("EvalSortieAuthor")
   evalSortieLabels EvalSortie[] @relation("EvalSortieLabeller")
+  evalNatures      EvalNature[] @relation("EvalNatureAuthor")
   evalLinkLabels   EvalLink[]   @relation("EvalLinkLabeller")
   evalRuns         EvalRun[]    @relation("EvalRunRequester")
 }
@@ -898,6 +899,74 @@ enum EvalSortieOrigin {
   /// elle a passé le seuil, elle a coûté une extraction — mais son texte ne
   /// valait rien. Rien ne capturait ce cas.
   ILLISIBLE
+}
+
+/// **Groupe 1 du corpus** : ce qu'une page *est*, avant qu'on en fasse quoi
+/// que ce soit.
+///
+/// C'est la question de l'étage 2 — `stages/identification.py` : la découverte
+/// rend des adresses sans rien en dire, et c'est là qu'on décide où chacune va.
+/// Un **agenda** part au dépouillement, une **sortie** saute à la lecture, un
+/// **programme** y saute aussi mais on en attend plusieurs fiches, et le reste
+/// n'a rien à faire dans la chaîne.
+///
+/// L'erreur n'y est pas symétrique, et c'est ce qui rend la mesure utile :
+/// prendre une sortie pour un agenda coûte un appel de tri et se rattrape tout
+/// seul ; prendre un agenda pour une sortie coûte **tous ses liens**, sans
+/// rattrapage.
+///
+/// ## Pourquoi une table à part
+///
+/// Ni `EvalAgenda` ni `EvalSortie` ne convient : l'un présuppose que la page
+/// est un agenda, l'autre qu'elle est une sortie — c'est justement la question
+/// qu'on pose. Et il faut pouvoir y mettre des contre-exemples : une page
+/// d'accueil, un article de blog, une billetterie. Sans eux, on ne mesurerait
+/// que les cas où l'étage 2 a déjà raison.
+///
+/// Le HTML gelé est indispensable : l'étage 2 décide **en lisant la page** —
+/// l'adresse, la pagination, le JSON-LD, les métadonnées, puis le modèle sur un
+/// condensé. Une étiquette posée sur une adresse nue ne serait rejouable contre
+/// rien.
+model EvalNature {
+  id    Int    @id @default(autoincrement())
+  url   String @unique @db.VarChar(500)
+  /// Nom donné à la main, pour s'y retrouver. Facultatif.
+  label String @default("") @db.VarChar(150)
+
+  capture      EvalCaptureStatus @default(QUEUED)
+  captureError String?           @db.Text
+  capturedAt   DateTime?
+  chars        Int               @default(0)
+  htmlPath     String?           @db.VarChar(255)
+
+  /// Ce que la page **est**, d'après un humain. Jamais nul : la ligne
+  /// n'existerait pas — c'est l'étiquette, et son absence dit que personne n'a
+  /// regardé.
+  nature EvalPageNature
+
+  note       String   @default("") @db.Text
+  labelledAt DateTime @default(now())
+
+  author      User @relation("EvalNatureAuthor", fields: [createdById], references: [id])
+  createdById Int
+
+  createdAt DateTime @default(now())
+
+  @@index([capture])
+  @@index([nature])
+}
+
+/// Les quatre natures que l'étage 2 sait rendre.
+///
+/// Les trois premières sont celles de `classify.py` ; `AUTRE` recouvre ce que
+/// le pipeline appelle « inconnu » **et** ce qui n'aurait jamais dû y entrer.
+/// La distinction n'a pas lieu d'être ici : dans les deux cas la page n'a rien
+/// à faire dans la chaîne, et c'est tout ce que la mesure a besoin de savoir.
+enum EvalPageNature {
+  AGENDA
+  SORTIE
+  PROGRAMME
+  AUTRE
 }
 
 // ─────────────────────────────────────────────────────────────── LES RUNS
