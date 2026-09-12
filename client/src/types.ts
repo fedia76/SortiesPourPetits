@@ -1036,50 +1036,53 @@ export interface EvalSortie {
   chars: number;
   archived: boolean;
   note: string;
-  expectedImage: string | null;
-  /** JSON d'un tableau de dates. */
-  expectedDates: string | null;
-  /** JSON d'un tableau de fragments que le texte doit contenir. */
-  expectedMarkers: string | null;
+
   /**
-   * Ce que l'étage 4 juge, en **faits** — pas dans la prose de la fiche.
-   * Une date se compare à une fenêtre, un code postal à des préfixes ; « du 20
-   * au 22 septembre » ne se compare qu'à une autre chaîne, et c'est le métier
-   * de l'étage 6.
+   * **L'étiquette** : tout ce qu'un humain affirme de cette sortie, en JSON.
+   *
+   * Une sortie, une étiquette. Elle était autrefois éparpillée entre des
+   * colonnes pour l'étage 5, d'autres pour l'étage 4, et une table à part pour
+   * l'étage 6 qui redécrivait les mêmes dates et les mêmes âges. Chaque étage
+   * y lit désormais son sous-ensemble et ignore le reste.
+   *
+   * Clé absente : personne n'a regardé. Clé présente et vide : la page n'en
+   * dit rien, et c'est une étiquette.
    */
-  dateStart: string | null;
-  dateEnd: string | null;
-  postalCode: string | null;
-  ageMin: number | null;
-  ageMax: number | null;
+  expected: string;
+  /** D'où vient chaque champ : `CORRIGE`, `NON_CONTREDIT`, `SAISIE`. En JSON. */
+  origins: string;
+  /** L'étiquette d'avant, en toutes lettres. N'entre dans aucune mesure. */
+  expectedLegacy: string | null;
+  labelledAt: string | null;
+
+  /** Annoncé en mots par la page. La seule affirmation qu'aucune brique ne rend. */
   audience: EvalAudience | null;
+
   origin: EvalSortieOrigin;
+  /**
+   * **Vrai** : la sortie existe sur le site, un modérateur l'a approuvée, et
+   * son étiquette est du travail humain déjà payé. **Faux** : elle n'existe
+   * que dans le banc, et tout ce qu'elle affirme reste à saisir.
+   */
+  published: boolean;
   eventId: number | null;
   readAt: string | null;
   runDecision: string;
   runReason: string;
   createdAt: string;
   author?: { id: number; displayName: string };
-  /**
-   * L'étiquette de la fiche : ce que la page annonce, **en faits**, dans la
-   * forme même que la brique rend — `{"free": false, "price": 8, …}`, en JSON.
-   *
-   * Elle portait autrefois la mise en forme (« gratuit », « dès 3 ans »),
-   * parce que la mesure comparait les libellés d'affichage. La donnée est
-   * structurée aux deux bouts : on compare les faits, et la mise en forme
-   * redevient de l'affichage.
-   *
-   * `expectedLegacy` garde l'ancienne valeur en toutes lettres. Elle n'entre
-   * dans aucune mesure — on ne rouvre pas de la prose pour en tirer des
-   * faits — et disparaîtra quand le corpus se sera reconstruit.
-   */
-  fiche?: {
-    id: number;
-    expected: string;
-    expectedLegacy: string | null;
-    origins: string;
-    labelledAt: string;
-  } | null;
+}
+
+/** Les champs de l'étiquette que la console fait saisir. */
+export interface EvalSortieLabel {
+  image: string | null;
+  declaredDates: string[] | null;
+  markers: string[] | null;
+  dateStart: string | null;
+  dateEnd: string | null;
+  venuePostalCode: string | null;
+  ageMin: number | null;
+  ageMax: number | null;
 }
 
 /**
@@ -1177,7 +1180,7 @@ export interface EvalSeedCounts {
   abandonnees: number;
   illisibles: number;
   liens: number;
-  /** Sorties venues d'une fiche approuvée, dont la fiche reste à reprendre. */
+  /** Sorties venues du site, dont l'étiquette reste à reprendre. */
   fiches: number;
   abandonReason: string;
 }

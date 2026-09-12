@@ -24,6 +24,7 @@ import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
 import type {
   EvalAgenda,
+  EvalSortieLabel,
   EvalAudience,
   EvalRunScope,
   EvalSortieFacts,
@@ -362,16 +363,24 @@ const editAgeMin = ref<number | null>(null);
 const editAgeMax = ref<number | null>(null);
 const editAudience = ref<EvalAudience | null>(null);
 
+/**
+ * L'étiquette d'une sortie, relue pour le formulaire.
+ *
+ * Une sortie n'a qu'une étiquette, en JSON. Chaque étage y lit son
+ * sous-ensemble : la console fait saisir celui des étages 4 et 5, le reste
+ * vient de la moisson.
+ */
 function edit(sortie: EvalSortie) {
   editing.value = sortie;
-  editImage.value = sortie.expectedImage ?? '';
-  editDates.value = (JSON.parse(sortie.expectedDates ?? '[]') as string[]).join('\n');
-  editMarkers.value = (JSON.parse(sortie.expectedMarkers ?? '[]') as string[]).join('\n');
-  editDateStart.value = (sortie.dateStart ?? '').slice(0, 10);
-  editDateEnd.value = (sortie.dateEnd ?? '').slice(0, 10);
-  editPostalCode.value = sortie.postalCode ?? '';
-  editAgeMin.value = sortie.ageMin;
-  editAgeMax.value = sortie.ageMax;
+  const e = JSON.parse(sortie.expected || '{}') as Partial<EvalSortieLabel>;
+  editImage.value = e.image ?? '';
+  editDates.value = (e.declaredDates ?? []).join('\n');
+  editMarkers.value = (e.markers ?? []).join('\n');
+  editDateStart.value = (e.dateStart ?? '').slice(0, 10);
+  editDateEnd.value = (e.dateEnd ?? '').slice(0, 10);
+  editPostalCode.value = e.venuePostalCode ?? '';
+  editAgeMin.value = e.ageMin ?? null;
+  editAgeMax.value = e.ageMax ?? null;
   editAudience.value = sortie.audience;
 }
 
@@ -387,12 +396,12 @@ async function saveLabels(clear = false) {
   if (!sortie) return;
   try {
     await api.patch(`/api/eval/sorties/${sortie.id}`, {
-      expectedImage: clear ? null : editImage.value.trim(),
-      expectedDates: clear ? null : lines(editDates.value),
-      expectedMarkers: clear ? null : lines(editMarkers.value),
+      image: clear ? null : editImage.value.trim(),
+      declaredDates: clear ? null : lines(editDates.value),
+      markers: clear ? null : lines(editMarkers.value),
       dateStart: clear ? null : editDateStart.value || null,
       dateEnd: clear ? null : editDateEnd.value || null,
-      postalCode: clear ? null : editPostalCode.value.trim() || null,
+      venuePostalCode: clear ? null : editPostalCode.value.trim() || null,
       ageMin: clear ? null : editAgeMin.value,
       ageMax: clear ? null : editAgeMax.value,
       audience: clear ? null : editAudience.value,
@@ -405,10 +414,50 @@ async function saveLabels(clear = false) {
 }
 
 /** Combien d'étiquettes une page porte : trois au plus, celles de l'étage 5. */
-function labelled(sortie: EvalSortie): number {
-  return [sortie.expectedImage, sortie.expectedDates, sortie.expectedMarkers].filter(
-    (v) => v !== null,
-  ).length;
+/**
+ * Ce que l'étiquette d'une sortie affirme, étage par étage.
+ *
+ * L'ancien compteur ne connaissait que les trois étiquettes de lecture et
+ * affichait donc « 0/3 » sur une sortie parfaitement décrite pour le tri. Il
+ * dit maintenant ce que chaque étage y trouve — et il n'y a plus qu'une
+ * étiquette derrière, pas deux objets à recouper.
+ */
+function etiquette(sortie: EvalSortie) {
+  const e = JSON.parse(sortie.expected || '{}') as Record<string, unknown>;
+  const dit = (cle: string) => cle in e;
+  return {
+    // L'étage 4 ne regarde que la date, le lieu et le public.
+    tri: [dit('dateStart'), dit('venuePostalCode'), sortie.audience !== null].filter(Boolean).length,
+    lecture: [dit('image'), dit('declaredDates'), dit('markers')].filter(Boolean).length,
+    // L'étage 6 regarde la fiche entière. On compte ce qui la remplit, sans
+    // les clés que les deux étages précédents se sont déjà comptées.
+    extraction: ['title', 'description', 'free', 'ageMin', 'category', 'venueName'].filter(dit)
+      .length,
+  };
+}
+
+/**
+ * Vider le corpus des sorties.
+ *
+ * Ce qui vient du site se remoissonne d'un clic ; ce qu'un humain a saisi à la
+ * main, non. On le compte et on le dit **avant** de demander confirmation :
+ * une confirmation qui n'annonce pas ce qu'elle détruit n'en est pas une.
+ */
+async function viderSorties() {
+  const saisies = sorties.value.filter((r) => !r.published && r.labelledAt).length;
+  const avertissement = saisies
+    ? `\n\n${saisies} sortie(s) étiquetée(s) à la main seront perdues : elles ne viennent pas du site et ne se remoissonnent pas.`
+    : '';
+  if (!confirm(`Vider les ${sorties.value.length} sortie(s) du corpus ?${avertissement}`)) return;
+  try {
+    const body = await api.delete<{ removed: number; handLabelled: number }>('/api/eval/sorties');
+    notice.value =
+      `${body.removed} sortie(s) retirée(s)` +
+      (body.handLabelled ? `, dont ${body.handLabelled} étiquetée(s) à la main.` : '.');
+    await load();
+  } catch (e) {
+    fail(e);
+  }
 }
 
 // ── peupler le corpus depuis ce que le pipeline a déjà fait ────────────
@@ -428,7 +477,12 @@ const corpusSize = computed(() => ({
   pages: agendas.value.reduce((n, a) => n + (a.pagesCaptured ?? 0), 0),
   links: agendas.value.reduce((n, a) => n + (a.labels ?? 0), 0),
   sorties: sorties.value.length,
-  sortieLabels: sorties.value.reduce((n, r) => n + labelled(r), 0),
+  // Les sorties dont l'étiquette affirme au moins quelque chose. Compter les
+  // champs n'aurait pas de sens : ils ne pèsent pas le même travail.
+  sortieLabels: sorties.value.filter((r) => {
+    const e = etiquette(r);
+    return e.tri + e.lecture + e.extraction > 0;
+  }).length,
 }));
 </script>
 
@@ -459,11 +513,11 @@ const corpusSize = computed(() => ({
       </div>
       <div class="card tile">
         <span class="value">{{ corpusSize.sorties }}</span>
-        <span class="label">page(s) au corpus de lecture</span>
+        <span class="label">sortie(s) au corpus</span>
       </div>
       <div class="card tile">
         <span class="value">{{ corpusSize.sortieLabels }}</span>
-        <span class="label">étiquette(s) de lecture</span>
+        <span class="label">sortie(s) étiquetée(s)</span>
       </div>
     </div>
 
@@ -480,7 +534,10 @@ const corpusSize = computed(() => ({
     </p>
     <div v-if="seed" class="row buckets">
       <button class="btn ghost" :disabled="!seed.approuvees" @click="pour('approuvees')">
-        Sorties approuvées ({{ seed.approuvees }})
+        Sorties publiées ({{ seed.approuvees }})
+      </button>
+      <button class="btn ghost" :disabled="!seed.fiches" @click="pour('fiches')">
+        Étiqueter les sorties publiées ({{ seed.fiches }})
       </button>
       <button class="btn ghost" :disabled="!seed.abandonnees" @click="pour('abandonnees')">
         Pages abandonnées ({{ seed.abandonnees }})
@@ -489,27 +546,39 @@ const corpusSize = computed(() => ({
         Descriptions refusées ({{ seed.illisibles }})
       </button>
       <button class="btn ghost" :disabled="!seed.liens" @click="pour('liens')">
-        Étiquettes venues de la modération ({{ seed.liens }})
+        Liens d’agenda déjà tranchés ({{ seed.liens }})
       </button>
-      <button class="btn ghost" :disabled="!seed.fiches" @click="pour('fiches')">
-        Fiches approuvées à reprendre ({{ seed.fiches }})
+      <button class="btn ghost danger" :disabled="!corpusSize.sorties" @click="viderSorties()">
+        Vider les sorties
       </button>
     </div>
-    <p v-if="seed" class="muted small">
-      Le panier <strong>« fiches approuvées »</strong> remplit ce qu’une sortie
-      <em>est</em>, champ par champ, depuis ce qu’un modérateur a validé fiche
-      en main. C’est la seule partie du corpus qui ne coûte aucun travail
-      humain — il a déjà eu lieu, ailleurs. Les <em>jours de représentation</em>
-      restent en dehors : le site ne les reçoit pas, et les reconstituer
-      donnerait une étiquette amputée qui compterait « faux » à chaque sortie
-      récurrente.
+    <p class="muted small">
+      Les deux premiers viennent de <strong>sorties publiées</strong> sur le
+      site : un modérateur les a approuvées, leur étiquette est donc du travail
+      humain déjà payé. Les deux suivants sont des pages que le pipeline a
+      rencontrées mais <strong>jamais publiées</strong> — abandonnées à la
+      lecture, ou dont la fiche a été refusée : elles n’ont aucune étiquette
+      d’avance, et c’est pour ça qu’elles comptent. Un corpus qui ne
+      contiendrait que des réussites mesurerait la brique sur ses propres
+      succès.
     </p>
     <p v-if="seed" class="muted small">
-      Le panier <strong>« étiquettes venues de la modération »</strong> n’apporte
-      que des <strong>positifs</strong> : une page
-      devenue une sortie approuvée est une sortie, un modérateur l’a vérifiée
-      fiche en main. Il ne dira jamais qu’un lien n’en est pas une — il
-      raccourcit la relecture, il ne la remplace pas.
+      <strong>« Étiqueter les sorties publiées »</strong> remplit ce qu’une
+      sortie <em>est</em>, champ par champ, depuis ce qu’un modérateur a validé.
+      Les <em>jours de représentation</em> restent en dehors : le site ne les
+      reçoit pas, et les reconstituer donnerait une étiquette amputée qui
+      compterait « faux » à chaque sortie récurrente.
+    </p>
+    <p v-if="seed" class="muted small">
+      <strong>« Liens d’agenda déjà tranchés »</strong> n’apporte que des
+      <strong>positifs</strong> : une page devenue une sortie approuvée est une
+      sortie, un modérateur l’a vérifiée. Il ne dira jamais qu’un lien n’en est
+      pas une — il raccourcit la relecture, il ne la remplace pas.
+    </p>
+    <p class="muted small">
+      <strong>« Vider les sorties »</strong> remet le corpus des sorties à zéro.
+      Tout ce qui vient du site se remoissonne avec les boutons ci-dessus ; ce
+      qui a été saisi à la main, non — le compte rendu le dit avant.
     </p>
 
     <!-- ── Ce qui reste à faire à la main ─────────────────────────────── -->
@@ -753,7 +822,7 @@ const corpusSize = computed(() => ({
         <thead>
           <tr>
             <th>Page</th>
-            <th>Origine</th>
+            <th>Provenance</th>
             <th>Capture</th>
             <th>Étiquettes</th>
             <th></th>
@@ -765,8 +834,25 @@ const corpusSize = computed(() => ({
               <div class="link-text">{{ sortie.label || sortie.url }}</div>
               <a :href="sortie.url" target="_blank" class="muted small">{{ sortie.url }}</a>
             </td>
-            <td :title="EVAL_ORIGIN_HINTS[sortie.origin]" class="small">
-              {{ EVAL_ORIGIN_LABELS[sortie.origin] }}
+            <td class="small">
+              <!--
+                D'abord d'où elle vient, parce que c'est ce qui dit si son
+                étiquette est du travail déjà payé ou du travail à faire.
+              -->
+              <span
+                class="provenance"
+                :class="sortie.published ? 'publiee' : 'banc'"
+                :title="
+                  sortie.published
+                    ? 'Publiée sur le site : un modérateur l’a approuvée, son étiquette se moissonne.'
+                    : 'Propre au banc : jamais publiée, tout ce qu’elle affirme est à saisir.'
+                "
+              >
+                {{ sortie.published ? 'sortie publiée' : 'banc de test' }}
+              </span>
+              <div :title="EVAL_ORIGIN_HINTS[sortie.origin]" class="muted small">
+                {{ EVAL_ORIGIN_LABELS[sortie.origin] }}
+              </div>
             </td>
             <td class="small">
               {{ EVAL_CAPTURE_LABELS[sortie.capture] }}
@@ -781,9 +867,18 @@ const corpusSize = computed(() => ({
                 HTML
               </a>
             </td>
-            <td class="num">
-              {{ labelled(sortie) }}/3
-              <span v-if="sortie.fiche" class="muted small"> · fiche</span>
+            <td class="num small">
+              <span :title="'Ce que l’étage 4 juge : la date, le lieu, le public.'">
+                tri {{ etiquette(sortie).tri }}/3
+              </span>
+              ·
+              <span :title="'Ce que l’étage 5 juge : l’illustration, les dates déclarées, les fragments du texte.'">
+                lecture {{ etiquette(sortie).lecture }}/3
+              </span>
+              ·
+              <span :title="'Ce que l’étage 6 juge : la fiche entière.'">
+                fiche {{ etiquette(sortie).extraction }}/6
+              </span>
             </td>
             <td>
               <div class="row actions">
@@ -1046,6 +1141,29 @@ h2 {
   gap: 0.8rem;
   flex-wrap: wrap;
   margin-bottom: 0.5rem;
+}
+
+.provenance {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.provenance.publiee {
+  background: var(--accent, #2563eb);
+  color: #fff;
+}
+
+.provenance.banc {
+  border: 1px solid var(--border, #ccc);
+  color: var(--ink-soft, #666);
+}
+
+.btn.ghost.danger {
+  color: var(--danger, #b42318);
+  border-color: currentColor;
 }
 
 .reste {
