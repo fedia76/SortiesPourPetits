@@ -31,6 +31,7 @@ import type {
   EvalLink,
   EvalLinkResult,
   EvalSortie,
+  EvalCriteres,
   EvalReste,
   EvalSeedCounts,
   EvalVerdict,
@@ -64,6 +65,9 @@ const seed = ref<EvalSeedCounts | null>(null);
  * au fil de l'eau, ce qui est la façon dont on abandonne un banc.
  */
 const reste = ref<EvalReste | null>(null);
+/** Ce que chaque étage cherche à savoir. Du serveur, jamais recopié ici. */
+const criteres = ref<EvalCriteres | null>(null);
+const criteresOuverts = ref(false);
 const open = ref<EvalAgenda | null>(null);
 const openRunId = ref(0);
 /**
@@ -100,6 +104,7 @@ async function load() {
   try {
     seed.value = await api.get<EvalSeedCounts>('/api/eval/seed');
     reste.value = await api.get<EvalReste>('/api/eval/reste');
+    criteres.value = await api.get<EvalCriteres>('/api/eval/criteres');
   } catch {
     // Les paniers sont un confort : leur échec ne doit pas vider la page.
   }
@@ -444,6 +449,84 @@ function pleine(part: { faits: number; total: number }): string {
   return part.faits === part.total ? 'complete' : '';
 }
 
+/**
+ * Les paniers, et **le chemin exact** qui mène à chacun.
+ *
+ * Les libellés seuls n'ont jamais suffi à les faire comprendre. Ce qui manquait
+ * n'était pas un mot plus juste : c'était de dire d'où vient la ligne — quel
+ * run, quelle étape, quelle décision, et de qui.
+ */
+const PANIERS = [
+  {
+    cle: 'approuvees' as const,
+    titre: 'Sorties publiées',
+    publiee: true,
+    ajoute: 'des sorties au corpus',
+    chemin: [
+      'Un run de <strong>production</strong> a lu une page et en a tiré une fiche.',
+      'La fiche est partie en modération.',
+      '<strong>Un humain l’a approuvée</strong> : elle est publiée sur le site.',
+    ],
+    pourquoi:
+      'Leur étiquette est du travail humain déjà payé : le bouton suivant la reprend sans rien redemander.',
+  },
+  {
+    cle: 'fiches' as const,
+    titre: 'Étiqueter les sorties publiées',
+    publiee: true,
+    ajoute: 'l’étiquette de ces sorties',
+    chemin: [
+      'Une sortie du corpus vient d’une fiche approuvée…',
+      '…mais personne n’a encore dit ce qu’elle affirme.',
+      'On recopie les champs de la fiche publiée dans son étiquette.',
+    ],
+    pourquoi:
+      'Une copie de champs, pas une interprétation. Les jours de représentation restent en dehors : le site ne les reçoit pas.',
+  },
+  {
+    cle: 'abandonnees' as const,
+    titre: 'Pages abandonnées à la lecture',
+    publiee: false,
+    ajoute: 'des sorties au corpus',
+    chemin: [
+      'Un run de <strong>production</strong> a retenu un lien au tri.',
+      'L’étage 5 a téléchargé la page et en a extrait le texte.',
+      'Le texte faisait <strong>moins de 200 caractères</strong> : la machine a écarté la page, seule.',
+      'Aucune fiche n’a été produite. <strong>Aucun humain n’a rien vu.</strong>',
+    ],
+    pourquoi:
+      'Si la page était vraiment vide, parfait. Si elle était pleine et que le texte n’a pas été extrait — JavaScript, encodage —, c’est un ratage que rien d’autre n’attrape.',
+  },
+  {
+    cle: 'illisibles' as const,
+    titre: 'Fiches refusées en modération',
+    publiee: false,
+    ajoute: 'des sorties au corpus',
+    chemin: [
+      'L’étage 5 a lu la page : le texte a passé les 200 caractères.',
+      'L’étage 6 en a tiré une fiche — un appel au modèle, payé.',
+      'La fiche est partie en modération.',
+      '<strong>Un humain l’a refusée</strong> pour « description inutilisable ».',
+    ],
+    pourquoi:
+      'Le point aveugle de l’étage 5 : la page n’était pas vide, elle a coûté une extraction, et son texte ne valait rien. Aucun signal automatique ne l’attrape.',
+  },
+  {
+    cle: 'liens' as const,
+    titre: 'Liens d’agenda déjà tranchés',
+    publiee: true,
+    ajoute: 'des étiquettes de lien, sur un agenda',
+    chemin: [
+      'Une adresse a donné une sortie <strong>approuvée</strong> en modération.',
+      'Cette même adresse figure dans le relevé d’un <strong>run du banc</strong> sur une page d’agenda du corpus.',
+      'Aucune étiquette n’existe encore pour ce lien sur cette page.',
+      'On pose « une sortie » : un humain l’a déjà vérifiée, ailleurs.',
+    ],
+    pourquoi:
+      'N’ajoute aucune sortie — seulement des étiquettes de lien. Reste à zéro tant qu’aucun run du banc n’a été joué sur vos agendas. Et n’apporte que des positifs : il ne dira jamais qu’un lien n’est pas une sortie.',
+  },
+];
+
 // ── peupler le corpus depuis ce que le pipeline a déjà fait ────────────
 
 async function pour(bucket: 'approuvees' | 'abandonnees' | 'illisibles' | 'liens' | 'fiches') {
@@ -513,58 +596,52 @@ const corpusSize = computed(() => ({
     <!-- ── Peupler ────────────────────────────────────────────────────── -->
     <h2>Peupler depuis ce que le pipeline a déjà fait</h2>
     <p class="muted small">
-      Quatre paniers, et l’équilibre entre eux est la question : ne prendre que
-      les réussites mesurerait la brique sur ses propres succès — on lirait 96 %
-      de textes corrects, et ça ne voudrait rien dire.
+      Chaque panier reprend ce que votre pipeline a déjà fait, et chacun dit
+      d’où il vient. L’équilibre entre eux est la question : ne prendre que les
+      réussites mesurerait la brique sur ses propres succès — on lirait 96 % de
+      textes corrects, et ça ne voudrait rien dire.
     </p>
-    <div v-if="seed" class="row buckets">
-      <button class="btn ghost" :disabled="!seed.approuvees" @click="pour('approuvees')">
-        Sorties publiées ({{ seed.approuvees }})
-      </button>
-      <button class="btn ghost" :disabled="!seed.fiches" @click="pour('fiches')">
-        Étiqueter les sorties publiées ({{ seed.fiches }})
-      </button>
-      <button class="btn ghost" :disabled="!seed.abandonnees" @click="pour('abandonnees')">
-        Pages abandonnées ({{ seed.abandonnees }})
-      </button>
-      <button class="btn ghost" :disabled="!seed.illisibles" @click="pour('illisibles')">
-        Descriptions refusées ({{ seed.illisibles }})
-      </button>
-      <button class="btn ghost" :disabled="!seed.liens" @click="pour('liens')">
-        Liens d’agenda déjà tranchés ({{ seed.liens }})
-      </button>
-      <button class="btn ghost danger" :disabled="!corpusSize.sorties" @click="viderSorties()">
-        Vider les sorties
-      </button>
+    <div v-if="seed" class="paniers">
+      <div v-for="panier in PANIERS" :key="panier.cle" class="panier">
+        <button
+          class="btn ghost"
+          :disabled="!seed[panier.cle]"
+          @click="pour(panier.cle)"
+        >
+          {{ panier.titre }} ({{ seed[panier.cle] }})
+        </button>
+        <div class="panier-quoi">
+          <span class="provenance" :class="panier.publiee ? 'publiee' : 'banc'">
+            {{ panier.publiee ? 'sortie publiée' : 'jamais publiée' }}
+          </span>
+          <strong class="small">ajoute : {{ panier.ajoute }}</strong>
+        </div>
+        <!--
+          Les étapes exactes qui mènent à ce panier. Trois fois de suite ces
+          libellés n'ont pas suffi : ce qui manquait n'était pas un mot plus
+          juste, c'était le chemin.
+        -->
+        <ol class="panier-chemin">
+          <li v-for="(etape, i) in panier.chemin" :key="i" v-html="etape"></li>
+        </ol>
+        <p class="muted small panier-pourquoi">{{ panier.pourquoi }}</p>
+      </div>
+
+      <div class="panier">
+        <button
+          class="btn ghost danger"
+          :disabled="!corpusSize.sorties"
+          @click="viderSorties()"
+        >
+          Vider les sorties
+        </button>
+        <p class="muted small panier-pourquoi">
+          Remet le corpus des sorties à zéro. Tout ce qui vient du site se
+          remoissonne avec les boutons ci-dessus ; ce qui a été saisi à la main,
+          non — le compte rendu le dit avant.
+        </p>
+      </div>
     </div>
-    <p class="muted small">
-      Les deux premiers viennent de <strong>sorties publiées</strong> sur le
-      site : un modérateur les a approuvées, leur étiquette est donc du travail
-      humain déjà payé. Les deux suivants sont des pages que le pipeline a
-      rencontrées mais <strong>jamais publiées</strong> — abandonnées à la
-      lecture, ou dont la fiche a été refusée : elles n’ont aucune étiquette
-      d’avance, et c’est pour ça qu’elles comptent. Un corpus qui ne
-      contiendrait que des réussites mesurerait la brique sur ses propres
-      succès.
-    </p>
-    <p v-if="seed" class="muted small">
-      <strong>« Étiqueter les sorties publiées »</strong> remplit ce qu’une
-      sortie <em>est</em>, champ par champ, depuis ce qu’un modérateur a validé.
-      Les <em>jours de représentation</em> restent en dehors : le site ne les
-      reçoit pas, et les reconstituer donnerait une étiquette amputée qui
-      compterait « faux » à chaque sortie récurrente.
-    </p>
-    <p v-if="seed" class="muted small">
-      <strong>« Liens d’agenda déjà tranchés »</strong> n’apporte que des
-      <strong>positifs</strong> : une page devenue une sortie approuvée est une
-      sortie, un modérateur l’a vérifiée. Il ne dira jamais qu’un lien n’en est
-      pas une — il raccourcit la relecture, il ne la remplace pas.
-    </p>
-    <p class="muted small">
-      <strong>« Vider les sorties »</strong> remet le corpus des sorties à zéro.
-      Tout ce qui vient du site se remoissonne avec les boutons ci-dessus ; ce
-      qui a été saisi à la main, non — le compte rendu le dit avant.
-    </p>
 
     <!-- ── Ce qui reste à faire à la main ─────────────────────────────── -->
     <h2>Ce qui reste à la main</h2>
@@ -800,6 +877,39 @@ const corpusSize = computed(() => ({
     <div class="row add">
       <input v-model="newSortieUrl" type="url" placeholder="https://exemple.fr/spectacle" />
       <button class="btn" @click="addSortie()">Ajouter au corpus</button>
+    </div>
+
+    <!--
+      Ce que chaque compteur compte, en clair. La liste vient du serveur : deux
+      compteurs écrits à la main ont menti, dont un qui annonçait « 6/6 » sur
+      six champs choisis arbitrairement quand l'étage en juge douze.
+    -->
+    <p v-if="criteres" class="muted small">
+      <button class="linklike" @click="criteresOuverts = !criteresOuverts">
+        {{ criteresOuverts ? 'Masquer' : 'Que comptent les colonnes Étage 4, 5 et 6 ?' }}
+      </button>
+    </p>
+    <div v-if="criteres && criteresOuverts" class="card criteres">
+      <div v-for="etage in criteres.etages" :key="etage.etage" class="criteres-bloc">
+        <h4>
+          Étage {{ etage.etage }} — {{ etage.nom }}
+          <span class="muted small">{{ etage.criteres.length }} critère(s)</span>
+        </h4>
+        <ol>
+          <li v-for="critere in etage.criteres" :key="critere.libelle">
+            {{ critere.libelle }}
+            <span class="muted small">
+              — {{ critere.champs.join(' ou ') }}
+            </span>
+          </li>
+        </ol>
+      </div>
+      <p class="muted small">
+        Un critère est compté dès qu’<strong>un</strong> de ses champs figure
+        dans l’étiquette — même vide, puisque « la page n’en dit rien » est une
+        étiquette de plein droit. Plusieurs champs pour un critère veut dire
+        qu’un seul suffit à y répondre : l’un ou l’autre, jamais deux fois.
+      </p>
     </div>
 
     <div class="table-wrap card">
@@ -1144,6 +1254,63 @@ td.num.complete {
 
 td.num.vide {
   color: var(--ink-soft, #999);
+}
+
+.paniers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.panier {
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border, #e5e5e5);
+  border-radius: 8px;
+}
+
+.panier .btn {
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+.panier-quoi {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.panier-chemin {
+  margin: 0 0 0.4rem;
+  padding-left: 1.1rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.panier-pourquoi {
+  margin: 0;
+}
+
+.criteres {
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1rem;
+}
+
+.criteres-bloc + .criteres-bloc {
+  margin-top: 0.9rem;
+}
+
+.criteres h4 {
+  margin: 0 0 0.3rem;
+  font-size: 0.9rem;
+}
+
+.criteres ol {
+  margin: 0;
+  padding-left: 1.3rem;
+  font-size: 0.85rem;
 }
 
 .provenance {

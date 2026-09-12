@@ -757,29 +757,114 @@ export interface Couverture {
 }
 
 /**
- * Les trois questions de l'étage 4, et ce qui permet d'y répondre.
+ * Un critère : ce qu'un étage cherche à savoir, et ce qui permet de le lui
+ * dire. Le libellé, les champs et le test vivent ensemble — c'est ce qui
+ * garantit que la console affiche la liste que la mesure applique vraiment.
+ */
+export interface Critere {
+  libelle: string;
+  /** Les champs de l'étiquette qui y répondent. Un seul suffit. */
+  champs: string[];
+  rempli: (e: FicheRendue, audience: Audience | null) => boolean;
+}
+
+/**
+ * Les trois questions de l'étage 4.
  *
  * Des **critères**, pas des champs : le public se lit dans `audience` ou se
  * déduit de l'âge, et compter les deux ferait deux fois la même chose.
  */
-const CRITERES_TRI: ((e: FicheRendue, audience: Audience | null) => boolean)[] = [
-  (e) => 'dateStart' in e,
-  (e) => 'venuePostalCode' in e,
-  (e, audience) => audience !== null || 'ageMin' in e || 'ageMax' in e,
+export const CRITERES_TRI: Critere[] = [
+  {
+    libelle: 'Quand elle a lieu',
+    champs: ['dateStart'],
+    rempli: (e) => 'dateStart' in e,
+  },
+  {
+    libelle: 'Où elle a lieu',
+    champs: ['venuePostalCode'],
+    rempli: (e) => 'venuePostalCode' in e,
+  },
+  {
+    libelle: 'À qui elle s’adresse',
+    champs: ['audience', 'ageMin', 'ageMax'],
+    rempli: (e, audience) => audience !== null || 'ageMin' in e || 'ageMax' in e,
+  },
 ];
 
 /** Ce que `readScore` lit, et rien d'autre. */
-const CRITERES_LECTURE: (keyof ReadLabels)[] = ['image', 'declaredDates', 'markers'];
+export const CRITERES_LECTURE: Critere[] = [
+  {
+    libelle: 'L’illustration de la page',
+    champs: ['image'],
+    rempli: (e) => 'image' in (e as Record<string, unknown>),
+  },
+  {
+    libelle: 'Les dates déclarées en JSON-LD',
+    champs: ['declaredDates'],
+    rempli: (e) => 'declaredDates' in (e as Record<string, unknown>),
+  },
+  {
+    libelle: 'Les fragments que le texte doit contenir',
+    champs: ['markers'],
+    rempli: (e) => 'markers' in (e as Record<string, unknown>),
+  },
+];
+
+/** Les libellés des douze aspects de la fiche, dans l'ordre où ils sont jugés. */
+export const LIBELLES_ASPECTS: Record<string, string> = {
+  verdict: 'La page est-elle une sortie',
+  titre: 'Le titre',
+  description: 'La description',
+  tarif: 'Le tarif',
+  age: 'L’âge',
+  dates: 'Les dates',
+  jours: 'Les jours de représentation',
+  horaires: 'Les horaires',
+  cadre: 'Intérieur ou extérieur',
+  categorie: 'La catégorie',
+  lieu: 'Le lieu',
+  adresse: 'L’adresse',
+};
+
+/**
+ * Ce que chaque étage cherche à savoir, pour que la console l'affiche.
+ *
+ * Servi depuis ici et non recopié dans la console : c'est la même liste que
+ * les compteurs appliquent, donc elle ne peut pas diverger d'eux.
+ */
+export function criteresParEtage() {
+  return [
+    {
+      etage: 4,
+      nom: 'tri',
+      criteres: CRITERES_TRI.map(({ libelle, champs }) => ({ libelle, champs })),
+    },
+    {
+      etage: 5,
+      nom: 'lecture',
+      criteres: CRITERES_LECTURE.map(({ libelle, champs }) => ({ libelle, champs })),
+    },
+    {
+      etage: 6,
+      nom: 'extraction',
+      criteres: ASPECTS.map((a) => ({
+        libelle: LIBELLES_ASPECTS[a.key] ?? a.key,
+        champs: a.champs.map(([champ]) => String(champ)),
+      })),
+    },
+  ];
+}
 
 export function couverture(attendue: FicheRendue, audience: Audience | null): Couverture {
   const etiquette = attendue as Record<string, unknown>;
   return {
     tri: {
-      faits: CRITERES_TRI.filter((critere) => critere(attendue, audience)).length,
+      faits: CRITERES_TRI.filter((c) => c.rempli(attendue, audience)).length,
       total: CRITERES_TRI.length,
     },
     lecture: {
-      faits: CRITERES_LECTURE.filter((cle) => cle in etiquette).length,
+      faits: CRITERES_LECTURE.filter((c) => c.rempli(attendue, audience)).length,
       total: CRITERES_LECTURE.length,
     },
     // Un aspect est couvert dès qu'un de ses champs est étiqueté : c'est très

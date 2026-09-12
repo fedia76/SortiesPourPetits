@@ -1103,6 +1103,19 @@ export interface EvalSortieLabel {
 }
 
 /**
+ * Ce que chaque étage cherche à savoir, et dans quels champs de l'étiquette il
+ * le lit. Servi par le serveur, jamais recopié : c'est la liste même que les
+ * compteurs appliquent.
+ */
+export interface EvalCriteres {
+  etages: {
+    etage: number;
+    nom: string;
+    criteres: { libelle: string; champs: string[] }[];
+  }[];
+}
+
+/**
  * Ce qu'il reste à faire à la main, compté.
  *
  * La modération paie la précision — parmi ce que le scraper a proposé, ce
