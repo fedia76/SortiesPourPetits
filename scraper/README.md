@@ -76,8 +76,8 @@ page (`/runs/:id/items`) puis clôt l'exécution avec ses compteurs
 
 Il sert aussi **trois autres files**, celles du banc d'évaluation
 (`POST /api/eval/harvest/next`, `/eval/reading/next` et `/eval/extraction/next`)
-— voir « [Le banc
-d'évaluation](#le-banc-dévaluation) ». Les recherches passent d'abord : une
+— voir « [Mesurer les briques : le banc
+d'évaluation](#mesurer-les-briques--le-banc-dévaluation) ». Les recherches passent d'abord : une
 recherche produit des sorties que des parents attendent, un agenda du banc
 attend un humain qui le relira quand il pourra. Et l'extraction passe en
 dernier, pour une raison de plus : c'est la seule file du banc qui dépense de
@@ -712,535 +712,38 @@ Le HTML est téléchargé une fois pour toutes à cet étage : le `Fetcher` gard
 les pages du run et les rend à qui les redemandera, si bien que le
 dépouillement et la lecture ne repassent pas sur le réseau.
 
-### Le banc d'évaluation
+### Mesurer les briques : le banc d'évaluation
 
-> **Le banc a été scindé en trois.** Ce qui suit décrit ce qu'il mesure et
-> pourquoi, et reste juste. Ce qui a changé, c'est *où* les choses vivent :
->
-> * le **corpus** — une entrée gelée et ce qu'un humain dit qu'elle contient.
->   Il ne dépend d'aucun modèle et vit des années. L'étiquette dit désormais ce
->   que la page *contient* (« la page annonce 8 € ») et non si une brique a eu
->   raison (« le tarif rendu est juste ») : la première vaut pour toujours, la
->   seconde périmait au premier changement de prompt ;
-> * un **run** — ce qu'une brique, à sa version du jour, rend sur ce corpus.
->   Immuable, empilé, jamais écrasé, et il déclare de quoi il est le run (SHA,
->   modèle, empreinte du prompt, réglages) ;
-> * la **mesure** — la confrontation des deux, calculée à la demande et
->   stockée nulle part.
->
-> Le mélange n'était pas une gêne d'architecture : rejouer un agenda
-> supprimait ses pages, donc en cascade les verdicts humains qu'elles
-> portaient. Mesurer détruisait la mesure, et « est-ce que ça s'améliore ? » —
-> la seule question pour laquelle un banc existe — restait sans réponse.
->
-> Trois conséquences visibles : `reviewed` n'existe plus (une étiquette existe
-> parce qu'un humain l'a posée, son absence dit qu'il n'a pas regardé),
-> `hasReference` non plus (une proposition est un run qu'on affiche), ni
-> `pageMoved` (un run rejoue sur l'entrée gelée, jamais sur le web
-> d'aujourd'hui). La console est en deux pages : **Corpus et étiquettes**, et
-> **Mesures**.
-
-
-Le registre ci-dessus mesure la **reconnaissance** en la laissant tourner. Le
-banc répond à l'autre question, celle qu'aucune observation passive ne peut
-atteindre : **ce que le pipeline a manqué.**
+Le registre ci-dessus mesure la reconnaissance **en la laissant tourner**. Le banc
+répond à l'autre question, celle qu'aucune observation passive ne peut atteindre :
+**ce que le pipeline a manqué.**
 
 Le déséquilibre est structurel. Une fausse sortie remonte au modérateur, qui la
-refuse — l'erreur est vue, corrigée, et *étiquetée*. Une vraie sortie écartée à
-l'étage 3 ou 4 n'est vue par personne, jamais ; elle ne produit même pas une
+refuse : l'erreur est vue, corrigée, étiquetée. Une vraie sortie écartée à
+l'étage 3 ou 4 n'est vue par personne, jamais — elle ne produit même pas une
 ligne de regret. La précision a le filet de la modération, le rappel n'en a
 aucun.
 
-Le banc s'ouvre donc par le **dépouillement**, et l'ordre n'est pas arbitraire :
-
-* il est **en amont** — un lien que `links_of` n'a pas vu est perdu pour les
-  cinq étages suivants, et aucun modèle en aval ne le rattrape ;
-* il est **déterministe, ce qui ne veut pas dire juste**. `links_of` rend les
-  mêmes liens à chaque fois ; ça ne dit rien de savoir si ce sont les bons. Une
-  fonction peut être fiablement fausse ;
-* et **sa panne se déguise en panne de l'étage 4**. Un agenda dont les liens de
-  fiche ont été perdus rend son menu ; la sélection n'en retient rien, avec un
-  `dropped_reason` parfaitement sensé ; et c'est le prompt de la sélection qu'on
-  ira retoucher pour un bug de sélecteur.
-
-#### Comment ça marche
-
-La console est à `/admin/evaluation`, réservée aux **administrateurs** — le banc
-fabrique la vérité de référence sur laquelle les mesures s'appuieront, et une
-vérité que plusieurs mains modifient sans se concerter n'en est plus une.
-
-On y donne un agenda réel et un nombre de pages. L'agenda part en file ; le
-worker le réclame comme il réclame une exécution
-(`POST /api/eval/harvest/next`), télécharge les pages avec le `Fetcher` du
-scraper — donc `robots.txt` et le délai par hôte — et appelle
-[`evaluation.harvest_agenda()`](sortiesbot/evaluation.py), qui n'est qu'une
-enveloppe autour du **vrai** `links_of`.
-
-C'est le point qui commande tout le reste, et il demande d'être précis :
-
-* **la fonction est partagée** avec la production — `links_of` est importée
-  telle quelle, avec ses seuils et son plafond. Refaire l'extraction côté site
-  donnerait la vérité d'une réimplémentation, c'est-à-dire aucune ;
-* **l'orchestration ne l'est pas.** L'étage 3 fait davantage qu'appeler
-  `links_of` : il journalise, tient les compteurs du run, dédoublonne entre
-  pages, et s'arrête dès que sa moisson suffit. Le banc a sa propre boucle,
-  délibérément plus bête. **On mesure la fonction, pas la brique.**
-
-Ce module n'a pas non plus le droit de « corriger » quoi que ce soit au
-passage — il appelle et rapporte. Compléter est le travail de l'humain.
-
-#### Le corpus est gelé, pour de bon
-
-Chaque page part avec son **HTML gzippé**, écrit sur le disque du serveur. Sans
-lui, le banc ne mesurerait `links_of` qu'à un instant donné : rejouer la mesure
-après l'avoir modifié obligerait à retélécharger, donc à comparer un nouveau
-code à une nouvelle page — et l'écart ne dirait plus lequel des deux a bougé.
-
-`GET /api/eval/pages/:id/html` rend cette page telle qu'elle a été servie. Une
-page injoignable ou démesurée est rapportée **sans** son archive : la mesure
-est le travail, l'archive est le confort du rejeu, et on ne perd pas la
-première pour avoir manqué la seconde. La console dit quelles pages ne sont pas
-archivées.
-
-#### La brique précoche, l'humain corrige
-
-Le banc relève **tous** les liens de la page, pas seulement ceux que le
-dépouillement a retenus, et ce que la brique en a fait devient une
-**précoche** : retenu, donc proposé comme « sortie » ; écarté, donc proposé
-comme « autre ». Il ne reste qu'à corriger ce qui est faux, et ce sont ces
-corrections-là qui sont la mesure.
-
-Ne montrer que la moisson obligeait à retrouver les manqués soi-même, en
-rouvrant la vraie page : lent, et incomplet par construction — on ne trouve que
-ce qu'on a pensé à chercher. Et surtout ça ne disait rien du contraire.
-
-**La précoche vient de la fonction, jamais d'une relecture de ses règles.**
-`evaluation.audit_links()` appelle le vrai `links_of` et se sert de sa réponse ;
-le motif du rejet, lui, est reconstitué à côté. Une erreur dans ce
-raisonnement-là fausserait un libellé, jamais la mesure — et un test le vérifie
-terme à terme.
-
-#### Les quatre verdicts
-
-Il en faut **quatre**, parce que trois ne suffisent pas à décrire ce qu'un
-agenda contient :
-
-| Verdict | Ce que c'est | Ce que le pipeline en fait |
-|---|---|---|
-| **sortie** | mène à la fiche d'un événement | ce que l'étage 4 doit garder |
-| **pagination** | la page 2, 3… du même agenda | suivie, mais seulement en `rel="next"` |
-| **sous-agenda** | une **autre** liste de sorties | **rien** |
-| **autre** | navigation, mentions légales, partage | correctement écarté |
-
-`SOUS_AGENDA` est le cas que personne ne comptait, et il est partout : « voir
-aussi les sorties en château », « les sorties gratuites ». Ces pages à facettes
-portent d'autres sorties sans être la page suivante. Le dépouillement les rend,
-le prompt de sélection lui dit d'écarter « les liens de navigation, de catégorie
-ou de pagination » — donc le modèle les jette, et ce qu'elles portent n'est
-jamais atteint. Le banc ne corrige pas ce trou : il le chiffre, ce qui est le
-premier pas.
-
-#### Les deux erreurs
-
-Le croisement de la précoche et du verdict les donne toutes les deux :
-
-|  | l'humain dit « sortie » | l'humain dit autre chose |
-|---|---|---|
-| **retenu** | juste | **retenu à tort** — un appel payant pour rien |
-| **écarté** | **sortie perdue** | juste |
-
-« Sortie perdue » est la plus chère, précisément parce qu'elle ne coûte rien :
-elle ne consomme aucun jeton, ne produit aucune ligne de journal, et personne
-ne la voit jamais.
-
-Car l'étage 3 n'est pas un pur extracteur. `links_of` **filtre déjà** : hors
-domaine, texte d'ancre de moins de quinze caractères, chemins de service,
-doublons, plafond à deux cents. Le partage avec l'étage 4 est celui-ci —
-l'étage 3 retire ce qui n'est *certainement pas* une fiche, gratuitement et par
-des règles ; l'étage 4 décide lesquelles des restantes correspondent au thème, à
-la zone et à la période, et c'est un jugement, donc facturé.
-
-Ce préfiltrage est légitime — il raccourcit l'appel payant. Mais il a sa propre
-balance, et un lien qu'il écarte n'atteint jamais l'étage 4. Les erreurs de
-l'étage 4 laissent une trace, un `dropped_reason` que la console affiche ;
-celles de l'étage 3 ne laissent rien.
-
-Chaque rejet part d'ailleurs avec **son motif** — « texte trop court », « hors
-domaine », « chemin de service ». Il ne décide de rien : il sert à ranger les
-rejets dans la console, parce que les sorties perdues se concentrent sous deux
-motifs et jamais sous les autres. La console offre aussi de trancher un motif
-entier d'un clic ; l'outil coupe dans les deux sens, et ne touche jamais les
-liens retenus.
-
-Et **tous** les liens partent avec leur contexte, écartés compris. Une première
-version le réservait aux retenus, au motif que c'est ce que l'étage 4 reçoit :
-l'argument était juste et la conséquence absurde. Le contexte ne sert pas ici à
-l'étage 4, il sert à l'humain pour juger — et il manquait très exactement là où
-il est indispensable, puisqu'un lien écarté pour « texte trop court » est par
-définition un lien dont l'intitulé ne dit rien. Sans lui, la console affichait
-des URL nues, impossibles à trancher sans les ouvrir une par une.
-
-Formellement, avec `retenus∩sorties` l'intersection des deux :
-
-```
-précision     = retenus∩sorties / retenus      ce que l'étage 4 veut, sur ce qu'il reçoit
-dont utiles   = retenus non-« autre » / retenus  ce qui mène quelque part, bruit exclu
-rappel        = retenus∩sorties / sorties      les vraies sorties que la brique a vues
-```
-
-**Deux précisions, parce qu'une seule accuse la mauvaise brique.** Compter tout
-ce qui n'est pas une sortie comme une faute du dépouillement est injuste : un
-sous-agenda retenu mène bien quelque part — vers d'autres sorties — et c'est
-l'étage 4 qui le jette, parce qu'on lui dit d'écarter les catégories. Une
-pagination retenue mène à la suite de la liste. « Précision » mesure donc le
-couple 3+4 et dit ce qu'on paie ; « dont utiles » mesure l'étage 3 seul et dit
-s'il sait reconnaître un lien qui compte.
-
-**Rien n'est dédoublonné entre pages** : un lien présent sur les pages 1 et 2
-compte deux fois, parce que `links_of` l'a vu deux fois.
-
-#### Ce qu'un humain a tranché, et ce que la brique a deviné
-
-L'import pose déjà un verdict sur chaque lien — la précoche. C'est ce qui rend
-la relecture rapide, et c'était un piège : rien ne distinguait « la machine a
-deviné *autre* » de « un humain a confirmé *autre* ».
-
-Constaté sur un vrai agenda : on pouvait valider en n'ayant relu que les
-soixante-trois liens retenus, et le rappel affichait **100 %**. Non pas parce
-que le dépouillement n'avait rien raté, mais parce que personne n'avait regardé
-les soixante-seize autres. Le dénominateur du rappel — les liens qu'un humain
-appelle « sortie » — ne peut pas être juste si une partie des liens n'a jamais
-été lue.
-
-D'où la colonne `reviewed`, posée au premier clic humain, et la règle qui en
-découle : **la validation exige que tout ait été tranché.** Ce n'est pas de la
-rigidité, c'est la condition pour que les taux veuillent dire quelque chose. Le
-filtre « À revoir » liste ce qui reste, et l'action de groupe permet d'expédier
-un motif entier.
-
-Les taux ne s'affichent **qu'une fois l'extraction validée** — donc une fois
-tout relu. Avant, ils ne diraient que « personne n'a encore regardé ».
-
-#### Parcourir les pages fait partie du travail, donc en rater est une erreur
-
-L'étage 3 ne se contente pas de lire une page : **il suit la pagination**. Un
-agenda pour lequel on demande deux pages et dont une seule est lue est donc un
-ratage, au même titre qu'une sortie perdue.
-
-Et il ne se voyait nulle part : la deuxième page n'existait simplement pas dans
-l'arbre, sans un mot. Deux compteurs le disent maintenant.
-
-**`pages lues / demandées`**, tout de suite, sans attendre l'humain — avec le
-motif de l'arrêt, dérivé de ce qu'on garde déjà :
-
-| Ce qu'on constate sur la dernière page lue | Motif |
-|---|---|
-| elle porte une erreur de lecture | `injoignable` — ce n'est pas la brique qu'il faut accuser |
-| pas de `rel="next"` | `sans_suite` — la brique n'a pas su désigner la suivante |
-| un `rel="next"` vers une page déjà lue | `boucle` — cet agenda tourne en rond |
-
-**`pagination ratée`**, une fois la page relue : des liens que l'humain appelle
-« pagination » sur une page où `next_page()` n'a rien trouvé. Le site offrait
-une suite, la brique ne l'a pas vue.
-
-#### Le verdict de pagination est au niveau de la page
-
-Il ne se déduit **pas** des étiquettes posées sur les liens, et une première
-version qui essayait posait une question sans réponse possible.
-
-`next_page()` lit le `rel="next"` des `<a>` **et** des `<link>` du `<head>`.
-Quand l'URL vient d'un `<link>`, ce n'est pas un lien de la page : elle
-n'apparaît dans aucune ligne, et l'étiqueter « pagination » était donc
-impossible. La console demandait de vérifier quelque chose qui n'existait nulle
-part. Et même sur un `<a>`, rien ne permettait de dire « vérifié, ce n'est pas
-la suite » : le bandeau restait rouge indéfiniment.
-
-D'où le même principe que pour les liens — la brique constate, l'humain
-tranche — avec trois réponses, parce que savoir qu'elle s'est trompée ne dit
-pas comment :
-
-| Verdict | Ce qu'il dit |
-|---|---|
-| **correct** | ce qu'elle a trouvé, ou n'a pas trouvé, est juste |
-| **suite ratée** | il y avait une suite, elle ne l'a pas vue |
-| **fausse suite** | elle a trouvé une page qui n'est pas la suite |
-
-Les deux derniers ouvrent un champ facultatif : **l'adresse de la vraie page
-suivante**. C'est ce qu'il faut pour réparer — savoir que la brique s'est
-trompée ne dit pas ce qu'elle aurait dû trouver, et une poignée de ces adresses
-dira tout de suite si `next_page()` doit apprendre à lire une pagination
-numérotée.
-
-Le bandeau **s'abstient tant que rien n'est tranché** : affirmer « cette page
-est la dernière » avant que quiconque ait regardé serait exactement
-l'affirmation gratuite que ce banc existe pour éviter. Et la validation exige un
-verdict sur chaque page, comme elle exige que chaque lien ait été relu.
-
-#### Deux choix qui ne vont pas de soi
-
-**Un nombre de pages fixe**, là où l'étage 3 en suit *tant qu'il manque de
-liens*. Ce sont deux questions distinctes : « ce site a-t-il des liens que je ne
-sais pas voir ? » se répond sur une page fixée, « fallait-il ouvrir la page 3 ? »
-est un arbitrage de budget qui se juge sur un run entier et son coût. Le banc
-répond à la première, et vérifie à part que la pagination est d'une forme
-suivable.
-
-**Pas de dédoublonnage entre pages.** `links_of` travaille page par page, et
-c'est page par page que la vérité s'établit. Fusionner ferait disparaître la
-moitié du travail qu'on cherche à noter — et masquerait le cas le plus
-instructif, celui de la page 2 qui ne rend rien alors que la page 1 va bien.
-
-Relancer une analyse efface aussi les ajouts manuels, et il n'y a pas d'autre
-choix honnête : ils disaient « `links_of` a manqué ceci **sur cette page telle
-qu'elle était** », la page vient d'être retéléchargée, et les garder les
-rattacherait à un HTML qu'ils n'ont jamais décrit.
-
-### Le banc de lecture — l'étage 5
-
-Le même principe, sur l'autre étage gratuit. L'étage 3 se mesure sur des
-**agendas**, celui-ci sur des **fiches** : ce ne sont pas les mêmes pages, donc
-pas le même corpus.
-
-L'étage 5 lit **trois fois** un même HTML — le texte qui part au modèle, les
-dates JSON-LD, l'illustration — et en tire une décision : sous
-`MIN_PAGE_CHARS`, la page est **abandonnée** avant le moindre appel payant.
-`evaluation.read_page()` rejoue les trois lectures avec les fonctions de
-production, et **l'échange de langue avec** : c'est lui qui décide *quelle* page
-est lue, et l'oublier ferait mesurer une autre page que celle que le pipeline
-aurait choisie.
-
-#### Trois verdicts plutôt qu'un
-
-Parce que les trois se ratent séparément et ne se réparent pas au même endroit.
-
-| Aspect | Réponses | Ce que la faute accuse |
-|---|---|---|
-| **texte** | correct · amputé · tronqué · hors sujet | la liste des balises décapées · le plafond de caractères · la mauvaise page |
-| **illustration** | correcte · logo du site · mauvaise · manquante | le tamis des images |
-| **dates** | correctes · incomplètes · fausses · manquantes | la lecture du JSON-LD |
-
-Un verdict unique les mélangerait et ne pointerait rien.
-
-#### Les signaux, et le premier d'entre eux
-
-Comme les motifs de rejet de l'étage 3, ce sont des **libellés** : la brique a
-déjà rendu ce qu'elle rend, et c'est ce rendu qu'on mesure. Ils disent seulement
-où regarder.
-
-Le plus utile de loin : **le titre de la page ne se retrouve pas dans le texte
-extrait.** `page_text` décape `nav header footer aside form`, et beaucoup de
-gabarits mettent le titre et les dates dans un `<header>`, l'encadré pratique
-dans un `<aside>`. Ils partent avec, le texte reste non vide, rien ne proteste —
-et c'est l'extraction qu'on ira accuser de rendre une fiche sans date.
-
-Les trois autres : texte **au plafond** (la fin n'atteindra jamais le modèle),
-**sous le seuil** (la page serait abandonnée — le ratage le plus cher, et le
-seul que la brique décide toute seule), et une adresse d'illustration qui
-**ressemble à un logo**.
-
-#### Rien n'est précoché en base
-
-À l'étage 3 il le fallait : cent trente-neuf liens ne se tranchent pas un par
-un, et il a fallu ensuite une colonne `reviewed` pour distinguer ce qu'un humain
-avait dit de ce que la machine avait deviné. Ici il y a **trois clics par
-page** : la console met en avant ce que la brique prétend, mais rien de cette
-proposition n'est écrit. Un verdict nul veut dire « personne n'a encore
-regardé », sans ambiguïté et sans colonne de plus.
-
-La validation exige les trois : valider en n'ayant jugé que le texte produirait
-un taux d'illustration calculé sur des pages que personne n'a regardées — le
-même mensonge que le rappel à 100 % de l'étage 3.
-
-#### Peupler le banc avec ce que le pipeline a déjà fait
-
-Deux paniers, et **l'équilibre entre eux est la question de ce banc**.
-
-| Panier | D'où | Ce qu'il apporte |
-|---|---|---|
-| **approuvées** | `ScraperRunItem` `decision='submitted'` dont la sortie est `APPROVED` | des pages où l'étage 5 a réussi — et la **vérité de référence** de l'étage 6 |
-| **abandonnées** | `ScraperRunItem` `decision='invalid'` avec `reason='page vide ou illisible'` | le **point aveugle** : la brique a dit non, personne n'a jamais vérifié |
-
-Une sortie approuvée est, par construction, une page dont le texte était
-lisible : sinon elle ne serait jamais devenue une sortie. Peupler le banc avec
-elles seules mesurerait la brique sur ses propres succès — on lirait 96 % de
-textes corrects, et ça ne voudrait rien dire. C'est le rappel à 100 % de l'étage
-3 sous un autre déguisement. La console affiche donc le mélange, et prévient
-quand il ne contient que des succès.
-
-**Pourquoi `ScraperRunItem` et pas `Event.sourceUrl`.** Parce que `sourceUrl` a
-pu être réécrit par l'étage 7 : quand l'attribution a remonté de l'agrégateur au
-site du musée, il désigne une page que le pipeline n'a **jamais lue**.
-`ScraperRunItem.url` est l'adresse réellement ouverte, après l'échange de langue.
-
-**Ce qui n'entre dans aucun panier :** les erreurs réseau (`decision='error'`).
-Une page injoignable ce jour-là est un fait du web, pas un jugement de la brique,
-et elle répond peut-être aujourd'hui.
-
-Le motif `page vide ou illisible` est une chaîne littérale de
-`stages/reading.py`, et le couplage est à connaître : s'il changeait côté
-scraper, le panier se viderait en silence. C'est pourquoi la route rend toujours
-le compte disponible — un panier vide se voit dans la console.
-
-**La fiche approuvée est du contexte ici, pas un verdict.** Les trois questions
-de l'étage 5 portent sur ce que la page *contient* ; la fiche dit ce que la
-sortie *est*. Confondre les deux fabriquerait des taux qui ne mesurent pas ce
-qu'ils annoncent. Elle est affichée en regard du texte parce qu'elle aide à
-juger, et c'est tout.
-
-### Le banc d'extraction — l'étage 6
-
-Le premier étage mesuré qui **coûte**. Et celui qui produit tout ce dont la
-fiche vit : `setting` (intérieur / extérieur), l'âge, le tarif, les horaires, le
-lieu, la catégorie. L'étage 5 ne rend qu'un texte ; tout le reste est lu dedans
-par le modèle.
-
-Trois choses le distinguent des deux étages précédents, et toutes les trois
-tiennent au fait que c'est un appel de modèle.
-
-#### 1. L'entrée est le texte de l'étage 5, jamais la page
-
-`evaluation.extract_page()` reçoit le texte que le banc de lecture a archivé, et
-appelle le vrai `provider.extract` dessus. Retélécharger mêlerait deux mesures :
-une fiche sans tarif dirait aussi bien « le modèle ne l'a pas vu » que « l'étage
-5 l'avait déjà emporté avec un `<aside>` ». Le banc de lecture a mesuré cela
-séparément, et l'a déjà dit — c'est pour ça qu'il vient avant.
-
-Conséquence pratique : on ne met au banc d'extraction qu'une page **déjà lue et
-au-dessus du seuil**. Une page que l'étage 5 aurait abandonnée n'atteint jamais
-l'extraction dans le pipeline, et la mesurer ici mesurerait un appel qui n'a
-pas lieu.
-
-Un seul appel, en mode **page unique**. Le mode programme pose une autre
-question — non pas « les champs sont-ils justes ? » mais « le découpage est-il
-le bon ? » — qui est une mesure de segmentation, avec ses propres taux. Ce que
-le banc mesure quand même, c'est la **décision** qui y mène : `several` est le
-premier aspect jugé.
-
-#### 2. Champ par champ, jamais fiche par fiche
-
-Une fiche « fausse » ne dit pas quel champ a lâché, donc ne dit pas quoi
-réparer. `audit_fiche()` découpe la fiche en **douze aspects** — les vingt-trois
-colonnes du schéma regroupées par *fait* : `free` et `price` sont un seul
-tarif, `age_min` et `age_max` un seul âge, les trois colonnes d'adresse une
-seule adresse. Les juger séparément compterait deux fois la même erreur.
-
-Quatre verdicts par aspect, et le croisement avec « le modèle a-t-il rempli ce
-champ ? » donne les trois taux :
-
-|                | la page le dit  | la page n'en dit rien |
-|----------------|-----------------|-----------------------|
-| **renseigné**  | JUSTE ou FAUX   | **INVENTE**           |
-| **vide**       | **MANQUE**      | JUSTE (vide à raison) |
-
-* **exactitude** = juste / (juste + faux + inventé) — parmi les valeurs qu'il a
-  osé écrire, la part juste ;
-* **couverture** = juste / (juste + faux + manqué) — parmi ce que la page
-  offrait, la part rapportée juste. C'est le rappel, et c'est le seul chiffre
-  qui demande vraiment un humain : il faut avoir lu la page pour savoir que
-  l'information y était ;
-* **invention** = inventé / renseigné. La faute propre à un modèle, celle
-  qu'aucun code déterministe ne commet. La ranger sous « faux » cacherait le
-  seul chiffre qui dit si le prompt tient le modèle.
-
-#### 3. Trois instruments gratuits, avant le premier clic
-
-Aucun ne coûte d'étiquette, et à eux trois ils désignent la plupart des fautes.
-
-| Instrument | Ce qu'il vérifie | Aspects couverts |
-|---|---|---|
-| **ancrage** | la valeur se retrouve-t-elle dans le texte ? | titre, description, tarif, âge, dates, jours, horaires, lieu, adresse |
-| **cohérence** | la fiche se contredit-elle toute seule ? | âge (min > max), tarif (gratuit *et* payant), dates (fin avant début), code postal |
-| **accord** | les dates rencontrent-elles celles du JSON-LD de l'étage 5 ? | dates |
-| **référentiel** | la catégorie existe-t-elle sur le site ? | catégorie |
-
-L'ancrage d'un **nombre** exige son voisinage : un tarif de 8 € ne compte pour
-ancré que près d'un `€` ou d'un « euro », un âge de 3 ans près d'un « ans » ou
-d'un « à partir de ». Sans ça, n'importe quel texte assez long ancre n'importe
-quel petit entier, et l'instrument ne dirait plus rien. Les **dates** sont
-cherchées sous toutes leurs écritures françaises — « 3 août », « 03/08/2026 »,
-« 2026-08-03 » — sinon toute date correctement lue serait déclarée inventée.
-
-Une exception est codée en dur, et elle est réglementaire : le prompt impose de
-mettre *aujourd'hui* en date de début quand la page n'annonce qu'une fin
-(« jusqu'au 23 octobre »). Cette date-là n'est pas dans la page, et la signaler
-accuserait le modèle d'avoir suivi sa consigne.
-
-Comme ailleurs au banc, ce sont des **libellés, pas des verdicts** : ils disent
-où regarder d'abord, ce qui est beaucoup quand douze aspects sur trente fiches
-font trois cent soixante décisions dont l'écrasante majorité est « juste ». D'où
-le bouton « le reste est juste », qui balaie ce qu'**aucun** instrument n'a
-signalé — et seulement cela. Balayer aussi les aspects signalés annulerait le
-seul travail que les instruments font, et rendrait la mesure indiscernable de
-« personne n'a rien lu ».
-
-#### Ce qu'aucun instrument ne sait faire
-
-`setting` — intérieur ou extérieur — n'a **aucun** ancrage possible. Une page ne
-l'écrit presque jamais : elle dit « au parc de la Villette » ou « salle
-Jean-Vilar », et c'est le lecteur qui conclut. C'est l'aspect qui coûtera
-toujours une étiquette humaine, et le banc l'annonce (`instrument: "aucun"`)
-plutôt que d'imaginer une heuristique qui donnerait l'illusion d'une mesure.
-
-La `description` est dans un entre-deux : c'est une reformulation, jugée sur le
-**vocabulaire** — une description dont la moitié des mots longs sont absents de
-la page n'a pas été tirée d'elle.
-
-#### La fiche approuvée comme vérité de référence
-
-Approuver, sur ce site, veut dire qu'un modérateur a vérifié **chaque champ**.
-Une sortie approuvée n'est donc pas une précoche de plus : c'est une étiquette
-humaine déjà payée, et elle tranche l'étage 6 gratuitement — y compris `setting`,
-le seul aspect qu'aucun instrument n'atteint.
-
-Quand la page du banc en porte une, `propose_verdicts()` compare champ par champ
-et **propose** un verdict, avec la valeur approuvée citée dans le motif : sans
-elle, il faudrait rouvrir la fiche publiée pour trancher, ce que la référence est
-justement censée épargner.
-
-Elle propose, elle n'écrit pas. Rien n'entre dans `verdicts` sans qu'un humain
-ait cliqué — c'est le même invariant qu'à l'étage 3, où la précoche de `links_of`
-est restée séparée de ce qu'un humain avait tranché. La console offre un bouton
-« confirmer la fiche approuvée » : un clic, et c'est un acte humain.
-
-Deux champs restent sans proposition, délibérément :
-
-* **la description** est une reformulation. Deux paraphrases différentes de la
-  même page sont toutes les deux justes ;
-* **`several`** — la référence est *une* sortie tirée de cette page, elle ne dit
-  rien de ce qu'il y en avait d'autres.
-
-Un troisième cas ne propose rien mais s'explique : la fiche approuvée est vide et
-l'ancrage retrouve pourtant la valeur dans le texte. Les deux instruments se
-contredisent, et c'est exactement le cas à montrer à un humain.
-
-**Le garde-fou.** La fiche décrit la page du jour du run ; le banc la relit
-aujourd'hui, et le pipeline n'archive aucun HTML d'époque. Si le titre approuvé
-ne se retrouve plus dans le texte, ce n'est plus la même page : toutes les
-propositions sont retirées (`pageMoved`), parce qu'elles accuseraient le modèle
-d'un changement du site. La console affiche par ailleurs l'ancienneté de la
-lecture — plus l'écart est grand, moins un désaccord accuse la brique.
-
-**Et le chiffre à garder sous les yeux :** combien de verdicts n'ont fait que
-*confirmer* la référence, contre combien l'ont *corrigée*. Une mesure entièrement
-confirmative reste vraie — un humain a cliqué — mais elle dit surtout que le
-modèle et le modérateur sont d'accord, ce qui est plus faible qu'une relecture
-indépendante. Les renseignements sont dans les corrections.
-
-#### Le prix de la mesure
-
-Une extraction = un appel. Le compte rendu porte les jetons et le coût, et la
-console les additionne : taire le prix donnerait l'impression que cette
-mesure-ci est gratuite comme les deux précédentes. C'est aussi pourquoi la file
-d'extraction passe **en dernier** dans le worker, derrière les recherches, les
-agendas et les lectures — tout ce qui est gratuit passe avant.
-
-La console permet de mettre en file **toutes** les fiches lisibles d'un coup
-(`POST /api/eval/extractions/all`), et c'est le seul geste du banc dont la
-dépense suit le nombre de pages : d'où la confirmation, qui annonce le compte
-avant de partir. Le serveur reste seul juge de ce qui est éligible — lu,
-au-dessus du seuil, pas déjà extrait — et rend combien de lignes ont réellement
-été créées, qui peut être moins que ce que la console annonçait si une page a
-été extraite depuis un autre onglet entre-temps.
+Le banc est une console (`/admin/evaluation`, administrateurs), un corpus de
+pages **gelées**, et des runs qui rejouent une brique dessus. Côté scraper il
+tient dans un seul module,
+[`sortiesbot/evaluation.py`](sortiesbot/evaluation.py), qui n'est qu'une
+enveloppe autour des **vraies** fonctions — `links_of`, `next_page`, `page_text`,
+`json_ld_dates`, `main_image`, `provider.select`, `provider.extract` — et le
+worker sert ses files comme il sert une recherche.
+
+Deux règles suffisent à comprendre le reste, et elles sont dans ce module :
+
+* **la fonction est partagée avec la production, l'orchestration ne l'est pas.**
+  L'étage 3 fait plus qu'appeler `links_of` : il journalise, compte, dédoublonne
+  entre pages et s'arrête quand sa moisson suffit. Le banc a sa propre boucle,
+  délibérément plus bête. On mesure la fonction, pas la brique ;
+* **le module n'a pas le droit de corriger quoi que ce soit au passage.** Il
+  appelle et rapporte. Compléter est le travail de l'humain.
+
+Tout le reste — ce que le corpus contient, comment chaque étage se mesure, ce que
+la modération donne gratuitement, et ce qui reste limité — est dans
+[`docs/banc-evaluation.md`](../docs/banc-evaluation.md).
 
 ### Le registre, et comment le lire
 
@@ -1281,31 +784,25 @@ journal porte les deux bouts, reliés par l'URL.
 
 ### Le partage des rôles
 
-Python fait tout ce qui est mécanique — télécharger, parser, extraire des
-liens — et ne coûte rien. Le modèle n'intervient qu'aux trois moments où il
-faut du jugement, et **aucun de ces appels ne boucle** :
+Python fait tout ce qui est mécanique — télécharger, parser, extraire des liens,
+géocoder, soumettre — et ne coûte rien. Le modèle n'intervient qu'aux moments où
+il faut du jugement, et **aucun de ces appels ne boucle**. Qui travaille à quel
+étage est dit une fois pour toutes par la colonne « Qui travaille » du [tableau
+des huit étages](#les-huit-étages-et-où-ils-sont-dans-le-code), et par `ACTOR`
+dans `stages/__init__.py` — la même source que celle dont la console tire son
+graphe.
 
-```
-1. recherche        modèle + web_search   → pages à ouvrir, classées
-   (mode « site » :                         « agenda » ou « sortie »
-    les URLs sont données, rien n'est lancé)
-   ├─ sortie  ─────────────────────────────────────────┐
-   └─ agenda                                           │
-2. téléchargement   Python                → HTML       │           gratuit
-3. extraction liens Python (BeautifulSoup)→ (texte, url, contexte)  gratuit
-4. sélection        modèle, sans outil    → liens menant à une sortie
-                                                       │
-5. lecture + fiche  Python puis modèle ◀───────────────┘
-                                          → une sortie structurée,
-                                            ou plusieurs si c'est un programme
-   puis géocodage, validation, photo, soumission — sans modèle
-```
+Trois étages appellent le modèle à chaque passage (1, 4, 6), trois sont du Python
+pur (3, 5, 8), et deux sont **mixtes** — gratuits tant qu'un signal certain
+tranche, facturés quand ils se taisent tous : la reconnaissance (2) et
+l'attribution (7).
 
 Une recherche ne remonte pas que des agendas : elle tombe régulièrement sur la
-page d'une sortie précise. Le modèle classe donc chaque page retenue, et une
-sortie trouvée directement court-circuite les étapes 2 à 4. S'il se trompe et
-qu'un « agenda » ne donne aucun lien, la page est relue comme une sortie — elle
-est déjà téléchargée, la lire coûte 0,004 $, l'ignorer coûte la sortie.
+page d'une sortie précise. C'est la reconnaissance qui le constate, sur le HTML,
+et une sortie trouvée directement saute le dépouillement et le tri. Si elle se
+trompe et qu'un « agenda » ne donne aucun lien, la page est relue comme une
+sortie — elle est déjà téléchargée, la lire coûte 0,004 $, l'ignorer coûte la
+sortie.
 
 C'est ce découpage qui rend le coût prévisible. La version précédente confiait
 toute la procédure à un seul appel agentique : le modèle ouvrait les pages
@@ -1387,7 +884,7 @@ L'illustration, elle, est commune : le HTML d'une page de programme n'annonce
 qu'une image (`og:image`), et toutes ses sorties la partagent. Une vignette
 juste vaut mieux que vingt fiches nues.
 
-### Étape 3, en détail
+### L'étage 3, en détail
 
 Une page d'agenda, ce qu'on y cherche, ce sont ses liens. Les faire lire au
 modèle coûtait 12 000 jetons par page ; BeautifulSoup les extrait pour rien :
@@ -1408,7 +905,7 @@ Un premier tri mécanique retire ensuite le bruit évident — liens vides, ancr
 doublons. Il n'a pas à être parfait : il doit réduire deux cents liens à une
 cinquantaine pour que le modèle en juge à moindre coût.
 
-### Étape 4 : le modèle répond par des numéros
+### L'étage 4 : le modèle répond par des numéros
 
 Les liens lui sont soumis numérotés, et il renvoie les numéros retenus — jamais
 des URL. **Il lui est donc matériellement impossible d'en inventer une**, ce qui

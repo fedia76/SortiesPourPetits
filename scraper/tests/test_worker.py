@@ -484,3 +484,50 @@ def test_une_date_illisible_ne_fait_pas_echouer_le_run():
     config = worker._config_du_run(run, quiet=True)
 
     assert config.date_from == date.today()
+
+
+# ═══════════════════════════════ de quoi un run du banc est le run
+
+
+def test_un_run_declare_son_modele_et_l_empreinte_de_son_prompt():
+    """Sans eux, deux points d'une courbe ne sont pas comparables — et le savoir
+    après coup est impossible : un run joué ne dira jamais ce qu'il était.
+
+    Ils partent à la **clôture** parce que le worker ne les connaît qu'une fois
+    le run réclamé : c'est l'étage de ce run qui dit quel modèle il interroge.
+    """
+    config = worker._config_du_run({"id": 11, "stage": "EXTRACT"}, quiet=True)
+
+    declare = worker._declare("EXTRACT", config)
+
+    assert declare["model"] == config.extraction_model
+    assert len(declare["promptHash"]) == 16
+
+
+def test_chaque_etage_declare_le_prompt_qu_il_a_vraiment_posé():
+    """Le tri et l'extraction ne posent pas la même question : une empreinte
+    commune ferait passer deux runs incomparables pour comparables."""
+    config = worker._config_du_run({"id": 12, "stage": "SELECT"}, quiet=True)
+
+    assert worker._declare("SELECT", config)["promptHash"] != (
+        worker._declare("EXTRACT", config)["promptHash"]
+    )
+    assert worker._declare("SELECT", config)["model"] == config.select_model
+
+
+def test_l_empreinte_change_avec_le_gabarit_et_pas_avec_la_page():
+    """C'est le gabarit qu'on empreinte, pas le prompt rendu : celui-ci change à
+    chaque page, et ce qu'on veut savoir est si deux runs ont posé la même
+    question."""
+    from dataclasses import replace as dc_replace
+
+    config = worker._config_du_run({"id": 13, "stage": "EXTRACT"}, quiet=True)
+    autre = dc_replace(config, extraction_prompt=config.extraction_prompt + "\nUne règle de plus.")
+
+    assert worker._declare("EXTRACT", config) != worker._declare("EXTRACT", autre)
+
+
+def test_un_etage_de_python_pur_ne_declare_aucun_modele():
+    """Annoncer un modèle qu'on n'a pas appelé serait une déclaration fausse, et
+    la colonne servirait à comparer ce qui ne se compare pas."""
+    assert worker._declare("HARVEST", None) == {"model": "", "promptHash": ""}

@@ -858,17 +858,20 @@ export const evalRunListSchema = z.object({
 /**
  * Ce que le worker déclare en prenant un run : **ce qu'il est**.
  *
- * Sa révision, son modèle, l'empreinte de son prompt — sans quoi un point de
- * la courbe ne s'attribue à rien, et c'est irrattrapable après coup.
+ * Sa révision, et elle seule — sans quoi un point de la courbe ne s'attribue à
+ * rien, et c'est irrattrapable après coup.
  *
- * Ce qu'on **cherche** ne se déclare plus ici : c'est le run qui le porte,
+ * Le **modèle** et l'**empreinte du prompt** ne peuvent pas se déclarer ici :
+ * le worker ne les connaît qu'une fois le run réclamé, puisque c'est l'étage de
+ * ce run qui les dit. Ils arrivent donc à la clôture, seul moment où ils sont
+ * vrais — les accepter ici revenait à les laisser vides pour toujours.
+ *
+ * Ce qu'on **cherche** ne se déclare pas non plus : c'est le run qui le porte,
  * fixé au lancement depuis la console. La fenêtre que le modèle reçoit et
  * celle contre laquelle on le juge sont ainsi la même ligne en base.
  */
 export const evalRunClaimSchema = z.object({
   codeRef: z.string().trim().max(60).optional().default(''),
-  model: z.string().trim().max(120).optional().default(''),
-  promptHash: z.string().trim().max(64).optional().default(''),
 });
 
 /** Ce qu'un run de l'étage 3 ou 4 rend sur une page du corpus. */
@@ -940,7 +943,14 @@ export const evalExtractResultSchema = z.object({
   error: z.string().trim().max(1000).optional(),
 });
 
-/** Clôture d'un run : son sort, et ce qu'il a coûté. */
+/**
+ * Clôture d'un run : son sort, ce qu'il a coûté, et **de quoi il était le run**.
+ *
+ * Le modèle et l'empreinte du prompt arrivent ici plutôt qu'à la réclamation
+ * parce que c'est ici qu'ils sont connus. Deux runs de même empreinte se
+ * comparent sur le modèle seul ; deux runs d'empreintes différentes ne se
+ * comparent pas — et un run qui ne dit ni l'un ni l'autre ne se compare à rien.
+ */
 export const evalRunFinishSchema = z.object({
   status: z.enum(['DONE', 'FAILED']),
   error: z.string().trim().max(2000).optional(),
@@ -948,6 +958,9 @@ export const evalRunFinishSchema = z.object({
   inputTokens: z.number().int().min(0).optional().default(0),
   outputTokens: z.number().int().min(0).optional().default(0),
   costUsd: z.number().min(0).optional().default(0),
+  /** Vide pour les deux étages de Python pur, qui n'interrogent personne. */
+  model: z.string().trim().max(120).optional().default(''),
+  promptHash: z.string().trim().max(64).optional().default(''),
 });
 
 /**

@@ -1,4 +1,17 @@
-# Documentation illustrée
+# Documentation
+
+Deux natures de documents vivent ici, et les confondre fait croire qu'un chiffre
+d'août dit encore quelque chose aujourd'hui.
+
+## La référence du banc, tenue à jour
+
+[`banc-evaluation.md`](banc-evaluation.md) — le banc d'évaluation : les trois
+choses qui ne se mélangent pas (corpus, run, mesure), ce que le corpus contient,
+comment chacun des étages 2 à 6 se mesure, ce que la modération donne
+gratuitement, et **ce qui reste limité**. Il suit le code, comme le [README du
+scraper](../scraper/README.md) suit le pipeline.
+
+## Les analyses illustrées, datées
 
 Cinq pages HTML autonomes, à ouvrir dans un navigateur (double-clic sur le
 fichier suffit : tout est embarqué, y compris les schémas, qui sont du SVG
@@ -43,15 +56,16 @@ page sur son HTML, et l'*attribution* (étage 7), qui remonte d'un agrégateur �
 la page de l'organisateur. Ce que ces deux documents disent des six autres
 reste juste ; pour les huit, c'est `scraper-briques.html` qui fait foi.
 
-`scraper-evaluation.html` a changé de statut depuis. Le banc qu'il décrivait
-existe : la console `/admin/evaluation` mesure aujourd'hui les étages **3**
-(dépouillement), **5** (lecture) et **6** (extraction), chacun sur la sortie
-gelée du précédent. Le banc se peuple avec ce que le pipeline a déjà fait — en
-deux paniers, les pages où il a réussi et celles qu'il a abandonnées — et les
-sorties approuvées y servent de vérité de référence, puisque approuver veut dire
-qu'un modérateur a vérifié chaque champ. Ce que le document dit des cinq autres reste une
-recommandation, et les **chiffres** qu'il cite restent des ordres de grandeur —
-les vrais sont dans la console.
+`scraper-evaluation.html` a changé de statut depuis, et c'est celui qui a le plus
+vieilli. Le banc qu'il recommandait **existe** : la console `/admin/evaluation`
+mesure aujourd'hui les étages **3** (dépouillement), **4** (tri), **5** (lecture)
+et **6** (extraction) — l'étage **2** a son corpus, mais pas encore de run qui le
+rejoue. Ce qu'il dit des trois autres
+reste une recommandation, ses **chiffres** restent des ordres de grandeur, et sa
+description du banc est dépassée sur un point qui compte : les étiquettes ne sont
+plus des verdicts (« le tarif rendu est juste ») mais des faits (« la page annonce
+8 € »), ce qui a séparé le corpus des runs. C'est
+[`banc-evaluation.md`](banc-evaluation.md) qui fait foi pour le banc.
 
 La description du pipeline, elle, est tenue à jour avec le code : le tableau
 des huit étages du [README du scraper](../scraper/README.md) et le vocabulaire

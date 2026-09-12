@@ -1,4 +1,4 @@
-"""Le socle commun aux six briques : leur contexte, et ce qu'elles partagent.
+"""Le socle commun aux huit briques : leur contexte, et ce qu'elles partagent.
 
 Deux objets, deux rôles.
 
@@ -11,11 +11,11 @@ pas : l'état d'une exécution.
 `Brick` est **ce que toute brique sait faire sans qu'on le lui redise** :
 s'annoncer au journal en ouvrant son étage, se refermer en disant ce qu'elle a
 produit, et atteindre le contexte sans le trimballer. Le reste — ce qu'elle
-prend et ce qu'elle rend — lui est propre, et c'est délibéré : les six briques
+prend et ce qu'elle rend — lui est propre, et c'est délibéré : les huit briques
 n'ont pas la même cardinalité. La découverte tourne une fois par run, le
 dépouillement une fois par agenda, la lecture une fois par page, la
 publication une fois par fiche. Une signature unique aurait été un mensonge
-commode ; on préfère six signatures honnêtes et un orchestrateur qui montre
+commode ; on préfère huit signatures honnêtes et un orchestrateur qui montre
 l'imbrication.
 """
 

@@ -44,6 +44,13 @@ jobs:
         run: |
           npm ci
           npm run build
+      # La mesure du banc est du calcul pur, et une erreur y fausserait tous les
+      # chiffres sans rien casser : compiler ne suffit donc pas à la surveiller.
+      # Ces tests ne demandent aucune dépendance de plus — le lanceur de Node,
+      # chargé par `tsx`, que l'API a déjà.
+      - name: Tests de l'API
+        working-directory: server
+        run: npm test
 
   # Ce job-ci appelle le vrai service et consomme un crédit : il ne part jamais
   # tout seul. Deux façons de le demander, et la seconde existe parce que la

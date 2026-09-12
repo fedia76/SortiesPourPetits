@@ -1,0 +1,18 @@
+{
+  // Les tests ne sont pas compilés — ils tournent sous `tsx` — mais ils doivent
+  // être **typés** : un test qui ne compile plus après un changement de
+  // signature est exactement l'avertissement qu'on veut. D'où ce second
+  // fichier : `tsconfig.json` ne connaît que `src`, pour que `dist` ne reçoive
+  // jamais de test.
+  //
+  // `scripts/` y est pour la même raison, et elle est née d'un dégât réel : le
+  // script de reprise des étiquettes écrivait dans une table supprimée depuis
+  // des semaines, et rien ne le disait puisque rien ne le compilait.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["src", "tests", "scripts"]
+}
