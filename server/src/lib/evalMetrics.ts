@@ -486,13 +486,22 @@ export function sumHarvest(pages: HarvestScore[]): HarvestScore {
 
 // ═══════════════════════════════════════════════════ étage 5 — la lecture
 
+/**
+ * Ce que l'étiquette dit de la **page**, pour l'étage 5.
+ *
+ * Trois clés du même JSON que le reste — une sortie n'a qu'une étiquette. Une
+ * clé absente veut dire « personne n'a regardé » ; une valeur vide (`""` pour
+ * l'image, `[]` pour les dates) veut dire « la page n'en porte pas », ce qui
+ * est une étiquette de plein droit. Sans le second état, une image inventée
+ * serait indiscernable d'un champ jamais relu.
+ */
 export interface ReadLabels {
-  /** `null` : personne n'a regardé. `''` : la page n'en porte pas. */
-  expectedImage: string | null;
-  /** JSON d'un tableau de dates. `null` : personne n'a regardé. */
-  expectedDates: string | null;
-  /** JSON d'un tableau de fragments que le texte doit contenir. */
-  expectedMarkers: string | null;
+  /** L'illustration que la page porte vraiment. */
+  image?: string | null;
+  /** Les dates que la page déclare dans son balisage `schema.org/Event`. */
+  declaredDates?: string[] | null;
+  /** Quelques fragments que le texte extrait doit contenir. */
+  markers?: string[] | null;
 }
 
 export interface ReadOutput {
@@ -531,7 +540,7 @@ function parseList(raw: string | null): string[] | null {
 
 export function readScore(labels: ReadLabels, out: ReadOutput): ReadScore {
   const haystack = fold(out.text);
-  const markers = parseList(labels.expectedMarkers);
+  const markers = labels.markers ?? null;
 
   let markersFound = 0;
   let markersMissing = 0;
@@ -540,7 +549,7 @@ export function readScore(labels: ReadLabels, out: ReadOutput): ReadScore {
     else markersMissing += 1;
   }
 
-  const wantedDates = parseList(labels.expectedDates);
+  const wantedDates = labels.declaredDates ?? null;
   const gotDates = parseList(out.dates) ?? [];
   const datesOk =
     wantedDates === null
@@ -555,8 +564,7 @@ export function readScore(labels: ReadLabels, out: ReadOutput): ReadScore {
     textOk: markers === null || markers.length === 0 ? null : markersMissing === 0,
     truncated: out.truncated,
     tooShort: out.tooShort,
-    imageOk:
-      labels.expectedImage === null ? null : fold(labels.expectedImage) === fold(out.imageUrl),
+    imageOk: labels.image == null ? null : fold(labels.image) === fold(out.imageUrl),
     datesOk,
   };
 }

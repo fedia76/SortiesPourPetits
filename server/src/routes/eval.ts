@@ -62,6 +62,7 @@ import {
   sumSelect,
   type FicheRendue,
   type LabelledLink,
+  type ReadLabels,
   type RunScope,
 } from '../lib/evalMetrics';
 import {
@@ -71,13 +72,14 @@ import {
   evalCaptureSchema,
   evalExtractResultSchema,
   evalFailSchema,
-  evalFicheSchema,
+  evalEtiquetteSchema,
   evalLinkResultSchema,
   evalLinkSchema,
   evalNextSchema,
   evalReadResultSchema,
   evalSortieLabelSchema,
   evalSortieSchema,
+  CHAMPS_ETIQUETTE,
   evalRunClaimSchema,
   evalRunFinishSchema,
   evalRunListSchema,
@@ -336,48 +338,35 @@ function scorePage(
  * plus. Ni le titre, ni le tarif, ni le texte attendu — ils appartiennent au
  * corpus et servent aux étages 5 et 6. Chaque étage lit son sous-ensemble.
  */
-const FAITS_SORTIE = {
-  dateStart: true,
-  dateEnd: true,
-  postalCode: true,
-  ageMin: true,
-  ageMax: true,
-  audience: true,
-} as const;
+const FAITS_SORTIE = { expected: true, audience: true } as const;
 
-type SortieRow = {
-  dateStart: Date | null;
-  dateEnd: Date | null;
-  postalCode: string | null;
-  ageMin: number | null;
-  ageMax: number | null;
-  audience: EvalAudience | null;
-};
+type SortieRow = { expected: string; audience: EvalAudience | null };
 
 /**
  * Une ligne de la base, sous la forme que la mesure compare.
  *
- * Les colonnes `DATE` reviennent en `Date` calées sur minuit UTC : les rendre
- * en `YYYY-MM-DD` ici garde `evalMetrics` pur — il compare des jours, jamais
- * des instants, et n'a donc aucun fuseau où se tromper.
+ * Les faits de l'étage 4 vivent dans l'étiquette, au même endroit que ceux des
+ * étages 5 et 6 : une sortie n'a qu'une étiquette, et chaque étage y lit son
+ * sous-ensemble. Seule `audience` est à part — c'est la seule affirmation du
+ * banc qu'aucune brique ne rend.
  */
 function labelled<T extends { url: string; verdict: EvalVerdict; sortie?: SortieRow | null }>(
   link: T,
 ): LabelledLink {
   const s = link.sortie;
+  if (!s) return { url: link.url, verdict: link.verdict, sortie: null };
+  const e = parseJson<FicheRendue>(s.expected, {});
   return {
     url: link.url,
     verdict: link.verdict,
-    sortie: s
-      ? {
-          dateStart: jour(s.dateStart),
-          dateEnd: jour(s.dateEnd),
-          postalCode: s.postalCode,
-          ageMin: s.ageMin,
-          ageMax: s.ageMax,
-          audience: s.audience,
-        }
-      : null,
+    sortie: {
+      dateStart: e.dateStart ?? null,
+      dateEnd: e.dateEnd ?? null,
+      postalCode: e.venuePostalCode ?? null,
+      ageMin: e.ageMin ?? null,
+      ageMax: e.ageMax ?? null,
+      audience: s.audience,
+    },
   };
 }
 
@@ -592,15 +581,27 @@ evalRouter.get('/sorties', admin, async (_req, res) => {
     orderBy: { createdAt: 'desc' },
     include: {
       author: { select: { id: true, displayName: true } },
-      fiche: { select: { id: true, expected: true, labelledAt: true } },
     },
   });
   res.json({ sorties: sorties.map(serializeSortie) });
 });
 
-function serializeSortie<T extends { htmlPath: string | null; fiche?: unknown }>(sortie: T) {
+/**
+ * Une sortie telle que la console la reçoit.
+ *
+ * `published` dit d'où elle vient, et c'est la distinction qui compte quand on
+ * regarde le corpus : ou bien elle existe sur le site — un modérateur l'a
+ * approuvée, et son étiquette est donc du travail humain déjà payé —, ou bien
+ * elle n'existe que dans le banc, et tout ce qu'elle affirme reste à saisir.
+ *
+ * Dérivé, jamais stocké : `eventId` n'est renseigné que par la moisson des
+ * sorties approuvées, et c'est déjà la réponse.
+ */
+function serializeSortie<T extends { htmlPath: string | null; eventId: number | null }>(
+  sortie: T,
+) {
   const { htmlPath, ...rest } = sortie;
-  return { ...rest, archived: Boolean(htmlPath) };
+  return { ...rest, archived: Boolean(htmlPath), published: sortie.eventId !== null };
 }
 
 evalRouter.post('/sorties', admin, async (req, res) => {
@@ -669,26 +670,48 @@ evalRouter.patch('/sorties/:id(\\d+)', admin, async (req, res) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const { expectedDates, expectedMarkers, dateStart, dateEnd, ...rest } = parsed.data;
+  const { audience, note, ...champs } = parsed.data;
+  const id = Number(req.params.id);
+  const avant = await prisma.evalSortie.findUnique({
+    where: { id },
+    select: { expected: true, origins: true },
+  });
+  if (!avant) {
+    res.status(404).json({ error: 'Sortie introuvable' });
+    return;
+  }
+
+  // On fusionne dans l'étiquette au lieu de la réécrire : corriger une date ne
+  // doit pas effacer le titre que la moisson avait rempli.
+  //
+  // Les trois états sont tenus par la présence de la clé. Une valeur — même
+  // vide — dit « la page annonce ceci », et c'est une étiquette de plein
+  // droit : c'est elle qui permet de reconnaître une valeur inventée. `null`
+  // retire la clé, c'est-à-dire revient à « personne n'a regardé ».
+  const expected = parseJson<Record<string, unknown>>(avant.expected, {});
+  const origins = parseJson<Record<string, string>>(avant.origins, {});
+  for (const cle of CHAMPS_ETIQUETTE) {
+    const valeur = champs[cle];
+    if (valeur === undefined) continue;
+    if (valeur === null) {
+      delete expected[cle];
+      delete origins[cle];
+    } else {
+      expected[cle] = valeur;
+      origins[cle] = 'SAISIE';
+    }
+  }
+
   try {
     const sortie = await prisma.evalSortie.update({
-      where: { id: Number(req.params.id) },
+      where: { id },
       data: {
-        ...rest,
-        // Une colonne `DATE` attend un instant : on cale sur minuit UTC pour
-        // que le jour saisi soit le jour relu, sous n'importe quel fuseau.
-        ...(dateStart === undefined
-          ? {}
-          : { dateStart: dateStart === null ? null : new Date(`${dateStart}T00:00:00Z`) }),
-        ...(dateEnd === undefined
-          ? {}
-          : { dateEnd: dateEnd === null ? null : new Date(`${dateEnd}T00:00:00Z`) }),
-        ...(expectedDates === undefined
-          ? {}
-          : { expectedDates: expectedDates === null ? null : JSON.stringify(expectedDates) }),
-        ...(expectedMarkers === undefined
-          ? {}
-          : { expectedMarkers: expectedMarkers === null ? null : JSON.stringify(expectedMarkers) }),
+        expected: JSON.stringify(expected),
+        origins: JSON.stringify(origins),
+        ...(audience === undefined ? {} : { audience }),
+        ...(note === undefined ? {} : { note }),
+        labelledAt: new Date(),
+        labelledById: req.user!.id,
       },
     });
     res.json({ sortie: serializeSortie(sortie) });
@@ -753,8 +776,8 @@ evalRouter.get('/sorties/:id(\\d+)/html', admin, async (req, res) => {
 });
 
 /** Ce que la page annonce, champ par champ : le corpus de l'étage 6. */
-evalRouter.put('/sorties/:id(\\d+)/fiche', admin, async (req, res) => {
-  const parsed = evalFicheSchema.safeParse(req.body);
+evalRouter.put('/sorties/:id(\\d+)/etiquette', admin, async (req, res) => {
+  const parsed = evalEtiquetteSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
@@ -765,13 +788,43 @@ evalRouter.put('/sorties/:id(\\d+)/fiche', admin, async (req, res) => {
     res.status(404).json({ error: 'Page introuvable' });
     return;
   }
-  const expected = JSON.stringify(parsed.data.expected);
-  const fiche = await prisma.evalFiche.upsert({
-    where: { sortieId },
-    create: { sortieId, expected, note: parsed.data.note, createdById: req.user!.id },
-    update: { expected, note: parsed.data.note, labelledAt: new Date() },
+  // L'étiquette s'écrit sur la sortie : il n'y a qu'un objet, et qu'une
+  // étiquette. Ce que chaque champ doit valoir se marque `SAISIE` — c'est un
+  // humain qui l'a tapé, la provenance la plus forte qu'on ait.
+  const expected = parsed.data.expected;
+  const origins = Object.fromEntries(Object.keys(expected).map((cle) => [cle, 'SAISIE']));
+  const updated = await prisma.evalSortie.update({
+    where: { id: sortieId },
+    data: {
+      expected: JSON.stringify(expected),
+      origins: JSON.stringify(origins),
+      note: parsed.data.note,
+      labelledAt: new Date(),
+      labelledById: req.user!.id,
+    },
   });
-  res.json({ fiche });
+  res.json({ sortie: serializeSortie(updated) });
+});
+
+/**
+ * Vider le corpus des sorties.
+ *
+ * Tout ce qui a été moissonné se remoissonne : les boutons de reprise vont
+ * rechercher dans la modération, qui n'a rien perdu. Ce qui **ne** revient pas
+ * tout seul, c'est ce qu'un humain a saisi à la main — d'où le compte rendu,
+ * qui dit combien d'étiquettes saisies partent avec.
+ *
+ * Les relevés des runs passés s'en vont aussi, par cascade : ils décrivaient
+ * ce que des briques ont fait sur des sorties qui n'existent plus. Les runs
+ * eux-mêmes restent, avec leur date et leur coût.
+ */
+evalRouter.delete('/sorties', admin, async (_req, res) => {
+  const [total, saisies] = await Promise.all([
+    prisma.evalSortie.count(),
+    prisma.evalSortie.count({ where: { labelledById: { not: null }, eventId: null } }),
+  ]);
+  await prisma.evalSortie.deleteMany({});
+  res.json({ removed: total, handLabelled: saisies });
 });
 
 // ═══════════════════════════════════════════════════════════════ LES RUNS
@@ -905,9 +958,7 @@ async function scoreRun(runId: number, stage: string) {
     const results = await prisma.evalReadResult.findMany({
       where: { runId },
       include: {
-        sortie: {
-          select: { expectedImage: true, expectedDates: true, expectedMarkers: true },
-        },
+        sortie: { select: { expected: true } },
       },
     });
     let textOk = 0;
@@ -919,7 +970,7 @@ async function scoreRun(runId: number, stage: string) {
     let truncated = 0;
     let tooShort = 0;
     for (const row of results) {
-      const score = readScore(row.sortie, row);
+      const score = readScore(parseJson<ReadLabels>(row.sortie.expected, {}), row);
       if (score.textOk !== null) {
         textJudged += 1;
         if (score.textOk) textOk += 1;
@@ -955,14 +1006,14 @@ async function scoreRun(runId: number, stage: string) {
 
   const results = await prisma.evalExtractResult.findMany({
     where: { runId },
-    include: { sortie: { select: { fiche: { select: { expected: true } } } } },
+    include: { sortie: { select: { expected: true } } },
   });
   const tally = { JUSTE: 0, FAUX: 0, INVENTE: 0, MANQUE: 0, inconnu: 0 };
   for (const row of results) {
     // `row.fiche` est la fiche **structurée** que la brique a rendue — la
     // pièce à conviction que le banc stockait déjà sans s'en servir pour
     // mesurer. C'est elle qu'on compare, et plus la mise en forme.
-    const attendue = parseJson<FicheRendue>(row.sortie.fiche?.expected ?? null, {});
+    const attendue = parseJson<FicheRendue>(row.sortie.expected, {});
     const rendue = parseJson<FicheRendue>(row.fiche, {});
     const score = extractScore(attendue, rendue);
     for (const key of Object.keys(tally) as (keyof typeof tally)[]) {
@@ -1011,22 +1062,13 @@ async function paginationScore(runId: number) {
   return { correct, missed, wrong, unjudged };
 }
 
-/** Le détail d'un run, page par page ou fiche par fiche. */
+/** Le détail d'un run, page par page ou sortie par sortie. */
 async function runDetail(runId: number, stage: string) {
   if (stage === 'READ') {
     const rows = await prisma.evalReadResult.findMany({
       where: { runId },
       include: {
-        sortie: {
-          select: {
-            id: true,
-            url: true,
-            label: true,
-            expectedImage: true,
-            expectedDates: true,
-            expectedMarkers: true,
-          },
-        },
+        sortie: { select: { id: true, url: true, label: true, expected: true } },
       },
     });
     return rows.map((row) => ({
@@ -1035,18 +1077,18 @@ async function runDetail(runId: number, stage: string) {
       label: row.sortie.label,
       textChars: row.textChars,
       error: row.error,
-      score: readScore(row.sortie, row),
+      score: readScore(parseJson<ReadLabels>(row.sortie.expected, {}), row),
     }));
   }
   if (stage === 'EXTRACT') {
     const rows = await prisma.evalExtractResult.findMany({
       where: { runId },
       include: {
-        sortie: { select: { id: true, url: true, label: true, fiche: { select: { expected: true } } } },
+        sortie: { select: { id: true, url: true, label: true, expected: true } },
       },
     });
     return rows.map((row) => {
-      const attendue = parseJson<FicheRendue>(row.sortie.fiche?.expected ?? null, {});
+      const attendue = parseJson<FicheRendue>(row.sortie.expected, {});
       return {
         sortieId: row.sortieId,
         url: row.sortie.url,
@@ -1444,15 +1486,17 @@ const BUCKETS = {
 
 /**
  * Les sorties du corpus qui viennent d'une fiche approuvée et n'ont pas
- * encore leur étiquette de fiche.
+ * encore leur étiquette.
  *
  * C'est le groupe 3 du corpus — ce qu'une sortie **est**, champ par champ — et
  * c'est la seule partie du banc qui se remplisse sans travail humain : le
  * travail a déjà eu lieu, en modération, fiche sous les yeux.
  */
-async function ficheCandidates(limit: number) {
+async function sortiesAEtiqueter(limit: number) {
   return prisma.evalSortie.findMany({
-    where: { eventId: { not: null }, fiche: { is: null } },
+    // Jamais étiquetée : l'étiquette est le JSON vide. Pas de jointure à faire,
+    // il n'y a plus qu'un objet.
+    where: { eventId: { not: null }, expected: '{}' },
     select: {
       id: true,
       event: {
@@ -1643,24 +1687,33 @@ evalRouter.get('/reste', admin, async (_req, res) => {
     //    l'essentiel du travail invisible, ce qui était tout le défaut qu'on
     //    cherche à corriger.
     prisma.evalLink.findMany({
-      where: {
-        verdict: 'SORTIE',
-        OR: [
-          { sortieId: null },
-          { sortie: { is: { dateStart: null, postalCode: null, audience: null, ageMax: null } } },
-        ],
-      },
+      where: { verdict: 'SORTIE' },
       select: {
         id: true,
         url: true,
         text: true,
         sortieId: true,
+        sortie: { select: { expected: true, audience: true } },
         page: { select: { id: true, pageNo: true, agenda: { select: { id: true, label: true } } } },
       },
       orderBy: { id: 'asc' },
-      take: 200,
     }),
   ]);
+
+  // Le tri se fait ici et non en SQL : les faits vivent dans l'étiquette, et
+  // fouiller du JSON en base coûterait une requête illisible et sans index
+  // pour un filtre que le serveur fait en mémoire sans effort. À revoir si le
+  // corpus dépasse quelques dizaines de milliers de sorties.
+  const sansFait = sansSortie
+    .filter((lien) => {
+      if (!lien.sortie) return true;
+      const e = parseJson<FicheRendue>(lien.sortie.expected, {});
+      return (
+        !e.dateStart && !e.venuePostalCode && !e.ageMax && lien.sortie.audience === null
+      );
+    })
+    .slice(0, 200)
+    .map(({ sortie, ...reste }) => reste);
 
   res.json({
     /** Par page d'agenda : combien de liens relevés que personne n'a tranchés. */
@@ -1674,7 +1727,7 @@ evalRouter.get('/reste', admin, async (_req, res) => {
      * Les sorties reconnues mais dont rien n'est affirmé. `sortieId` nul : il
      * faut la créer. Renseigné : elle existe, il faut la décrire.
      */
-    sansSortie,
+    sansSortie: sansFait,
   });
 });
 
@@ -1684,7 +1737,7 @@ evalRouter.get('/seed', admin, async (_req, res) => {
     candidates('abandonnees', 100),
     candidates('illisibles', 100),
     linkLabelCandidates(100),
-    ficheCandidates(100),
+    sortiesAEtiqueter(100),
   ]);
   res.json({
     approuvees: approuvees.length,
@@ -1736,7 +1789,7 @@ evalRouter.post('/seed', admin, async (req, res) => {
   }
 
   if (bucket === 'fiches') {
-    const sorties = await ficheCandidates(limit);
+    const sorties = await sortiesAEtiqueter(limit);
     if (!sorties.length) {
       res.status(409).json({ error: 'Aucune fiche approuvée à reprendre' });
       return;
@@ -1762,7 +1815,7 @@ evalRouter.post('/seed', admin, async (req, res) => {
         permanent: e.isPermanent,
         dateStart: e.dateStart ? e.dateStart.toISOString().slice(0, 10) : '',
         dateEnd: e.dateEnd ? e.dateEnd.toISOString().slice(0, 10) : '',
-        dates: e.dates.map((d) => d.day.toISOString().slice(0, 10)),
+        dates: e.dates.map((d: { day: Date }) => d.day.toISOString().slice(0, 10)),
         openTime: e.openTime ?? '',
         closeTime: e.closeTime ?? '',
         setting: e.setting ?? '',
@@ -1773,15 +1826,16 @@ evalRouter.post('/seed', admin, async (req, res) => {
         venueCity: e.venue.city,
       };
       const corriges = e.corrections
-        .map((c) => CHAMP_VERS_FICHE[c.field])
+        .map((c: { field: string }) => CHAMP_VERS_FICHE[c.field])
         .filter((cle): cle is keyof FicheRendue => Boolean(cle));
-      await prisma.evalFiche.create({
+      await prisma.evalSortie.update({
+        where: { id: sortie.id },
         data: {
-          sortieId: sortie.id,
           expected: JSON.stringify(attendue),
           origins: JSON.stringify(provenances(attendue, corriges)),
           note: 'Reprise d’une fiche approuvée en modération.',
-          createdById: req.user!.id,
+          labelledAt: new Date(),
+          labelledById: req.user!.id,
         },
       });
       added += 1;

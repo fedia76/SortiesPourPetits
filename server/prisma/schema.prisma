@@ -77,15 +77,15 @@ model User {
   role         Role     @default(USER)
   createdAt    DateTime @default(now())
 
-  events          Event[]      @relation("EventAuthor")
-  moderatedEvents Event[]      @relation("EventModerator")
-  apiKeys         ApiKey[]
-  scraperRuns     ScraperRun[] @relation("ScraperRunRequester")
-  evalAgendas     EvalAgenda[] @relation("EvalAgendaAuthor")
-  evalSorties     EvalSortie[] @relation("EvalSortieAuthor")
-  evalFiches      EvalFiche[]  @relation("EvalFicheAuthor")
-  evalLinkLabels  EvalLink[]   @relation("EvalLinkLabeller")
-  evalRuns        EvalRun[]    @relation("EvalRunRequester")
+  events           Event[]      @relation("EventAuthor")
+  moderatedEvents  Event[]      @relation("EventModerator")
+  apiKeys          ApiKey[]
+  scraperRuns      ScraperRun[] @relation("ScraperRunRequester")
+  evalAgendas      EvalAgenda[] @relation("EvalAgendaAuthor")
+  evalSorties      EvalSortie[] @relation("EvalSortieAuthor")
+  evalSortieLabels EvalSortie[] @relation("EvalSortieLabeller")
+  evalLinkLabels   EvalLink[]   @relation("EvalLinkLabeller")
+  evalRuns         EvalRun[]    @relation("EvalRunRequester")
 }
 
 /// Clé d'API pour les programmes tiers. La clé en clair n'est jamais stockée :
@@ -821,58 +821,44 @@ model EvalSortie {
   htmlPath     String?           @db.VarChar(255)
   note         String            @default("") @db.Text
 
-  // ── les étiquettes : ce que la page contient, pas ce que la brique a rendu
+  // ── l'étiquette : tout ce qu'un humain affirme de cette sortie ─────────
   //
-  //    Chacune a trois états — `null` : personne n'a regardé ; une valeur
-  //    vide : la page n'en porte pas, et c'est une étiquette ; une valeur :
-  //    la voici. Sans le second état, « pas d'image sur la page » et « pas
-  //    encore étiqueté » seraient le même silence.
+  // **Une sortie, une étiquette.** Elle a longtemps été éparpillée : trois
+  // colonnes pour l'étage 5, six pour l'étage 4, et une table `EvalFiche` à
+  // part pour l'étage 6 — qui redécrivait les mêmes dates et les mêmes âges.
+  // Cette table n'était qu'une colonne avec une table autour : elle datait
+  // d'avant que l'objet « sortie » n'existe, quand le corpus ne connaissait
+  // que des « pages de lecture ».
+  //
+  // Tout tient désormais dans un seul JSON, à la forme même que la brique
+  // rend (`evaluation.fiche_payload`), augmentée de ce que le banc seul
+  // affirme. Chaque étage y lit son sous-ensemble et ignore le reste.
+  //
+  // Trois états, comme partout : clé absente — personne n'a regardé ; clé
+  // présente et vide — la page n'en dit rien, et c'est une étiquette ; une
+  // valeur — la voici. Sans le deuxième état, une valeur inventée serait
+  // indiscernable d'un champ jamais relu.
 
-  /// L'illustration que la page porte vraiment, ou `""` si elle n'en a pas.
-  expectedImage   String? @db.VarChar(500)
-  /// Les dates que la page annonce, en JSON. `"[]"` : elle n'en annonce pas.
-  expectedDates   String? @db.Text
-  /// Quelques fragments que le texte extrait **doit** contenir — le titre, le
-  /// tarif, l'adresse. En JSON.
-  ///
-  /// On ne demande pas à un humain de retaper le texte attendu : ce serait
-  /// invivable et personne ne le ferait deux fois. On lui demande ce qui ne
-  /// doit pas manquer, ce qui se coche en quelques secondes depuis la page —
-  /// et ça suffit à distinguer un texte amputé d'un texte entier, qui est très
-  /// exactement la question de cet étage.
-  expectedMarkers String? @db.Text
+  /// Ce que la page annonce, en faits. Voir `FicheRendue` dans `evalMetrics`.
+  expected String @default("{}") @db.Text
 
-  // ── ce que l'étage 4 juge : la date, le lieu, l'âge ────────────────────
-  //
-  // Stockés en **faits structurés**, et non dans la prose de `EvalFiche`.
-  // Celle-ci porte bien « du 2026-09-20 au 2026-09-22 », « dès 3 ans »,
-  // « 12 rue X, 75012, Paris » — mais ce sont des chaînes destinées à être
-  // comparées à ce que le modèle a rendu, et leur forme est définie en Python.
-  // Les relire ici demanderait d'écrire en TypeScript un analyseur du format
-  // d'un autre langage : deux implémentations d'une seule convention, qui
-  // divergeraient en silence au premier changement de rendu.
-  //
-  // Une date se compare à une fenêtre, un code postal à des préfixes, un âge
-  // à « jeune public ». Il faut donc les faits, pas leur mise en forme. C'est
-  // aussi ce qui rend la moisson depuis la modération gratuite : `Event` et
-  // `Venue` portent déjà ces colonnes, structurées, vérifiées par un humain.
-  //
-  // `null` partout : personne n'a regardé. La sortie est alors *indécidable*
-  // et n'entre dans aucun dénominateur — jamais un reproche au modèle.
+  /// D'où vient chaque champ : `CORRIGE`, `NON_CONTREDIT`, `SAISIE`.
+  origins String @default("{}") @db.Text
 
-  /// Premier et dernier jour de la sortie. `dateEnd` nul sur une date unique.
-  dateStart  DateTime?     @db.Date
-  dateEnd    DateTime?     @db.Date
-  /// Le code postal, à cinq chiffres. Une ville en toutes lettres ne situe
-  /// rien de comparable : elle a sa place dans `EvalFiche`, pas ici.
-  postalCode String?       @db.VarChar(10)
-  /// L'âge annoncé. Les deux nuls sans être `audience` nulle veut dire que la
-  /// page annonce un public sans donner de tranche — « en famille ».
-  ageMin     Int?
-  ageMax     Int?
-  /// À qui la sortie s'adresse. Renseignée à part parce qu'une page peut
-  /// afficher « jeune public » sans le moindre chiffre, et l'inverse.
-  audience   EvalAudience?
+  /// L'étiquette d'avant, en toutes lettres. N'entre dans aucune mesure : on
+  /// ne rouvre pas de la prose pour en tirer des faits. À supprimer une fois
+  /// le corpus reconstruit.
+  expectedLegacy String? @db.Text
+
+  labelledAt   DateTime?
+  labelledBy   User?     @relation("EvalSortieLabeller", fields: [labelledById], references: [id])
+  labelledById Int?
+
+  /// À qui la sortie s'adresse, quand la page l'annonce en mots plutôt qu'en
+  /// chiffres — « spectacle jeune public », sans tranche d'âge. C'est la seule
+  /// affirmation du banc qu'aucune brique ne rend : elle vit donc ici, en
+  /// colonne, et non dans l'étiquette qui décalque la fiche.
+  audience EvalAudience?
 
   // ── d'où vient cette page, et pourquoi elle est au corpus
   origin      EvalSortieOrigin @default(MANUEL)
@@ -890,7 +876,6 @@ model EvalSortie {
   author      User     @relation("EvalSortieAuthor", fields: [createdById], references: [id])
   createdById Int
 
-  fiche              EvalFiche?
   evalReadResults    EvalReadResult[]
   evalExtractResults EvalExtractResult[]
   /// Les liens d'agenda qui mènent à cette sortie. Plusieurs agendas peuvent
@@ -913,88 +898,6 @@ enum EvalSortieOrigin {
   /// elle a passé le seuil, elle a coûté une extraction — mais son texte ne
   /// valait rien. Rien ne capturait ce cas.
   ILLISIBLE
-}
-
-/// Le corpus de l'extraction : ce que la page annonce, champ par champ.
-///
-/// L'étiquette n'est plus « le tarif rendu est JUSTE » — un jugement qui n'a
-/// de sens que face à une fiche donnée, et qui périme au premier changement de
-/// prompt. Elle est « la page annonce 8 € », qui décrit la page et vaut pour
-/// toujours. Les quatre verdicts d'autrefois se **dérivent** alors tout seuls,
-/// pour n'importe quel run :
-///
-///   attendu renseigné, rendu identique   → JUSTE
-///   attendu renseigné, rendu différent   → FAUX
-///   attendu vide,      rendu renseigné   → INVENTE
-///   attendu renseigné, rendu vide        → MANQUE
-///
-/// C'est aussi ce qui permet à la modération de fournir des étiquettes sans
-/// rien savoir du banc : `EventCorrection.after` est très exactement « ce que
-/// la page annonce », vérifié par un humain la fiche sous les yeux.
-model EvalFiche {
-  id Int @id @default(autoincrement())
-
-  /// Ce que la page annonce, par champ, en JSON : `{"tarif": "8 €", …}`.
-  ///
-  /// En JSON plutôt qu'en table : la liste des champs est définie par
-  /// `evaluation.audit_fiche`, côté Python, et elle bougera. Une table
-  /// imposerait une migration à chaque champ ajouté, pour une mesure que le
-  /// serveur agrège de toute façon en mémoire.
-  ///
-  /// Une clé absente veut dire « personne n'a regardé ce champ » ; une clé
-  /// présente et vide veut dire « la page n'en dit rien », ce qui est une
-  /// étiquette et permet de reconnaître une valeur inventée.
-  /// Ce que la page annonce, **en faits**, dans la forme même que la brique
-  /// rend : `{"free": false, "price": 8, "ageMin": 3, "ageMax": null, …}`.
-  ///
-  /// Elle portait autrefois la mise en forme — « gratuit », « dès 3 ans » —,
-  /// parce que la mesure comparait les libellés que `audit_fiche` calcule pour
-  /// l'affichage. Or la donnée est structurée aux deux bouts : le modèle rend
-  /// `ageMin`, la sortie publiée porte la colonne `ageMin`. Comparer la prose
-  /// au milieu obligeait à réécrire en TypeScript un format défini en Python,
-  /// et un point-virgule déplacé faisait compter « faux » tous les tarifs.
-  ///
-  /// Une clé absente veut dire « personne n'a regardé ce champ » ; une clé
-  /// présente et vide veut dire « la page n'en dit rien », ce qui est une
-  /// étiquette et permet de reconnaître une valeur inventée.
-  expected String @default("{}") @db.Text
-
-  /// L'ancienne étiquette, en toutes lettres, gardée telle quelle.
-  ///
-  /// Elle n'entre dans aucune mesure : on ne rouvre pas de la prose pour en
-  /// tirer des faits, c'est précisément ce qu'on vient d'arrêter de faire.
-  /// Elle reste lisible pour qu'un humain puisse retrouver ce qu'une étiquette
-  /// disait, le temps que le corpus se reconstruise — la plupart des fiches se
-  /// remoissonnent d'un clic. À supprimer quand ce sera fait.
-  expectedLegacy String? @db.Text
-
-  /// D'où vient chaque champ, en JSON : `{"tarif": "CORRIGE", …}`.
-  ///
-  /// `CORRIGE` — un modérateur a réécrit ce champ avant d'approuver. C'est une
-  /// étiquette indépendante du modèle, la plus forte qu'on ait.
-  /// `NON_CONTREDIT` — le modèle l'a rendu, le modérateur l'a laissé passer.
-  /// `SAISIE` — quelqu'un l'a tapé dans la console.
-  ///
-  /// **La mesure les traite à égalité.** L'hypothèse retenue est qu'approuver,
-  /// c'est avoir vérifié chaque champ, fiche en main ; sous cette hypothèse un
-  /// champ non contredit est une étiquette de plein droit.
-  ///
-  /// La distinction est conservée quand même, et c'est tout son intérêt : une
-  /// hypothèse sur le comportement des gens vieillit. Si un jour le taux de
-  /// correction s'effondre sur tous les champs à la fois, c'est qu'on n'aura
-  /// plus le droit de la tenir — et on ne pourra le voir que si on l'a notée.
-  /// La couler dans les données en ne notant rien la rendrait invérifiable
-  /// pour toujours, ce qui coûte plus cher qu'une colonne.
-  origins  String @default("{}") @db.Text
-
-  note       String   @default("") @db.Text
-  labelledAt DateTime @default(now())
-
-  sortie   EvalSortie @relation(fields: [sortieId], references: [id], onDelete: Cascade)
-  sortieId Int        @unique
-
-  author      User @relation("EvalFicheAuthor", fields: [createdById], references: [id])
-  createdById Int
 }
 
 // ─────────────────────────────────────────────────────────────── LES RUNS

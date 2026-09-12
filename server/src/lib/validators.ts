@@ -707,8 +707,11 @@ export const evalSortieSchema = z.object({
  */
 export const evalSortieLabelSchema = z
   .object({
-    expectedImage: z.union([scraperUrl, z.literal(''), z.null()]),
-    expectedDates: z.union([z.array(z.string().trim().max(40)).max(400), z.null()]),
+    // ── ce que la page porte, pour l'étage 5
+    /** L'illustration que la page porte vraiment. */
+    image: z.union([scraperUrl, z.literal(''), z.null()]),
+    /** Les dates déclarées dans le balisage `schema.org/Event`. */
+    declaredDates: z.union([z.array(z.string().trim().max(40)).max(400), z.null()]),
     /**
      * Les fragments que le texte extrait doit contenir — le titre, le tarif,
      * l'adresse. On ne demande pas de retaper le texte attendu : ce serait
@@ -716,25 +719,28 @@ export const evalSortieLabelSchema = z
      * pas manquer, ce qui se coche en quelques secondes, et ça suffit à
      * distinguer un texte amputé d'un texte entier — la question de cet étage.
      */
-    expectedMarkers: z.union([z.array(z.string().trim().min(2).max(200)).max(40), z.null()]),
-    note: z.string().trim().max(2000),
+    markers: z.union([z.array(z.string().trim().min(2).max(200)).max(40), z.null()]),
 
-    // ── ce que l'étage 4 juge : la date, le lieu, l'âge ────────────────────
-    //
-    // Des faits, dans la forme où ils se comparent — une date à une fenêtre,
-    // un code postal à des préfixes. La prose équivalente vit dans `EvalFiche`
-    // et sert à l'étage 6, qui compare des chaînes à des chaînes.
+    // ── ce que la sortie est, pour l'étage 4
     /** Premier et dernier jour. `dateEnd` nul sur une date unique. */
-    dateStart: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.null()]),
-    dateEnd: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.null()]),
+    dateStart: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal(''), z.null()]),
+    dateEnd: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal(''), z.null()]),
     /** Cinq chiffres, ou rien. Une ville en toutes lettres ne se compare pas. */
-    postalCode: z.union([z.string().regex(/^\d{5}$/), z.null()]),
+    venuePostalCode: z.union([z.string().regex(/^\d{5}$/), z.literal(''), z.null()]),
     ageMin: z.union([z.number().int().min(0).max(120), z.null()]),
     ageMax: z.union([z.number().int().min(0).max(120), z.null()]),
+
+    /**
+     * À qui la sortie s'adresse, quand la page l'annonce en mots. Seule
+     * affirmation du banc qu'aucune brique ne rend : elle vit en colonne, pas
+     * dans l'étiquette qui décalque la fiche.
+     */
     audience: z.union([z.enum(['ENFANTS', 'ADULTES', 'INDETERMINE']), z.null()]),
+
+    note: z.string().trim().max(2000),
   })
   .partial()
-  .refine((v) => v.dateStart == null || v.dateEnd == null || v.dateEnd >= v.dateStart, {
+  .refine((v) => !v.dateStart || !v.dateEnd || v.dateEnd >= v.dateStart, {
     message: 'La sortie ne peut pas finir avant d’avoir commencé',
     path: ['dateEnd'],
   })
@@ -743,6 +749,18 @@ export const evalSortieLabelSchema = z
     path: ['ageMax'],
   });
 
+/** Les champs de l'étiquette qui vivent dans le JSON, et non en colonne. */
+export const CHAMPS_ETIQUETTE = [
+  'image',
+  'declaredDates',
+  'markers',
+  'dateStart',
+  'dateEnd',
+  'venuePostalCode',
+  'ageMin',
+  'ageMax',
+] as const;
+
 /**
  * Ce que la page annonce, champ par champ : le corpus de l'étage 6.
  *
@@ -750,8 +768,8 @@ export const evalSortieLabelSchema = z
  * présente et vide veut dire « la page n'en dit rien », ce qui est une
  * étiquette et permet de reconnaître une valeur inventée.
  */
-export const evalFicheSchema = z.object({
-  expected: z.record(z.string().max(40), z.string().max(1000)),
+export const evalEtiquetteSchema = z.object({
+  expected: z.record(z.string().max(40), z.unknown()),
   note: z.string().trim().max(2000).optional().default(''),
 });
 
