@@ -1597,18 +1597,6 @@ async function candidates(bucket: keyof typeof BUCKETS, limit: number) {
       decision: true,
       at: true,
       eventId: true,
-      // Les faits que l'étage 4 juge, tels qu'un modérateur les a validés.
-      // Sans eux la sortie arrive au corpus sans date ni lieu, donc
-      // indécidable — et la moisson n'aurait servi qu'aux étages 5 et 6.
-      event: {
-        select: {
-          dateStart: true,
-          dateEnd: true,
-          ageMin: true,
-          ageMax: true,
-          venue: { select: { postalCode: true } },
-        },
-      },
     },
   });
   const seen = new Set<string>();
@@ -1849,29 +1837,31 @@ evalRouter.post('/seed', admin, async (req, res) => {
     res.status(409).json({ error: 'Rien de nouveau dans ce panier' });
     return;
   }
+  // Le type de retour est **annoté**, et ce n'est pas du zèle : sans lui, le
+  // résultat d'un `map` échappe au contrôle des propriétés en trop, et une
+  // colonne supprimée depuis se laisse écrire sans que rien ne bronche jusqu'à
+  // l'erreur 500 en production. C'est exactement ce qui est arrivé ici.
   const created = await prisma.evalSortie.createMany({
-    data: rows.map((row) => ({
-      url: row.url,
-      label: (row.title ?? '').slice(0, 150),
-      origin: BUCKETS[bucket].origin,
-      eventId: bucket === 'approuvees' ? row.eventId : null,
-      readAt: row.at,
-      runDecision: row.decision.slice(0, 40),
-      runReason: row.reason ?? '',
-      createdById: req.user!.id,
-      // Les faits viennent de la fiche approuvée : une copie de colonnes, pas
-      // une analyse de prose. C'est ce qui rend cette moisson gratuite pour
-      // l'étage 4 autant que pour les étages 5 et 6.
-      dateStart: row.event?.dateStart ?? null,
-      dateEnd: row.event?.dateEnd ?? null,
-      ageMin: row.event?.ageMin ?? null,
-      ageMax: row.event?.ageMax ?? null,
-      postalCode: row.event?.venue?.postalCode || null,
-      // Voir la migration 0027 : approuvée sur ce site veut dire jeune public,
-      // et c'est un humain qui l'a tranché. Les deux autres paniers n'ont
-      // jamais été approuvés — on ne sait rien de leur public.
-      audience: BUCKETS[bucket].origin === 'APPROUVEE' ? ('ENFANTS' as const) : null,
-    })),
+    data: rows.map(
+      (row): Prisma.EvalSortieCreateManyInput => ({
+        url: row.url,
+        label: (row.title ?? '').slice(0, 150),
+        origin: BUCKETS[bucket].origin,
+        eventId: bucket === 'approuvees' ? row.eventId : null,
+        readAt: row.at,
+        runDecision: row.decision.slice(0, 40),
+        runReason: row.reason ?? '',
+        createdById: req.user!.id,
+        // Ce que la sortie **est** n'entre pas ici : ça appartient à son
+        // étiquette, que « Étiqueter les sorties publiées » remplit ensuite
+        // depuis la fiche approuvée. Une sortie créée ici arrive donc sans rien
+        // d'affirmé, ce que le corpus sait dire — `expected` vaut `{}`.
+        //
+        // Sauf le public : la seule affirmation qu'aucune brique ne rend, et
+        // qu'approuver sur ce site tranche à lui seul.
+        audience: BUCKETS[bucket].origin === 'APPROUVEE' ? ('ENFANTS' as const) : null,
+      }),
+    ),
     skipDuplicates: true,
   });
   res.status(201).json({ added: created.count });
