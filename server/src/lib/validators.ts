@@ -811,35 +811,64 @@ export const EVAL_STAGES = ['HARVEST', 'SELECT', 'READ', 'EXTRACT'] as const;
  * six mois plus tard — « après le correctif d'encodage » dit quelque chose,
  * « run #47 » non.
  */
-export const evalRunSchema = z.object({
-  stage: z.enum(EVAL_STAGES),
-  label: z.string().trim().max(150).optional().default(''),
+/**
+ * La recherche sous laquelle un run de tri est joué.
+ *
+ * En **dates absolues**, et c'est le point : une fenêtre relative (« les
+ * trente prochains jours ») ferait qu'un même run ne mesure plus la même chose
+ * selon le jour où on le rejoue. Un banc doit pouvoir rendre le même chiffre
+ * six mois plus tard, ou il ne mesure que le calendrier.
+ *
+ * Ces valeurs servent **deux fois**, et c'est ce qui les rend délicates : elles
+ * partent dans le prompt de l'étage 4 — c'est ce que le modèle croit qu'on
+ * cherche — et elles servent à juger ce qu'il a rendu. Les deux viennent du
+ * même endroit, donc elles ne peuvent pas se contredire.
+ */
+export const evalRechercheSchema = z.object({
+  dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** Préfixes de code postal : « 75 », « 77 »… */
+  postalPrefixes: z.array(z.string().regex(/^\d{2,5}$/)).max(101),
+  /** Ce que le tri a le droit de retenir par page. */
+  maxLinks: z.number().int().min(1).max(100),
+  theme: z.string().trim().min(1).max(120),
 });
+
+export const evalRunSchema = z
+  .object({
+    stage: z.enum(EVAL_STAGES),
+    label: z.string().trim().max(150).optional().default(''),
+    /** Obligatoire pour un run de tri, sans objet pour les autres. */
+    recherche: evalRechercheSchema.optional(),
+  })
+  .refine((v) => v.stage !== 'SELECT' || v.recherche !== undefined, {
+    message: 'Un run de tri doit dire sous quelle recherche il est joué',
+    path: ['recherche'],
+  })
+  .refine((v) => !v.recherche || v.recherche.dateTo >= v.recherche.dateFrom, {
+    message: 'La fenêtre ne peut pas finir avant d’avoir commencé',
+    path: ['recherche'],
+  });
 
 export const evalRunListSchema = z.object({
   stage: z.enum(EVAL_STAGES).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(30),
 });
 
-/** Ce que le worker déclare en prenant un run : de quoi il est le run. */
+/**
+ * Ce que le worker déclare en prenant un run : **ce qu'il est**.
+ *
+ * Sa révision, son modèle, l'empreinte de son prompt — sans quoi un point de
+ * la courbe ne s'attribue à rien, et c'est irrattrapable après coup.
+ *
+ * Ce qu'on **cherche** ne se déclare plus ici : c'est le run qui le porte,
+ * fixé au lancement depuis la console. La fenêtre que le modèle reçoit et
+ * celle contre laquelle on le juge sont ainsi la même ligne en base.
+ */
 export const evalRunClaimSchema = z.object({
   codeRef: z.string().trim().max(60).optional().default(''),
   model: z.string().trim().max(120).optional().default(''),
   promptHash: z.string().trim().max(64).optional().default(''),
-  settings: z
-    .object({
-      /** La fenêtre de la recherche jouée, en `YYYY-MM-DD`. */
-      dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      /** Les départements visés. */
-      postalPrefixes: z.array(z.string().max(5)).max(40).optional(),
-      /** Le plafond du tri : ce qui rend une page saturée indécidable. */
-      maxLinks: z.number().int().min(1).max(200).optional(),
-      theme: z.string().max(200).optional(),
-    })
-    .passthrough()
-    .optional()
-    .default({}),
 });
 
 /** Ce qu'un run de l'étage 3 ou 4 rend sur une page du corpus. */

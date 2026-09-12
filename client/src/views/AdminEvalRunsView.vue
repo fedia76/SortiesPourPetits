@@ -15,7 +15,8 @@
  */
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
-import type { EvalRun, EvalScore, EvalStage } from '../types';
+import type {
+  EvalRecherche, EvalRun, EvalScore, EvalStage } from '../types';
 import {
   EVAL_RUN_STATUS_LABELS,
   EVAL_STAGE_COST,
@@ -32,6 +33,19 @@ const busy = ref(false);
 const stage = ref<EvalStage | ''>('');
 const newStage = ref<EvalStage>('HARVEST');
 const newLabel = ref('');
+/**
+ * La recherche sous laquelle un run de tri sera joué.
+ *
+ * Elle était codée en dur dans le worker Python, donc injoignable d'ici. Or ces
+ * valeurs servent **deux fois** : elles partent dans le prompt de l'étage 4 —
+ * c'est ce que le modèle croit qu'on cherche — et elles servent à juger ce
+ * qu'il a rendu. Les fixer ici garantit qu'elles ne divergent pas.
+ *
+ * En dates absolues : une fenêtre relative ferait qu'un même run ne mesure plus
+ * la même chose selon le jour où on le rejoue.
+ */
+const recherche = ref<EvalRecherche | null>(null);
+const prefixes = ref('');
 
 const STAGES: EvalStage[] = ['HARVEST', 'SELECT', 'READ', 'EXTRACT'];
 
@@ -41,6 +55,14 @@ async function load() {
   try {
     const params = stage.value ? `?stage=${stage.value}` : '';
     runs.value = (await api.get<{ runs: EvalRun[] }>(`/api/eval/runs${params}`)).runs;
+    if (!recherche.value) {
+      // La configuration du banc, servie par le serveur : elle doit être la
+      // même pour tous ceux qui lancent un run, sinon deux personnes
+      // mesureraient sous deux fenêtres sans s'en apercevoir.
+      const d = await api.get<{ recherche: EvalRecherche }>('/api/eval/recherche');
+      recherche.value = d.recherche;
+      prefixes.value = d.recherche.postalPrefixes.join(', ');
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erreur';
   } finally {
@@ -58,6 +80,18 @@ async function launch() {
     const body = await api.post<{ run: EvalRun }>('/api/eval/runs', {
       stage: newStage.value,
       label: newLabel.value.trim(),
+      // Seul le tri en a besoin : les autres étages n'ont pas de recherche.
+      ...(newStage.value === 'SELECT' && recherche.value
+        ? {
+            recherche: {
+              ...recherche.value,
+              postalPrefixes: prefixes.value
+                .split(/[,\s]+/)
+                .map((p) => p.trim())
+                .filter(Boolean),
+            },
+          }
+        : {}),
     });
     notice.value =
       `Run #${body.run.id} en file : ${body.run.items} entrée(s) du corpus. ` +
@@ -162,17 +196,58 @@ function detail(run: EvalRun): string {
  * d'une brique à l'autre, et les tracer ensemble ferait une ligne qui ne dit
  * rien.
  */
+/**
+ * La recherche d'un run, en une ligne — et la clé qui sépare les courbes.
+ *
+ * Vide pour les étages qui n'en ont pas : ils gardent une seule courbe.
+ */
+function rechercheDe(run: EvalRun): { cle: string; texte: string } {
+  if (run.stage !== 'SELECT') return { cle: '', texte: '' };
+  let r: Partial<EvalRecherche> = {};
+  try {
+    r = JSON.parse(run.settings || '{}') as Partial<EvalRecherche>;
+  } catch {
+    r = {};
+  }
+  if (!r.dateFrom) return { cle: 'sans', texte: 'sans recherche déclarée' };
+  const bouts = [
+    `du ${r.dateFrom} au ${r.dateTo}`,
+    (r.postalPrefixes ?? []).join(', '),
+    `${r.maxLinks} liens max`,
+    r.theme ?? '',
+  ].filter(Boolean);
+  return { cle: bouts.join('|'), texte: bouts.join(' · ') };
+}
+
+/**
+ * Les runs d'un même étage **et d'une même recherche**, du plus ancien au plus
+ * récent : c'est la courbe.
+ *
+ * Grouper par étage seul était faux, et faux d'une façon qui ne se voyait pas.
+ * Les mêmes étiquettes donnent 100 % de rappel sous « Île-de-France, un mois »
+ * et 0 % sous « grande couronne, dix-huit mois » — c'est la mesure qui marche,
+ * pas un bug. Aligner ces deux points sur une ligne aurait fait lire une chute
+ * catastrophique là où seule la recherche avait changé.
+ *
+ * Une courbe ne vaut que dans un étage **et** sous une recherche : les taux ne
+ * mesurent pas la même chose autrement, et les tracer ensemble ferait une ligne
+ * qui ne dit rien.
+ */
 const series = computed(() => {
-  const byStage = new Map<EvalStage, EvalRun[]>();
+  const groupes = new Map<string, { stage: EvalStage; recherche: string; runs: EvalRun[] }>();
   for (const run of runs.value) {
     if (run.status !== 'DONE' || headline(run.score) === null) continue;
-    const list = byStage.get(run.stage) ?? [];
-    list.push(run);
-    byStage.set(run.stage, list);
+    const { cle, texte } = rechercheDe(run);
+    const id = `${run.stage}|${cle}`;
+    const groupe = groupes.get(id) ?? { stage: run.stage, recherche: texte, runs: [] };
+    groupe.runs.push(run);
+    groupes.set(id, groupe);
   }
-  return [...byStage.entries()].map(([key, list]) => ({
-    stage: key,
-    runs: [...list].sort((a, b) => a.id - b.id),
+  return [...groupes.entries()].map(([id, g]) => ({
+    id,
+    stage: g.stage,
+    recherche: g.recherche,
+    runs: [...g.runs].sort((a, b) => a.id - b.id),
   }));
 });
 
@@ -226,6 +301,51 @@ function when(value: string | null): string {
         </div>
         <button class="btn" :disabled="busy" @click="launch()">Mettre en file</button>
       </div>
+      <!--
+        Seul le tri a une recherche. Ces valeurs partent dans son prompt — c'est
+        ce que le modèle croit qu'on cherche — et servent à juger ce qu'il a
+        rendu. Elles étaient codées en dur dans le worker, donc injoignables.
+      -->
+      <fieldset v-if="newStage === 'SELECT' && recherche" class="recherche">
+        <legend>Sous quelle recherche</legend>
+        <div class="row launch-row">
+          <div class="field">
+            <label for="ev-du">Du</label>
+            <input id="ev-du" v-model="recherche.dateFrom" type="date" />
+          </div>
+          <div class="field">
+            <label for="ev-au">Au</label>
+            <input id="ev-au" v-model="recherche.dateTo" type="date" />
+          </div>
+          <div class="field">
+            <label for="ev-max">Liens retenus, au plus</label>
+            <input id="ev-max" v-model.number="recherche.maxLinks" type="number" min="1" max="100" />
+          </div>
+        </div>
+        <div class="row launch-row">
+          <div class="field grow">
+            <label for="ev-dep">Départements</label>
+            <input id="ev-dep" v-model="prefixes" type="text" placeholder="75, 77, 78…" />
+          </div>
+          <div class="field grow">
+            <label for="ev-theme">Thème</label>
+            <input id="ev-theme" v-model="recherche.theme" type="text" maxlength="120" />
+          </div>
+        </div>
+        <p class="muted small">
+          En <strong>dates absolues</strong>, et c’est voulu : une fenêtre
+          relative — « les trente prochains jours » — ferait qu’un même run ne
+          mesure plus la même chose selon le jour où on le rejoue. Il mesurerait
+          le calendrier plutôt que la brique.
+        </p>
+        <p class="muted small">
+          Deux recherches différentes font <strong>deux courbes</strong>, jamais
+          une seule : les mêmes étiquettes peuvent donner 100 % sous une fenêtre
+          et 0 % sous une autre, et les aligner lirait une chute là où seule la
+          recherche a changé.
+        </p>
+      </fieldset>
+
       <p class="muted small">
         {{ EVAL_STAGE_COST[newStage] }}. L’étiquette n’est pas du décor : c’est
         elle qui rendra ce point de la courbe lisible dans six mois — « run #47 »
@@ -242,10 +362,17 @@ function when(value: string | null): string {
       Aucune mesure terminée pour l’instant. Le premier run donnera un point ;
       c’est le deuxième qui donnera une réponse.
     </p>
-    <div v-for="serie in series" :key="serie.stage" class="card serie">
+    <div v-for="serie in series" :key="serie.id" class="card serie">
       <div class="serie-head">
         <h3>{{ EVAL_STAGE_LABELS[serie.stage] }}</h3>
         <span class="muted small">{{ headlineLabel(serie.stage) }}</span>
+        <!--
+          La recherche fait partie de l'identité de la courbe : les mêmes
+          étiquettes donnent 100 % sous une fenêtre et 0 % sous une autre.
+        -->
+        <span v-if="serie.recherche" class="muted small recherche-serie">
+          · {{ serie.recherche }}
+        </span>
         <span
           v-if="drift(serie.runs) !== null"
           class="drift"
@@ -348,6 +475,23 @@ function when(value: string | null): string {
 </template>
 
 <style scoped>
+.recherche-serie {
+  font-style: italic;
+}
+
+.recherche {
+  border: 1px solid var(--border, #ddd);
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem 0.4rem;
+  margin: 0.6rem 0 0.8rem;
+}
+
+.recherche legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0 0.4rem;
+}
+
 h2 {
   margin-top: 1.6rem;
 }
