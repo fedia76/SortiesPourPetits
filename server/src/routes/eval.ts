@@ -53,6 +53,7 @@ import { prisma } from '../db';
 import { deleteEvalPages, readEvalPage, saveEvalPage } from '../lib/evalPages';
 import { requireRole } from '../middleware/auth';
 import {
+  couverture,
   extractScore,
   harvestScore,
   readScore,
@@ -597,11 +598,25 @@ evalRouter.get('/sorties', admin, async (_req, res) => {
  * Dérivé, jamais stocké : `eventId` n'est renseigné que par la moisson des
  * sorties approuvées, et c'est déjà la réponse.
  */
-function serializeSortie<T extends { htmlPath: string | null; eventId: number | null }>(
-  sortie: T,
-) {
+function serializeSortie<
+  T extends {
+    htmlPath: string | null;
+    eventId: number | null;
+    expected: string;
+    audience: EvalAudience | null;
+  },
+>(sortie: T) {
   const { htmlPath, ...rest } = sortie;
-  return { ...rest, archived: Boolean(htmlPath), published: sortie.eventId !== null };
+  return {
+    ...rest,
+    archived: Boolean(htmlPath),
+    published: sortie.eventId !== null,
+    // Calculée ici et non dans la console : c'est le serveur qui détient le
+    // code de mesure, donc lui seul peut dire ce qu'un étage sait lire. Une
+    // liste recopiée dans la console finirait par mentir — deux compteurs l'ont
+    // déjà fait.
+    couverture: couverture(parseJson<FicheRendue>(sortie.expected, {}), sortie.audience),
+  };
 }
 
 evalRouter.post('/sorties', admin, async (req, res) => {

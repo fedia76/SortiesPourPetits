@@ -735,6 +735,63 @@ export function verdictAspect(
  * prompt — se compare à lui sans qu'un humain n'ait à rouvrir quoi que ce soit,
  * et sans qu'aucune mise en forme n'ait à concorder entre deux langages.
  */
+/**
+ * Ce qu'une étiquette couvre, étage par étage.
+ *
+ * Les compteurs se dérivent **du code de mesure**, et pas d'une liste écrite à
+ * la main. Deux compteurs successifs ont menti pour l'avoir été : l'un ne
+ * connaissait que les trois étiquettes de lecture et affichait « 0/3 » sur une
+ * sortie parfaitement décrite pour le tri ; l'autre annonçait « 6/6 » sur six
+ * champs que j'avais choisis arbitrairement, alors que l'étage 6 en juge douze.
+ *
+ * Ici, chaque dénominateur est celui de la mesure : ajouter un aspect à
+ * `ASPECTS` ou un critère à `relevanceOf` déplace le compteur tout seul.
+ */
+export interface Couverture {
+  /** Étage 4 — la date, le lieu, le public. Ce que `relevanceOf` sait lire. */
+  tri: { faits: number; total: number };
+  /** Étage 5 — l'image, les dates déclarées, les fragments. Ce que lit `readScore`. */
+  lecture: { faits: number; total: number };
+  /** Étage 6 — les aspects de la fiche qu'au moins un champ renseigne. */
+  extraction: { faits: number; total: number };
+}
+
+/**
+ * Les trois questions de l'étage 4, et ce qui permet d'y répondre.
+ *
+ * Des **critères**, pas des champs : le public se lit dans `audience` ou se
+ * déduit de l'âge, et compter les deux ferait deux fois la même chose.
+ */
+const CRITERES_TRI: ((e: FicheRendue, audience: Audience | null) => boolean)[] = [
+  (e) => 'dateStart' in e,
+  (e) => 'venuePostalCode' in e,
+  (e, audience) => audience !== null || 'ageMin' in e || 'ageMax' in e,
+];
+
+/** Ce que `readScore` lit, et rien d'autre. */
+const CRITERES_LECTURE: (keyof ReadLabels)[] = ['image', 'declaredDates', 'markers'];
+
+export function couverture(attendue: FicheRendue, audience: Audience | null): Couverture {
+  const etiquette = attendue as Record<string, unknown>;
+  return {
+    tri: {
+      faits: CRITERES_TRI.filter((critere) => critere(attendue, audience)).length,
+      total: CRITERES_TRI.length,
+    },
+    lecture: {
+      faits: CRITERES_LECTURE.filter((cle) => cle in etiquette).length,
+      total: CRITERES_LECTURE.length,
+    },
+    // Un aspect est couvert dès qu'un de ses champs est étiqueté : c'est très
+    // exactement le test que `verdictAspect` fait pour décider s'il rend un
+    // verdict ou « personne n'a regardé ».
+    extraction: {
+      faits: ASPECTS.filter((a) => a.champs.some(([champ]) => champ in etiquette)).length,
+      total: ASPECTS.length,
+    },
+  };
+}
+
 export function extractScore(
   attendue: FicheRendue,
   rendue: FicheRendue,

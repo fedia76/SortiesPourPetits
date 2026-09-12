@@ -415,28 +415,6 @@ async function saveLabels(clear = false) {
 
 /** Combien d'étiquettes une page porte : trois au plus, celles de l'étage 5. */
 /**
- * Ce que l'étiquette d'une sortie affirme, étage par étage.
- *
- * L'ancien compteur ne connaissait que les trois étiquettes de lecture et
- * affichait donc « 0/3 » sur une sortie parfaitement décrite pour le tri. Il
- * dit maintenant ce que chaque étage y trouve — et il n'y a plus qu'une
- * étiquette derrière, pas deux objets à recouper.
- */
-function etiquette(sortie: EvalSortie) {
-  const e = JSON.parse(sortie.expected || '{}') as Record<string, unknown>;
-  const dit = (cle: string) => cle in e;
-  return {
-    // L'étage 4 ne regarde que la date, le lieu et le public.
-    tri: [dit('dateStart'), dit('venuePostalCode'), sortie.audience !== null].filter(Boolean).length,
-    lecture: [dit('image'), dit('declaredDates'), dit('markers')].filter(Boolean).length,
-    // L'étage 6 regarde la fiche entière. On compte ce qui la remplit, sans
-    // les clés que les deux étages précédents se sont déjà comptées.
-    extraction: ['title', 'description', 'free', 'ageMin', 'category', 'venueName'].filter(dit)
-      .length,
-  };
-}
-
-/**
  * Vider le corpus des sorties.
  *
  * Ce qui vient du site se remoissonne d'un clic ; ce qu'un humain a saisi à la
@@ -460,6 +438,12 @@ async function viderSorties() {
   }
 }
 
+/** De quoi souligner ce qui est complet, et ce que personne n'a encore touché. */
+function pleine(part: { faits: number; total: number }): string {
+  if (part.faits === 0) return 'vide';
+  return part.faits === part.total ? 'complete' : '';
+}
+
 // ── peupler le corpus depuis ce que le pipeline a déjà fait ────────────
 
 async function pour(bucket: 'approuvees' | 'abandonnees' | 'illisibles' | 'liens' | 'fiches') {
@@ -479,10 +463,11 @@ const corpusSize = computed(() => ({
   sorties: sorties.value.length,
   // Les sorties dont l'étiquette affirme au moins quelque chose. Compter les
   // champs n'aurait pas de sens : ils ne pèsent pas le même travail.
-  sortieLabels: sorties.value.filter((r) => {
-    const e = etiquette(r);
-    return e.tri + e.lecture + e.extraction > 0;
-  }).length,
+  // Les sorties dont l'étiquette affirme au moins quelque chose. Compter les
+  // champs n'aurait pas de sens : ils ne pèsent pas le même travail.
+  sortieLabels: sorties.value.filter(
+    (r) => r.couverture.tri.faits + r.couverture.lecture.faits + r.couverture.extraction.faits > 0,
+  ).length,
 }));
 </script>
 
@@ -824,7 +809,15 @@ const corpusSize = computed(() => ({
             <th>Page</th>
             <th>Provenance</th>
             <th>Capture</th>
-            <th>Étiquettes</th>
+            <th class="num" title="Ce que le tri juge : la date, le lieu, le public.">
+              Étage 4<br /><span class="muted small">tri</span>
+            </th>
+            <th class="num" title="Ce que la lecture juge : l’illustration, les dates déclarées, les fragments du texte.">
+              Étage 5<br /><span class="muted small">lecture</span>
+            </th>
+            <th class="num" title="Ce que l’extraction juge : les douze aspects de la fiche.">
+              Étage 6<br /><span class="muted small">extraction</span>
+            </th>
             <th></th>
           </tr>
         </thead>
@@ -867,18 +860,19 @@ const corpusSize = computed(() => ({
                 HTML
               </a>
             </td>
-            <td class="num small">
-              <span :title="'Ce que l’étage 4 juge : la date, le lieu, le public.'">
-                tri {{ etiquette(sortie).tri }}/3
-              </span>
-              ·
-              <span :title="'Ce que l’étage 5 juge : l’illustration, les dates déclarées, les fragments du texte.'">
-                lecture {{ etiquette(sortie).lecture }}/3
-              </span>
-              ·
-              <span :title="'Ce que l’étage 6 juge : la fiche entière.'">
-                fiche {{ etiquette(sortie).extraction }}/6
-              </span>
+            <!--
+              Une colonne par étage : les trois ne mesurent pas la même chose,
+              et les aligner sur une seule ligne faisait lire « 6/6 » comme une
+              complétude alors que c'était un dénominateur inventé.
+            -->
+            <td class="num" :class="pleine(sortie.couverture.tri)">
+              {{ sortie.couverture.tri.faits }}/{{ sortie.couverture.tri.total }}
+            </td>
+            <td class="num" :class="pleine(sortie.couverture.lecture)">
+              {{ sortie.couverture.lecture.faits }}/{{ sortie.couverture.lecture.total }}
+            </td>
+            <td class="num" :class="pleine(sortie.couverture.extraction)">
+              {{ sortie.couverture.extraction.faits }}/{{ sortie.couverture.extraction.total }}
             </td>
             <td>
               <div class="row actions">
@@ -1141,6 +1135,15 @@ h2 {
   gap: 0.8rem;
   flex-wrap: wrap;
   margin-bottom: 0.5rem;
+}
+
+td.num.complete {
+  color: var(--ok, #1a7f37);
+  font-weight: 600;
+}
+
+td.num.vide {
+  color: var(--ink-soft, #999);
 }
 
 .provenance {

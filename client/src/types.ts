@@ -1058,6 +1058,23 @@ export interface EvalSortie {
   /** Annoncé en mots par la page. La seule affirmation qu'aucune brique ne rend. */
   audience: EvalAudience | null;
 
+  /**
+   * Ce que l'étiquette couvre, étage par étage — calculé par le serveur, à
+   * partir du code de mesure lui-même.
+   *
+   * Jamais une liste recopiée ici : deux compteurs successifs ont menti pour
+   * l'avoir été. Ajouter un critère à un étage déplace le dénominateur tout
+   * seul, du côté où la mesure vit.
+   */
+  couverture: {
+    /** Étage 4 — la date, le lieu, le public. */
+    tri: { faits: number; total: number };
+    /** Étage 5 — l'image, les dates déclarées, les fragments du texte. */
+    lecture: { faits: number; total: number };
+    /** Étage 6 — les aspects de la fiche qu'au moins un champ renseigne. */
+    extraction: { faits: number; total: number };
+  };
+
   origin: EvalSortieOrigin;
   /**
    * **Vrai** : la sortie existe sur le site, un modérateur l'a approuvée, et
