@@ -83,7 +83,13 @@ Le Havre, Niort et Nancy.
   reconnaissance a son corpus mais pas encore son run. Le corpus se peuple
   surtout de travail humain **déjà
   payé** : les fiches qu'un modérateur a approuvées, les pages que la lecture a
-  abandonnées, les liens dont on sait déjà qu'ils menaient à une sortie.
+  abandonnées, les liens dont on sait déjà qu'ils menaient à une sortie. Une
+  **chasse** le complète là où la modération ne voit rien : depuis un prompt,
+  elle lance plusieurs recherches, ouvre toutes les pages qu'elles remontent et
+  les **précoche** avec ce que la reconnaissance en pense — il ne reste qu'à
+  corriger ce qui est faux. Ce qu'on aura corrigé est gardé à part de ce qu'on
+  aura laissé passer : sans cette distinction, le corpus mesurerait la brique
+  contre elle-même.
   Tout le détail — ce que chaque étage mesure, ce que la fiche approuvée vaut
   vraiment comme référence, et ce qui reste limité — est dans
   [`docs/banc-evaluation.md`](docs/banc-evaluation.md).
@@ -193,7 +199,14 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | GET | `/api/eval/reste` | admin | La dette d'étiquetage : jamais regardés, à créer, à décrire |
 | GET | `/api/eval/recherche` | admin | La recherche que le formulaire propose par défaut |
 | GET | `/api/eval/criteres` | admin | Ce que chaque étage cherche à savoir, et dans quels champs |
+| GET / POST | `/api/eval/hunts` | admin | Les chasses et leurs candidates ; en lancer une (`prompt`, `area`, `maxPages`) |
+| POST | `/api/eval/hunts/:id/decide` | admin | Valider les candidates : une nature les met au corpus, `null` les écarte |
+| GET | `/api/eval/hunts/pages/:id/html` | admin | Le HTML gelé d'une candidate, tel que la précoche l'a vu |
+| DELETE | `/api/eval/hunts/:id` | admin | Oublier une chasse. Les pages déjà retenues restent au corpus |
 | POST | `/api/eval/capture/next` | modérateur | Le worker réclame une capture. Les captures passent avant les runs |
+| POST | `/api/eval/hunts/next` | modérateur | Le worker réclame une chasse. Après les captures, avant les runs |
+| POST | `/api/eval/hunts/:id/pages` | modérateur | Les candidates, avec leur précoche et leur HTML gelé |
+| POST | `/api/eval/hunts/:id/finish` | modérateur | Clôt la chasse, et déclare les requêtes réellement lancées |
 | POST | `/api/eval/capture/:kind/:id[/fail]` | modérateur | Le worker rend le HTML gelé, ou dit pourquoi il ne l'a pas |
 | POST | `/api/eval/runs/next` | modérateur | Le worker réclame un run, et déclare la révision qui tourne |
 | POST | `/api/eval/runs/:id/next-item` | modérateur | L'entrée suivante, **avec son HTML gelé** : le rejeu est hors ligne |

@@ -74,14 +74,24 @@ recherche avec la configuration que le site lui donne, rend compte page par
 page (`/runs/:id/items`) puis clôt l'exécution avec ses compteurs
 (`/runs/:id/finish`). Il ne décide de rien : tout se règle dans la console.
 
-Il sert aussi **trois autres files**, celles du banc d'évaluation
-(`POST /api/eval/harvest/next`, `/eval/reading/next` et `/eval/extraction/next`)
-— voir « [Mesurer les briques : le banc
-d'évaluation](#mesurer-les-briques--le-banc-dévaluation) ». Les recherches passent d'abord : une
-recherche produit des sorties que des parents attendent, un agenda du banc
-attend un humain qui le relira quand il pourra. Et l'extraction passe en
-dernier, pour une raison de plus : c'est la seule file du banc qui dépense de
-l'argent.
+Il sert aussi **trois autres files**, celles du banc d'évaluation — voir
+« [Mesurer les briques : le banc
+d'évaluation](#mesurer-les-briques--le-banc-dévaluation) » —, et l'ordre dans
+lequel il les sert n'est pas arbitraire :
+
+1. les **recherches** (`POST /api/scraper/next`) : elles produisent des sorties
+   que des parents attendent, là où le banc attend un humain qui le relira
+   quand il pourra ;
+2. les **captures** du banc (`/api/eval/capture/next`) : geler ne coûte rien, et
+   un run joué sur un corpus incomplet mesure ce qu'on avait sous la main
+   plutôt que ce qu'on voulait mesurer ;
+3. les **chasses** (`/api/eval/hunts/next`) : elles peuplent le corpus de
+   l'étage 2 — des recherches, toutes les pages qu'elles remontent, et ce que
+   la reconnaissance pense de chacune. Après les captures, parce qu'elles
+   lancent de vraies recherches ; avant les runs, parce qu'elles construisent
+   ce qu'un run mesurera ;
+4. les **runs** du banc (`/api/eval/runs/next`) : deux de leurs quatre étages
+   appellent le modèle et se paient.
 
 Une exécution est close **quoi qu'il arrive**, y compris sur un plantage :
 sans clôture elle resterait « En cours » dans la console, et bloquerait toute
@@ -725,7 +735,12 @@ ligne de regret. La précision a le filet de la modération, le rappel n'en a
 aucun.
 
 Le banc est une console (`/admin/evaluation`, administrateurs), un corpus de
-pages **gelées**, et des runs qui rejouent une brique dessus. Côté scraper il
+pages **gelées**, et des runs qui rejouent une brique dessus. Une **chasse** le
+peuple : elle lance les recherches de l'étage 1 depuis un prompt, ouvre tout ce
+qu'elles remontent, et précoche chaque page avec ce que l'étage 2 en dit — un
+humain n'a plus qu'à corriger ce qui est faux. Ce qu'il aura corrigé est gardé à
+part de ce qu'il aura laissé passer, sans quoi le corpus mesurerait la brique
+contre elle-même. Côté scraper il
 tient dans un seul module,
 [`sortiesbot/evaluation.py`](sortiesbot/evaluation.py), qui n'est qu'une
 enveloppe autour des **vraies** fonctions — `links_of`, `next_page`, `page_text`,

@@ -40,6 +40,7 @@ from .evaluation import (
     capture_pages,
     extract_page,
     harvest_from_html,
+    hunt,
     read_from_html,
     select_from_html,
 )
@@ -316,6 +317,96 @@ def capture(job: dict[str, Any], api: SppApi, quiet: bool) -> None:
                 print(f"Clôture impossible de {kind} #{item_id} : {api_err}", file=sys.stderr, flush=True)
 
 
+#: Candidates rendues par envoi. Chacune porte son HTML gzippé : une trentaine
+#: de pages d'un coup dépasserait le plafond de corps du site, et perdrait tout
+#: le travail de la chasse pour un seul envoi refusé.
+HUNT_BATCH = 5
+
+
+def chasse(job: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> None:
+    """Joue une chasse : les recherches de l'étage 1, la précoche de l'étage 2.
+
+    C'est la seule file du banc qui touche au web vivant, et c'est assumé :
+    elle **peuple** le corpus, elle ne le mesure pas. Le HTML est gelé au
+    passage, de sorte que la page qu'un run rejouera plus tard est exactement
+    celle sur laquelle la précoche a été faite.
+
+    Les candidates partent par paquets, au fil de l'eau : une chasse
+    interrompue laisse ce qu'elle a déjà trouvé, qui reste bon à valider.
+
+    Le `finally` a la même raison qu'ailleurs — le site l'a déjà passée en
+    RUNNING, et sans clôture elle ne serait plus jamais réclamée.
+    """
+    hunt_id = int(job["id"])
+    config = _chasse_config(job)
+    if not quiet:
+        print(f"▶ Chasse #{hunt_id} — « {config.theme} »", flush=True)
+
+    log = RunLog(None, verbose=not quiet)
+    status, error = "DONE", None
+    trouvees, hors_plafond = 0, 0
+    # Celles **réellement lancées** : la console n'en impose pas toujours, et
+    # une chasse qui tait les requêtes que le modèle a formulées ne se rejoue
+    # pas — c'est le même manque qu'un run sans `codeRef`.
+    requetes = list(config.queries)
+    provider = None
+    try:
+        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
+        found = hunt(config, provider, log, fetcher=Fetcher())
+        requetes = list(found["queries"])
+        hors_plafond = int(found["overCap"])
+        pages = found["pages"]
+        for start in range(0, len(pages), HUNT_BATCH):
+            paquet = pages[start : start + HUNT_BATCH]
+            api.report_hunt_pages(hunt_id, paquet)
+            trouvees += len(paquet)
+    except (ProviderError, ApiError) as err:
+        status, error = "FAILED", str(err)
+    except Exception as err:  # noqa: BLE001 — la trace part dans la console du service
+        traceback.print_exc()
+        status, error = "FAILED", f"{err.__class__.__name__} : {err}"
+    finally:
+        usage = getattr(provider, "usage", None)
+        payload: dict[str, Any] = {
+            "queries": requetes,
+            "pages": trouvees,
+            "overCap": hors_plafond,
+            "model": config.classify_model,
+            "costUsd": round(float(getattr(usage, "total_usd", 0.0) or 0.0), 4),
+        }
+        if error:
+            payload["error"] = error[:2000]
+        try:
+            api.finish_hunt(hunt_id, status, **payload)
+        except ApiError as err:
+            print(f"Clôture impossible de la chasse #{hunt_id} : {err}", file=sys.stderr, flush=True)
+        if not quiet:
+            fin = "terminée" if status == "DONE" else f"en échec ({error})"
+            print(
+                f"■ Chasse #{hunt_id} {fin} — {trouvees} candidate(s), "
+                f"{payload['costUsd']} $",
+                flush=True,
+            )
+
+
+def _chasse_config(job: dict[str, Any]) -> Config:
+    """La configuration **que la chasse déclare**, et rien d'inventé ici.
+
+    Le prompt devient le thème : c'est lui qui part dans les requêtes, et c'est
+    tout ce dont l'étage 1 a besoin. Le reste — la zone, le plafond, le moteur
+    — vient de la console, où un humain l'a fixé.
+    """
+    return Config(
+        name="chasse",
+        theme=str(job.get("prompt") or "sorties enfants"),
+        area=str(job.get("area") or "Île-de-France"),
+        queries=[str(q) for q in (job.get("queries") or [])],
+        max_searches=int(job.get("maxQueries") or 6),
+        max_agendas=int(job.get("maxPages") or 30),
+        provider=str(job.get("provider") or "serper"),
+    )
+
+
 def _bench_config() -> Config:
     """La configuration de repli du banc.
 
@@ -579,6 +670,23 @@ def main(argv: list[str] | None = None) -> int:
             job = None
         if job:
             capture(job, api, args.quiet)
+            if args.once:
+                return 0
+            continue
+
+        # Les chasses avant les runs, pour la raison qui met déjà les captures
+        # avant eux : elles construisent le corpus, et un run joué sur un
+        # corpus incomplet mesure ce qu'on a sous la main plutôt que ce qu'on
+        # voulait mesurer. Elles passent en revanche **après** les captures,
+        # qui ne coûtent rien là où une chasse lance de vraies recherches.
+        try:
+            job = api.next_hunt(code_ref=_code_ref())
+        except ApiError as err:
+            if not args.quiet:
+                print(f"Banc injoignable ({err}) — nouvelle tentative.", file=sys.stderr, flush=True)
+            job = None
+        if job:
+            chasse(job, api, env, args.quiet)
             if args.once:
                 return 0
             continue

@@ -85,6 +85,7 @@ model User {
   evalSorties      EvalSortie[] @relation("EvalSortieAuthor")
   evalSortieLabels EvalSortie[] @relation("EvalSortieLabeller")
   evalNatures      EvalNature[] @relation("EvalNatureAuthor")
+  evalHunts        EvalHunt[]   @relation("EvalHuntRequester")
   evalLinkLabels   EvalLink[]   @relation("EvalLinkLabeller")
   evalRuns         EvalRun[]    @relation("EvalRunRequester")
 }
@@ -944,6 +945,20 @@ model EvalNature {
   /// regardé.
   nature EvalPageNature
 
+  /// Ce que l'étage 2 proposait quand un humain a tranché, et rien quand
+  /// personne n'a proposé. Gardé à côté de l'étiquette parce que la seule
+  /// question qui vaille, plus tard, sera « celle-ci, l'a-t-il vue venir ? ».
+  proposed EvalPageNature?
+
+  /// D'où vient l'étiquette. La distinction n'est pas décorative : un taux
+  /// calculé surtout sur des `NON_CONTREDIT` mesure l'étage 2 contre
+  /// lui-même, et il sera flatteur par construction. Les renseignements sont
+  /// dans les `CORRIGE`.
+  origin EvalNatureOrigin @default(SAISIE)
+
+  /// La candidate de chasse dont elle est née, s'il y en a une.
+  huntPage EvalHuntPage?
+
   note       String   @default("") @db.Text
   labelledAt DateTime @default(now())
 
@@ -954,6 +969,159 @@ model EvalNature {
 
   @@index([capture])
   @@index([nature])
+  @@index([origin])
+}
+
+/// D'où vient l'étiquette d'une page du corpus de l'étage 2.
+///
+/// Le même vocabulaire que la provenance des champs d'une fiche, et pour la
+/// même raison : une étiquette qui ne fait que reprendre ce que la brique
+/// proposait ne la contredit jamais, donc ne la mesure pas vraiment. Elle
+/// compte quand même — il faut des cas où la brique a raison —, mais c'est
+/// une moyenne qu'il faut savoir lire.
+enum EvalNatureOrigin {
+  /// Un humain a saisi l'adresse et la nature, sans que rien ne lui souffle.
+  SAISIE
+  /// Une chasse proposait autre chose, un humain a corrigé. La plus forte.
+  CORRIGE
+  /// Une chasse proposait ceci, un humain l'a laissé passer.
+  NON_CONTREDIT
+}
+
+/// Une **chasse** : des recherches lancées depuis un prompt, et tout ce
+/// qu'elles remontent, précoché par l'étage 2.
+///
+/// Étiqueter est le seul travail coûteux du banc. Le corpus de l'étage 2 se
+/// remplissait une adresse à la fois, collée à la main ; une chasse fait le
+/// trajet d'un coup — l'étage 1 cherche, l'étage 2 dit ce qu'il pense de
+/// chaque page, un humain valide.
+///
+/// ## En ligne, et c'est voulu
+///
+/// Une chasse lance de vraies recherches et télécharge de vraies pages. Ce
+/// serait inadmissible pour un run — qui doit être rejouable, donc hors ligne
+/// — et c'est sans conséquence ici : une chasse **construit** le corpus, elle
+/// ne le mesure pas. Le HTML est gelé au passage, de sorte que la page qu'un
+/// run rejouera est exactement celle sur laquelle la précoche a été faite.
+///
+/// ## Ce qu'une chasse déclare
+///
+/// Le prompt, la zone et les plafonds sont fixés au lancement ; les requêtes
+/// **réellement lancées** et la révision qui tournait sont écrites à la
+/// clôture. Sans elles, une chasse ne se rejoue pas et son rendement ne
+/// s'attribue à rien — le même manque qu'un run sans `codeRef`.
+model EvalHunt {
+  id Int @id @default(autoincrement())
+
+  /// Ce qu'on cherche, en une phrase. Part tel quel comme thème de l'étage 1.
+  prompt String @db.VarChar(300)
+  area   String @default("Île-de-France") @db.VarChar(120)
+
+  /// Requêtes imposées, en JSON. Vide : le modèle les formule, et ce sont
+  /// celles-là que `ranQueries` gardera.
+  queries    String @db.Text
+  maxQueries Int    @default(6)
+  /// Pages ouvertes au plus, toutes requêtes confondues.
+  maxPages   Int    @default(30)
+  /// Le moteur de recherche : `serper` ou `anthropic`.
+  provider   String @default("serper") @db.VarChar(20)
+
+  status EvalHuntStatus @default(QUEUED)
+  error  String?        @db.Text
+
+  /// Les requêtes réellement lancées, en JSON.
+  ranQueries String @db.Text
+  /// Ce que les recherches ont remonté au-delà du plafond : des pages que
+  /// personne n'ouvrira. Le dire évite de croire la moisson exhaustive.
+  overCap    Int    @default(0)
+  costUsd    Float  @default(0)
+  /// Le modèle interrogé quand la cascade se tait. Vide : personne.
+  model      String @default("") @db.VarChar(80)
+  codeRef    String @default("") @db.VarChar(60)
+
+  queuedAt  DateTime  @default(now())
+  startedAt DateTime?
+  endedAt   DateTime?
+
+  author      User @relation("EvalHuntRequester", fields: [createdById], references: [id])
+  createdById Int
+
+  pages EvalHuntPage[]
+
+  @@index([status])
+}
+
+/// Une page remontée par une chasse, et ce que l'étage 2 en pense.
+///
+/// `proposed` est nul quand l'étage 2 ne sait pas, et ce nul est la seule
+/// chose qui empêche une chasse de se valider toute seule : le pipeline, lui,
+/// traite « inconnu » en agenda, mais c'est une décision d'orchestration. La
+/// recopier ici écrirait au corpus ce que le pipeline *fait* au lieu de ce que
+/// la page *est* — c'est-à-dire précisément ce qu'on cherche à mesurer.
+model EvalHuntPage {
+  id     Int      @id @default(autoincrement())
+  hunt   EvalHunt @relation(fields: [huntId], references: [id], onDelete: Cascade)
+  huntId Int
+
+  /// L'adresse **reconnue** : celle de la jumelle française quand l'échange de
+  /// langue a joué, sinon celle qu'a rendue la recherche.
+  url      String @db.VarChar(500)
+  /// Celle que la recherche avait rendue. Diffère de `url` après un échange.
+  foundUrl String @default("") @db.VarChar(500)
+  title    String @default("") @db.VarChar(300)
+  /// La requête qui l'a remontée. Sert la filiation, pas la décision.
+  query    String @default("") @db.VarChar(300)
+
+  /// La précoche. Nulle quand l'étage 2 reste indécis.
+  proposed   EvalPageNature?
+  /// Le signal qui a tranché — `url`, `pagination`, `json-ld`, `modele`…
+  signal     String          @default("") @db.VarChar(30)
+  detail     String          @default("") @db.VarChar(300)
+  /// `certain` : le site le déclare. `probable` : on l'infère de sa forme.
+  confidence String          @default("") @db.VarChar(20)
+  /// Le modèle interrogé pour cette page-ci, quand la cascade s'est tue.
+  asked      String          @default("") @db.VarChar(80)
+
+  /// Le condensé, de quoi juger sans ouvrir la page.
+  links   Int    @default(0)
+  dated   Int    @default(0)
+  heading String @default("") @db.VarChar(200)
+  opening String @db.Text
+
+  chars    Int     @default(0)
+  htmlPath String? @db.VarChar(255)
+  /// Page injoignable : elle est rendue quand même, sans archive ni précoche.
+  error    String  @default("") @db.VarChar(300)
+
+  decision  EvalHuntDecision @default(EN_ATTENTE)
+  decidedAt DateTime?
+
+  /// L'entrée du corpus qui en est née, quand elle a été retenue.
+  nature   EvalNature? @relation(fields: [natureId], references: [id], onDelete: SetNull)
+  natureId Int?        @unique
+
+  createdAt DateTime @default(now())
+
+  @@unique([huntId, url])
+  @@index([decision])
+}
+
+enum EvalHuntStatus {
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+}
+
+/// Ce qu'un humain a fait d'une candidate.
+///
+/// `EN_ATTENTE` est un état de plein droit : c'est la dette de la chasse, et
+/// la console la compte. Une chasse dont personne n'a rien fait n'a rien
+/// peuplé.
+enum EvalHuntDecision {
+  EN_ATTENTE
+  RETENUE
+  ECARTEE
 }
 
 /// Les quatre natures que l'étage 2 sait rendre.

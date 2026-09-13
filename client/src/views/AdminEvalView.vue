@@ -24,6 +24,8 @@ import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
 import type {
   EvalAgenda,
+  EvalHunt,
+  EvalHuntPage,
   EvalNature,
   EvalPageNature,
   EvalSortieLabel,
@@ -38,6 +40,7 @@ import type {
   EvalReste,
   EvalSeedCounts,
   EvalVerdict,
+  SoucheCorpus,
 } from '../types';
 import {
   EVAL_AUDIENCE_HINTS,
@@ -47,7 +50,10 @@ import {
   EVAL_RELEVANCE_HINTS,
   EVAL_RELEVANCE_LABELS,
   EVAL_CAPTURE_LABELS,
+  EVAL_HUNT_STATUS_LABELS,
   EVAL_LABEL_ORIGIN_LABELS,
+  EVAL_NATURE_ORIGIN_HINTS,
+  EVAL_NATURE_ORIGIN_LABELS,
   EVAL_ORIGIN_HINTS,
   EVAL_ORIGIN_LABELS,
   EVAL_VERDICT_HINTS,
@@ -64,6 +70,32 @@ const natures = ref<EvalNature[]>([]);
 const newNatureUrl = ref('');
 const newNature = ref<EvalPageNature>('AGENDA');
 const NATURES: EvalPageNature[] = ['AGENDA', 'SORTIE', 'PROGRAMME', 'AUTRE'];
+/**
+ * Ce que le corpus de l'étage 2 doit à la brique qu'il mesure.
+ *
+ * Sa taille ne dit rien : un corpus rempli en validant les précoches d'une
+ * chasse grossit sans mesurer autre chose que l'étage 2 contre lui-même. Ce
+ * chiffre-ci est le seul qui le dise, et c'est pourquoi il est affiché même
+ * quand il est bon.
+ */
+const souche = ref<SoucheCorpus | null>(null);
+/** Les chasses, la plus récente d'abord, avec leurs candidates. */
+const chasses = ref<EvalHunt[]>([]);
+const nouvelleChasse = ref({
+  prompt: '',
+  area: 'Île-de-France',
+  maxQueries: 6,
+  maxPages: 30,
+  queries: '',
+});
+/**
+ * Ce qu'on s'apprête à écrire au corpus, candidate par candidate.
+ *
+ * Absent : on ne retient pas — c'est l'état d'une page que l'étage 2 n'a pas
+ * su reconnaître, et elle reste alors en attente plutôt que d'être écartée
+ * dans le dos de quelqu'un.
+ */
+const choix = ref<Record<number, EvalPageNature>>({});
 const seed = ref<EvalSeedCounts | null>(null);
 /**
  * Ce qui reste à faire à la main, compté.
@@ -100,14 +132,17 @@ async function load() {
   loading.value = true;
   error.value = '';
   try {
-    const [a, r, n] = await Promise.all([
+    const [a, r, n, c] = await Promise.all([
       api.get<{ agendas: EvalAgenda[] }>('/api/eval/agendas'),
       api.get<{ sorties: EvalSortie[] }>('/api/eval/sorties'),
-      api.get<{ natures: EvalNature[] }>('/api/eval/natures'),
+      api.get<{ natures: EvalNature[]; souche: SoucheCorpus }>('/api/eval/natures'),
+      api.get<{ hunts: EvalHunt[] }>('/api/eval/hunts'),
     ]);
     agendas.value = a.agendas;
     sorties.value = r.sorties;
     natures.value = n.natures;
+    souche.value = n.souche;
+    poserLesChasses(c.hunts);
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Erreur';
   } finally {
@@ -593,6 +628,170 @@ const PANIERS = [
   },
 ];
 
+// ── la chasse : peupler le corpus de l'étage 2 depuis un prompt ────────
+//
+// Étiqueter est le seul travail coûteux du banc, et ce corpus-ci le payait une
+// adresse à la fois. Une chasse lance les recherches, ouvre ce qu'elles
+// remontent, et précoche chaque page avec ce que l'étage 2 en pense.
+//
+// La précoche est un **affichage**, comme partout ailleurs sur cette page :
+// rien n'entre au corpus tant que personne n'a cliqué. Et ce qu'on aura
+// corrigé est gardé à part de ce qu'on aura laissé passer, sans quoi un corpus
+// rempli en trois clics mesurerait l'étage 2 contre lui-même.
+
+/**
+ * Range les chasses et repose la précoche sur ce qui attend encore.
+ *
+ * Une candidate que l'étage 2 n'a pas su reconnaître reste **décochée** : lui
+ * donner « agenda », comme le fait le pipeline, écrirait au corpus un repli
+ * d'orchestration au lieu de ce que la page est.
+ */
+function poserLesChasses(rows: EvalHunt[]) {
+  chasses.value = rows;
+  const suivant: Record<number, EvalPageNature> = {};
+  for (const chasse of rows) {
+    for (const page of chasse.pages) {
+      if (page.decision !== 'EN_ATTENTE') continue;
+      const dejaVu = choix.value[page.id];
+      const propose = dejaVu ?? page.proposed;
+      if (propose) suivant[page.id] = propose;
+    }
+  }
+  choix.value = suivant;
+}
+
+async function lancerChasse() {
+  const prompt = nouvelleChasse.value.prompt.trim();
+  if (!prompt) return;
+  const queries = nouvelleChasse.value.queries
+    .split('\n')
+    .map((q) => q.trim())
+    .filter(Boolean);
+  try {
+    await api.post('/api/eval/hunts', {
+      prompt,
+      area: nouvelleChasse.value.area.trim() || 'Île-de-France',
+      maxQueries: nouvelleChasse.value.maxQueries,
+      maxPages: nouvelleChasse.value.maxPages,
+      queries,
+    });
+    nouvelleChasse.value.prompt = '';
+    nouvelleChasse.value.queries = '';
+    notice.value =
+      'Chasse mise en file : le worker la prendra à sa prochaine passe, ' +
+      'après les captures et avant les runs.';
+    await load();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function supprimerChasse(chasse: EvalHunt) {
+  const attente = chasse.comptes.enAttente;
+  const avertissement = attente ? `\n\n${attente} candidate(s) non triée(s) seront perdues.` : '';
+  if (!confirm(`Oublier la chasse « ${chasse.prompt} » ?${avertissement}`)) return;
+  try {
+    await api.delete(`/api/eval/hunts/${chasse.id}`);
+    notice.value = 'Chasse oubliée. Les pages déjà retenues restent au corpus.';
+    await load();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** Cocher une nature, ou la décocher en recliquant dessus. */
+function choisir(page: EvalHuntPage, nature: EvalPageNature) {
+  const suivant = { ...choix.value };
+  if (suivant[page.id] === nature) delete suivant[page.id];
+  else suivant[page.id] = nature;
+  choix.value = suivant;
+}
+
+function retenue(page: EvalHuntPage): boolean {
+  return Boolean(choix.value[page.id]);
+}
+
+/** Les candidates qui attendent encore qu'on en dise quelque chose. */
+function enAttente(chasse: EvalHunt): EvalHuntPage[] {
+  return chasse.pages.filter((p) => p.decision === 'EN_ATTENTE');
+}
+
+function cochees(chasse: EvalHunt): EvalHuntPage[] {
+  return enAttente(chasse).filter(retenue);
+}
+
+/**
+ * Ce qu'on s'apprête à contredire.
+ *
+ * Affiché avant de valider, et pas après : c'est le seul chiffre qui dise si
+ * la chasse apprend quelque chose au banc. Zéro correction sur trente pages
+ * veut dire que le corpus vient de recopier l'étage 2.
+ */
+function corrections(chasse: EvalHunt): number {
+  return cochees(chasse).filter((p) => p.proposed !== choix.value[p.id]).length;
+}
+
+/**
+ * Écrit au corpus les candidates cochées. Les autres **restent en attente**.
+ *
+ * Valider par paquets ne doit pas trancher à la place de personne : une page
+ * décochée parce que l'étage 2 n'a pas su n'est pas une page qu'on a refusée.
+ */
+async function validerChasse(chasse: EvalHunt) {
+  const prises = cochees(chasse);
+  if (!prises.length) return;
+  await envoyer(
+    chasse,
+    prises.map((p) => ({ pageId: p.id, nature: choix.value[p.id] })),
+  );
+}
+
+/** Écarte tout ce qui reste : la dette de la chasse tombe à zéro. */
+async function ecarterRestantes(chasse: EvalHunt) {
+  const restantes = enAttente(chasse).filter((p) => !retenue(p));
+  if (!restantes.length) return;
+  if (!confirm(`Écarter ${restantes.length} candidate(s) ? Leur HTML gelé sera effacé.`)) return;
+  await envoyer(
+    chasse,
+    restantes.map((p) => ({ pageId: p.id, nature: null })),
+  );
+}
+
+async function ecarterUne(chasse: EvalHunt, page: EvalHuntPage) {
+  await envoyer(chasse, [{ pageId: page.id, nature: null }]);
+}
+
+async function envoyer(
+  chasse: EvalHunt,
+  decisions: { pageId: number; nature: EvalPageNature | null }[],
+) {
+  try {
+    const body = await api.post<{ retenues: number; ecartees: number; doublons: string[] }>(
+      `/api/eval/hunts/${chasse.id}/decide`,
+      { decisions },
+    );
+    notice.value =
+      `${body.retenues} page(s) au corpus, ${body.ecartees} écartée(s)` +
+      (body.doublons.length ? `, ${body.doublons.length} déjà au corpus.` : '.');
+    await load();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** Ce que l'étage 2 a dit d'une candidate, en une ligne lisible. */
+function precoche(page: EvalHuntPage): string {
+  if (page.error) return `injoignable : ${page.error}`;
+  if (!page.proposed) return `indécis — ${page.detail || 'rien de déclaré'}`;
+  return `${EVAL_NATURE_LABELS[page.proposed]} — ${page.detail}`;
+}
+
+/** La part du corpus qui ne vient pas de la brique, en pourcentage. */
+const independance = computed(() => {
+  const part = souche.value?.independance;
+  return part === null || part === undefined ? '—' : `${Math.round(part * 100)} %`;
+});
+
 // ── peupler le corpus depuis ce que le pipeline a déjà fait ────────────
 
 async function pour(bucket: 'approuvees' | 'abandonnees' | 'illisibles' | 'liens' | 'fiches') {
@@ -774,6 +973,160 @@ const corpusSize = computed(() => ({
       </div>
     </div>
 
+    <!-- ── La chasse ──────────────────────────────────────────────────── -->
+    <h2>Chasse — peupler l’étage 2 depuis un prompt</h2>
+    <p class="muted small">
+      Une chasse lance les recherches de l’étage 1, ouvre <strong>toutes</strong>
+      les pages qu’elles remontent, et marque chacune avec ce que l’étage 2 en
+      pense. Il ne reste qu’à corriger ce qui est faux. Le HTML est gelé au
+      passage : la page qu’un run rejouera est exactement celle sur laquelle la
+      précoche a été faite, et non celle que le site servira demain.
+    </p>
+    <p class="muted small">
+      Une page que l’étage 2 <strong>ne sait pas reconnaître</strong> arrive
+      décochée, et c’est voulu : le pipeline, lui, la traite en agenda, mais
+      c’est une décision d’orchestration. L’écrire au corpus y mettrait ce que
+      le pipeline <em>fait</em> au lieu de ce que la page <em>est</em> — soit
+      exactement ce qu’on cherche à mesurer.
+    </p>
+
+    <div class="card chasse-form">
+      <label class="chasse-champ">
+        <span>Ce qu’on cherche</span>
+        <input
+          v-model="nouvelleChasse.prompt"
+          type="text"
+          maxlength="300"
+          placeholder="spectacles jeune public en Seine-Saint-Denis à la Toussaint"
+        />
+      </label>
+      <div class="row add">
+        <label class="chasse-champ">
+          <span>Zone</span>
+          <input v-model="nouvelleChasse.area" type="text" maxlength="120" />
+        </label>
+        <label class="chasse-champ court">
+          <span>Requêtes</span>
+          <input v-model.number="nouvelleChasse.maxQueries" type="number" min="1" max="10" />
+        </label>
+        <label class="chasse-champ court">
+          <span>Pages au plus</span>
+          <input v-model.number="nouvelleChasse.maxPages" type="number" min="1" max="100" />
+        </label>
+        <button class="btn" @click="lancerChasse()">Lancer la chasse</button>
+      </div>
+      <details>
+        <summary class="muted small">Imposer les requêtes plutôt que les faire formuler</summary>
+        <p class="muted small">
+          Une par ligne. Les fournir fige la chasse — donc la rend comparable
+          d’une semaine sur l’autre — et évite le petit appel qui les formule.
+        </p>
+        <textarea
+          v-model="nouvelleChasse.queries"
+          rows="3"
+          placeholder="agenda sorties enfants Seine-Saint-Denis octobre"
+        ></textarea>
+      </details>
+    </div>
+
+    <div v-for="chasse in chasses" :key="chasse.id" class="card entry">
+      <div class="entry-head">
+        <strong>{{ chasse.prompt }}</strong>
+        <span class="badge">{{ EVAL_HUNT_STATUS_LABELS[chasse.status] }}</span>
+        <span class="muted small">
+          {{ chasse.comptes.total }} candidate(s), {{ chasse.comptes.enAttente }} en attente,
+          {{ chasse.comptes.retenues }} au corpus
+          <template v-if="chasse.comptes.indecises">
+            · {{ chasse.comptes.indecises }} que l’étage 2 n’a pas su reconnaître
+          </template>
+          <template v-if="chasse.overCap">
+            · {{ chasse.overCap }} au-delà du plafond, jamais ouverte(s)
+          </template>
+        </span>
+        <span class="spacer"></span>
+        <span class="muted small">{{ chasse.costUsd }} $</span>
+        <button class="linklike" @click="supprimerChasse(chasse)">Oublier</button>
+      </div>
+      <p v-if="chasse.error" class="error small">{{ chasse.error }}</p>
+      <p v-if="chasse.ranQueries.length" class="muted small">
+        Requêtes lancées : {{ chasse.ranQueries.join(' · ') }}
+      </p>
+
+      <div v-if="enAttente(chasse).length" class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Page</th>
+              <th>Ce que l’étage 2 en dit</th>
+              <th>C’est…</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="page in enAttente(chasse)" :key="page.id" :class="{ off: !retenue(page) }">
+              <td>
+                <div class="link-text">{{ page.title || page.url }}</div>
+                <a :href="page.url" target="_blank" class="muted small">{{ page.url }}</a>
+                <div v-if="page.foundUrl" class="muted small">
+                  trouvée en <code>{{ page.foundUrl }}</code>, lue en français
+                </div>
+                <div class="muted small">
+                  {{ page.links }} lien(s), dont {{ page.dated }} voisinent une date
+                  <template v-if="page.archived">
+                    ·
+                    <a :href="`/api/eval/hunts/pages/${page.id}/html`" target="_blank">HTML gelé</a>
+                  </template>
+                  <template v-else>· sans archive : elle passera par la file de capture</template>
+                </div>
+              </td>
+              <td class="small">
+                {{ precoche(page) }}
+                <div class="muted small">
+                  <template v-if="page.signal">signal : {{ page.signal }}</template>
+                  <template v-if="page.confidence"> ({{ page.confidence }})</template>
+                  <template v-if="page.asked"> · tranché par {{ page.asked }}</template>
+                </div>
+              </td>
+              <td>
+                <div class="chips">
+                  <button
+                    v-for="n in NATURES"
+                    :key="n"
+                    class="chip"
+                    :class="{ on: choix[page.id] === n }"
+                    :title="EVAL_NATURE_HINTS[n]"
+                    @click="choisir(page, n)"
+                  >
+                    {{ EVAL_NATURE_LABELS[n] }}
+                  </button>
+                </div>
+              </td>
+              <td>
+                <button class="linklike" @click="ecarterUne(chasse, page)">Écarter</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="enAttente(chasse).length" class="row add chasse-valide">
+        <button class="btn" :disabled="!cochees(chasse).length" @click="validerChasse(chasse)">
+          Mettre au corpus les {{ cochees(chasse).length }} cochée(s)
+        </button>
+        <button class="btn ghost" @click="ecarterRestantes(chasse)">
+          Écarter les {{ enAttente(chasse).length - cochees(chasse).length }} restante(s)
+        </button>
+        <span class="muted small">
+          dont <strong>{{ corrections(chasse) }}</strong> correction(s) de ce que l’étage 2
+          proposait. C’est le seul chiffre qui dise si cette chasse apprend quelque chose au
+          banc : zéro correction, et le corpus recopie la brique qu’il mesure.
+        </span>
+      </div>
+      <p v-else-if="chasse.status === 'DONE'" class="muted small">
+        Plus rien à trier. {{ chasse.comptes.retenues }} page(s) sont entrées au corpus.
+      </p>
+    </div>
+
     <!-- ── Ce qu'une page est ─────────────────────────────────────────── -->
     <h2>Pages — étage 2 : ce qu’une page est</h2>
     <p class="muted small">
@@ -796,6 +1149,15 @@ const corpusSize = computed(() => ({
       <button class="btn" @click="addNature()">Ajouter au corpus</button>
     </div>
 
+    <p v-if="souche && souche.total" class="muted small">
+      <strong>{{ independance }}</strong> de ce corpus ne vient pas de l’étage 2 :
+      {{ souche.saisies }} saisie(s) et {{ souche.corriges }} correction(s), contre
+      {{ souche.nonContredits }} précoche(s) laissée(s) passer. C’est le chiffre à
+      regarder avant la taille : une mesure calculée surtout sur des étiquettes
+      non contredites vérifie que l’étage 2 fait ce qu’il fait, et elle sera
+      flatteuse par construction.
+    </p>
+
     <div v-if="natures.length" class="table-wrap card">
       <table>
         <thead>
@@ -803,6 +1165,7 @@ const corpusSize = computed(() => ({
             <th>Page</th>
             <th>Capture</th>
             <th>C’est…</th>
+            <th>Étiquette</th>
             <th></th>
           </tr>
         </thead>
@@ -842,6 +1205,18 @@ const corpusSize = computed(() => ({
                 >
                   {{ EVAL_NATURE_LABELS[n] }}
                 </button>
+              </div>
+            </td>
+            <td class="small">
+              <span
+                class="provenance"
+                :class="page.origin === 'NON_CONTREDIT' ? 'banc' : 'publiee'"
+                :title="EVAL_NATURE_ORIGIN_HINTS[page.origin]"
+              >
+                {{ EVAL_NATURE_ORIGIN_LABELS[page.origin] }}
+              </span>
+              <div v-if="page.proposed && page.proposed !== page.nature" class="muted small">
+                l’étage 2 disait « {{ EVAL_NATURE_LABELS[page.proposed] }} »
               </div>
             </td>
             <td>
@@ -1507,6 +1882,41 @@ td.num.vide {
 .btn.ghost.danger {
   color: var(--danger, #b42318);
   border-color: currentColor;
+}
+
+.chasse-form {
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1rem;
+}
+
+.chasse-champ {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  flex: 1;
+  min-width: 180px;
+}
+
+.chasse-champ.court {
+  flex: 0 0 7rem;
+  min-width: 7rem;
+}
+
+.chasse-form textarea {
+  width: 100%;
+  margin-top: 0.3rem;
+}
+
+.chasse-valide {
+  align-items: center;
+  margin-top: 0.8rem;
+}
+
+/* Une candidate décochée reste lisible : elle n'est pas refusée, elle attend. */
+tr.off {
+  opacity: 0.55;
 }
 
 .reste {
