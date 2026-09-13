@@ -1411,6 +1411,129 @@ export interface EvalRun {
   score?: EvalScore;
 }
 
+/**
+ * Le détail d'une mesure : la ligne, et pas un total plus petit.
+ *
+ * Un taux surprenant ne se corrige pas, il se **remonte** — jusqu'au lien qui
+ * l'a fait, et jusqu'à la phrase qui dit dans quelle case il tombe. Ces types
+ * décrivent ce que le serveur rend pour ça ; les raisons y sont fabriquées par
+ * la mesure elle-même, jamais reconstituées ici : une explication écrite à côté
+ * du test finit toujours par décrire un test qui a changé.
+ */
+export type EvalLinkCase =
+  | 'TROUVEE'
+  | 'MANQUEE'
+  | 'BRUIT'
+  | 'ECARTEE_A_RAISON'
+  | 'INDECIDABLE'
+  | 'SANS_ETIQUETTE'
+  | 'NON_SOUMISE';
+
+export const EVAL_LINK_CASE_LABELS: Record<EvalLinkCase, string> = {
+  TROUVEE: 'trouvée',
+  MANQUEE: 'manquée',
+  BRUIT: 'bruit',
+  ECARTEE_A_RAISON: 'écartée à raison',
+  INDECIDABLE: 'indécidable',
+  SANS_ETIQUETTE: 'sans étiquette',
+  NON_SOUMISE: 'jamais soumise',
+};
+
+export const EVAL_LINK_CASE_HINTS: Record<EvalLinkCase, string> = {
+  TROUVEE: 'Le corpus la veut, la brique l’a retenue. Compte dans le rappel.',
+  MANQUEE: 'Le corpus la veut, la brique l’a laissée. La faute chère, et silencieuse.',
+  BRUIT: 'La brique l’a retenue, le corpus n’en veut pas. Une lecture payée pour rien.',
+  ECARTEE_A_RAISON:
+    'Le corpus n’en veut pas, la brique ne l’a pas prise. Du travail bien fait, hors de tout taux.',
+  INDECIDABLE:
+    'Le corpus ne permet pas de trancher — personne n’a décrit la sortie. Hors de tout dénominateur.',
+  SANS_ETIQUETTE:
+    'Retenue, mais le corpus ne dit rien de ce lien. Un trou du corpus, pas une faute de la brique.',
+  NON_SOUMISE:
+    'Le dépouillement ne l’a pas soumise au tri : l’étage 4 ne l’a jamais vue, et ne paie pas pour elle.',
+};
+
+/** Un lien de la mesure : ce que le corpus dit, ce que la brique a fait, et la case. */
+export interface EvalLinkLine {
+  url: string;
+  cas: EvalLinkCase;
+  retenu: boolean;
+  verdict: EvalVerdict | null;
+  relevance: EvalRelevance | null;
+  /** Pourquoi cette case-là, fabriqué par la mesure. */
+  raison: string;
+  /** Hors du taux affiché — page plafonnée, ou hors dénominateur. */
+  horsTaux: boolean;
+  texte: string;
+  contexte: string;
+  /** Ce que la brique a dit d’elle-même : motif de rejet, ou motif du tri. */
+  motif: string;
+}
+
+/** Le détail d'un run de dépouillement ou de tri, page par page. */
+export interface EvalRunDetailPage {
+  pageId: number;
+  url: string;
+  pageNo: number;
+  label: string;
+  /** Le tri a pris exactement son quota : cette page sort du rappel. */
+  plafonnee: boolean;
+  score: EvalHarvestScore & Partial<EvalSelectScore>;
+  pagination: { attendu: string | null; trouve: string };
+  liens: EvalLinkLine[];
+}
+
+/** Le détail d'un run de lecture, sortie par sortie. */
+export interface EvalRunDetailRead {
+  sortieId: number;
+  url: string;
+  label: string;
+  textChars: number;
+  error: string | null;
+  score: {
+    markersFound: number;
+    markersMissing: number;
+    textOk: boolean | null;
+    truncated: boolean;
+    tooShort: boolean;
+    imageOk: boolean | null;
+    datesOk: boolean | null;
+  };
+  detail: {
+    image: { attendu: string | null; rendu: string; verdict: boolean | null };
+    dates: { attendues: string[] | null; rendues: string[]; verdict: boolean | null };
+    fragments: { trouves: string[]; manquants: string[]; verdict: boolean | null };
+    truncated: boolean;
+    tooShort: boolean;
+  };
+}
+
+/** Un aspect de la fiche, avec les deux valeurs qu'on a comparées. */
+export interface EvalAspectDetail {
+  key: string;
+  libelle: string;
+  verdict: EvalFieldVerdict | null;
+  attendu: string;
+  rendu: string;
+}
+
+/** Le détail d'un run d'extraction, sortie par sortie. */
+export interface EvalRunDetailExtract {
+  sortieId: number;
+  url: string;
+  label: string;
+  costUsd: number;
+  error: string | null;
+  tally: { JUSTE: number; FAUX: number; INVENTE: number; MANQUE: number; inconnu: number };
+  byField: Record<string, EvalFieldVerdict | null>;
+  aspects: EvalAspectDetail[];
+}
+
+export type EvalRunDetail =
+  | EvalRunDetailPage[]
+  | EvalRunDetailRead[]
+  | EvalRunDetailExtract[];
+
 /** Les quatre verdicts de l'étage 6, dérivés et non plus stockés. */
 export type EvalFieldVerdict = 'JUSTE' | 'FAUX' | 'INVENTE' | 'MANQUE';
 

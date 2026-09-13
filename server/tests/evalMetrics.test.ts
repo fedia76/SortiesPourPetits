@@ -47,9 +47,14 @@ import {
   emptyTally,
   extractScore,
   fold,
+  harvestLines,
   harvestScore,
+  aspectsDetail,
+  readDetail,
   readScore,
+  relevanceDetail,
   relevanceOf,
+  selectLines,
   selectScore,
   sumHarvest,
   sumSelect,
@@ -549,4 +554,149 @@ test('la console reçoit la liste que la mesure applique', () => {
   // `ASPECTS` déplace le compteur tout seul.
   assert.equal(etages[2].criteres.length, ASPECTS.length);
   assert.ok(etages[2].criteres.every((c) => c.libelle && c.champs.length > 0));
+});
+
+// ═══════════════════════════════════ le détail : la ligne qui a fait le chiffre
+//
+// Un taux du banc est une conclusion. Une conclusion qu'on ne peut pas remonter
+// jusqu'à la ligne qui l'a produite ne laisse le choix qu'entre la croire et la
+// jeter — et ces tests-ci verrouillent la seule chose qui rende le détail
+// digne de foi : **il additionne au total**. Deux comptes séparés, l'un pour
+// afficher et l'autre pour expliquer, divergent au premier changement de règle.
+
+test('le détail du dépouillement additionne à son score', () => {
+  const labels = [lien('/a'), lien('/b'), lien('/nav', 'AUTRE'), lien('/pied', 'AUTRE')];
+  const results = [
+    { url: '/a', harvested: true },
+    { url: '/b', harvested: false },
+    { url: '/nav', harvested: true },
+    { url: '/pied', harvested: false },
+    { url: '/inconnu', harvested: true },
+  ];
+
+  const lignes = harvestLines(labels, results);
+  const score = harvestScore(labels, results);
+  const compte = (cas: string) => lignes.filter((l) => l.cas === cas).length;
+
+  assert.equal(compte('TROUVEE'), score.found);
+  assert.equal(compte('MANQUEE'), score.missed);
+  assert.equal(compte('BRUIT'), score.noise);
+  assert.equal(compte('SANS_ETIQUETTE'), score.unlabelled);
+  // Le lien correctement laissé de côté : du travail bien fait, qu'aucun
+  // compteur du dépouillement ne porte, et qui doit quand même se voir.
+  assert.equal(compte('ECARTEE_A_RAISON'), 1);
+  assert.equal(lignes.length, 5);
+});
+
+test('le détail du tri additionne à son score, plafond compris', () => {
+  const scope: RunScope = { dateFrom: '2026-09-01', dateTo: '2026-09-30', maxLinks: 1 };
+  const labels: LabelledLink[] = [
+    { url: '/dedans', verdict: 'SORTIE', sortie: { dateStart: '2026-09-10', ageMax: 8 } },
+    { url: '/apres', verdict: 'SORTIE', sortie: { dateStart: '2026-12-10', ageMax: 8 } },
+    { url: '/nue', verdict: 'SORTIE' },
+    { url: '/jamais-vue', verdict: 'SORTIE', sortie: { dateStart: '2026-09-12' } },
+  ];
+  const results = [
+    { url: '/dedans', selected: true },
+    { url: '/apres', selected: false },
+    { url: '/nue', selected: false },
+    // Jamais soumise au tri : l'étage 3 l'avait déjà perdue.
+    { url: '/jamais-vue', selected: null },
+  ];
+
+  const { lignes, plafonnee } = selectLines(labels, results, scope);
+  const score = selectScore(labels, results, scope);
+  const cas = (url: string) => lignes.find((l) => l.url === url)!.cas;
+
+  assert.equal(plafonnee, true);
+  assert.equal(cas('/dedans'), 'TROUVEE');
+  assert.equal(cas('/apres'), 'ECARTEE_A_RAISON');
+  assert.equal(cas('/nue'), 'INDECIDABLE');
+  assert.equal(cas('/jamais-vue'), 'NON_SOUMISE');
+  assert.equal(lignes.filter((l) => l.cas === 'TROUVEE').length, score.found);
+  assert.equal(lignes.filter((l) => l.cas === 'ECARTEE_A_RAISON').length, score.rightlyDropped);
+  assert.equal(lignes.filter((l) => l.cas === 'INDECIDABLE').length, score.undecidable);
+  // La page est au plafond : la ligne trouvée le porte, sinon le détail
+  // montrerait un chiffre que le rappel affiché ne compte pas.
+  assert.equal(lignes.find((l) => l.url === '/dedans')!.horsTaux, true);
+  assert.equal(score.recall, null);
+});
+
+test('la raison nomme ce qui a écarté le lien, et pas seulement qu’il l’est', () => {
+  const scope: RunScope = { dateFrom: '2026-09-01', dateTo: '2026-09-30', postalPrefixes: ['75'] };
+
+  // Une raison qui dirait « hors recherche » n'apprendrait rien : c'est la
+  // dimension fautive qu'on vient chercher, parce que c'est elle qui se règle.
+  const tard = relevanceDetail(
+    { verdict: 'SORTIE', sortie: { dateStart: '2026-12-01', ageMax: 6 } },
+    scope,
+  );
+  assert.equal(tard.relevance, 'HORS_RECHERCHE');
+  assert.match(tard.raison, /2026-12-01/);
+
+  const ailleurs = relevanceDetail(
+    { verdict: 'SORTIE', sortie: { dateStart: '2026-09-10', postalCode: '76600', ageMax: 6 } },
+    scope,
+  );
+  assert.match(ailleurs.raison, /76600/);
+
+  const adultes = relevanceDetail({ verdict: 'SORTIE', sortie: { ageMin: 18 } }, scope);
+  assert.match(adultes.raison, /adultes/);
+
+  const nue = relevanceDetail({ verdict: 'SORTIE' }, scope);
+  assert.equal(nue.relevance, 'INDECIDABLE');
+  assert.match(nue.raison, /décrit cette sortie/);
+
+  // Et la conclusion reste exactement celle d'avant : le détail explique la
+  // mesure, il ne la change pas.
+  for (const label of [
+    { verdict: 'SORTIE' as const, sortie: { dateStart: '2026-09-10', ageMax: 6 } },
+    { verdict: 'AUTRE' as const },
+    { verdict: 'SORTIE' as const, sortie: { ageMin: 18 } },
+  ]) {
+    assert.equal(relevanceDetail(label, scope).relevance, relevanceOf(label, scope));
+  }
+});
+
+test('la lecture dit quel fragment manque, pas seulement qu’il en manque un', () => {
+  const detail = readDetail(
+    { markers: ['Atelier modelage', '8 €'], image: 'https://x/affiche.jpg', declaredDates: ['2026-09-10'] },
+    {
+      text: 'Venez à l’atelier  MODELAGE de la saison',
+      imageUrl: 'https://x/logo.png',
+      dates: '[]',
+      truncated: false,
+      tooShort: false,
+    },
+  );
+
+  assert.deepEqual(detail.fragments.trouves, ['Atelier modelage']);
+  assert.deepEqual(detail.fragments.manquants, ['8 €']);
+  assert.equal(detail.fragments.verdict, false);
+  // Les deux valeurs comparées : « l'image est fausse » sans elles n'indique
+  // pas si c'est le logo qui a été pris pour l'affiche.
+  assert.equal(detail.image.attendu, 'https://x/affiche.jpg');
+  assert.equal(detail.image.rendu, 'https://x/logo.png');
+  assert.deepEqual(detail.dates.attendues, ['2026-09-10']);
+  assert.deepEqual(detail.dates.rendues, []);
+});
+
+test('l’extraction montre les deux valeurs comparées, aspect par aspect', () => {
+  const attendue: FicheRendue = { title: 'Le Petit Prince', free: false, price: 8 };
+  const rendue: FicheRendue = { title: 'Le Petit Prince', free: false, price: 12, setting: 'INTERIEUR' };
+
+  const aspects = aspectsDetail(attendue, rendue);
+  const par = (key: string) => aspects.find((a) => a.key === key)!;
+
+  assert.equal(aspects.length, ASPECTS.length);
+  assert.equal(par('titre').verdict, 'JUSTE');
+  assert.equal(par('tarif').verdict, 'FAUX');
+  // La pièce à conviction : 8 contre 12. Sans elle, « faux » est une
+  // accusation sans pièce jointe.
+  assert.match(par('tarif').attendu, /8/);
+  assert.match(par('tarif').rendu, /12/);
+  // Le corpus ne dit rien du cadre : pas de verdict, et l'attendu reste vide
+  // plutôt que de se lire comme un vide étiqueté.
+  assert.equal(par('cadre').verdict, null);
+  assert.equal(par('cadre').attendu, '');
 });

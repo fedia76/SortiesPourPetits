@@ -20,7 +20,8 @@
  * seule raison que personne n'a regardé, ce qui est très exactement le
  * mensonge que ce banc existe pour éviter.
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
 import type {
   EvalAgenda,
@@ -560,6 +561,8 @@ function pleine(part: { faits: number; total: number }): string {
 const PANIERS = [
   {
     cle: 'approuvees' as const,
+    // Le geste qui le solde décide de l'onglet où il vit.
+    groupe: 'sorties' as const,
     titre: 'Sorties publiées',
     publiee: true,
     ajoute: 'des sorties au corpus',
@@ -573,6 +576,8 @@ const PANIERS = [
   },
   {
     cle: 'fiches' as const,
+    // Le geste qui le solde décide de l'onglet où il vit.
+    groupe: 'sorties' as const,
     titre: 'Étiqueter les sorties publiées',
     publiee: true,
     ajoute: 'l’étiquette de ces sorties',
@@ -586,6 +591,8 @@ const PANIERS = [
   },
   {
     cle: 'abandonnees' as const,
+    // Le geste qui le solde décide de l'onglet où il vit.
+    groupe: 'sorties' as const,
     titre: 'Pages abandonnées à la lecture',
     publiee: false,
     ajoute: 'des sorties au corpus',
@@ -600,6 +607,8 @@ const PANIERS = [
   },
   {
     cle: 'illisibles' as const,
+    // Le geste qui le solde décide de l'onglet où il vit.
+    groupe: 'sorties' as const,
     titre: 'Fiches refusées en modération',
     publiee: false,
     ajoute: 'des sorties au corpus',
@@ -614,6 +623,8 @@ const PANIERS = [
   },
   {
     cle: 'liens' as const,
+    // Le geste qui le solde décide de l'onglet où il vit.
+    groupe: 'agendas' as const,
     titre: 'Liens d’agenda déjà tranchés',
     publiee: true,
     ajoute: 'des étiquettes de lien, sur un agenda',
@@ -804,6 +815,89 @@ async function pour(bucket: 'approuvees' | 'abandonnees' | 'illisibles' | 'liens
   }
 }
 
+// ── les trois onglets ──────────────────────────────────────────────────
+//
+// Un onglet par corpus, et le corpus décide — pas la longueur des sections.
+// Les trois n'étiquettent pas la même chose, ne se remplissent pas du même
+// geste, et ne se relisent jamais ensemble : les empiler sur une seule page
+// obligeait à faire défiler deux cents lignes d'agendas pour atteindre le
+// tableau des sorties.
+
+type Onglet = 'pages' | 'agendas' | 'sorties';
+
+const ONGLETS_CONNUS: Onglet[] = ['pages', 'agendas', 'sorties'];
+
+const route = useRoute();
+const router = useRouter();
+
+/**
+ * L'onglet ouvert, **dans l'adresse**.
+ *
+ * Pas seulement pour le confort : un rechargement après avoir étiqueté vingt
+ * liens ramenait sur le premier onglet, et c'est le genre de détail qui fait
+ * qu'on cesse d'utiliser une console.
+ */
+const onglet = ref<Onglet>(
+  ONGLETS_CONNUS.includes(route.query.onglet as Onglet) ? (route.query.onglet as Onglet) : 'pages',
+);
+
+function choisirOnglet(cle: Onglet) {
+  onglet.value = cle;
+  void router.replace({ query: { ...route.query, onglet: cle } });
+}
+
+/**
+ * Les trois onglets, et **tous les compteurs du corpus**.
+ *
+ * Ils vivaient au-dessus, dans une grille de cinq tuiles, qui répétait mot pour
+ * mot ce que les onglets disent maintenant. Deux fois le même chiffre sur un
+ * écran, c'est un de trop — et c'était la moitié du haut de page.
+ */
+const ONGLETS = computed(() => [
+  {
+    cle: 'pages' as const,
+    titre: 'Étage 2 — ce qu’une page est',
+    compte: `${corpusSize.value.natures} page(s)`,
+    quoi: 'la chasse, et les natures étiquetées',
+  },
+  {
+    cle: 'agendas' as const,
+    titre: 'Étages 3 et 4 — les liens d’un agenda',
+    compte:
+      `${corpusSize.value.agendas} agenda(s) · ${corpusSize.value.pages} page(s) gelée(s)` +
+      ` · ${corpusSize.value.links} lien(s) étiqueté(s)`,
+    quoi: 'ce qu’un relevé retient, et ce qu’il laisse',
+  },
+  {
+    cle: 'sorties' as const,
+    titre: 'Étages 5 et 6 — ce qu’une page dit',
+    compte: `${corpusSize.value.sorties} sortie(s) · ${corpusSize.value.sortieLabels} étiquetée(s)`,
+    quoi: 'le texte, l’image, et les champs de la fiche',
+  },
+]);
+
+/** Les paniers qui se soldent dans un onglet donné. */
+function paniersDe(groupe: 'agendas' | 'sorties') {
+  return PANIERS.filter((p) => p.groupe === groupe);
+}
+
+/**
+ * Aller voir la sortie vers laquelle un lien d'agenda mène.
+ *
+ * Elle vit dans un autre onglet : une ancre `#sortie-12` ne pointait plus sur
+ * rien dès que la page s'est découpée. On change d'onglet, puis on va la
+ * chercher une fois qu'elle existe — sans quoi le navigateur défilerait vers
+ * un élément que Vue n'a pas encore posé.
+ */
+async function allerALaSortie(sortieId: number) {
+  choisirOnglet('sorties');
+  await nextTick();
+  const cible = document.getElementById(`sortie-${sortieId}`);
+  cible?.scrollIntoView({ block: 'center' });
+  cible?.classList.add('vise');
+  window.setTimeout(() => cible?.classList.remove('vise'), 2000);
+}
+
 const corpusSize = computed(() => ({
   natures: natures.value.length,
   agendas: agendas.value.length,
@@ -834,258 +928,266 @@ const corpusSize = computed(() => ({
       <RouterLink to="/admin/evaluation/mesures">Mesures</RouterLink>.
     </p>
 
-    <div class="tiles">
-      <div class="card tile">
-        <span class="value">{{ corpusSize.natures }}</span>
-        <span class="label">page(s) au corpus de l’étage 2</span>
-      </div>
-      <div class="card tile">
-        <span class="value">{{ corpusSize.pages }}</span>
-        <span class="label">page(s) d’agenda gelée(s)</span>
-      </div>
-      <div class="card tile">
-        <span class="value">{{ corpusSize.links }}</span>
-        <span class="label">lien(s) étiqueté(s)</span>
-      </div>
-      <div class="card tile">
-        <span class="value">{{ corpusSize.sorties }}</span>
-        <span class="label">sortie(s) au corpus</span>
-      </div>
-      <div class="card tile">
-        <span class="value">{{ corpusSize.sortieLabels }}</span>
-        <span class="label">sortie(s) étiquetée(s)</span>
-      </div>
-    </div>
-
     <p v-if="notice" class="notice">{{ notice }}</p>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="loading" class="muted">Chargement…</p>
 
-    <!-- ── Peupler ────────────────────────────────────────────────────── -->
-    <h2>Peupler depuis ce que le pipeline a déjà fait</h2>
-    <p class="muted small">
-      Chaque panier reprend ce que votre pipeline a déjà fait, et chacun dit
-      d’où il vient. L’équilibre entre eux est la question : ne prendre que les
-      réussites mesurerait la brique sur ses propres succès — on lirait 96 % de
-      textes corrects, et ça ne voudrait rien dire.
-    </p>
-    <div v-if="seed" class="paniers">
-      <div v-for="panier in PANIERS" :key="panier.cle" class="panier">
-        <button
-          class="btn ghost"
-          :disabled="!seed[panier.cle]"
-          @click="pour(panier.cle)"
-        >
-          {{ panier.titre }} ({{ seed[panier.cle] }})
-        </button>
-        <div class="panier-quoi">
-          <span class="provenance" :class="panier.publiee ? 'publiee' : 'banc'">
-            {{ panier.publiee ? 'sortie publiée' : 'jamais publiée' }}
-          </span>
-          <strong class="small">ajoute : {{ panier.ajoute }}</strong>
-        </div>
-        <!--
-          Les étapes exactes qui mènent à ce panier. Trois fois de suite ces
-          libellés n'ont pas suffi : ce qui manquait n'était pas un mot plus
-          juste, c'était le chemin.
-        -->
-        <ol class="panier-chemin">
-          <li v-for="(etape, i) in panier.chemin" :key="i" v-html="etape"></li>
-        </ol>
-        <p class="muted small panier-pourquoi">{{ panier.pourquoi }}</p>
-      </div>
+    <!-- ── Les trois corpus, un onglet chacun ─────────────────────────── -->
+    <!--
+      La page tenait tout d'un seul tenant : peupler, les dettes, la chasse,
+      les natures, les agendas, les sorties. Ça se lisait tant que le banc
+      était petit, et plus du tout une fois qu'il a servi — on cherchait le
+      tableau des sorties en faisant défiler deux cents lignes d'agendas.
 
-      <div class="panier">
-        <button
-          class="btn ghost danger"
-          :disabled="!corpusSize.sorties"
-          @click="viderSorties()"
-        >
-          Vider les sorties
-        </button>
-        <p class="muted small panier-pourquoi">
-          Remet le corpus des sorties à zéro. Tout ce qui vient du site se
-          remoissonne avec les boutons ci-dessus ; ce qui a été saisi à la main,
-          non — le compte rendu le dit avant.
-        </p>
-      </div>
-    </div>
+      Le découpage suit les **trois corpus**, et pas la commodité de
+      l'affichage : chacun étiquette une question différente, se remplit d'un
+      geste différent, et ne se relit jamais en même temps qu'un autre.
 
-    <!-- ── Ce qui reste à faire à la main ─────────────────────────────── -->
-    <h2>Ce qui reste à la main</h2>
-    <p class="muted small">
-      La modération paie la <strong>précision</strong> : parmi ce que le
-      scraper a proposé, ce qu’un humain a validé. Elle ne paiera jamais le
-      <strong>rappel</strong> — ce qu’il a raté n’apparaît pas dans ce qu’il a
-      proposé. Ces deux listes sont ce qu’il coûte.
-    </p>
-    <div v-if="reste" class="card reste">
-      <div class="reste-ligne">
-        <strong>{{ totalJamaisRegardes }}</strong>
-        lien(s) relevés que personne n’a tranchés
-        <span class="muted small">
-          — tant qu’ils sont là, le rappel de l’étage 3 est une illusion : on ne
-          peut pas savoir si une sortie s’y cache.
-        </span>
-        <ul v-if="reste.jamaisRegardes.length" class="reste-detail">
-          <li v-for="page in reste.jamaisRegardes.slice(0, 5)" :key="page.pageId">
-            {{ page.manquants }} sur « {{ page.label || page.url }} »
-          </li>
-        </ul>
-      </div>
-      <!--
-        Deux dettes, et elles ne se soldent pas du même geste. Les mêler sous un
-        seul compte obligeait à ouvrir chaque ligne pour savoir laquelle on
-        avait sous les yeux.
-      -->
-      <div class="reste-ligne">
-        <strong>{{ reste.aCreer.length }}</strong>
-        lien(s) « une sortie » dont la sortie <strong>n’existe pas</strong> au corpus
-        <p class="muted small">
-          Quelqu’un a dit que ce lien mène à une sortie, mais rien ne la
-          représente au banc : il n’y a aucun objet à décrire. Le geste est de
-          <strong>la créer</strong>.
-        </p>
-        <ul v-if="reste.aCreer.length" class="reste-detail">
-          <li v-for="lien in reste.aCreer.slice(0, 5)" :key="lien.id">
-            <a :href="lien.url" target="_blank">{{ lien.text || lien.url }}</a>
-            <span class="muted small">— {{ venue(lien.origin) }}</span>
-          </li>
-        </ul>
-      </div>
+      Les paniers et les dettes se répartissent d'après **le geste qui les
+      solde**, et non d'après la liste où ils étaient rangés : « des liens déjà
+      tranchés » pose des étiquettes de lien, donc il vit avec les agendas ;
+      « la sortie n'affirme rien » se solde en cliquant « Étiqueter » dans le
+      tableau des sorties, donc il vit là. Les quatre paniers qui ajoutent des
+      sorties, eux, restent ensemble : c'est leur **équilibre** qui est la
+      question, et les séparer reviendrait à cacher qu'on n'a repris que les
+      réussites.
+    -->
+    <nav class="onglets" aria-label="Les trois corpus">
+      <button
+        v-for="o in ONGLETS"
+        :key="o.cle"
+        class="onglet"
+        :class="{ on: onglet === o.cle }"
+        :aria-current="onglet === o.cle ? 'page' : undefined"
+        @click="choisirOnglet(o.cle)"
+      >
+        <span class="onglet-titre">{{ o.titre }}</span>
+        <span class="onglet-compte">{{ o.compte }}</span>
+        <span class="onglet-quoi">{{ o.quoi }}</span>
+      </button>
+    </nav>
 
-      <div class="reste-ligne">
-        <strong>{{ reste.aDecrire.length }}</strong>
-        lien(s) dont la sortie <strong>existe mais n’affirme rien</strong>
-        <p class="muted small">
-          L’objet est au corpus, son étiquette est vide : ni date, ni code
-          postal, ni âge, ni public. L’étage 4 n’a rien à quoi la comparer, elle
-          compte <em>indécidable</em> — ni pour ni contre le modèle. Le geste est
-          de <strong>la décrire</strong>, ou de laisser le bouton
-          « Étiqueter les sorties publiées » le faire quand elle vient du site.
-        </p>
-        <ul v-if="reste.aDecrire.length" class="reste-detail">
-          <li v-for="lien in reste.aDecrire.slice(0, 5)" :key="lien.id">
-            <a :href="lien.url" target="_blank">{{ lien.text || lien.url }}</a>
-            <span class="muted small">— {{ venue(lien.origin) }}</span>
-          </li>
-        </ul>
-      </div>
-    </div>
-
-    <!-- ── La chasse ──────────────────────────────────────────────────── -->
-    <h2>Chasse — peupler l’étage 2 depuis un prompt</h2>
-    <p class="muted small">
-      Une chasse lance les recherches de l’étage 1, ouvre <strong>toutes</strong>
-      les pages qu’elles remontent, et marque chacune avec ce que l’étage 2 en
-      pense. Il ne reste qu’à corriger ce qui est faux. Le HTML est gelé au
-      passage : la page qu’un run rejouera est exactement celle sur laquelle la
-      précoche a été faite, et non celle que le site servira demain.
-    </p>
-    <p class="muted small">
-      Une page que l’étage 2 <strong>ne sait pas reconnaître</strong> arrive
-      décochée, et c’est voulu : le pipeline, lui, la traite en agenda, mais
-      c’est une décision d’orchestration. L’écrire au corpus y mettrait ce que
-      le pipeline <em>fait</em> au lieu de ce que la page <em>est</em> — soit
-      exactement ce qu’on cherche à mesurer.
-    </p>
-
-    <div class="card chasse-form">
-      <label class="chasse-champ">
-        <span>Ce qu’on cherche</span>
-        <input
-          v-model="nouvelleChasse.prompt"
-          type="text"
-          maxlength="300"
-          placeholder="spectacles jeune public en Seine-Saint-Denis à la Toussaint"
-        />
-      </label>
-      <div class="row add">
-        <label class="chasse-champ">
-          <span>Zone</span>
-          <input v-model="nouvelleChasse.area" type="text" maxlength="120" />
-        </label>
-        <label class="chasse-champ court">
-          <span>Requêtes</span>
-          <input v-model.number="nouvelleChasse.maxQueries" type="number" min="1" max="10" />
-        </label>
-        <label class="chasse-champ court">
-          <span>Pages au plus</span>
-          <input v-model.number="nouvelleChasse.maxPages" type="number" min="1" max="100" />
-        </label>
-        <button class="btn" @click="lancerChasse()">Lancer la chasse</button>
-      </div>
-      <details>
-        <summary class="muted small">Imposer les requêtes plutôt que les faire formuler</summary>
-        <p class="muted small">
-          Une par ligne. Les fournir fige la chasse — donc la rend comparable
-          d’une semaine sur l’autre — et évite le petit appel qui les formule.
-        </p>
-        <textarea
-          v-model="nouvelleChasse.queries"
-          rows="3"
-          placeholder="agenda sorties enfants Seine-Saint-Denis octobre"
-        ></textarea>
-      </details>
-    </div>
-
-    <div v-for="chasse in chasses" :key="chasse.id" class="card entry">
-      <div class="entry-head">
-        <strong>{{ chasse.prompt }}</strong>
-        <span class="badge">{{ EVAL_HUNT_STATUS_LABELS[chasse.status] }}</span>
-        <span class="muted small">
-          {{ chasse.comptes.total }} candidate(s), {{ chasse.comptes.enAttente }} en attente,
-          {{ chasse.comptes.retenues }} au corpus
-          <template v-if="chasse.comptes.indecises">
-            · {{ chasse.comptes.indecises }} que l’étage 2 n’a pas su reconnaître
-          </template>
-          <template v-if="chasse.overCap">
-            · {{ chasse.overCap }} au-delà du plafond, jamais ouverte(s)
-          </template>
-        </span>
-        <span class="spacer"></span>
-        <span class="muted small">{{ chasse.costUsd }} $</span>
-        <button class="linklike" @click="supprimerChasse(chasse)">Oublier</button>
-      </div>
-      <p v-if="chasse.error" class="error small">{{ chasse.error }}</p>
-      <p v-if="chasse.ranQueries.length" class="muted small">
-        Requêtes lancées : {{ chasse.ranQueries.join(' · ') }}
+    <!-- ═══ Onglet 1 — l’étage 2 : ce qu’une page est ═══════════════════ -->
+    <section v-if="onglet === 'pages'">
+      <!-- ── La chasse ──────────────────────────────────────────────────── -->
+      <h2>Chasse — peupler l’étage 2 depuis un prompt</h2>
+      <p class="muted small">
+        Une chasse lance les recherches de l’étage 1, ouvre <strong>toutes</strong>
+        les pages qu’elles remontent, et marque chacune avec ce que l’étage 2 en
+        pense. Il ne reste qu’à corriger ce qui est faux. Le HTML est gelé au
+        passage : la page qu’un run rejouera est exactement celle sur laquelle la
+        précoche a été faite, et non celle que le site servira demain.
+      </p>
+      <p class="muted small">
+        Une page que l’étage 2 <strong>ne sait pas reconnaître</strong> arrive
+        décochée, et c’est voulu : le pipeline, lui, la traite en agenda, mais
+        c’est une décision d’orchestration. L’écrire au corpus y mettrait ce que
+        le pipeline <em>fait</em> au lieu de ce que la page <em>est</em> — soit
+        exactement ce qu’on cherche à mesurer.
       </p>
 
-      <div v-if="enAttente(chasse).length" class="table-wrap">
+      <div class="card chasse-form">
+        <label class="chasse-champ">
+          <span>Ce qu’on cherche</span>
+          <input
+            v-model="nouvelleChasse.prompt"
+            type="text"
+            maxlength="300"
+            placeholder="spectacles jeune public en Seine-Saint-Denis à la Toussaint"
+          />
+        </label>
+        <div class="row add">
+          <label class="chasse-champ">
+            <span>Zone</span>
+            <input v-model="nouvelleChasse.area" type="text" maxlength="120" />
+          </label>
+          <label class="chasse-champ court">
+            <span>Requêtes</span>
+            <input v-model.number="nouvelleChasse.maxQueries" type="number" min="1" max="10" />
+          </label>
+          <label class="chasse-champ court">
+            <span>Pages au plus</span>
+            <input v-model.number="nouvelleChasse.maxPages" type="number" min="1" max="100" />
+          </label>
+          <button class="btn" @click="lancerChasse()">Lancer la chasse</button>
+        </div>
+        <details>
+          <summary class="muted small">Imposer les requêtes plutôt que les faire formuler</summary>
+          <p class="muted small">
+            Une par ligne. Les fournir fige la chasse — donc la rend comparable
+            d’une semaine sur l’autre — et évite le petit appel qui les formule.
+          </p>
+          <textarea
+            v-model="nouvelleChasse.queries"
+            rows="3"
+            placeholder="agenda sorties enfants Seine-Saint-Denis octobre"
+          ></textarea>
+        </details>
+      </div>
+
+      <div v-for="chasse in chasses" :key="chasse.id" class="card entry">
+        <div class="entry-head">
+          <strong>{{ chasse.prompt }}</strong>
+          <span class="badge">{{ EVAL_HUNT_STATUS_LABELS[chasse.status] }}</span>
+          <span class="muted small">
+            {{ chasse.comptes.total }} candidate(s), {{ chasse.comptes.enAttente }} en attente,
+            {{ chasse.comptes.retenues }} au corpus
+            <template v-if="chasse.comptes.indecises">
+              · {{ chasse.comptes.indecises }} que l’étage 2 n’a pas su reconnaître
+            </template>
+            <template v-if="chasse.overCap">
+              · {{ chasse.overCap }} au-delà du plafond, jamais ouverte(s)
+            </template>
+          </span>
+          <span class="spacer"></span>
+          <span class="muted small">{{ chasse.costUsd }} $</span>
+          <button class="linklike" @click="supprimerChasse(chasse)">Oublier</button>
+        </div>
+        <p v-if="chasse.error" class="error small">{{ chasse.error }}</p>
+        <p v-if="chasse.ranQueries.length" class="muted small">
+          Requêtes lancées : {{ chasse.ranQueries.join(' · ') }}
+        </p>
+
+        <div v-if="enAttente(chasse).length" class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Page</th>
+                <th>Ce que l’étage 2 en dit</th>
+                <th>C’est…</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="page in enAttente(chasse)" :key="page.id" :class="{ off: !retenue(page) }">
+                <td>
+                  <div class="link-text">{{ page.title || page.url }}</div>
+                  <a :href="page.url" target="_blank" class="muted small">{{ page.url }}</a>
+                  <div v-if="page.foundUrl" class="muted small">
+                    trouvée en <code>{{ page.foundUrl }}</code>, lue en français
+                  </div>
+                  <div class="muted small">
+                    {{ page.links }} lien(s), dont {{ page.dated }} voisinent une date
+                    <template v-if="page.archived">
+                      ·
+                      <a :href="`/api/eval/hunts/pages/${page.id}/html`" target="_blank">HTML gelé</a>
+                    </template>
+                    <template v-else>· sans archive : elle passera par la file de capture</template>
+                  </div>
+                </td>
+                <td class="small">
+                  {{ precoche(page) }}
+                  <div class="muted small">
+                    <template v-if="page.signal">signal : {{ page.signal }}</template>
+                    <template v-if="page.confidence"> ({{ page.confidence }})</template>
+                    <template v-if="page.asked"> · tranché par {{ page.asked }}</template>
+                  </div>
+                </td>
+                <td>
+                  <div class="chips">
+                    <button
+                      v-for="n in NATURES"
+                      :key="n"
+                      class="chip"
+                      :class="{ on: choix[page.id] === n }"
+                      :title="EVAL_NATURE_HINTS[n]"
+                      @click="choisir(page, n)"
+                    >
+                      {{ EVAL_NATURE_LABELS[n] }}
+                    </button>
+                  </div>
+                </td>
+                <td>
+                  <button class="linklike" @click="ecarterUne(chasse, page)">Écarter</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="enAttente(chasse).length" class="row add chasse-valide">
+          <button class="btn" :disabled="!cochees(chasse).length" @click="validerChasse(chasse)">
+            Mettre au corpus les {{ cochees(chasse).length }} cochée(s)
+          </button>
+          <button class="btn ghost" @click="ecarterRestantes(chasse)">
+            Écarter les {{ enAttente(chasse).length - cochees(chasse).length }} restante(s)
+          </button>
+          <span class="muted small">
+            dont <strong>{{ corrections(chasse) }}</strong> correction(s) de ce que l’étage 2
+            proposait. C’est le seul chiffre qui dise si cette chasse apprend quelque chose au
+            banc : zéro correction, et le corpus recopie la brique qu’il mesure.
+          </span>
+        </div>
+        <p v-else-if="chasse.status === 'DONE'" class="muted small">
+          Plus rien à trier. {{ chasse.comptes.retenues }} page(s) sont entrées au corpus.
+        </p>
+      </div>
+
+      <!-- ── Ce qu'une page est ─────────────────────────────────────────── -->
+      <h2>Pages — étage 2 : ce qu’une page est</h2>
+      <p class="muted small">
+        La découverte rend des adresses sans rien en dire. L’étage 2 décide où
+        chacune va — <strong>en lisant la page</strong>, d’où le HTML gelé. Et
+        l’erreur n’y est pas symétrique : prendre une sortie pour un agenda coûte
+        un appel de tri et se rattrape tout seul ; prendre un agenda pour une
+        sortie coûte <strong>tous ses liens</strong>, sans rattrapage.
+      </p>
+      <p class="muted small">
+        Mettez-y aussi des <strong>contre-exemples</strong> — une page d’accueil,
+        un article, une billetterie. Sans eux, on ne mesurerait que les cas où
+        l’étage 2 a déjà raison.
+      </p>
+      <div class="row add">
+        <input v-model="newNatureUrl" type="url" placeholder="https://exemple.fr/une-page" />
+        <select v-model="newNature" :title="EVAL_NATURE_HINTS[newNature]">
+          <option v-for="n in NATURES" :key="n" :value="n">{{ EVAL_NATURE_LABELS[n] }}</option>
+        </select>
+        <button class="btn" @click="addNature()">Ajouter au corpus</button>
+      </div>
+
+      <p v-if="souche && souche.total" class="muted small">
+        <strong>{{ independance }}</strong> de ce corpus ne vient pas de l’étage 2 :
+        {{ souche.saisies }} saisie(s) et {{ souche.corriges }} correction(s), contre
+        {{ souche.nonContredits }} précoche(s) laissée(s) passer. C’est le chiffre à
+        regarder avant la taille : une mesure calculée surtout sur des étiquettes
+        non contredites vérifie que l’étage 2 fait ce qu’il fait, et elle sera
+        flatteuse par construction.
+      </p>
+
+      <div v-if="natures.length" class="table-wrap card">
         <table>
           <thead>
             <tr>
               <th>Page</th>
-              <th>Ce que l’étage 2 en dit</th>
+              <th>Capture</th>
               <th>C’est…</th>
+              <th>Étiquette</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="page in enAttente(chasse)" :key="page.id" :class="{ off: !retenue(page) }">
+            <tr v-for="page in natures" :key="page.id">
               <td>
-                <div class="link-text">{{ page.title || page.url }}</div>
+                <div class="link-text">{{ page.label || page.url }}</div>
                 <a :href="page.url" target="_blank" class="muted small">{{ page.url }}</a>
-                <div v-if="page.foundUrl" class="muted small">
-                  trouvée en <code>{{ page.foundUrl }}</code>, lue en français
-                </div>
-                <div class="muted small">
-                  {{ page.links }} lien(s), dont {{ page.dated }} voisinent une date
-                  <template v-if="page.archived">
-                    ·
-                    <a :href="`/api/eval/hunts/pages/${page.id}/html`" target="_blank">HTML gelé</a>
-                  </template>
-                  <template v-else>· sans archive : elle passera par la file de capture</template>
-                </div>
               </td>
               <td class="small">
-                {{ precoche(page) }}
-                <div class="muted small">
-                  <template v-if="page.signal">signal : {{ page.signal }}</template>
-                  <template v-if="page.confidence"> ({{ page.confidence }})</template>
-                  <template v-if="page.asked"> · tranché par {{ page.asked }}</template>
-                </div>
+                {{ EVAL_CAPTURE_LABELS[page.capture] }}
+                <button
+                  v-if="page.capture !== 'CAPTURED'"
+                  class="linklike"
+                  @click="capture('natures', page.id)"
+                >
+                  geler
+                </button>
+                <a
+                  v-else-if="page.archived"
+                  :href="`/api/eval/natures/${page.id}/html`"
+                  target="_blank"
+                >
+                  HTML
+                </a>
+                <div v-if="page.captureError" class="error small">{{ page.captureError }}</div>
               </td>
               <td>
                 <div class="chips">
@@ -1093,569 +1195,657 @@ const corpusSize = computed(() => ({
                     v-for="n in NATURES"
                     :key="n"
                     class="chip"
-                    :class="{ on: choix[page.id] === n }"
+                    :class="{ on: page.nature === n }"
                     :title="EVAL_NATURE_HINTS[n]"
-                    @click="choisir(page, n)"
+                    @click="setNature(page.id, n)"
                   >
                     {{ EVAL_NATURE_LABELS[n] }}
                   </button>
                 </div>
               </td>
+              <td class="small">
+                <span
+                  class="provenance"
+                  :class="page.origin === 'NON_CONTREDIT' ? 'banc' : 'publiee'"
+                  :title="EVAL_NATURE_ORIGIN_HINTS[page.origin]"
+                >
+                  {{ EVAL_NATURE_ORIGIN_LABELS[page.origin] }}
+                </span>
+                <div v-if="page.proposed && page.proposed !== page.nature" class="muted small">
+                  l’étage 2 disait « {{ EVAL_NATURE_LABELS[page.proposed] }} »
+                </div>
+              </td>
               <td>
-                <button class="linklike" @click="ecarterUne(chasse, page)">Écarter</button>
+                <button class="linklike" @click="removeNature(page)">Retirer</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else class="muted small">
+        Rien encore. Ajoutez quelques pages de chaque sorte — y compris des
+        contre-exemples.
+      </p>
+
+    </section>
+
+    <!-- ═══ Onglet 2 — les étages 3 et 4 : les liens d’un agenda ════════ -->
+    <section v-else-if="onglet === 'agendas'">
+      <!-- ── Peupler : le seul panier qui pose des étiquettes de lien ───── -->
+      <h2>Peupler depuis ce que le pipeline a déjà fait</h2>
+      <p class="muted small">
+        Ce panier-ci n’ajoute <strong>aucune sortie</strong> : il pose des
+        étiquettes de lien sur les agendas du corpus, à partir d’adresses qu’un
+        humain a déjà tranchées ailleurs, en modération. Les paniers qui
+        ajoutent des sorties sont dans l’onglet
+        <button class="linklike" @click="choisirOnglet('sorties')">
+          Étages 5 et 6
+        </button>.
+      </p>
+      <div v-if="seed" class="paniers">
+        <div v-for="panier in paniersDe('agendas')" :key="panier.cle" class="panier">
+          <button
+            class="btn ghost"
+            :disabled="!seed[panier.cle]"
+            @click="pour(panier.cle)"
+          >
+            {{ panier.titre }} ({{ seed[panier.cle] }})
+          </button>
+          <div class="panier-quoi">
+            <span class="provenance" :class="panier.publiee ? 'publiee' : 'banc'">
+              {{ panier.publiee ? 'sortie publiée' : 'jamais publiée' }}
+            </span>
+            <strong class="small">ajoute : {{ panier.ajoute }}</strong>
+          </div>
+          <!--
+            Les étapes exactes qui mènent à ce panier. Trois fois de suite ces
+            libellés n'ont pas suffi : ce qui manquait n'était pas un mot plus
+            juste, c'était le chemin.
+          -->
+          <ol class="panier-chemin">
+            <li v-for="(etape, i) in panier.chemin" :key="i" v-html="etape"></li>
+          </ol>
+          <p class="muted small panier-pourquoi">{{ panier.pourquoi }}</p>
+        </div>
+      </div>
+      <!-- ── Ce qui reste à la main, côté liens ─────────────────────────── -->
+      <h2>Ce qui reste à la main</h2>
+      <p class="muted small">
+        La modération paie la <strong>précision</strong> : parmi ce que le
+        scraper a proposé, ce qu’un humain a validé. Elle ne paiera jamais le
+        <strong>rappel</strong> — ce qu’il a raté n’apparaît pas dans ce qu’il a
+        proposé. Ces deux listes-ci se soldent <strong>dans cet onglet</strong> :
+        en ouvrant un agenda, et en cliquant.
+      </p>
+      <div v-if="reste" class="card reste">
+        <div class="reste-ligne">
+          <strong>{{ totalJamaisRegardes }}</strong>
+          lien(s) relevés que personne n’a tranchés
+          <span class="muted small">
+            — tant qu’ils sont là, le rappel de l’étage 3 est une illusion : on ne
+            peut pas savoir si une sortie s’y cache.
+          </span>
+          <ul v-if="reste.jamaisRegardes.length" class="reste-detail">
+            <li v-for="page in reste.jamaisRegardes.slice(0, 5)" :key="page.pageId">
+              {{ page.manquants }} sur « {{ page.label || page.url }} »
+            </li>
+          </ul>
+        </div>
+        <!--
+          Deux dettes, et elles ne se soldent pas du même geste — c'est aussi ce
+          qui décide de leur onglet. Celle-ci se solde ici, en ouvrant un
+          agenda ; la troisième — « la sortie existe mais n'affirme rien » — se
+          solde dans le tableau des sorties, et vit donc là-bas. Les mêler sous
+          un seul compte obligeait à ouvrir chaque ligne pour savoir laquelle on
+          avait sous les yeux.
+        -->
+        <div class="reste-ligne">
+          <strong>{{ reste.aCreer.length }}</strong>
+          lien(s) « une sortie » dont la sortie <strong>n’existe pas</strong> au corpus
+          <p class="muted small">
+            Quelqu’un a dit que ce lien mène à une sortie, mais rien ne la
+            représente au banc : il n’y a aucun objet à décrire. Le geste est de
+            <strong>la créer</strong>.
+          </p>
+          <ul v-if="reste.aCreer.length" class="reste-detail">
+            <li v-for="lien in reste.aCreer.slice(0, 5)" :key="lien.id">
+              <a :href="lien.url" target="_blank">{{ lien.text || lien.url }}</a>
+              <span class="muted small">— {{ venue(lien.origin) }}</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+      <!-- ── Les agendas ────────────────────────────────────────────────── -->
+      <h2>Agendas — étages 3 et 4</h2>
+      <div class="row add">
+        <input v-model="newAgendaUrl" type="url" placeholder="https://exemple.fr/agenda" />
+        <input v-model.number="newAgendaPages" type="number" min="1" max="10" title="Pages à geler" />
+        <button class="btn" @click="addAgenda()">Ajouter au corpus</button>
+      </div>
+
+      <div v-for="agenda in agendas" :key="agenda.id" class="card entry">
+        <div class="entry-head">
+          <button class="linklike strong" @click="openAgenda(agenda)">
+            {{ agenda.label || agenda.url }}
+          </button>
+          <span class="badge">{{ EVAL_CAPTURE_LABELS[agenda.capture] }}</span>
+          <span class="muted small">
+            {{ agenda.pagesCaptured }} page(s) gelée(s) · {{ agenda.labels }} étiquette(s)
+          </span>
+          <span class="spacer" />
+          <button
+            v-if="agenda.capture !== 'CAPTURED'"
+            class="linklike"
+            @click="capture('agendas', agenda.id)"
+          >
+            Geler
+          </button>
+          <button class="linklike" @click="removeAgenda(agenda)">Retirer</button>
+        </div>
+        <p v-if="agenda.captureError" class="error small">{{ agenda.captureError }}</p>
+
+        <!-- Le détail : les étiquettes, et un relevé en regard -->
+        <div v-if="open?.id === agenda.id" class="detail">
+          <p v-if="!openRunId" class="muted small">
+            Aucune mesure jouée : les liens de cette page ne sont pas encore
+            connus. Lancez-en une depuis
+            <RouterLink to="/admin/evaluation/mesures">Mesures</RouterLink>, ou
+            étiquetez à la main ce que vous savez déjà.
+          </p>
+          <p v-else class="muted small">
+            Relevé affiché : run #{{ openRunId }}. Il <strong>propose</strong>, il
+            n’écrit rien : une ligne n’entre au corpus que si vous cliquez.
+            <template v-if="scopeText">
+              <br />
+              Recherche de ce run : {{ scopeText }}. C’est elle, et elle seule,
+              qui rend un lien « hors recherche » — les étiquettes, elles, ne
+              changent pas d’un run à l’autre.
+            </template>
+          </p>
+
+          <div v-for="page in open.agendaPages" :key="page.id" class="page-block">
+            <h4>
+              Page {{ page.pageNo }}
+              <span class="muted small">{{ page.chars }} caractères</span>
+              <a v-if="page.archived" :href="`/api/eval/pages/${page.id}/html`" target="_blank">
+                voir le HTML gelé
+              </a>
+            </h4>
+
+            <!-- La pagination -->
+            <div class="next">
+              <span class="muted small">Page suivante réelle :</span>
+              <code v-if="page.nextExpected">{{ page.nextExpected }}</code>
+              <em v-else-if="page.nextExpected === ''" class="muted">il n’y en a pas</em>
+              <em v-else class="muted">non étiquetée</em>
+              <span v-if="openRunId" class="muted small">
+                — le relevé a trouvé
+                <code v-if="foundNext(page)">{{ foundNext(page) }}</code>
+                <em v-else>rien</em>
+              </span>
+              <button class="linklike" @click="labelNext(page.id, foundNext(page))">
+                c’est juste
+              </button>
+              <button class="linklike" @click="labelNext(page.id, '')">il n’y a pas de suite</button>
+              <button
+                class="linklike"
+                @click="askNext(page.id)"
+              >
+                c’est celle-ci…
+              </button>
+            </div>
+
+            <!-- Les motifs de rejet, expédiables en groupe -->
+            <div v-if="reasons(page).length" class="row reasons">
+              <span class="muted small">Écartés par le relevé :</span>
+              <span v-for="[reason, count] in reasons(page)" :key="reason" class="reason">
+                {{ reason }} ({{ count }})
+                <button class="linklike" @click="bulk(page.id, reason, 'AUTRE')">
+                  tout « autre chose »
+                </button>
+              </span>
+            </div>
+
+            <table class="links">
+              <thead>
+                <tr>
+                  <th>Lien</th>
+                  <th>Relevé</th>
+                  <th>Étiquette</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in rows(page)" :key="row.result?.url ?? row.label?.url">
+                  <td>
+                    <div class="link-text">{{ row.result?.text || row.label?.text || '(sans texte)' }}</div>
+                    <a :href="row.result?.url ?? row.label?.url" target="_blank" class="muted small">
+                      {{ row.result?.url ?? row.label?.url }}
+                    </a>
+                    <div v-if="row.result?.context" class="muted small ctx">{{ row.result.context }}</div>
+                  </td>
+                  <td class="small">
+                    <template v-if="row.result">
+                      <span v-if="row.result.harvested">retenu</span>
+                      <span v-else class="muted">écarté — {{ row.result.dropReason }}</span>
+                      <div v-if="row.result.selected !== null" class="muted">
+                        tri : {{ row.result.selected ? 'retenu' : 'écarté' }}
+                      </div>
+                    </template>
+                    <em v-else class="muted">absent du relevé</em>
+                  </td>
+                  <td>
+                    <div class="chips">
+                      <button
+                        v-for="v in VERDICTS"
+                        :key="v"
+                        class="chip"
+                        :class="{ on: row.label?.verdict === v }"
+                        :title="EVAL_VERDICT_HINTS[v]"
+                        @click="labelLink(page.id, row.result?.url ?? row.label!.url, row.result?.text ?? row.label?.text ?? '', v)"
+                      >
+                        {{ EVAL_VERDICT_LABELS[v] }}
+                      </button>
+                      <button v-if="row.label" class="linklike" @click="unlabel(row.label.id)">
+                        retirer
+                      </button>
+                    </div>
+                    <!--
+                      Un lien « une sortie » mène quelque part. Tant que personne
+                      n'a dit ce qu'il y a au bout, l'étage 4 n'a rien à quoi se
+                      comparer : on propose de la décrire plutôt que d'afficher
+                      des champs qui n'appartiendraient à rien.
+                    -->
+                    <template v-if="row.label?.verdict === 'SORTIE'">
+                      <div v-if="!row.label.sortie" class="hints">
+                        <span class="muted small">Sortie non décrite —</span>
+                        <button class="linklike" @click="creerSortie(row.label.id)">
+                          la décrire
+                        </button>
+                      </div>
+
+                      <!--
+                        La date, le lieu et l'âge **ne se saisissent pas ici**.
+                        Ils décrivent la sortie, pas le lien, et une seule sortie
+                        peut être annoncée par plusieurs agendas. Les offrir sur
+                        cette ligne laissait croire qu'ils lui appartenaient — ce
+                        qu'ils faisaient d'ailleurs, dans une version précédente,
+                        en double de ce que le corpus des sorties disait déjà.
+                        On y renvoie plutôt qu'on ne les recopie.
+                      -->
+                      <div v-else class="hints">
+                        <button
+                          class="linklike"
+                          @click="allerALaSortie(row.label.sortieId!)"
+                        >
+                          voir la sortie
+                        </button>
+                        <span class="muted small">{{ resume(row.label.sortie) }}</span>
+                      </div>
+
+                      <!--
+                        Ce que la sortie donne pour le run affiché. Ce n'est pas
+                        une étiquette de plus : c'est ce que le serveur en déduit,
+                        et il change avec la recherche qu'on regarde.
+                      -->
+                      <span
+                        v-if="row.label.relevance"
+                        class="relevance"
+                        :class="row.label.relevance.toLowerCase()"
+                        :title="EVAL_RELEVANCE_HINTS[row.label.relevance]"
+                      >
+                        → {{ EVAL_RELEVANCE_LABELS[row.label.relevance] }}
+                      </span>
+                    </template>
+                    <div v-if="row.label" class="muted small">
+                      {{ EVAL_LABEL_ORIGIN_LABELS[row.label.origin] }}
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ═══ Onglet 3 — les étages 5 et 6 : ce qu’une page dit ═══════════ -->
+    <section v-else>
+      <!-- ── Peupler ────────────────────────────────────────────────────── -->
+      <h2>Peupler depuis ce que le pipeline a déjà fait</h2>
+      <p class="muted small">
+        Chaque panier reprend ce que votre pipeline a déjà fait, et chacun dit
+        d’où il vient. L’équilibre entre eux est la question : ne prendre que les
+        réussites mesurerait la brique sur ses propres succès — on lirait 96 % de
+        textes corrects, et ça ne voudrait rien dire.
+      </p>
+      <div v-if="seed" class="paniers">
+        <div v-for="panier in paniersDe('sorties')" :key="panier.cle" class="panier">
+          <button
+            class="btn ghost"
+            :disabled="!seed[panier.cle]"
+            @click="pour(panier.cle)"
+          >
+            {{ panier.titre }} ({{ seed[panier.cle] }})
+          </button>
+          <div class="panier-quoi">
+            <span class="provenance" :class="panier.publiee ? 'publiee' : 'banc'">
+              {{ panier.publiee ? 'sortie publiée' : 'jamais publiée' }}
+            </span>
+            <strong class="small">ajoute : {{ panier.ajoute }}</strong>
+          </div>
+          <!--
+            Les étapes exactes qui mènent à ce panier. Trois fois de suite ces
+            libellés n'ont pas suffi : ce qui manquait n'était pas un mot plus
+            juste, c'était le chemin.
+          -->
+          <ol class="panier-chemin">
+            <li v-for="(etape, i) in panier.chemin" :key="i" v-html="etape"></li>
+          </ol>
+          <p class="muted small panier-pourquoi">{{ panier.pourquoi }}</p>
+        </div>
+
+        <div class="panier">
+          <button
+            class="btn ghost danger"
+            :disabled="!corpusSize.sorties"
+            @click="viderSorties()"
+          >
+            Vider les sorties
+          </button>
+          <p class="muted small panier-pourquoi">
+            Remet le corpus des sorties à zéro. Tout ce qui vient du site se
+            remoissonne avec les boutons ci-dessus ; ce qui a été saisi à la main,
+            non — le compte rendu le dit avant.
+          </p>
+        </div>
+      </div>
+      <!-- ── Ce qui reste à la main, côté sorties ───────────────────────── -->
+      <h2>Ce qui reste à la main</h2>
+      <p class="muted small">
+        Une sortie au corpus dont l’étiquette est vide ne dit rien : l’étage 4
+        n’a rien à quoi la comparer, et elle compte <em>indécidable</em> — ni
+        pour, ni contre. C’est la dette qui se solde ici, en étiquetant.
+      </p>
+      <div v-if="reste" class="card reste">
+        <div class="reste-ligne">
+          <strong>{{ reste.aDecrire.length }}</strong>
+          lien(s) dont la sortie <strong>existe mais n’affirme rien</strong>
+          <p class="muted small">
+            L’objet est au corpus, son étiquette est vide : ni date, ni code
+            postal, ni âge, ni public. L’étage 4 n’a rien à quoi la comparer, elle
+            compte <em>indécidable</em> — ni pour ni contre le modèle. Le geste est
+            de <strong>la décrire</strong>, ou de laisser le bouton
+            « Étiqueter les sorties publiées » le faire quand elle vient du site.
+          </p>
+          <ul v-if="reste.aDecrire.length" class="reste-detail">
+            <li v-for="lien in reste.aDecrire.slice(0, 5)" :key="lien.id">
+              <a :href="lien.url" target="_blank">{{ lien.text || lien.url }}</a>
+              <span class="muted small">— {{ venue(lien.origin) }}</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+      <!-- ── Les pages de lecture ───────────────────────────────────────── -->
+      <h2>Pages — étages 5 et 6</h2>
+      <div class="row add">
+        <input v-model="newSortieUrl" type="url" placeholder="https://exemple.fr/spectacle" />
+        <button class="btn" @click="addSortie()">Ajouter au corpus</button>
+      </div>
+
+      <!--
+        Ce que chaque compteur compte, en clair. La liste vient du serveur : deux
+        compteurs écrits à la main ont menti, dont un qui annonçait « 6/6 » sur
+        six champs choisis arbitrairement quand l'étage en juge douze.
+      -->
+      <p v-if="criteres" class="muted small">
+        <button class="linklike" @click="criteresOuverts = !criteresOuverts">
+          {{ criteresOuverts ? 'Masquer' : 'Que comptent les colonnes Étage 4, 5 et 6 ?' }}
+        </button>
+      </p>
+      <div v-if="criteres && criteresOuverts" class="card criteres">
+        <div v-for="etage in criteres.etages" :key="etage.etage" class="criteres-bloc">
+          <h4>
+            Étage {{ etage.etage }} — {{ etage.nom }}
+            <span class="muted small">{{ etage.criteres.length }} critère(s)</span>
+          </h4>
+          <ol>
+            <li v-for="critere in etage.criteres" :key="critere.libelle">
+              {{ critere.libelle }}
+              <span class="muted small">
+                — {{ critere.champs.join(' ou ') }}
+              </span>
+            </li>
+          </ol>
+        </div>
+        <p class="muted small">
+          Un critère est compté dès qu’<strong>un</strong> de ses champs figure
+          dans l’étiquette — même vide, puisque « la page n’en dit rien » est une
+          étiquette de plein droit. Plusieurs champs pour un critère veut dire
+          qu’un seul suffit à y répondre : l’un ou l’autre, jamais deux fois.
+        </p>
+      </div>
+
+      <div class="table-wrap card">
+        <table>
+          <thead>
+            <tr>
+              <th>Page</th>
+              <th>Provenance</th>
+              <th>Capture</th>
+              <th class="num" title="Ce que le tri juge : la date, le lieu, le public.">
+                Étage 4<br /><span class="muted small">tri</span>
+              </th>
+              <th class="num" title="Ce que la lecture juge : l’illustration, les dates déclarées, les fragments du texte.">
+                Étage 5<br /><span class="muted small">lecture</span>
+              </th>
+              <th class="num" title="Ce que l’extraction juge : les douze aspects de la fiche.">
+                Étage 6<br /><span class="muted small">extraction</span>
+              </th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="sortie in sorties" :id="`sortie-${sortie.id}`" :key="sortie.id">
+              <td>
+                <div class="link-text">{{ sortie.label || sortie.url }}</div>
+                <a :href="sortie.url" target="_blank" class="muted small">{{ sortie.url }}</a>
+              </td>
+              <td class="small">
+                <!--
+                  D'abord d'où elle vient, parce que c'est ce qui dit si son
+                  étiquette est du travail déjà payé ou du travail à faire.
+                -->
+                <span
+                  class="provenance"
+                  :class="sortie.published ? 'publiee' : 'banc'"
+                  :title="
+                    sortie.published
+                      ? 'Publiée sur le site : un modérateur l’a approuvée, son étiquette se moissonne.'
+                      : 'Propre au banc : jamais publiée, tout ce qu’elle affirme est à saisir.'
+                  "
+                >
+                  {{ sortie.published ? 'sortie publiée' : 'banc de test' }}
+                </span>
+                <div :title="EVAL_ORIGIN_HINTS[sortie.origin]" class="muted small">
+                  {{ EVAL_ORIGIN_LABELS[sortie.origin] }}
+                </div>
+              </td>
+              <td class="small">
+                {{ EVAL_CAPTURE_LABELS[sortie.capture] }}
+                <button
+                  v-if="sortie.capture !== 'CAPTURED'"
+                  class="linklike"
+                  @click="capture('sorties', sortie.id)"
+                >
+                  geler
+                </button>
+                <a v-else-if="sortie.archived" :href="`/api/eval/sorties/${sortie.id}/html`" target="_blank">
+                  HTML
+                </a>
+              </td>
+              <!--
+                Une colonne par étage : les trois ne mesurent pas la même chose,
+                et les aligner sur une seule ligne faisait lire « 6/6 » comme une
+                complétude alors que c'était un dénominateur inventé.
+              -->
+              <td class="num" :class="pleine(sortie.couverture.tri)">
+                {{ sortie.couverture.tri.faits }}/{{ sortie.couverture.tri.total }}
+              </td>
+              <td class="num" :class="pleine(sortie.couverture.lecture)">
+                {{ sortie.couverture.lecture.faits }}/{{ sortie.couverture.lecture.total }}
+              </td>
+              <td class="num" :class="pleine(sortie.couverture.extraction)">
+                {{ sortie.couverture.extraction.faits }}/{{ sortie.couverture.extraction.total }}
+              </td>
+              <td>
+                <div class="row actions">
+                  <button class="linklike" @click="edit(sortie)">Étiqueter</button>
+                  <button class="linklike" @click="removeSortie(sortie)">Retirer</button>
+                </div>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <div v-if="enAttente(chasse).length" class="row add chasse-valide">
-        <button class="btn" :disabled="!cochees(chasse).length" @click="validerChasse(chasse)">
-          Mettre au corpus les {{ cochees(chasse).length }} cochée(s)
-        </button>
-        <button class="btn ghost" @click="ecarterRestantes(chasse)">
-          Écarter les {{ enAttente(chasse).length - cochees(chasse).length }} restante(s)
-        </button>
-        <span class="muted small">
-          dont <strong>{{ corrections(chasse) }}</strong> correction(s) de ce que l’étage 2
-          proposait. C’est le seul chiffre qui dise si cette chasse apprend quelque chose au
-          banc : zéro correction, et le corpus recopie la brique qu’il mesure.
-        </span>
-      </div>
-      <p v-else-if="chasse.status === 'DONE'" class="muted small">
-        Plus rien à trier. {{ chasse.comptes.retenues }} page(s) sont entrées au corpus.
-      </p>
-    </div>
-
-    <!-- ── Ce qu'une page est ─────────────────────────────────────────── -->
-    <h2>Pages — étage 2 : ce qu’une page est</h2>
-    <p class="muted small">
-      La découverte rend des adresses sans rien en dire. L’étage 2 décide où
-      chacune va — <strong>en lisant la page</strong>, d’où le HTML gelé. Et
-      l’erreur n’y est pas symétrique : prendre une sortie pour un agenda coûte
-      un appel de tri et se rattrape tout seul ; prendre un agenda pour une
-      sortie coûte <strong>tous ses liens</strong>, sans rattrapage.
-    </p>
-    <p class="muted small">
-      Mettez-y aussi des <strong>contre-exemples</strong> — une page d’accueil,
-      un article, une billetterie. Sans eux, on ne mesurerait que les cas où
-      l’étage 2 a déjà raison.
-    </p>
-    <div class="row add">
-      <input v-model="newNatureUrl" type="url" placeholder="https://exemple.fr/une-page" />
-      <select v-model="newNature" :title="EVAL_NATURE_HINTS[newNature]">
-        <option v-for="n in NATURES" :key="n" :value="n">{{ EVAL_NATURE_LABELS[n] }}</option>
-      </select>
-      <button class="btn" @click="addNature()">Ajouter au corpus</button>
-    </div>
-
-    <p v-if="souche && souche.total" class="muted small">
-      <strong>{{ independance }}</strong> de ce corpus ne vient pas de l’étage 2 :
-      {{ souche.saisies }} saisie(s) et {{ souche.corriges }} correction(s), contre
-      {{ souche.nonContredits }} précoche(s) laissée(s) passer. C’est le chiffre à
-      regarder avant la taille : une mesure calculée surtout sur des étiquettes
-      non contredites vérifie que l’étage 2 fait ce qu’il fait, et elle sera
-      flatteuse par construction.
-    </p>
-
-    <div v-if="natures.length" class="table-wrap card">
-      <table>
-        <thead>
-          <tr>
-            <th>Page</th>
-            <th>Capture</th>
-            <th>C’est…</th>
-            <th>Étiquette</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="page in natures" :key="page.id">
-            <td>
-              <div class="link-text">{{ page.label || page.url }}</div>
-              <a :href="page.url" target="_blank" class="muted small">{{ page.url }}</a>
-            </td>
-            <td class="small">
-              {{ EVAL_CAPTURE_LABELS[page.capture] }}
-              <button
-                v-if="page.capture !== 'CAPTURED'"
-                class="linklike"
-                @click="capture('natures', page.id)"
-              >
-                geler
-              </button>
-              <a
-                v-else-if="page.archived"
-                :href="`/api/eval/natures/${page.id}/html`"
-                target="_blank"
-              >
-                HTML
-              </a>
-              <div v-if="page.captureError" class="error small">{{ page.captureError }}</div>
-            </td>
-            <td>
-              <div class="chips">
-                <button
-                  v-for="n in NATURES"
-                  :key="n"
-                  class="chip"
-                  :class="{ on: page.nature === n }"
-                  :title="EVAL_NATURE_HINTS[n]"
-                  @click="setNature(page.id, n)"
-                >
-                  {{ EVAL_NATURE_LABELS[n] }}
-                </button>
-              </div>
-            </td>
-            <td class="small">
-              <span
-                class="provenance"
-                :class="page.origin === 'NON_CONTREDIT' ? 'banc' : 'publiee'"
-                :title="EVAL_NATURE_ORIGIN_HINTS[page.origin]"
-              >
-                {{ EVAL_NATURE_ORIGIN_LABELS[page.origin] }}
-              </span>
-              <div v-if="page.proposed && page.proposed !== page.nature" class="muted small">
-                l’étage 2 disait « {{ EVAL_NATURE_LABELS[page.proposed] }} »
-              </div>
-            </td>
-            <td>
-              <button class="linklike" @click="removeNature(page)">Retirer</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <p v-else class="muted small">
-      Rien encore. Ajoutez quelques pages de chaque sorte — y compris des
-      contre-exemples.
-    </p>
-
-    <!-- ── Les agendas ────────────────────────────────────────────────── -->
-    <h2>Agendas — étages 3 et 4</h2>
-    <div class="row add">
-      <input v-model="newAgendaUrl" type="url" placeholder="https://exemple.fr/agenda" />
-      <input v-model.number="newAgendaPages" type="number" min="1" max="10" title="Pages à geler" />
-      <button class="btn" @click="addAgenda()">Ajouter au corpus</button>
-    </div>
-
-    <div v-for="agenda in agendas" :key="agenda.id" class="card entry">
-      <div class="entry-head">
-        <button class="linklike strong" @click="openAgenda(agenda)">
-          {{ agenda.label || agenda.url }}
-        </button>
-        <span class="badge">{{ EVAL_CAPTURE_LABELS[agenda.capture] }}</span>
-        <span class="muted small">
-          {{ agenda.pagesCaptured }} page(s) gelée(s) · {{ agenda.labels }} étiquette(s)
-        </span>
-        <span class="spacer" />
-        <button
-          v-if="agenda.capture !== 'CAPTURED'"
-          class="linklike"
-          @click="capture('agendas', agenda.id)"
-        >
-          Geler
-        </button>
-        <button class="linklike" @click="removeAgenda(agenda)">Retirer</button>
-      </div>
-      <p v-if="agenda.captureError" class="error small">{{ agenda.captureError }}</p>
-
-      <!-- Le détail : les étiquettes, et un relevé en regard -->
-      <div v-if="open?.id === agenda.id" class="detail">
-        <p v-if="!openRunId" class="muted small">
-          Aucune mesure jouée : les liens de cette page ne sont pas encore
-          connus. Lancez-en une depuis
-          <RouterLink to="/admin/evaluation/mesures">Mesures</RouterLink>, ou
-          étiquetez à la main ce que vous savez déjà.
-        </p>
-        <p v-else class="muted small">
-          Relevé affiché : run #{{ openRunId }}. Il <strong>propose</strong>, il
-          n’écrit rien : une ligne n’entre au corpus que si vous cliquez.
-          <template v-if="scopeText">
-            <br />
-            Recherche de ce run : {{ scopeText }}. C’est elle, et elle seule,
-            qui rend un lien « hors recherche » — les étiquettes, elles, ne
-            changent pas d’un run à l’autre.
-          </template>
-        </p>
-
-        <div v-for="page in open.agendaPages" :key="page.id" class="page-block">
-          <h4>
-            Page {{ page.pageNo }}
-            <span class="muted small">{{ page.chars }} caractères</span>
-            <a v-if="page.archived" :href="`/api/eval/pages/${page.id}/html`" target="_blank">
-              voir le HTML gelé
-            </a>
-          </h4>
-
-          <!-- La pagination -->
-          <div class="next">
-            <span class="muted small">Page suivante réelle :</span>
-            <code v-if="page.nextExpected">{{ page.nextExpected }}</code>
-            <em v-else-if="page.nextExpected === ''" class="muted">il n’y en a pas</em>
-            <em v-else class="muted">non étiquetée</em>
-            <span v-if="openRunId" class="muted small">
-              — le relevé a trouvé
-              <code v-if="foundNext(page)">{{ foundNext(page) }}</code>
-              <em v-else>rien</em>
-            </span>
-            <button class="linklike" @click="labelNext(page.id, foundNext(page))">
-              c’est juste
-            </button>
-            <button class="linklike" @click="labelNext(page.id, '')">il n’y a pas de suite</button>
-            <button
-              class="linklike"
-              @click="askNext(page.id)"
-            >
-              c’est celle-ci…
-            </button>
-          </div>
-
-          <!-- Les motifs de rejet, expédiables en groupe -->
-          <div v-if="reasons(page).length" class="row reasons">
-            <span class="muted small">Écartés par le relevé :</span>
-            <span v-for="[reason, count] in reasons(page)" :key="reason" class="reason">
-              {{ reason }} ({{ count }})
-              <button class="linklike" @click="bulk(page.id, reason, 'AUTRE')">
-                tout « autre chose »
-              </button>
-            </span>
-          </div>
-
-          <table class="links">
-            <thead>
-              <tr>
-                <th>Lien</th>
-                <th>Relevé</th>
-                <th>Étiquette</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in rows(page)" :key="row.result?.url ?? row.label?.url">
-                <td>
-                  <div class="link-text">{{ row.result?.text || row.label?.text || '(sans texte)' }}</div>
-                  <a :href="row.result?.url ?? row.label?.url" target="_blank" class="muted small">
-                    {{ row.result?.url ?? row.label?.url }}
-                  </a>
-                  <div v-if="row.result?.context" class="muted small ctx">{{ row.result.context }}</div>
-                </td>
-                <td class="small">
-                  <template v-if="row.result">
-                    <span v-if="row.result.harvested">retenu</span>
-                    <span v-else class="muted">écarté — {{ row.result.dropReason }}</span>
-                    <div v-if="row.result.selected !== null" class="muted">
-                      tri : {{ row.result.selected ? 'retenu' : 'écarté' }}
-                    </div>
-                  </template>
-                  <em v-else class="muted">absent du relevé</em>
-                </td>
-                <td>
-                  <div class="chips">
-                    <button
-                      v-for="v in VERDICTS"
-                      :key="v"
-                      class="chip"
-                      :class="{ on: row.label?.verdict === v }"
-                      :title="EVAL_VERDICT_HINTS[v]"
-                      @click="labelLink(page.id, row.result?.url ?? row.label!.url, row.result?.text ?? row.label?.text ?? '', v)"
-                    >
-                      {{ EVAL_VERDICT_LABELS[v] }}
-                    </button>
-                    <button v-if="row.label" class="linklike" @click="unlabel(row.label.id)">
-                      retirer
-                    </button>
-                  </div>
-                  <!--
-                    Un lien « une sortie » mène quelque part. Tant que personne
-                    n'a dit ce qu'il y a au bout, l'étage 4 n'a rien à quoi se
-                    comparer : on propose de la décrire plutôt que d'afficher
-                    des champs qui n'appartiendraient à rien.
-                  -->
-                  <template v-if="row.label?.verdict === 'SORTIE'">
-                    <div v-if="!row.label.sortie" class="hints">
-                      <span class="muted small">Sortie non décrite —</span>
-                      <button class="linklike" @click="creerSortie(row.label.id)">
-                        la décrire
-                      </button>
-                    </div>
-
-                    <!--
-                      La date, le lieu et l'âge **ne se saisissent pas ici**.
-                      Ils décrivent la sortie, pas le lien, et une seule sortie
-                      peut être annoncée par plusieurs agendas. Les offrir sur
-                      cette ligne laissait croire qu'ils lui appartenaient — ce
-                      qu'ils faisaient d'ailleurs, dans une version précédente,
-                      en double de ce que le corpus des sorties disait déjà.
-                      On y renvoie plutôt qu'on ne les recopie.
-                    -->
-                    <div v-else class="hints">
-                      <a :href="`#sortie-${row.label.sortieId}`" class="linklike">
-                        voir la sortie
-                      </a>
-                      <span class="muted small">{{ resume(row.label.sortie) }}</span>
-                    </div>
-
-                    <!--
-                      Ce que la sortie donne pour le run affiché. Ce n'est pas
-                      une étiquette de plus : c'est ce que le serveur en déduit,
-                      et il change avec la recherche qu'on regarde.
-                    -->
-                    <span
-                      v-if="row.label.relevance"
-                      class="relevance"
-                      :class="row.label.relevance.toLowerCase()"
-                      :title="EVAL_RELEVANCE_HINTS[row.label.relevance]"
-                    >
-                      → {{ EVAL_RELEVANCE_LABELS[row.label.relevance] }}
-                    </span>
-                  </template>
-                  <div v-if="row.label" class="muted small">
-                    {{ EVAL_LABEL_ORIGIN_LABELS[row.label.origin] }}
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Les pages de lecture ───────────────────────────────────────── -->
-    <h2>Pages — étages 5 et 6</h2>
-    <div class="row add">
-      <input v-model="newSortieUrl" type="url" placeholder="https://exemple.fr/spectacle" />
-      <button class="btn" @click="addSortie()">Ajouter au corpus</button>
-    </div>
-
-    <!--
-      Ce que chaque compteur compte, en clair. La liste vient du serveur : deux
-      compteurs écrits à la main ont menti, dont un qui annonçait « 6/6 » sur
-      six champs choisis arbitrairement quand l'étage en juge douze.
-    -->
-    <p v-if="criteres" class="muted small">
-      <button class="linklike" @click="criteresOuverts = !criteresOuverts">
-        {{ criteresOuverts ? 'Masquer' : 'Que comptent les colonnes Étage 4, 5 et 6 ?' }}
-      </button>
-    </p>
-    <div v-if="criteres && criteresOuverts" class="card criteres">
-      <div v-for="etage in criteres.etages" :key="etage.etage" class="criteres-bloc">
-        <h4>
-          Étage {{ etage.etage }} — {{ etage.nom }}
-          <span class="muted small">{{ etage.criteres.length }} critère(s)</span>
-        </h4>
-        <ol>
-          <li v-for="critere in etage.criteres" :key="critere.libelle">
-            {{ critere.libelle }}
-            <span class="muted small">
-              — {{ critere.champs.join(' ou ') }}
-            </span>
-          </li>
-        </ol>
-      </div>
-      <p class="muted small">
-        Un critère est compté dès qu’<strong>un</strong> de ses champs figure
-        dans l’étiquette — même vide, puisque « la page n’en dit rien » est une
-        étiquette de plein droit. Plusieurs champs pour un critère veut dire
-        qu’un seul suffit à y répondre : l’un ou l’autre, jamais deux fois.
-      </p>
-    </div>
-
-    <div class="table-wrap card">
-      <table>
-        <thead>
-          <tr>
-            <th>Page</th>
-            <th>Provenance</th>
-            <th>Capture</th>
-            <th class="num" title="Ce que le tri juge : la date, le lieu, le public.">
-              Étage 4<br /><span class="muted small">tri</span>
-            </th>
-            <th class="num" title="Ce que la lecture juge : l’illustration, les dates déclarées, les fragments du texte.">
-              Étage 5<br /><span class="muted small">lecture</span>
-            </th>
-            <th class="num" title="Ce que l’extraction juge : les douze aspects de la fiche.">
-              Étage 6<br /><span class="muted small">extraction</span>
-            </th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="sortie in sorties" :id="`sortie-${sortie.id}`" :key="sortie.id">
-            <td>
-              <div class="link-text">{{ sortie.label || sortie.url }}</div>
-              <a :href="sortie.url" target="_blank" class="muted small">{{ sortie.url }}</a>
-            </td>
-            <td class="small">
-              <!--
-                D'abord d'où elle vient, parce que c'est ce qui dit si son
-                étiquette est du travail déjà payé ou du travail à faire.
-              -->
-              <span
-                class="provenance"
-                :class="sortie.published ? 'publiee' : 'banc'"
-                :title="
-                  sortie.published
-                    ? 'Publiée sur le site : un modérateur l’a approuvée, son étiquette se moissonne.'
-                    : 'Propre au banc : jamais publiée, tout ce qu’elle affirme est à saisir.'
-                "
-              >
-                {{ sortie.published ? 'sortie publiée' : 'banc de test' }}
-              </span>
-              <div :title="EVAL_ORIGIN_HINTS[sortie.origin]" class="muted small">
-                {{ EVAL_ORIGIN_LABELS[sortie.origin] }}
-              </div>
-            </td>
-            <td class="small">
-              {{ EVAL_CAPTURE_LABELS[sortie.capture] }}
-              <button
-                v-if="sortie.capture !== 'CAPTURED'"
-                class="linklike"
-                @click="capture('sorties', sortie.id)"
-              >
-                geler
-              </button>
-              <a v-else-if="sortie.archived" :href="`/api/eval/sorties/${sortie.id}/html`" target="_blank">
-                HTML
-              </a>
-            </td>
-            <!--
-              Une colonne par étage : les trois ne mesurent pas la même chose,
-              et les aligner sur une seule ligne faisait lire « 6/6 » comme une
-              complétude alors que c'était un dénominateur inventé.
-            -->
-            <td class="num" :class="pleine(sortie.couverture.tri)">
-              {{ sortie.couverture.tri.faits }}/{{ sortie.couverture.tri.total }}
-            </td>
-            <td class="num" :class="pleine(sortie.couverture.lecture)">
-              {{ sortie.couverture.lecture.faits }}/{{ sortie.couverture.lecture.total }}
-            </td>
-            <td class="num" :class="pleine(sortie.couverture.extraction)">
-              {{ sortie.couverture.extraction.faits }}/{{ sortie.couverture.extraction.total }}
-            </td>
-            <td>
-              <div class="row actions">
-                <button class="linklike" @click="edit(sortie)">Étiqueter</button>
-                <button class="linklike" @click="removeSortie(sortie)">Retirer</button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- L'étiquetage d'une page -->
-    <div v-if="editing" class="card editor">
-      <h3>{{ editing.label || editing.url }}</h3>
-      <p class="muted small">
-        Ce que la page contient. Un champ vide veut dire « la page n’en porte
-        pas », et c’est une étiquette de plein droit : c’est elle qui permettra
-        de reconnaître une valeur inventée. Pour dire « je n’ai pas regardé »,
-        utilisez « Effacer les étiquettes ».
-      </p>
-      <fieldset class="faits">
-        <legend>Ce que l’étage 4 juge — la date, le lieu, l’âge</legend>
+      <!-- L'étiquetage d'une page -->
+      <div v-if="editing" class="card editor">
+        <h3>{{ editing.label || editing.url }}</h3>
         <p class="muted small">
-          Trois champs, et ils suffisent : c’est tout ce que le tri regarde.
-          Ils se lisent souvent dans la ligne de l’agenda, sans ouvrir la page.
+          Ce que la page contient. Un champ vide veut dire « la page n’en porte
+          pas », et c’est une étiquette de plein droit : c’est elle qui permettra
+          de reconnaître une valeur inventée. Pour dire « je n’ai pas regardé »,
+          utilisez « Effacer les étiquettes ».
         </p>
-        <div class="row faits-ligne">
-          <label class="hint">
-            <span class="muted small">du</span>
-            <input v-model="editDateStart" type="date" />
-          </label>
-          <label class="hint">
-            <span class="muted small">au</span>
-            <input v-model="editDateEnd" type="date" title="Vide sur une date unique." />
-          </label>
-          <label class="hint">
-            <span class="muted small">à</span>
-            <input
-              v-model="editPostalCode"
-              type="text"
-              inputmode="numeric"
-              size="6"
-              placeholder="75012"
-              title="Cinq chiffres. Une ville en toutes lettres ne se compare à aucun département."
-            />
-          </label>
-          <label class="hint">
-            <span class="muted small">de</span>
-            <input v-model.number="editAgeMin" type="number" min="0" max="120" size="3" />
-            <span class="muted small">à</span>
-            <input v-model.number="editAgeMax" type="number" min="0" max="120" size="3" />
-            <span class="muted small">ans</span>
-          </label>
+        <fieldset class="faits">
+          <legend>Ce que l’étage 4 juge — la date, le lieu, l’âge</legend>
+          <p class="muted small">
+            Trois champs, et ils suffisent : c’est tout ce que le tri regarde.
+            Ils se lisent souvent dans la ligne de l’agenda, sans ouvrir la page.
+          </p>
+          <div class="row faits-ligne">
+            <label class="hint">
+              <span class="muted small">du</span>
+              <input v-model="editDateStart" type="date" />
+            </label>
+            <label class="hint">
+              <span class="muted small">au</span>
+              <input v-model="editDateEnd" type="date" title="Vide sur une date unique." />
+            </label>
+            <label class="hint">
+              <span class="muted small">à</span>
+              <input
+                v-model="editPostalCode"
+                type="text"
+                inputmode="numeric"
+                size="6"
+                placeholder="75012"
+                title="Cinq chiffres. Une ville en toutes lettres ne se compare à aucun département."
+              />
+            </label>
+            <label class="hint">
+              <span class="muted small">de</span>
+              <input v-model.number="editAgeMin" type="number" min="0" max="120" size="3" />
+              <span class="muted small">à</span>
+              <input v-model.number="editAgeMax" type="number" min="0" max="120" size="3" />
+              <span class="muted small">ans</span>
+            </label>
+          </div>
+          <div class="chips">
+            <button
+              v-for="a in AUDIENCES"
+              :key="a"
+              class="chip tiny"
+              :class="{ on: editAudience === a }"
+              :title="EVAL_AUDIENCE_HINTS[a]"
+              @click="editAudience = editAudience === a ? null : a"
+            >
+              {{ EVAL_AUDIENCE_LABELS[a] }}
+            </button>
+          </div>
+        </fieldset>
+
+        <label for="ed-img">Illustration de la page</label>
+        <input id="ed-img" v-model="editImage" type="url" placeholder="https://… (vide : aucune)" />
+
+        <label for="ed-dates">Dates annoncées — une par ligne</label>
+        <textarea id="ed-dates" v-model="editDates" rows="3" placeholder="2027-03-04"></textarea>
+
+        <label for="ed-mark">Fragments que le texte doit contenir — un par ligne</label>
+        <textarea
+          id="ed-mark"
+          v-model="editMarkers"
+          rows="4"
+          placeholder="Atelier modelage&#10;8 €&#10;77 rue de Varenne"
+        ></textarea>
+        <p class="muted small">
+          On ne demande pas de retaper le texte attendu : ce serait invivable et
+          personne ne le ferait deux fois. Quelques fragments suffisent à
+          distinguer un texte amputé d’un texte entier, qui est la question de cet
+          étage.
+        </p>
+
+        <div class="row">
+          <button class="btn" @click="saveLabels()">Enregistrer</button>
+          <button class="linklike" @click="saveLabels(true)">Effacer les étiquettes</button>
+          <button class="linklike" @click="editing = null">Annuler</button>
         </div>
-        <div class="chips">
-          <button
-            v-for="a in AUDIENCES"
-            :key="a"
-            class="chip tiny"
-            :class="{ on: editAudience === a }"
-            :title="EVAL_AUDIENCE_HINTS[a]"
-            @click="editAudience = editAudience === a ? null : a"
-          >
-            {{ EVAL_AUDIENCE_LABELS[a] }}
-          </button>
-        </div>
-      </fieldset>
-
-      <label for="ed-img">Illustration de la page</label>
-      <input id="ed-img" v-model="editImage" type="url" placeholder="https://… (vide : aucune)" />
-
-      <label for="ed-dates">Dates annoncées — une par ligne</label>
-      <textarea id="ed-dates" v-model="editDates" rows="3" placeholder="2027-03-04"></textarea>
-
-      <label for="ed-mark">Fragments que le texte doit contenir — un par ligne</label>
-      <textarea
-        id="ed-mark"
-        v-model="editMarkers"
-        rows="4"
-        placeholder="Atelier modelage&#10;8 €&#10;77 rue de Varenne"
-      ></textarea>
-      <p class="muted small">
-        On ne demande pas de retaper le texte attendu : ce serait invivable et
-        personne ne le ferait deux fois. Quelques fragments suffisent à
-        distinguer un texte amputé d’un texte entier, qui est la question de cet
-        étage.
-      </p>
-
-      <div class="row">
-        <button class="btn" @click="saveLabels()">Enregistrer</button>
-        <button class="linklike" @click="saveLabels(true)">Effacer les étiquettes</button>
-        <button class="linklike" @click="editing = null">Annuler</button>
       </div>
-    </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-h2 {
-  margin-top: 1.8rem;
-}
 
-.tiles {
+/* ── Les onglets ──────────────────────────────────────────────────────
+   Larges et bavards, à dessein : ce sont trois corpus différents, et le
+   libellé doit dire lequel avant qu'on clique. */
+.onglets {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 0.8rem;
-  margin-bottom: 1.4rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.6rem;
+  margin: 1.4rem 0 0.4rem;
 }
 
-.tile {
-  padding: 0.9rem 1rem;
+.onglet {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.15rem;
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--photo-bg);
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  cursor: pointer;
 }
 
-.tile .value {
-  font-size: 1.5rem;
+.onglet.on {
+  border-color: var(--accent);
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+
+.onglet-titre {
   font-weight: 700;
 }
 
-.tile .label {
-  font-size: 0.82rem;
+.onglet-compte {
+  font-size: 0.85rem;
+}
+
+.onglet-quoi {
+  font-size: 0.78rem;
   color: var(--ink-soft);
+}
+
+/* La sortie qu'on vient d'atteindre depuis l'onglet des agendas : sans ce
+   repère, on arrive au milieu d'un tableau sans savoir sur quelle ligne. */
+.vise > td {
+  background: var(--photo-bg);
+}
+h2 {
+  margin-top: 1.8rem;
 }
 
 .add {

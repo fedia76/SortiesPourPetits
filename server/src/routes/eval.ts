@@ -60,12 +60,16 @@ import { deleteEvalPages, readEvalPage, saveEvalPage } from '../lib/evalPages';
 import { avancements, reprendreLesAbandonnes } from '../lib/evalRuns';
 import { requireRole } from '../middleware/auth';
 import {
+  aspectsDetail,
   couverture,
   criteresParEtage,
   extractScore,
+  harvestLines,
   harvestScore,
+  readDetail,
   readScore,
   relevanceOf,
+  selectLines,
   selectScore,
   sumHarvest,
   sumSelect,
@@ -1460,7 +1464,22 @@ async function paginationScore(runId: number) {
   return { correct, missed, wrong, unjudged };
 }
 
-/** Le détail d'un run, page par page ou sortie par sortie. */
+/** Ce qu'on garde d'un texte de contexte : de quoi reconnaître le lien, pas plus. */
+function coupe(value: string, max = 300): string {
+  return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+/**
+ * Le détail d'un run — et « détail » veut dire **la ligne**, pas un total plus
+ * petit.
+ *
+ * Un résumé ne se relit pas : « 12 manquées » ne dit ni lesquelles, ni
+ * pourquoi, et un chiffre surprenant qu'on ne peut pas remonter jusqu'à la
+ * ligne qui l'a produit ne laisse le choix qu'entre le croire et le jeter.
+ * Chaque ligne porte donc trois choses : ce que le corpus dit, ce que la brique
+ * a fait, et la phrase qui explique dans quelle case elle tombe — phrase
+ * fabriquée par la mesure elle-même, jamais reconstituée ici.
+ */
 async function runDetail(runId: number, stage: string) {
   if (stage === 'READ') {
     const rows = await prisma.evalReadResult.findMany({
@@ -1469,14 +1488,22 @@ async function runDetail(runId: number, stage: string) {
         sortie: { select: { id: true, url: true, label: true, expected: true } },
       },
     });
-    return rows.map((row) => ({
-      sortieId: row.sortieId,
-      url: row.sortie.url,
-      label: row.sortie.label,
-      textChars: row.textChars,
-      error: row.error,
-      score: readScore(parseJson<ReadLabels>(row.sortie.expected, {}), row),
-    }));
+    return rows.map((row) => {
+      const labels = parseJson<ReadLabels>(row.sortie.expected, {});
+      return {
+        sortieId: row.sortieId,
+        url: row.sortie.url,
+        label: row.sortie.label,
+        textChars: row.textChars,
+        error: row.error,
+        score: readScore(labels, row),
+        // L'attendu et le rendu côte à côte : sans eux, « le texte n'est pas
+        // entier » n'indique pas si la page est tronquée, si elle passe par du
+        // JavaScript, ou si le fragment attendu était mal choisi — et les trois
+        // se corrigent à trois endroits différents.
+        detail: readDetail(labels, row),
+      };
+    });
   }
   if (stage === 'EXTRACT') {
     const rows = await prisma.evalExtractResult.findMany({
@@ -1487,19 +1514,36 @@ async function runDetail(runId: number, stage: string) {
     });
     return rows.map((row) => {
       const attendue = parseJson<FicheRendue>(row.sortie.expected, {});
+      const rendue = parseJson<FicheRendue>(row.fiche, {});
       return {
         sortieId: row.sortieId,
         url: row.sortie.url,
         label: row.sortie.label,
         costUsd: row.costUsd,
         error: row.error,
-        ...extractScore(attendue, parseJson<FicheRendue>(row.fiche, {})),
+        ...extractScore(attendue, rendue),
+        // Les deux valeurs comparées, aspect par aspect. « FAUX » sans elles est
+        // une accusation sans pièce jointe : on ne sait pas si le modèle s'est
+        // trompé, si l'étiquette était fautive, ou si les deux disent la même
+        // chose autrement — et ce dernier cas est une faute de la mesure, qu'aucun
+        // total ne révélera.
+        aspects: aspectsDetail(attendue, rendue),
       };
     });
   }
   const results = await prisma.evalLinkResult.findMany({
     where: { runId },
-    select: { pageId: true, url: true, harvested: true, selected: true },
+    select: {
+      pageId: true,
+      url: true,
+      text: true,
+      context: true,
+      position: true,
+      harvested: true,
+      dropReason: true,
+      selected: true,
+      selectReason: true,
+    },
   });
   const pageIds = [...new Set(results.map((r) => r.pageId))];
   // La même portée que le résumé du run. Sans elle, le détail page par page
@@ -1517,20 +1561,49 @@ async function runDetail(runId: number, stage: string) {
       id: true,
       url: true,
       pageNo: true,
+      nextExpected: true,
       agenda: { select: { label: true } },
       links: { select: { url: true, verdict: true, sortie: { select: FAITS_SORTIE } } },
     },
   });
   return pages.map((page) => {
-    const rows = results.filter((r) => r.pageId === page.id);
+    // La ligne de position négative n'est pas un lien : c'est la pagination,
+    // rangée là faute d'une table par page. La montrer parmi les liens ferait
+    // une ligne fantôme que le total ne compte nulle part.
+    const rows = results.filter((r) => r.pageId === page.id && r.position >= 0);
     const labels = page.links.map(labelled);
+    const tri = stage === 'SELECT';
+    const { lignes, plafonnee } = tri
+      ? selectLines(labels, rows, scope)
+      : { lignes: harvestLines(labels, rows), plafonnee: false };
+    // Ce que la brique a dit d'elle-même, à côté de ce que la mesure conclut.
+    // C'est le seul moyen de distinguer « le modèle a mal jugé » de « le modèle
+    // n'a jamais vu ce lien », qui ne se corrigent pas au même étage.
+    const parUrl = new Map(rows.map((r) => [r.url, r]));
     return {
       pageId: page.id,
       url: page.url,
       pageNo: page.pageNo,
       label: page.agenda.label,
-      score:
-        stage === 'SELECT' ? selectScore(labels, rows, scope) : harvestScore(labels, rows),
+      plafonnee,
+      score: tri ? selectScore(labels, rows, scope) : harvestScore(labels, rows),
+      pagination: {
+        attendu: page.nextExpected,
+        trouve: results.find((r) => r.pageId === page.id && r.position < 0)?.selectReason ?? '',
+      },
+      liens: lignes.map((ligne) => {
+        const releve = parUrl.get(ligne.url);
+        return {
+          ...ligne,
+          texte: releve?.text ?? '',
+          // Le contexte et le motif sont coupés : une page d'agenda porte deux
+          // cents liens, et le détail d'un run en couvre toutes les pages. Un
+          // contexte entier par ligne ferait plusieurs mégaoctets de réponse
+          // pour un tableau qui n'en affiche de toute façon que le début.
+          contexte: coupe(releve?.context ?? ''),
+          motif: coupe((tri ? releve?.selectReason : releve?.dropReason) ?? ''),
+        };
+      }),
     };
   });
 }
