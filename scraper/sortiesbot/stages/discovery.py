@@ -17,7 +17,7 @@ appel du pipeline.
 * **mode recherche** — les requêtes partent au moteur.
 * **mode site** — les URL sont données, aucune recherche n'est lancée.
   L'étage existe quand même, il ne coûte simplement rien : le graphe de la
-  console garde ainsi ses sept briques dans les deux modes.
+  console garde ainsi ses huit briques dans les deux modes.
 """
 
 from __future__ import annotations

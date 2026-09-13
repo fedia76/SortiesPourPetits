@@ -11,7 +11,7 @@ Trois destinations pour le même événement, et c'est voulu :
 Chaque événement porte l'**étage** qui l'a produit (`stages.Stage`). Il n'est
 pas passé en paramètre à chaque appel : `RunLog.stage()` est un gestionnaire
 de contexte, et le pipeline ouvre un étage à la fois. C'est ce qui permet à la
-console de reconstituer le graphe en six briques sans que le code ait à se
+console de reconstituer le graphe des huit briques sans que le code ait à se
 répéter.
 
 Un mot sur le champ `op` : il nomme l'opération technique en cause dans une

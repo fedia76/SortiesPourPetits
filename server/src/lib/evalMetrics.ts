@@ -606,6 +606,20 @@ export interface FicheRendue {
   dateEnd?: string;
   weekdays?: string[];
   dates?: string[];
+  /**
+   * Les jours que le **pipeline** retiendrait de cette fiche, une fois son
+   * calendrier appliqué (`sortiesbot.schedule.resolve`, la fonction de
+   * production). C'est ce qui se compare au `dates` du corpus.
+   *
+   * Sans ce champ, un spectacle « tous les dimanches » comptait MANQUÉ à chaque
+   * fois : le modèle rend `weekdays: ["dimanche"]` et aucune date, là où la
+   * sortie publiée porte les six dimanches que le site a calculés. On
+   * reprochait à l'étage 6 une conversion qui n'est pas la sienne.
+   *
+   * Rendu par la brique et non recalculé ici : refaire `resolve` en TypeScript
+   * comparerait deux implémentations plutôt qu'un rendu à une vérité.
+   */
+  resolvedDates?: string[];
   openTime?: string;
   closeTime?: string;
   setting?: string;
@@ -616,8 +630,27 @@ export interface FicheRendue {
   venuePostalCode?: string;
 }
 
-/** Comment se compare un champ. Le repli ne vaut que pour de la prose. */
-type Genre = 'texte' | 'nombre' | 'booleen' | 'jour' | 'liste';
+/**
+ * Comment se compare un champ.
+ *
+ * `prose` est le cas à part, et il est délibérément faible : deux paraphrases
+ * différentes de la même page sont **toutes les deux justes**. Une référence ne
+ * peut donc trancher qu'une chose, la présence — ce que la page devait faire
+ * dire, et ce qu'elle n'avait pas à faire écrire. Le *contenu* d'une
+ * description se juge ailleurs, par l'ancrage dans le texte
+ * (`evaluation.audit_fiche`, drapeau `hors_texte`), qui n'a pas besoin d'une
+ * référence pour dire qu'un mot n'est pas dans la page.
+ */
+type Genre = 'texte' | 'prose' | 'nombre' | 'booleen' | 'jour' | 'liste';
+
+/**
+ * Un champ jugé : celui de l'étiquette, comment il se compare, et — seulement
+ * quand ils diffèrent — celui du run auquel il se compare.
+ *
+ * Le premier élément est toujours le champ **du corpus** : c'est lui qui décide
+ * si l'aspect est étiqueté, donc lui que les compteurs de couverture lisent.
+ */
+type Champ = [etiquette: keyof FicheRendue, genre: Genre, rendu?: keyof FicheRendue];
 
 /**
  * Les aspects d'une fiche, et les champs que chacun recouvre.
@@ -627,17 +660,21 @@ type Genre = 'texte' | 'nombre' | 'booleen' | 'jour' | 'liste';
  * la raison d'être de cette table, et la seule ; elle décrit le même découpage
  * que `evaluation.audit_fiche`, mais en termes de champs plutôt que de chaînes.
  */
-export const ASPECTS: { key: string; champs: [keyof FicheRendue, Genre][] }[] = [
+export const ASPECTS: { key: string; champs: Champ[] }[] = [
   { key: 'verdict', champs: [['relevant', 'booleen'], ['several', 'booleen']] },
   { key: 'titre', champs: [['title', 'texte']] },
-  { key: 'description', champs: [['description', 'texte']] },
+  { key: 'description', champs: [['description', 'prose']] },
   { key: 'tarif', champs: [['free', 'booleen'], ['price', 'nombre']] },
   { key: 'age', champs: [['ageMin', 'nombre'], ['ageMax', 'nombre']] },
   {
     key: 'dates',
     champs: [['permanent', 'booleen'], ['dateStart', 'jour'], ['dateEnd', 'jour']],
   },
-  { key: 'jours', champs: [['weekdays', 'liste'], ['dates', 'liste']] },
+  // Le corpus dit des **dates** — le site ne stocke que ça, et une étiquette
+  // reprise d'une sortie publiée porte le calendrier qu'il a calculé. La brique,
+  // elle, rend des « dimanches » : c'est son calendrier appliqué qu'on compare,
+  // pas sa prose. `weekdays` n'est jugé que si un humain l'a étiqueté à la main.
+  { key: 'jours', champs: [['dates', 'liste', 'resolvedDates'], ['weekdays', 'liste']] },
   { key: 'horaires', champs: [['openTime', 'texte'], ['closeTime', 'texte']] },
   { key: 'cadre', champs: [['setting', 'texte']] },
   { key: 'categorie', champs: [['category', 'texte']] },
@@ -666,6 +703,12 @@ function pareil(a: unknown, b: unknown, genre: Genre): boolean {
   if (muet(a) && muet(b)) return true;
   if (muet(a) || muet(b)) return false;
   switch (genre) {
+    case 'prose':
+      // Deux paraphrases de la même page sont toutes les deux justes : ce qui
+      // est renseigné des deux côtés s'accorde, et FAUX est inatteignable ici
+      // **par construction**. Comparer à la lettre fabriquait une faute à
+      // chaque fiche — le modérateur ne recopie pas la description du modèle.
+      return true;
     case 'nombre':
       return Number(a) === Number(b);
     case 'booleen':
@@ -685,6 +728,20 @@ function pareil(a: unknown, b: unknown, genre: Genre): boolean {
 }
 
 /**
+ * La valeur du côté du run : celle du même champ, ou celle du champ que
+ * l'aspect désigne quand les deux côtés ne parlent pas de la même chose.
+ *
+ * Le repli sur le champ de l'étiquette n'est pas une commodité : un run joué
+ * avant que la brique ne rende `resolvedDates` n'en porte pas la clé, et le
+ * traiter comme vide compterait MANQUÉ ce que personne n'avait mesuré.
+ */
+function renduDe(rendue: FicheRendue, champ: Champ): unknown {
+  const [etiquette, , source] = champ;
+  if (source && source in rendue) return rendue[source];
+  return rendue[etiquette];
+}
+
+/**
  * Le verdict d'un aspect, par comparaison champ à champ.
  *
  * Les quatre verdicts gardent exactement le sens qu'ils avaient :
@@ -701,7 +758,7 @@ function pareil(a: unknown, b: unknown, genre: Genre): boolean {
  * le même silence, et une valeur inventée deviendrait invisible.
  */
 export function verdictAspect(
-  aspect: { key: string; champs: [keyof FicheRendue, Genre][] },
+  aspect: { key: string; champs: Champ[] },
   attendue: FicheRendue,
   rendue: FicheRendue,
 ): FieldVerdict | null {
@@ -709,20 +766,22 @@ export function verdictAspect(
   // n'est pas un vide : personne ne l'a regardé, et le comparer reprocherait à
   // la brique d'avoir rendu quelque chose sur quoi le corpus se tait.
   //
-  // C'est le cas des jours de représentation : l'étiquette reprise d'une
-  // sortie publiée porte `dates` mais jamais `weekdays`, que le site ne reçoit
-  // pas. Sans ce filtre, chaque sortie à récurrence compterait « faux ».
+  // C'est le cas de `weekdays` : l'étiquette reprise d'une sortie publiée porte
+  // `dates` mais jamais les jours de la semaine, que le site ne reçoit pas.
+  // Sans ce filtre, chaque sortie à récurrence compterait « faux ».
   const juges = aspect.champs.filter(([champ]) => champ in attendue);
   if (juges.length === 0) return null;
 
   const attenduRempli = juges.some(([champ]) => !muet(attendue[champ]));
-  const renduRempli = juges.some(([champ]) => !muet(rendue[champ]));
+  const renduRempli = juges.some((champ) => !muet(renduDe(rendue, champ)));
 
   if (!attenduRempli && !renduRempli) return 'JUSTE';
   if (!attenduRempli) return 'INVENTE';
   if (!renduRempli) return 'MANQUE';
 
-  const accord = juges.every(([champ, genre]) => pareil(attendue[champ], rendue[champ], genre));
+  const accord = juges.every((champ) =>
+    pareil(attendue[champ[0]], renduDe(rendue, champ), champ[1]),
+  );
   return accord ? 'JUSTE' : 'FAUX';
 }
 

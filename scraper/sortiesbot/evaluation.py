@@ -602,6 +602,27 @@ def fiche_payload(event: ExtractedEvent) -> dict[str, Any]:
     }
 
 
+def resolved_days(event: ExtractedEvent, json_ld: list[str]) -> list[str]:
+    """Les jours que le **pipeline** retiendrait de cette fiche.
+
+    C'est ce qui se compare au calendrier d'une sortie publiée, et c'est tout
+    l'objet de cette fonction : le site ne stocke pas des « mercredis », il
+    stocke des dates. Sans cette conversion, le banc reprochait à l'étage 6 de
+    rendre `weekdays: ["dimanche"]` là où la sortie approuvée portait six
+    dimanches — une faute qui n'était pas la sienne, mais l'absence d'un calcul
+    qui a lieu plus loin.
+
+    `schedule.resolve` est la fonction de **production** : une relecture de ses
+    règles ici comparerait deux implémentations plutôt qu'un rendu à une vérité.
+    Liste vide des deux côtés vaut « tous les jours de la plage », ce qui est un
+    accord.
+    """
+    from .schedule import resolve
+
+    plan = resolve(event.date_start, event.date_end, event.weekdays, event.dates, json_ld)
+    return list(plan.dates)
+
+
 def _date_range(start: str, end: str) -> tuple[str, str]:
     """Les deux bornes réduites à leur jour, pour comparer sans se soucier des heures."""
     return start.strip()[:10], (end.strip()[:10] or start.strip()[:10])
@@ -868,7 +889,6 @@ def extract_page(
     log: Any,
     categories: list[str] | tuple[str, ...] = (),
     declared_dates: list[str] | tuple[str, ...] = (),
-    reference: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rejoue l'étage 6 sur un texte déjà gelé, et rapporte la fiche et ses défauts.
 
@@ -890,21 +910,16 @@ def extract_page(
     qui y mène : `several`, rendu par l'appel simple, est le premier aspect
     jugé.
 
-    ## La fiche approuvée, quand il y en a une
+    ## Ce qui part avec la fiche
 
-    `reference` est la sortie qu'un modérateur a approuvée depuis cette page,
-    champ par champ. Ce n'est pas une précoche de plus : c'est une étiquette
-    humaine déjà payée, et elle **propose** un verdict pour chaque aspect — y
-    compris `setting`, le seul qu'aucun instrument ne sait atteindre.
+    Les **catégories du site** sont dans le prompt, et il faut qu'elles y
+    soient : le modèle doit choisir dans une liste, et la lui refuser faisait
+    compter faux, à chaque fiche, un champ qu'on l'empêchait de remplir. Le banc
+    mesurerait alors un appel qui n'existe pas en production.
 
-    Elle propose, elle n'écrit pas. Un verdict qui s'inscrirait tout seul
-    redeviendrait indiscernable de « personne n'a regardé », ce que ce banc
-    existe pour éviter.
-
-    Et elle s'efface entièrement si la page a bougé depuis le run : le titre
-    approuvé qui ne se retrouve plus dans le texte veut dire qu'on ne lit plus la
-    même page, et les propositions accuseraient alors le modèle d'un changement
-    du site.
+    Le **calendrier résolu** (`resolvedDates`) accompagne la fiche, calculé par
+    la fonction de production. C'est lui qui se compare au calendrier d'une
+    sortie publiée — voir `resolved_days`.
 
     Le retour porte aussi ce que l'appel a coûté. C'est le premier étage du banc
     dont la mesure se paie, et le taire donnerait l'impression qu'elle est
@@ -924,250 +939,17 @@ def extract_page(
     after = getattr(provider, "usage", None)
     aspects = audit_fiche(event, text, list(declared_dates), list(categories))
 
-    moved = bool(reference) and page_moved(reference or {}, text)
-    if reference and not moved:
-        proposed = propose_verdicts(event, reference, aspects, list(declared_dates))
-        for aspect in aspects:
-            verdict, because = proposed.get(aspect["key"], ("", ""))
-            aspect["proposed"] = verdict
-            aspect["because"] = because
+    fiche = fiche_payload(event)
+    # Le calendrier appliqué, à côté de ce que le modèle a écrit. Les deux
+    # voyagent : la prose (« dimanche ») dit ce qu'il a lu, les dates disent ce
+    # que le site aurait enregistré, et c'est celles-là que le corpus connaît.
+    fiche["resolvedDates"] = resolved_days(event, list(declared_dates))
 
     return {
         "model": getattr(config, "extraction_model", ""),
-        "fiche": fiche_payload(event),
+        "fiche": fiche,
         "aspects": aspects,
-        "hasReference": bool(reference) and not moved,
-        "pageMoved": moved,
         "inputTokens": getattr(after, "input_tokens", 0) - spent_in,
         "outputTokens": getattr(after, "output_tokens", 0) - spent_out,
         "costUsd": round(getattr(after, "cost_usd", 0.0) - spent_usd, 6),
     }
-
-
-# ════════════════════════════ la fiche approuvée comme vérité de référence
-
-# Une sortie **approuvée** a été relue par un modérateur, champ par champ. Ce
-# n'est donc pas une précoche de plus : c'est une étiquette humaine déjà payée,
-# et elle donne le verdict de l'étage 6 gratuitement — y compris sur `setting`,
-# le seul aspect qu'aucun instrument ne sait atteindre.
-#
-# ## Ce que la comparaison peut dire, et ce qu'elle ne peut pas
-#
-# Elle propose un verdict par champ. Elle ne l'écrit pas : rien n'entre dans les
-# verdicts sans qu'un humain ait cliqué, exactement comme la précoche de l'étage
-# 3 est restée séparée de ce qu'un humain avait tranché. Une proposition qui
-# s'écrirait toute seule redeviendrait indiscernable de « personne n'a regardé ».
-#
-# Deux champs restent sans proposition, et c'est délibéré :
-#
-# * **la description** est une reformulation. Deux paraphrases différentes de la
-#   même page sont toutes les deux justes, et les comparer à la lettre
-#   fabriquerait des fautes qui n'existent pas ;
-# * **`several`** — la page porte-t-elle plusieurs sorties ? La référence est
-#   *une* sortie tirée de cette page ; elle ne dit rien de ce qu'il y en avait
-#   d'autres.
-#
-# ## Le garde-fou : la page a pu bouger
-#
-# La fiche décrit la page telle qu'elle était le jour du run. Le banc la relit
-# aujourd'hui, et aucun HTML d'époque n'est conservé. Si le titre approuvé ne se
-# retrouve plus dans le texte, ce n'est plus la même page : les propositions
-# accuseraient le modèle d'un changement du site. Toutes sont alors retirées, et
-# le banc le dit.
-
-#: Les quatre verdicts, repris tels quels du site : un vocabulaire commun, ou
-#: rien ne se recoupe.
-JUSTE, FAUX, INVENTE, MANQUE = "JUSTE", "FAUX", "INVENTE", "MANQUE"
-
-
-def _same_text(left: str, right: str) -> bool:
-    """Deux libellés désignent-ils la même chose ?
-
-    Comparé à plat — minuscules, sans accents — puis, à défaut, sur les mots :
-    un modérateur retouche volontiers une majuscule ou retire un article, et
-    compter ça comme une faute de l'extraction serait faux.
-    """
-    a, b = _flat(left), _flat(right)
-    if a == b:
-        return True
-    if not a or not b:
-        return False
-    mots_a = set(re.findall(r"[a-z0-9]{4,}", a))
-    mots_b = set(re.findall(r"[a-z0-9]{4,}", b))
-    if not mots_a or not mots_b:
-        return False
-    return len(mots_a & mots_b) / len(mots_a | mots_b) >= 0.6
-
-
-def _verdict(bench: bool, ref_value: str, same: bool, anchored: bool) -> tuple[str, str]:
-    """Le verdict que le croisement « rendu / référence » propose, et pourquoi.
-
-    Le motif cite **la valeur approuvée**, et pas seulement « ça diverge » : sans
-    elle, l'humain devrait rouvrir la fiche publiée pour trancher, ce qui est
-    exactement le travail que la référence est censée lui épargner.
-
-    Le seul cas subtil est **rendu, mais rien dans la référence**. Le modérateur
-    a vérifié ce champ et n'a rien mis : la page n'en dit donc rien, et la valeur
-    est une invention. Sauf si l'ancrage la retrouve dans le texte — alors les
-    deux instruments se contredisent, et c'est justement le cas qu'il faut
-    montrer à un humain plutôt que de trancher à sa place.
-    """
-    ref = bool(ref_value)
-    if bench and ref:
-        if same:
-            return JUSTE, "identique à la fiche approuvée"
-        return FAUX, f"la fiche approuvée dit « {ref_value} »"
-    if bench and not ref:
-        if anchored:
-            return "", "rien dans la fiche approuvée, mais la valeur est dans la page"
-        return INVENTE, "rien dans la fiche approuvée, et rien dans la page"
-    if ref and not bench:
-        return MANQUE, f"la fiche approuvée dit « {ref_value} »"
-    return JUSTE, "vide des deux côtés"
-
-
-def _ref_price(reference: dict[str, Any]) -> str:
-    if reference.get("isFree"):
-        return "gratuit"
-    price = reference.get("price")
-    return f"{float(price):g} €" if price not in (None, "") else ""
-
-
-def _ref_age(reference: dict[str, Any]) -> str:
-    lo, hi = reference.get("ageMin"), reference.get("ageMax")
-    if lo is not None and hi is not None:
-        return f"{lo} à {hi} ans"
-    if lo is not None:
-        return f"dès {lo} ans"
-    if hi is not None:
-        return f"jusqu'à {hi} ans"
-    return ""
-
-
-def _ref_dates(reference: dict[str, Any]) -> str:
-    if reference.get("isPermanent"):
-        return "toute l'année"
-    start = str(reference.get("dateStart") or "")[:10]
-    end = str(reference.get("dateEnd") or "")[:10]
-    if start and end and end != start:
-        return f"du {start} au {end}"
-    return f"le {start}" if start else ""
-
-
-def _bench_days(event: ExtractedEvent, json_ld: list[str]) -> list[str]:
-    """Les jours que le pipeline retiendrait de cette fiche.
-
-    C'est `schedule.resolve` — la fonction de production — qui décide, et pas
-    une relecture de ses règles : le site ne stocke pas les « mercredis », il
-    stocke des dates, et c'est elle qui fait la conversion. Refaire le calcul
-    ici comparerait deux implémentations plutôt qu'un rendu à une vérité.
-    """
-    from .schedule import resolve
-
-    plan = resolve(
-        event.date_start, event.date_end, event.weekdays, event.dates, json_ld
-    )
-    return list(plan.dates)
-
-
-def page_moved(reference: dict[str, Any], text: str) -> bool:
-    """Le titre approuvé ne se retrouve plus dans la page : ce n'est plus la même.
-
-    La fiche décrit la page du jour du run ; le banc la relit aujourd'hui. Un
-    site qui a changé de saison ferait accuser le modèle de tout ce qui a bougé.
-    """
-    titre = str(reference.get("title") or "")
-    return bool(titre) and _overlap(titre, _flat(text)) < _OVERLAP_MIN
-
-
-def propose_verdicts(
-    event: ExtractedEvent,
-    reference: dict[str, Any],
-    aspects: list[dict[str, Any]],
-    json_ld_dates: list[str] | tuple[str, ...] = (),
-) -> dict[str, tuple[str, str]]:
-    """Le verdict que la fiche approuvée propose pour chaque aspect, et pourquoi.
-
-    Rien n'est proposé pour la description ni pour un aspect que la référence ne
-    peut pas trancher : mieux vaut un blanc qu'une proposition fausse, parce
-    qu'une proposition se confirme d'un clic et qu'un clic de trop est une
-    mesure fausse de plus.
-    """
-    flags = {a["key"]: set(a["flags"]) for a in aspects}
-    filled = {a["key"]: a["filled"] for a in aspects}
-    values = {a["key"]: a["value"] for a in aspects}
-
-    def ancre(key: str) -> bool:
-        """La valeur rendue se retrouve-t-elle dans la page ? L'autre instrument."""
-        return "hors_texte" not in flags.get(key, set())
-
-    def compare(key: str, ref_value: str) -> tuple[str, str]:
-        return _verdict(
-            filled.get(key, False),
-            ref_value,
-            _same_text(values.get(key, ""), ref_value),
-            ancre(key),
-        )
-
-    out: dict[str, tuple[str, str]] = {}
-
-    # La page a bien porté une sortie : un modérateur l'a approuvée. C'est le
-    # verdict le plus lourd de l'étage, et le seul que la référence tranche
-    # sans la moindre nuance.
-    if event.several:
-        # La référence est *une* sortie tirée de cette page ; elle ne dit rien
-        # de ce qu'il y en avait d'autres.
-        pass
-    elif event.relevant:
-        out["verdict"] = (JUSTE, "un modérateur a approuvé une sortie depuis cette page")
-    else:
-        out["verdict"] = (FAUX, "un modérateur a approuvé une sortie depuis cette page")
-
-    out["titre"] = compare("titre", str(reference.get("title") or ""))
-    out["tarif"] = compare("tarif", _ref_price(reference))
-    out["age"] = compare("age", _ref_age(reference))
-    out["dates"] = compare("dates", _ref_dates(reference))
-    out["horaires"] = compare(
-        "horaires",
-        " – ".join(
-            t for t in (reference.get("openTime") or "", reference.get("closeTime") or "") if t
-        ),
-    )
-    out["cadre"] = compare("cadre", _SETTINGS.get(str(reference.get("setting") or ""), ""))
-    out["categorie"] = compare("categorie", str(reference.get("category") or ""))
-    out["lieu"] = compare("lieu", str(reference.get("venueName") or ""))
-    out["adresse"] = compare(
-        "adresse",
-        ", ".join(
-            p
-            for p in (
-                reference.get("venueAddress") or "",
-                reference.get("venuePostalCode") or "",
-                reference.get("venueCity") or "",
-            )
-            if p
-        ),
-    )
-
-    # Les jours ne se comparent pas en clair : le site stocke des dates, la
-    # fiche rend des « mercredis ». C'est `schedule.resolve` qui convertit, et
-    # c'est son résultat qu'on compare — une liste vide des deux côtés voulant
-    # dire « tous les jours de la plage », ce qui est un accord.
-    attendus = [str(d)[:10] for d in (reference.get("days") or [])]
-    obtenus = _bench_days(event, list(json_ld_dates))
-    if attendus or obtenus:
-        if set(obtenus) == set(attendus):
-            out["jours"] = (JUSTE, "mêmes jours après application du calendrier")
-        elif obtenus and attendus:
-            out["jours"] = (
-                FAUX,
-                f"{len(obtenus)} jour(s) contre {len(attendus)} sur la fiche approuvée",
-            )
-        elif attendus:
-            out["jours"] = (MANQUE, "la fiche approuvée porte un calendrier précis")
-        else:
-            out["jours"] = ("", "la fiche approuvée n'a pas de calendrier précis")
-    else:
-        out["jours"] = (JUSTE, "aucun calendrier précis des deux côtés")
-
-    return {key: value for key, value in out.items() if value[0] or value[1]}

@@ -179,29 +179,25 @@ class SppApi:
         """
         self._post_json(f"/api/eval/capture/{kind}/{item_id}/fail", {"error": error[:2000]})
 
-    def next_eval_run(
-        self,
-        code_ref: str = "",
-        model: str = "",
-        prompt_hash: str = "",
-    ) -> dict[str, Any] | None:
-        """Réclame un run en file, en déclarant **ce qu'on est**.
+    def next_eval_run(self, code_ref: str = "") -> dict[str, Any] | None:
+        """Réclame un run en file, en déclarant la révision qui tourne.
 
-        La révision, le modèle et l'empreinte du prompt : sans eux, une courbe
-        qui monte ou descend n'est attribuable à rien, et ils sont
-        irrattrapables après coup — un run déjà joué ne dira jamais ce qu'il
-        était.
+        Sans elle, une courbe qui monte ou descend n'est attribuable à rien, et
+        c'est irrattrapable après coup — un run déjà joué ne dira jamais ce
+        qu'il était.
 
-        Ce qu'on **cherche**, en revanche, ne se déclare plus ici : ça vient du
+        Le **modèle** et l'**empreinte du prompt** ne se déclarent pas ici : on
+        ne les connaît qu'une fois le run réclamé, puisque c'est son étage qui
+        les dit. Ils partent donc à la clôture (`finish_eval_run`), ce qui est
+        le seul moment où ils sont vrais.
+
+        Ce qu'on **cherche**, enfin, ne se déclare pas non plus : ça vient du
         run, fixé au lancement depuis la console, et ça revient dans la réponse
         sous `recherche`. La fenêtre que le modèle reçoit et celle contre
         laquelle on le juge sont ainsi la même ligne en base, et ne peuvent pas
         diverger.
         """
-        body = self._post_json(
-            "/api/eval/runs/next",
-            {"codeRef": code_ref, "model": model, "promptHash": prompt_hash},
-        )
+        body = self._post_json("/api/eval/runs/next", {"codeRef": code_ref})
         return body.get("run")
 
     def next_eval_item(self, run_id: int) -> dict[str, Any] | None:
@@ -227,7 +223,10 @@ class SppApi:
 
     def finish_eval_run(self, run_id: int, status: str, **counters: Any) -> None:
         """Clôt un run. C'est ce qu'on ne peut pas perdre : sans clôture, il
-        resterait « en cours » et le worker n'en prendrait plus d'autre."""
+        resterait « en cours » et le worker n'en prendrait plus d'autre.
+
+        C'est aussi là que le run dit de quoi il était le run — `model` et
+        `promptHash` —, faute de le savoir avant de l'avoir réclamé."""
         self._post_json(f"/api/eval/runs/{run_id}/finish", {"status": status, **counters})
 
     def known_urls(self, urls: list[str]) -> set[str]:

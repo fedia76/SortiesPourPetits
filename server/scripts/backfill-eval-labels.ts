@@ -73,10 +73,21 @@ export function expectedFrom(ficheRaw: string, verdictsRaw: string): FicheRendue
   return expected as FicheRendue;
 }
 
+/**
+ * La table où l'étiquette atterrit a changé depuis, et ce script visait encore
+ * l'ancienne : `EvalFiche` a été fusionnée dans `EvalSortie.expected` par la
+ * migration « une sortie, une étiquette », puis supprimée. Le script ne pouvait
+ * donc plus que planter — et comme `scripts/` n'était pas typé, rien ne le
+ * disait.
+ *
+ * Il écrit maintenant là où l'étiquette vit, et **seulement** sur une sortie qui
+ * n'en a pas : une étiquette saisie depuis vaut mieux qu'une reprise, et on ne
+ * l'écrase pas.
+ */
 async function main(): Promise<void> {
   const legacy = await prisma.$queryRaw<LegacyRow[]>`
     SELECT
-      l.sortieId    AS sortieId,
+      l.sortieId     AS sortieId,
       l.createdById  AS createdById,
       l.fiche        AS fiche,
       l.aspects      AS aspects,
@@ -84,12 +95,12 @@ async function main(): Promise<void> {
       l.note         AS note,
       IFNULL(l.validatedAt, l.createdAt) AS labelledAt
     FROM \`_LegacyEvalExtraction\` l
-    LEFT JOIN \`EvalFiche\` f ON f.sortieId = l.sortieId
-    WHERE f.id IS NULL
+    JOIN \`EvalSortie\` s ON s.id = l.sortieId
+    WHERE s.expected = '{}' OR s.expected = '' OR s.expected IS NULL
   `;
 
   if (legacy.length === 0) {
-    console.log('Rien à reprendre : le corpus des fiches est à jour.');
+    console.log('Rien à reprendre : le corpus des sorties est à jour.');
     return;
   }
 
@@ -99,24 +110,29 @@ async function main(): Promise<void> {
     const expected = expectedFrom(row.fiche, row.verdicts);
     if (Object.keys(expected).length === 0) {
       // Aucun aspect n'avait été jugé juste : il n'y a rien à décrire de cette
-      // page. Créer une ligne vide ferait croire à une étiquette.
+      // page. Écrire un objet vide ferait croire à une étiquette.
       empty += 1;
       continue;
     }
-    await prisma.evalFiche.create({
+    await prisma.evalSortie.update({
+      where: { id: row.sortieId },
       data: {
-        sortieId: row.sortieId,
-        createdById: row.createdById,
         expected: JSON.stringify(expected),
+        // Chaque champ vient d'un aspect qu'un humain avait jugé juste : c'est
+        // une saisie, la provenance la plus forte qu'on ait.
+        origins: JSON.stringify(
+          Object.fromEntries(Object.keys(expected).map((cle) => [cle, 'SAISIE'])),
+        ),
         note: row.note ?? '',
         labelledAt: row.labelledAt,
+        labelledById: row.createdById,
       },
     });
     written += 1;
   }
 
   console.log(
-    `${written} fiche(s) reprise(s) au corpus` +
+    `${written} étiquette(s) reprise(s) au corpus` +
       (empty ? `, ${empty} sans aucun aspect jugé juste — rien à en tirer.` : '.'),
   );
 }

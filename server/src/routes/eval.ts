@@ -1440,22 +1440,20 @@ evalRouter.post('/runs/next', async (req, res) => {
     res.json({ run: null });
     return;
   }
-  // Le worker déclare **ce qu'il est** — sa révision, son modèle, l'empreinte
-  // de son prompt. Il ne déclare plus **ce qu'on cherche** : ça vient du run,
-  // fixé au lancement depuis la console. Sans quoi la recherche que le modèle
-  // reçoit et celle contre laquelle on le juge pourraient diverger.
+  // Le worker déclare la **révision** qui tourne. Pas son modèle ni l'empreinte
+  // de son prompt : il ne les connaît qu'une fois ce run réclamé, puisque c'est
+  // l'étage du run qui les dit. Ils arrivent à la clôture, et c'est pour cela
+  // que les deux colonnes restaient vides jusqu'ici.
+  //
+  // Il ne déclare pas non plus **ce qu'on cherche** : ça vient du run, fixé au
+  // lancement depuis la console. Sans quoi la recherche que le modèle reçoit et
+  // celle contre laquelle on le juge pourraient diverger.
   //
   // Un run mis en file avant ce changement porte des réglages vides : le worker
   // retombe alors sur la configuration par défaut du banc, et le dit.
   const claimed = await prisma.evalRun.update({
     where: { id: run.id },
-    data: {
-      status: 'RUNNING',
-      startedAt: new Date(),
-      codeRef: parsed.data.codeRef,
-      model: parsed.data.model,
-      promptHash: parsed.data.promptHash,
-    },
+    data: { status: 'RUNNING', startedAt: new Date(), codeRef: parsed.data.codeRef },
   });
   res.json({
     run: {
@@ -1614,6 +1612,10 @@ evalRouter.post('/runs/:id(\\d+)/extract', bigBody, async (req, res) => {
 /**
  * Clôt un run. C'est ce qu'on ne peut pas perdre : sans clôture, il resterait
  * « en cours » et le worker n'en prendrait plus d'autre.
+ *
+ * C'est aussi ici que le run dit **de quoi il était le run** — le modèle et
+ * l'empreinte de son prompt —, faute d'avoir pu le dire avant de connaître son
+ * étage. Ces deux champs entrent par `counters`, comme les compteurs.
  */
 evalRouter.post('/runs/:id(\\d+)/finish', async (req, res) => {
   const parsed = evalRunFinishSchema.safeParse(req.body);

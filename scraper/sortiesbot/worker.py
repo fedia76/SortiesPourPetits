@@ -17,6 +17,7 @@ quelque chose.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import signal
 import sys
 import tempfile
@@ -359,6 +360,31 @@ def _config_du_run(run: dict[str, Any], quiet: bool) -> Config:
     )
 
 
+def _declare(stage: str, config: Config | None) -> dict[str, str]:
+    """De quoi ce run est le run : le modèle interrogé, l'empreinte de son prompt.
+
+    Déclaré **à la clôture**, et pas en réclamant le travail : le worker ne sait
+    quel modèle il emploiera qu'une fois le run réclamé, puisque c'est l'étage
+    qui le dit. Les deux colonnes restaient donc vides, et deux points d'une
+    courbe n'étaient ni comparables ni distinguables — ce qui est irrattrapable
+    après coup, un run joué ne disant jamais ce qu'il était.
+
+    L'empreinte porte sur le **gabarit**, pas sur le prompt rendu : celui-ci
+    change à chaque page, et ce qu'on veut savoir est si deux runs ont posé la
+    même question.
+    """
+    if config is None:
+        # Les deux étages de Python pur n'interrogent personne : annoncer un
+        # modèle qu'ils n'ont pas appelé serait une déclaration fausse.
+        return {"model": "", "promptHash": ""}
+    prompt = config.select_prompt if stage == "SELECT" else config.extraction_prompt
+    model = config.select_model if stage == "SELECT" else config.extraction_model
+    return {
+        "model": model,
+        "promptHash": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
+    }
+
+
 def _code_ref() -> str:
     """La révision qui tourne, si le dépôt est là. Vide sinon, et c'est dit.
 
@@ -408,6 +434,12 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
     traites = 0
     status, error = "DONE", None
     try:
+        # Les catégories du site partent dans le prompt d'extraction : le modèle
+        # doit y choisir la sienne. Les lui refuser faisait compter faux, à
+        # chaque fiche, un champ qu'on l'empêchait de remplir — et le banc
+        # mesurait un appel qui n'existe pas en production. Un site injoignable
+        # met donc le run en échec plutôt que de rendre une mesure fausse.
+        categories = sorted(api.categories()) if stage == "EXTRACT" else []
         while not _stop:
             item = api.next_eval_item(run_id)
             if not item:
@@ -442,6 +474,7 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
                     provider=provider,
                     config=config,
                     log=log,
+                    categories=categories,
                     declared_dates=lecture.get("dates", []),
                 )
                 result["sortieId"] = sortie_id
@@ -459,6 +492,7 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
             "inputTokens": int(getattr(usage, "input_tokens", 0) or 0),
             "outputTokens": int(getattr(usage, "output_tokens", 0) or 0),
             "costUsd": round(float(getattr(usage, "total_usd", 0.0) or 0.0), 4),
+            **_declare(stage, config),
         }
         if error:
             payload["error"] = error

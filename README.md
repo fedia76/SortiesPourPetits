@@ -71,84 +71,22 @@ Le Havre, Niort et Nancy.
   de chaque domaine source — avec ce qu'il a réellement donné, et pas
   seulement ce qu'il a coûté à lire — et la part de chaque catégorie, qui dit
   ce qu'aucune recherche ne couvre.
-- **Banc d'évaluation** (`/admin/evaluation`, administrateurs) : un onglet par
-  brique du scraper, et le premier ouvert est le **dépouillement**. On donne un
-  agenda réel et le nombre de pages à ouvrir ; le worker les télécharge et
-  appelle le vrai `links_of` — une extraction réécrite côté site donnerait la
-  vérité d'une réécriture, c'est-à-dire aucune. **Tous** les liens de la page
-  sont relevés, et ce que la brique en a fait devient une **précoche** : il ne
-  reste qu'à corriger. Chaque lien reçoit l'un de quatre verdicts — *sortie*,
-  *pagination*, *sous-agenda* (« voir aussi les sorties en château » : une autre
-  liste, que le pipeline n'exploite pas aujourd'hui), *autre*. Le croisement
-  donne les deux erreurs : les liens **retenus à tort**, qui ont coûté un appel
-  payant pour rien, et les **sorties perdues**, que personne n'aurait jamais
-  vues. Deux précisions sont affichées — celle du couple 3+4, qui dit ce qu'on
-  paie, et celle de l'étage 3 seul, qui ne compte comme faute que le vrai bruit
-  (un sous-agenda retenu mène quelque part ; c'est l'étage 4 qui le jette). Les
-  taux ne se débloquent **qu'une fois tous les liens tranchés par un humain** :
-  valider en n'ayant relu que la moisson affichait un rappel de 100 % qui ne
-  disait que « personne n'a regardé le reste ». Suivre la pagination fait partie du travail de la brique : la
-  console compte donc les **pages lues sur pages demandées** et dit pourquoi la
-  moisson s'est arrêtée, et le verdict de pagination de chaque page — juste,
-  **suite ratée** ou **fausse suite** — avec l'adresse de la vraie page suivante
-  quand on la connaît, qui est ce qu'il faut pour réparer. Le HTML de chaque page est gardé, gzippé : c'est ce qui fait du
-  banc un corpus gelé, et permet de rejouer la mesure hors ligne sans que la
-  page ait bougé entre-temps.
-- **Banc d'évaluation, la lecture** (étage 5) : le même principe sur l'autre
-  étage gratuit, mais sur des **fiches** plutôt que des agendas. La brique lit
-  trois fois un même HTML — le texte qui part au modèle, les dates JSON-LD,
-  l'illustration — et en tire une décision : sous deux cents caractères, la page
-  est abandonnée avant tout appel payant. La console montre les trois lectures
-  côte à côte et demande **trois verdicts**, parce qu'elles se ratent séparément
-  et ne se réparent pas au même endroit. Avec, en évidence, le signal qui
-  attrape le ratage le plus discret : quand le titre de la page ne se retrouve
-  pas dans le texte extrait, c'est qu'un `<header>` a été décapé — et les dates
-  et l'adresse sont parties avec.
-- **Banc d'évaluation, peupler les deux paniers** : plutôt que de saisir des
-  adresses une par une, le banc de lecture se remplit avec ce que le pipeline a
-  déjà fait — et en **deux paniers**, dont l'équilibre est la question centrale.
-  Les **sorties approuvées** sont des pages où l'étage 5 a réussi (sinon elles ne
-  seraient jamais devenues des sorties) ; n'en prendre que celles-là mesurerait
-  la brique sur ses propres succès. Les **pages abandonnées** — « page vide ou
-  illisible » — sont l'autre moitié, et personne n'a jamais vérifié si ces
-  abandons étaient justifiés. Les pages viennent de `ScraperRunItem`, qui garde
-  l'adresse *réellement lue*, et non de `sourceUrl` que l'étage 7 a pu réécrire
-  vers une page jamais ouverte. La console affiche le mélange et prévient quand
-  il ne contient que des succès.
-- **Banc d'évaluation, l'extraction** (étage 6) : le premier étage mesuré qui
-  **coûte**, et c'est là que naissent *intérieur / extérieur*, l'âge, le tarif,
-  le lieu — l'étage 5 ne rend qu'un texte, tout le reste de la fiche est lu
-  dedans par le modèle. L'extraction est rejouée sur le **texte gelé** de
-  l'étage 5, jamais sur la page : retélécharger mêlerait les deux mesures, et
-  une fiche sans tarif ne dirait plus si le modèle l'a raté ou si la lecture
-  l'avait déjà emporté avec un `<aside>`. Le jugement se fait **champ par
-  champ**, jamais fiche par fiche : une fiche « fausse » ne dit pas quoi
-  réparer, douze aspects tranchés séparément disent « le tarif se rate une fois
-  sur trois ». Quatre verdicts par champ — *juste*, *faux*, **inventé**,
-  **manqué** — d'où trois taux : l'**exactitude** (parmi les valeurs osées, la
-  part juste), la **couverture** (parmi ce que la page offrait, la part
-  rapportée), et le taux d'**invention**. Trois instruments travaillent avant le
-  premier clic et ne coûtent aucune étiquette : l'**ancrage** (toute valeur doit
-  se retrouver dans le texte), la **cohérence** interne (un âge minimum au-dessus
-  du maximum), l'**accord** avec les dates JSON-LD de l'étage 5. Un bouton « le
-  reste est juste » balaie ce qu'aucun instrument n'a signalé — et seulement
-  cela, sinon la mesure redeviendrait indiscernable de « personne n'a rien lu ».
-  Un second bouton met en file **toutes** les fiches lisibles d'un coup, avec le
-  compte annoncé : c'est le seul geste du banc dont la dépense suit le nombre de
-  pages, un appel par fiche.
-  *Intérieur / extérieur* n'a **aucun** instrument — une page ne l'écrit presque
-  jamais, elle dit « au parc de la Villette » et c'est le lecteur qui conclut.
-  C'est là que la **fiche approuvée** prend le relais : approuver veut dire qu'un
-  modérateur a vérifié chaque champ, donc la fiche est une vérité de référence
-  déjà payée. Quand la page en porte une, chaque aspect reçoit un verdict
-  **proposé**, avec la valeur approuvée citée en clair — et un bouton « confirmer
-  la fiche approuvée » les reporte d'un clic. Proposé, jamais écrit : rien
-  n'entre dans la mesure sans qu'un humain ait cliqué. Deux garde-fous
-  l'accompagnent : si le titre approuvé ne se retrouve plus dans le texte, la
-  page a changé depuis le run et **toutes** les propositions sont retirées ; et
-  la console compte à part les verdicts qui n'ont fait que *confirmer* la
-  référence — une mesure entièrement confirmative reste vraie, mais elle dit
-  surtout que le modèle et le modérateur sont d'accord.
+- **Banc d'évaluation** (`/admin/evaluation`, administrateurs) : la modération
+  dit gratuitement ce que le scraper a proposé à tort. Elle ne dira jamais ce
+  qu'il a **manqué** — une sortie écartée à l'étage 3 ou 4 n'est vue par
+  personne, jamais. C'est ce trou que le banc va chercher, et il est fait de
+  trois choses qui ne se mélangent pas : un **corpus** de pages gelées et de ce
+  qu'un humain dit qu'elles contiennent, des **runs** qui rejouent une brique
+  dessus et s'empilent sans jamais s'écraser, et une **mesure** calculée à la
+  demande, stockée nulle part. Quatre étages sont mesurés — le dépouillement, le
+  tri, la lecture et l'extraction —, chacun sur la sortie gelée du précédent ; la
+  reconnaissance a son corpus mais pas encore son run. Le corpus se peuple
+  surtout de travail humain **déjà
+  payé** : les fiches qu'un modérateur a approuvées, les pages que la lecture a
+  abandonnées, les liens dont on sait déjà qu'ils menaient à une sortie.
+  Tout le détail — ce que chaque étage mesure, ce que la fiche approuvée vaut
+  vraiment comme référence, et ce qui reste limité — est dans
+  [`docs/banc-evaluation.md`](docs/banc-evaluation.md).
 - **Import automatique** : un [scraper](scraper/README.md) cherche des sorties
   sur le web via l'API Claude et les propose au même titre qu'un visiteur, avec
   une clé d'API. Il sait aussi partir d'une adresse connue — le site d'un
@@ -160,13 +98,23 @@ Le Havre, Niort et Nancy.
   sont pas complétés. Tout ce qu'une exécution a produit — ses sorties et ce
   qu'elle a mémorisé — se supprime d'un bouton depuis sa page.
 
-## Documentation illustrée
+## Documentation
 
-Trois pages HTML à ouvrir dans un navigateur, dans [`docs/`](docs/README.md) :
-deux **planches** qui résument le scraper étage par étage, l'**anatomie**
-détaillée du pipeline et de son coût, et un mode d'emploi pour **fabriquer un
-modèle maison** à la place de Haiku. Ce sont des documents d'analyse datés, pas
-des spécifications — leur statut est précisé dans l'index.
+Deux natures de documents, et il faut les distinguer — [`docs/`](docs/README.md)
+en tient l'index.
+
+**Les références, tenues à jour avec le code.** Le [README du
+scraper](scraper/README.md) pour le pipeline, et
+[`docs/banc-evaluation.md`](docs/banc-evaluation.md) pour le banc d'évaluation :
+ce que le corpus contient, comment chaque étage se mesure, et ce qui reste
+limité.
+
+**Les analyses, datées.** Cinq pages HTML à ouvrir dans un navigateur : deux
+**planches** qui résument le scraper étage par étage, l'**anatomie** détaillée du
+pipeline et de son coût, de quoi **mesurer** ses briques, et un mode d'emploi
+pour **fabriquer un modèle maison** à la place de Haiku. Ce ne sont pas des
+spécifications, et leurs chiffres vieillissent — leur statut est précisé dans
+l'index.
 
 ## Démarrage
 
@@ -223,28 +171,34 @@ Comptes de démonstration créés par le seed (mot de passe `motdepasse`) :
 | GET | `/api/scraper/memory` | modérateur | Mémoire des pages analysées (`q`, `decision`, `page`) |
 | DELETE | `/api/scraper/memory` | modérateur | Oublier des pages (`decision` pour n'en purger qu'un lot) |
 | DELETE | `/api/scraper/runs/:id/data` | modérateur | Supprimer ce qu'une exécution a produit : ses sorties et ce qu'elle a mémorisé (le journal reste) |
-| GET | `/api/eval/agendas` | admin | Le banc d'évaluation : les agendas et ce que le dépouillement en a tiré |
-| POST | `/api/eval/agendas` | admin | Ajouter un agenda au banc et le mettre en file (`url`, `pages`, `label`) |
-| POST | `/api/eval/agendas/:id/analyze` | admin | Relancer le dépouillement (efface la moisson précédente et les ajouts manuels) |
-| PATCH | `/api/eval/links/:id` | admin | Corriger le verdict d'un lien — c'est la mesure |
-| POST | `/api/eval/pages/:id/verdict` | admin | Trancher d'un coup les liens écartés d'un motif (jamais les retenus) |
-| PATCH | `/api/eval/pages/:id/next` | admin | Trancher la pagination d'une page, et dire quelle était la vraie suite |
-| GET / POST | `/api/eval/readings` | admin | Le banc de lecture : les fiches et ce que l'étage 5 en a tiré |
-| PATCH | `/api/eval/readings/:id` | admin | Trancher le texte, l'illustration ou les dates |
-| POST | `/api/eval/readings/:id/validate` | admin | Figer la lecture — les trois aspects exigés |
-| POST | `/api/eval/pages/:pageId/links` | admin | Ajouter un lien absent du HTML (une carte rendue en JavaScript) |
-| DELETE | `/api/eval/links/:id` | admin | Retirer un ajout manuel (un lien relevé sur la page, lui, ne s'efface pas) |
-| POST | `/api/eval/agendas/:id/validate` | admin | Figer la vérité de référence : le rappel devient lisible |
-| GET | `/api/eval/pages/:id/html` | admin | Le HTML gelé d'une page, tel que le site l'a servi ce jour-là |
-| GET / POST | `/api/eval/seed` | admin | Les deux paniers : ce qu'ils peuvent donner, et en mettre un lot en file |
-| GET / POST | `/api/eval/extractions` | admin | Le banc d'extraction : les fiches et ce que l'étage 6 a tiré du texte gelé |
-| POST | `/api/eval/extractions/all` | admin | Mettre en file toutes les fiches lisibles — un appel payant par fiche |
-| PATCH | `/api/eval/extractions/:id` | admin | Trancher un ou plusieurs champs — *juste*, *faux*, *inventé*, *manqué* |
-| POST | `/api/eval/extractions/:id/validate` | admin | Figer la fiche — tous les aspects exigés |
-| POST | `/api/eval/harvest/next` | modérateur | Le worker réclame le prochain agenda du banc |
-| POST | `/api/eval/harvest/:id/pages` | modérateur | Le worker rend les liens de chaque page |
-| POST | `/api/eval/reading/next` | modérateur | Le worker réclame la prochaine fiche à lire |
-| POST | `/api/eval/extraction/next` | modérateur | Le worker réclame la prochaine extraction — le texte part avec |
+| GET / POST | `/api/eval/natures` | admin | Le corpus de l'étage 2 : ce qu'une page **est** (`url`, `nature`, `label`) |
+| PATCH / DELETE | `/api/eval/natures/:id` | admin | Corriger cette étiquette, ou retirer la page |
+| GET / POST | `/api/eval/agendas` | admin | Le corpus des agendas, et en ajouter un (`url`, `pages`, `label`) |
+| GET | `/api/eval/agendas/:id` | admin | Un agenda : ses étiquettes, et le relevé d'un run en regard (`runId`) |
+| PUT | `/api/eval/pages/:pageId/links` | admin | Étiqueter un lien — c'est la mesure. Y compris un lien absent du HTML |
+| PATCH / DELETE | `/api/eval/links/:id` | admin | Corriger une étiquette, ou la retirer (« je ne sais pas ») |
+| POST | `/api/eval/links/:id/sortie` | admin | Décrire la sortie vers laquelle ce lien mène, ou rejoindre la sienne |
+| POST | `/api/eval/pages/:pageId/bulk` | admin | Étiqueter d'un coup les liens qu'un run a écartés sous un même motif |
+| PATCH | `/api/eval/pages/:id/next` | admin | L'adresse de la vraie page suivante (vide = il n'y en a pas) |
+| GET / POST | `/api/eval/sorties` | admin | Le corpus des sorties : les pages de fiche et ce qu'elles contiennent |
+| PATCH | `/api/eval/sorties/:id` | admin | Corriger l'étiquette champ par champ (`null` = « personne n'a regardé ») |
+| PUT | `/api/eval/sorties/:id/etiquette` | admin | Réécrire l'étiquette entière : ce que la page annonce |
+| DELETE | `/api/eval/sorties[/:id]` | admin | Retirer une sortie, ou vider le corpus (dit ce qui était saisi à la main) |
+| POST | `/api/eval/{natures,agendas,sorties}/:id/capture` | admin | Remettre en file de capture. **Refusé** si l'entrée est déjà gelée |
+| GET | `/api/eval/{pages,sorties,natures}/:id/html` | admin | Le HTML gelé, tel que le site l'a servi ce jour-là |
+| GET / POST | `/api/eval/runs` | admin | Les runs et leur mesure ; en lancer un (`stage`, `label`, `recherche`) |
+| GET / DELETE | `/api/eval/runs/:id` | admin | Un run, sa mesure et son détail ; ou l'oublier |
+| GET | `/api/eval/seed` | admin | Ce que chaque panier de la modération peut encore donner |
+| POST | `/api/eval/seed` | admin | En verser un lot au corpus (`bucket`, `limit`) |
+| GET | `/api/eval/reste` | admin | La dette d'étiquetage : jamais regardés, à créer, à décrire |
+| GET | `/api/eval/recherche` | admin | La recherche que le formulaire propose par défaut |
+| GET | `/api/eval/criteres` | admin | Ce que chaque étage cherche à savoir, et dans quels champs |
+| POST | `/api/eval/capture/next` | modérateur | Le worker réclame une capture. Les captures passent avant les runs |
+| POST | `/api/eval/capture/:kind/:id[/fail]` | modérateur | Le worker rend le HTML gelé, ou dit pourquoi il ne l'a pas |
+| POST | `/api/eval/runs/next` | modérateur | Le worker réclame un run, et déclare la révision qui tourne |
+| POST | `/api/eval/runs/:id/next-item` | modérateur | L'entrée suivante, **avec son HTML gelé** : le rejeu est hors ligne |
+| POST | `/api/eval/runs/:id/{links,read,extract}` | modérateur | Ce que la brique a rendu sur cette entrée |
+| POST | `/api/eval/runs/:id/finish` | modérateur | Clôture : le coût, et de quoi ce run était le run (`model`, `promptHash`) |
 | GET | `/api/admin/users` | admin | Liste des utilisateurs |
 | PATCH | `/api/admin/users/:id/role` | admin | Changer un rôle |
 
