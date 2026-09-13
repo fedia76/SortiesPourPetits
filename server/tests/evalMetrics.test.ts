@@ -29,6 +29,11 @@
  * Exécution : `npm test` (le lanceur de Node, chargé par tsx — aucune
  * dépendance de plus, et c'est délibéré : une mesure qu'on n'ose pas installer
  * est une mesure qu'on n'exécute pas).
+ *
+ * Le motif du script npm n'est pas entre guillemets, et il ne doit pas l'être :
+ * c'est au shell de le développer. Le lanceur de Node 20 ne développe pas les
+ * motifs lui-même — il cherche alors un fichier nommé « tests/*.test.ts » et la
+ * CI échoue, là où une machine en Node 22 ne voit rien.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

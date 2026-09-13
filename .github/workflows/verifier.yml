@@ -39,15 +39,25 @@ jobs:
         run: |
           npm ci
           npm run typecheck
-      - name: Compilation de l'API
+      # `build` compile `src`, et rien d'autre : ni les tests, ni `scripts/`. Le
+      # script de reprise des étiquettes a pu écrire dans une table supprimée
+      # pendant des semaines pour cette raison exacte, sans que rien ne le dise.
+      # `typecheck` couvre les trois.
+      - name: Compilation et types de l'API
         working-directory: server
         run: |
           npm ci
           npm run build
+          npm run typecheck
       # La mesure du banc est du calcul pur, et une erreur y fausserait tous les
       # chiffres sans rien casser : compiler ne suffit donc pas à la surveiller.
       # Ces tests ne demandent aucune dépendance de plus — le lanceur de Node,
       # chargé par `tsx`, que l'API a déjà.
+      #
+      # Le motif de `npm test` n'est **pas** protégé par des guillemets, et il ne
+      # doit pas l'être : c'est le shell qui doit le développer. Le lanceur de
+      # Node 20 ne développe pas les motifs lui-même et cherche un fichier
+      # nommé « tests/*.test.ts », qu'il ne trouve évidemment pas.
       - name: Tests de l'API
         working-directory: server
         run: npm test
