@@ -1122,10 +1122,134 @@ export interface EvalNature {
   archived: boolean;
   /** Ce que la page est, d'après un humain. Jamais nul : c'est l'étiquette. */
   nature: EvalPageNature;
+  /** Ce que l'étage 2 proposait quand un humain a tranché. Nul si rien. */
+  proposed: EvalPageNature | null;
+  /** D'où vient l'étiquette : saisie, corrigée, ou laissée passer. */
+  origin: EvalNatureOrigin;
   note: string;
   labelledAt: string;
   createdAt: string;
   author?: { id: number; displayName: string };
+}
+
+/**
+ * D'où vient l'étiquette d'une page du corpus de l'étage 2.
+ *
+ * Le même vocabulaire que la provenance des champs d'une fiche, et pour la
+ * même raison : une étiquette qui ne fait que reprendre ce que la brique
+ * proposait ne la contredit jamais, donc ne la mesure pas vraiment.
+ */
+export type EvalNatureOrigin = 'SAISIE' | 'CORRIGE' | 'NON_CONTREDIT';
+
+export const EVAL_NATURE_ORIGIN_LABELS: Record<EvalNatureOrigin, string> = {
+  SAISIE: 'saisie',
+  CORRIGE: 'corrigée',
+  NON_CONTREDIT: 'non contredite',
+};
+
+export const EVAL_NATURE_ORIGIN_HINTS: Record<EvalNatureOrigin, string> = {
+  SAISIE: 'Un humain a saisi l’adresse et la nature, sans que rien ne lui souffle.',
+  CORRIGE:
+    'Une chasse proposait autre chose, un humain a corrigé. La plus forte des ' +
+    'trois : elle est indépendante de ce que la brique pensait.',
+  NON_CONTREDIT:
+    'Une chasse proposait ceci, un humain l’a laissé passer. Elle compte — il ' +
+    'faut des cas où la brique a raison — mais un taux calculé surtout sur ' +
+    'celles-là mesure l’étage 2 contre lui-même.',
+};
+
+/** Ce que le corpus de l'étage 2 doit à la brique qu'il mesure. */
+export interface SoucheCorpus {
+  total: number;
+  saisies: number;
+  corriges: number;
+  nonContredits: number;
+  /** Part de ce qui ne vient pas de la brique. Nulle si le corpus est vide. */
+  independance: number | null;
+}
+
+// ─────────────────────────────────────────────────────────────── les chasses
+
+export type EvalHuntStatus = 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED';
+export type EvalHuntDecision = 'EN_ATTENTE' | 'RETENUE' | 'ECARTEE';
+
+export const EVAL_HUNT_STATUS_LABELS: Record<EvalHuntStatus, string> = {
+  QUEUED: 'en file',
+  RUNNING: 'en cours',
+  DONE: 'terminée',
+  FAILED: 'en échec',
+};
+
+/**
+ * Une page remontée par une chasse, et ce que l'étage 2 en pense.
+ *
+ * `proposed` est nul quand l'étage 2 n'a pas su trancher — et ce nul est la
+ * seule chose qui empêche une chasse de se valider toute seule. Le pipeline,
+ * lui, traite « inconnu » en agenda, mais c'est une décision d'orchestration :
+ * la recopier écrirait au corpus ce que le pipeline fait au lieu de ce que la
+ * page est.
+ */
+export interface EvalHuntPage {
+  id: number;
+  huntId: number;
+  url: string;
+  /** L'adresse d'avant l'échange de langue, quand il a joué. Vide sinon. */
+  foundUrl: string;
+  title: string;
+  query: string;
+  proposed: EvalPageNature | null;
+  /** Le signal qui a tranché : `url`, `pagination`, `json-ld`, `modele`… */
+  signal: string;
+  detail: string;
+  /** `certain` : le site le déclare. `probable` : on l'infère de sa forme. */
+  confidence: string;
+  /** Le modèle interrogé pour cette page-ci. Vide : la cascade a suffi. */
+  asked: string;
+  links: number;
+  dated: number;
+  heading: string;
+  opening: string;
+  chars: number;
+  archived: boolean;
+  /** Page injoignable ce jour-là : rendue quand même, sans précoche. */
+  error: string;
+  decision: EvalHuntDecision;
+  decidedAt: string | null;
+  natureId: number | null;
+  createdAt: string;
+}
+
+export interface EvalHunt {
+  id: number;
+  prompt: string;
+  area: string;
+  /** Requêtes imposées au lancement. Vides : le modèle les a formulées. */
+  queries: string[];
+  /** Celles réellement lancées, écrites à la clôture. */
+  ranQueries: string[];
+  maxQueries: number;
+  maxPages: number;
+  provider: string;
+  status: EvalHuntStatus;
+  error: string | null;
+  /** Ce que les recherches ont remonté au-delà du plafond, et qu'on n'a pas ouvert. */
+  overCap: number;
+  costUsd: number;
+  model: string;
+  codeRef: string;
+  queuedAt: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  author?: { id: number; displayName: string };
+  comptes: {
+    total: number;
+    enAttente: number;
+    retenues: number;
+    ecartees: number;
+    indecises: number;
+    injoignables: number;
+  };
+  pages: EvalHuntPage[];
 }
 
 export type EvalPageNature = 'AGENDA' | 'SORTIE' | 'PROGRAMME' | 'AUTRE';

@@ -13,6 +13,7 @@ lui-même est décrit dans [`scraper/README.md`](../scraper/README.md).
 | Routes | [`server/src/routes/eval.ts`](../server/src/routes/eval.ts) |
 | Mesure | [`server/src/lib/evalMetrics.ts`](../server/src/lib/evalMetrics.ts) — pur, testé dans [`server/tests/`](../server/tests/evalMetrics.test.ts) |
 | Briques rejouées | [`scraper/sortiesbot/evaluation.py`](../scraper/sortiesbot/evaluation.py) |
+| Chasse | `hunt()` dans le même module ; la précoche se pèse dans [`server/src/lib/evalHunt.ts`](../server/src/lib/evalHunt.ts) |
 | Files du worker | [`scraper/sortiesbot/worker.py`](../scraper/sortiesbot/worker.py) |
 
 ## Pourquoi un banc
@@ -350,6 +351,75 @@ précédentes. C'est aussi pourquoi les catégories du site partent dans le prom
 le modèle doit y choisir la sienne, et les lui refuser faisait compter faux un
 champ qu'on l'empêchait de remplir.
 
+## La chasse : peupler l'étage 2 depuis un prompt
+
+Étiqueter est le seul travail coûteux du banc, et le corpus de l'étage 2 le
+payait au prix fort : une adresse collée à la main dans la console, une nature
+choisie, un gel demandé, et on recommence. Une **chasse** fait le trajet d'un
+coup.
+
+| Ce qu'elle fait | Avec quoi |
+|---|---|
+| lance plusieurs recherches depuis un prompt | `provider.queries`, `provider.search` — l'étage 1 tel quel |
+| ouvre **toutes** les pages qu'elles remontent | le `Fetcher` de production |
+| dit de chacune ce qu'elle est | `classify`, `digest`, et le modèle quand la cascade se tait — l'étage 2 tel quel |
+| gèle le HTML au passage | la même archive gzippée que la capture |
+
+Un humain n'a plus qu'à corriger ce qui est faux et valider. Les candidates
+arrivent **précochées**, et la console tient trois listes : celles qu'on retient,
+celles qu'on écarte, et celles qui attendent encore.
+
+### Ce que la précoche ne doit jamais devenir
+
+Un corpus rempli en acceptant les propositions de la brique mesurerait la brique
+**contre elle-même**. Le taux monterait à mesure qu'on valide vite, sans qu'aucune
+page n'ait rien appris à personne — et rien, dans un tableau de bord, ne
+distingue ce chiffre-là d'un vrai. C'est le travers que la provenance des champs
+d'une fiche nommait déjà (`CORRIGE` contre `NON_CONTREDIT`), en plus dangereux :
+il n'y a qu'une étiquette à poser, donc un seul clic entre « j'ai vérifié » et
+« j'ai laissé passer ».
+
+Deux garde-fous, et ils sont dans le code plutôt que dans une recommandation :
+
+* **un indécis ne propose rien.** Quand aucun signal ne tranche et que le modèle
+  répond « inconnu », la candidate arrive **décochée**. Le pipeline, lui, la
+  traite en agenda — et il a raison, l'erreur n'y est pas symétrique — mais c'est
+  une décision d'orchestration : la recopier écrirait au corpus ce que le
+  pipeline *fait* au lieu de ce que la page *est*, c'est-à-dire exactement ce
+  qu'on cherche à mesurer ;
+* **ce qu'on a corrigé se distingue de ce qu'on a laissé passer.**
+  `EvalNature.origin` vaut `SAISIE` (personne n'avait rien proposé), `CORRIGE`
+  (la chasse proposait autre chose) ou `NON_CONTREDIT` (la chasse proposait ceci).
+  La console affiche la part du corpus qui ne vient **pas** de la brique, et
+  c'est ce chiffre qu'il faut regarder avant la taille.
+
+Le nombre de corrections d'une chasse est affiché **avant** de valider, pas
+après : zéro correction sur trente pages veut dire que le corpus vient de
+recopier l'étage 2, et il vaut mieux le savoir le doigt sur le bouton.
+
+### Pourquoi une chasse a le droit d'être en ligne
+
+Un run ne peut pas l'être : il doit rendre le même chiffre six mois plus tard,
+donc rejouer sur du HTML gelé. Une chasse **construit** le corpus, elle ne le
+mesure pas — et elle gèle le HTML au passage, de sorte que la page qu'un run
+rejouera est exactement celle sur laquelle la précoche a été faite, et non celle
+que le site servira le jour où quelqu'un validera. Une page injoignable ce
+jour-là revient quand même, sans archive et sans précoche : l'adresse vaut d'être
+vue, et la file de capture la gèlera si on la retient.
+
+Ce qu'une chasse déclare à sa clôture — les requêtes **réellement lancées**, la
+révision qui tournait, le prix — obéit à la même règle qu'un run : on ne déclare
+que ce qui est déjà vrai, et une chasse qui tait les requêtes que le modèle a
+formulées ne se rejoue pas.
+
+### Ce qu'elle ne fait pas
+
+Elle n'**étiquette** pas : elle propose. Et elle ne mesure rien — le corpus de
+l'étage 2 attend toujours son run (voir « [Ce qui reste
+limité](#ce-qui-reste-limité) »). C'est même son principal effet de bord : elle
+rend le peuplement si rapide que la dette de mesure, elle, devient la seule qui
+reste.
+
 ## Peupler le corpus avec ce que la modération a déjà payé
 
 Étiqueter est le seul travail coûteux du banc. Tout ce qui peut venir d'un geste
@@ -362,6 +432,12 @@ humain **déjà fait** doit en venir.
 | **illisibles** | sorties refusées pour `DESCRIPTION_INUTILISABLE` | le pire des trois : la page a passé le seuil, coûté une extraction, et son texte ne valait rien |
 | **liens** | une page devenue une sortie approuvée, trouvée parmi les liens d'un agenda du corpus | l'étiquette `SORTIE` est acquise |
 | **fiches** | la fiche approuvée elle-même, champ par champ | l'étiquette de l'étage 6, sans un clic |
+
+Une **chasse** est un cinquième chemin, et il ne ressemble à aucun des quatre :
+les paniers reprennent un geste humain déjà fait, la chasse va chercher des pages
+que personne n'a jamais vues. C'est ce qui la rend indispensable au corpus de
+l'étage 2 — la modération ne voit que des pages qui ont **passé** l'étage 2, donc
+jamais celles qu'il a mal reconnues.
 
 **L'équilibre entre les paniers est la question.** Une sortie approuvée est, par
 construction, une page dont le texte était lisible : n'en prendre que celles-là
@@ -418,7 +494,10 @@ coût annoncé se planifie.
 1. les **recherches** — elles produisent des sorties que des parents attendent ;
 2. les **captures** du banc — geler est gratuit, et un run joué sur un corpus
    incomplet mesure ce qu'on a sous la main plutôt que ce qu'on voulait mesurer ;
-3. les **runs** du banc — dont deux étages sur quatre appellent le modèle et se
+3. les **chasses** — après les captures, parce qu'elles lancent de vraies
+   recherches et téléchargent de vraies pages ; avant les runs, parce qu'elles
+   construisent ce qu'un run mesurera ;
+4. les **runs** du banc — dont deux étages sur quatre appellent le modèle et se
    paient.
 
 Un run est clos **quoi qu'il arrive**, y compris sur un plantage : sans clôture
@@ -452,10 +531,22 @@ jugé.
 
 **Le corpus de l'étage 2 ne se mesure pas encore.** Les pages s'y ajoutent,
 s'étiquettent et se gèlent, mais `EvalStage` ne connaît que les quatre autres
-étages : aucun run ne peut les rejouer. C'est un corpus qui se paie en travail
-humain sans rien rendre, et c'est la première chose à finir — il manque une valeur
-d'énuméré, une branche dans le worker et une fonction de score, la plus simple des
-cinq puisqu'il s'agit de comparer deux étiquettes.
+étages : aucun run ne peut les rejouer. C'est la première chose à finir — il
+manque une valeur d'énuméré, une branche dans le worker et une fonction de score,
+la plus simple des cinq puisqu'il s'agit de comparer deux étiquettes.
+
+Et la chasse rend cette dette **plus urgente**, pas moins : elle a supprimé le
+coût du peuplement, donc la seule raison qui restait de ne pas mesurer. Un corpus
+qui grossit vite sans run est un corpus qu'on croit utile parce qu'on l'a vu
+grandir.
+
+**La précoche d'une chasse ne se mesure pas non plus, et c'est un autre trou.**
+La console dit combien d'étiquettes ont contredit l'étage 2 — c'est ce qui évite
+de mesurer la brique contre elle-même —, mais elle n'en fait pas un taux : un
+`CORRIGE` sur une page d'agenda et un sur une billetterie n'ont pas la même
+valeur, et les additionner rendrait un chiffre qui a l'air d'une mesure sans en
+être une. Le jour où l'étage 2 aura son run, c'est lui qui le dira, sur le corpus
+entier plutôt que sur les seules pages qu'une chasse a ramenées.
 
 **Les étages 1, 7 et 8 ne sont pas au banc.** La découverte se juge sur le
 rendement des requêtes (page « Statistiques »), l'attribution sur l'entonnoir de

@@ -179,6 +179,29 @@ class SppApi:
         """
         self._post_json(f"/api/eval/capture/{kind}/{item_id}/fail", {"error": error[:2000]})
 
+    # ------------------------------------------------------------ la chasse
+    # Une troisième file, et elle ne fait ni l'un ni l'autre : elle **peuple**
+    # le corpus de l'étage 2 au lieu d'attendre qu'on y colle des adresses une
+    # à une. Elle est en ligne — recherches, téléchargements —, ce qui est
+    # permis parce qu'elle construit le corpus au lieu de le mesurer, et le
+    # HTML qu'elle rapporte est gelé du même geste.
+
+    def next_hunt(self, code_ref: str = "") -> dict[str, Any] | None:
+        """Réclame la prochaine chasse en file, ou None s'il n'y a rien."""
+        body = self._post_json("/api/eval/hunts/next", {"codeRef": code_ref})
+        return body.get("hunt")
+
+    def report_hunt_pages(self, hunt_id: int, pages: list[dict[str, Any]]) -> None:
+        """Rend un paquet de candidates, avec leur précoche et leur HTML gelé."""
+        if not pages:
+            return
+        self._post_json(f"/api/eval/hunts/{hunt_id}/pages", {"pages": pages})
+
+    def finish_hunt(self, hunt_id: int, status: str, **payload: Any) -> None:
+        """Clôt une chasse. Même exigence qu'ailleurs : sans clôture elle
+        resterait « en cours » et le worker n'en prendrait plus d'autre."""
+        self._post_json(f"/api/eval/hunts/{hunt_id}/finish", {"status": status, **payload})
+
     def next_eval_run(self, code_ref: str = "") -> dict[str, Any] | None:
         """Réclame un run en file, en déclarant la révision qui tourne.
 

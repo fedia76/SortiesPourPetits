@@ -973,3 +973,113 @@ export const evalSeedSchema = z.object({
   bucket: z.enum(['approuvees', 'abandonnees', 'illisibles', 'liens', 'fiches']),
   limit: z.coerce.number().int().min(1).max(200).optional().default(25),
 });
+
+// ══════════════════════════════════════════ la chasse : peupler l'étage 2
+//
+// Étiqueter est le seul travail coûteux du banc, et le corpus de l'étage 2 le
+// payait une adresse à la fois. Une chasse lance les recherches de l'étage 1,
+// ouvre ce qu'elles remontent, et précoche chaque page avec ce que l'étage 2
+// en pense. Il ne reste qu'à corriger ce qui est faux.
+
+/**
+ * Pages ouvertes au plus par une chasse.
+ *
+ * Chacune est un téléchargement chez quelqu'un **et** une ligne qu'un humain
+ * devra relire. Le plafond est donc celui de l'attention d'un relecteur, pas
+ * celui d'une machine : au-delà, on ne peuple plus un corpus, on le noie.
+ */
+export const EVAL_MAX_HUNT_PAGES = 100;
+
+/** Lancer une chasse depuis la console. */
+export const evalHuntSchema = z.object({
+  /** Ce qu'on cherche, en une phrase. Devient le thème de l'étage 1. */
+  prompt: z.string().trim().min(3).max(300),
+  area: z.string().trim().min(1).max(120).optional().default('Île-de-France'),
+  /**
+   * Requêtes imposées. Vides — le cas ordinaire —, un appel au modèle les
+   * formule ; les fournir fige la chasse, donc la rend comparable.
+   */
+  queries: z.array(z.string().trim().min(2).max(300)).max(10).optional().default([]),
+  maxQueries: z.number().int().min(1).max(10).optional().default(6),
+  maxPages: z.number().int().min(1).max(EVAL_MAX_HUNT_PAGES).optional().default(30),
+  provider: z.enum(['serper', 'anthropic']).optional().default('serper'),
+});
+
+/** Ce que le worker déclare en prenant une chasse : sa révision, et elle seule. */
+export const evalHuntClaimSchema = z.object({
+  codeRef: z.string().trim().max(60).optional().default(''),
+});
+
+/**
+ * Ce qu'une chasse rend d'une page : la précoche de l'étage 2, et son HTML.
+ *
+ * `nature` vide est un état de plein droit — l'étage 2 n'a pas su trancher, et
+ * la page attendra un humain. C'est la seule chose qui empêche une chasse de
+ * se valider toute seule : le pipeline, lui, traite « inconnu » en agenda,
+ * mais c'est une décision d'orchestration, pas une observation sur la page.
+ */
+export const evalHuntPagesSchema = z.object({
+  pages: z
+    .array(
+      z.object({
+        url: scraperUrl,
+        /** Celle qu'a rendue la recherche, avant l'échange de langue. */
+        foundUrl: z.union([scraperUrl, z.literal('')]).optional().default(''),
+        title: z.string().trim().max(300).optional().default(''),
+        query: z.string().trim().max(300).optional().default(''),
+        /** Les trois natures que `classify` rend, ou rien s'il reste indécis. */
+        nature: z.enum(['agenda', 'sortie', 'programme', '']).optional().default(''),
+        signal: z.string().trim().max(30).optional().default(''),
+        detail: z.string().trim().max(300).optional().default(''),
+        confidence: z.string().trim().max(20).optional().default(''),
+        /** Le modèle interrogé pour cette page-ci. Vide : la cascade a suffi. */
+        asked: z.string().trim().max(80).optional().default(''),
+        links: z.number().int().min(0).optional().default(0),
+        dated: z.number().int().min(0).optional().default(0),
+        heading: z.string().trim().max(200).optional().default(''),
+        opening: z.string().trim().max(2000).optional().default(''),
+        chars: z.number().int().min(0).optional().default(0),
+        error: z.string().trim().max(300).optional().default(''),
+        html: z.string().max(EVAL_MAX_HTML_B64).optional(),
+      }),
+    )
+    .min(1)
+    .max(20),
+});
+
+/**
+ * La clôture d'une chasse, et ce qu'elle déclare de ce qu'elle a fait.
+ *
+ * Les requêtes **réellement lancées** en font partie : la console n'en impose
+ * pas toujours, et une chasse qui tait celles que le modèle a formulées ne se
+ * rejoue pas. `overCap` dit ce que les recherches ont remonté au-delà du
+ * plafond — sans quoi on croirait la moisson exhaustive.
+ */
+export const evalHuntFinishSchema = z.object({
+  status: z.enum(['DONE', 'FAILED']),
+  queries: z.array(z.string().trim().max(300)).max(20).optional().default([]),
+  pages: z.number().int().min(0).optional().default(0),
+  overCap: z.number().int().min(0).optional().default(0),
+  model: z.string().trim().max(80).optional().default(''),
+  costUsd: z.number().min(0).optional().default(0),
+  error: z.string().trim().max(2000).optional(),
+});
+
+/**
+ * Ce qu'un humain fait des candidates d'une chasse.
+ *
+ * `nature: null` écarte la page. Une candidate qu'on ne nomme pas reste en
+ * attente : valider par paquets ne doit pas trancher à la place de personne
+ * sur celles qu'on n'a pas regardées.
+ */
+export const evalHuntDecisionSchema = z.object({
+  decisions: z
+    .array(
+      z.object({
+        pageId: z.number().int().positive(),
+        nature: z.enum(EVAL_NATURES).nullable(),
+      }),
+    )
+    .min(1)
+    .max(EVAL_MAX_HUNT_PAGES),
+});

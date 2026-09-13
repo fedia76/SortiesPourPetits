@@ -46,10 +46,17 @@
  * porte sa clé d'API : exiger l'administration obligerait à donner ce rôle à
  * un programme.
  */
-import { Prisma, Role, type EvalAudience, type EvalVerdict } from '@prisma/client';
+import {
+  Prisma,
+  Role,
+  type EvalAudience,
+  type EvalPageNature,
+  type EvalVerdict,
+} from '@prisma/client';
 import express from 'express';
 import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
+import { comptesChasse, natureProposee, origineDe, soucheCorpus } from '../lib/evalHunt';
 import { deleteEvalPages, readEvalPage, saveEvalPage } from '../lib/evalPages';
 import { requireRole } from '../middleware/auth';
 import {
@@ -75,6 +82,11 @@ import {
   evalExtractResultSchema,
   evalFailSchema,
   evalEtiquetteSchema,
+  evalHuntClaimSchema,
+  evalHuntDecisionSchema,
+  evalHuntFinishSchema,
+  evalHuntPagesSchema,
+  evalHuntSchema,
   evalLinkResultSchema,
   evalLinkSchema,
   evalNatureSchema,
@@ -863,6 +875,10 @@ evalRouter.get('/natures', admin, async (_req, res) => {
   });
   res.json({
     natures: natures.map(({ htmlPath, ...rest }) => ({ ...rest, archived: Boolean(htmlPath) })),
+    // Ce que ce corpus doit à la brique qu'il mesure. La taille ne dit rien :
+    // un corpus rempli en acceptant les précoches d'une chasse grossit sans
+    // rien mesurer d'autre que l'étage 2 contre lui-même.
+    souche: soucheCorpus(natures),
   });
 });
 
@@ -963,6 +979,227 @@ evalRouter.get('/natures/:id(\\d+)/html', admin, async (req, res) => {
   }
   const html = await readEvalPage(nature.htmlPath);
   res.type('html').send(html);
+});
+
+// ═══════════════════════════ la chasse : peupler le corpus de l'étage 2
+//
+// Étiqueter est le seul travail coûteux du banc, et ce corpus-ci le payait au
+// prix fort : une adresse collée à la main, une nature choisie, un gel
+// demandé, et on recommence. Une chasse fait le trajet d'un coup — l'étage 1
+// lance les recherches depuis un prompt, l'étage 2 dit ce qu'il pense de
+// chaque page qu'elles remontent, et il ne reste qu'à corriger ce qui est
+// faux.
+//
+// ## Le danger, et il faut le nommer ici plutôt que le découvrir dans six mois
+//
+// Un corpus rempli en acceptant les propositions de la brique mesurerait la
+// brique **contre elle-même** : le taux monterait à mesure qu'on valide vite,
+// et rien ne distinguerait ce chiffre-là d'un vrai. D'où deux choses, dans
+// `lib/evalHunt.ts` :
+//
+// * une page que l'étage 2 ne sait pas reconnaître part **sans précoche**. Le
+//   pipeline, lui, tranche — il traite « inconnu » en agenda — mais c'est une
+//   décision d'orchestration, et la recopier écrirait au corpus ce que le
+//   pipeline *fait* au lieu de ce que la page *est* ;
+// * ce qu'un humain a **corrigé** est gardé à part de ce qu'il a laissé
+//   passer (`EvalNature.origin`). Les renseignements sont dans les `CORRIGE`.
+
+/** Ce qu'une chasse montre dans la console, candidates comprises. */
+const CHASSE_AVEC_PAGES = {
+  author: { select: { id: true, displayName: true } },
+  pages: { orderBy: { id: 'asc' } },
+} as const;
+
+/**
+ * Ce qu'une candidate porte de nécessaire au compte. Le reste part tel quel.
+ *
+ * `htmlPath` ne sort **jamais** : le chemin d'une archive n'a rien à faire
+ * dans une réponse, et la console n'a besoin que de savoir si elle existe.
+ */
+interface CandidateRendue {
+  htmlPath: string | null;
+  decision: string;
+  proposed: EvalPageNature | null;
+  error: string;
+}
+
+function chasseRendue<
+  T extends { queries: string; ranQueries: string; pages: CandidateRendue[] },
+>(hunt: T) {
+  const { queries, ranQueries, pages, ...rest } = hunt;
+  return {
+    ...rest,
+    queries: parseJson<string[]>(queries, []),
+    ranQueries: parseJson<string[]>(ranQueries, []),
+    comptes: comptesChasse(pages),
+    pages: pages.map(({ htmlPath, ...page }) => ({ ...page, archived: Boolean(htmlPath) })),
+  };
+}
+
+evalRouter.get('/hunts', admin, async (_req, res) => {
+  const hunts = await prisma.evalHunt.findMany({
+    orderBy: { queuedAt: 'desc' },
+    take: 20,
+    include: CHASSE_AVEC_PAGES,
+  });
+  res.json({ hunts: hunts.map(chasseRendue) });
+});
+
+/**
+ * Met une chasse en file. C'est le worker qui la joue — les recherches et la
+ * reconnaissance sont en Python, et les refaire ici mesurerait autre chose.
+ */
+evalRouter.post('/hunts', admin, async (req, res) => {
+  const parsed = evalHuntSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const { queries, ...reste } = parsed.data;
+  const hunt = await prisma.evalHunt.create({
+    data: {
+      ...reste,
+      queries: JSON.stringify(queries),
+      ranQueries: '[]',
+      createdById: req.user!.id,
+    },
+    include: CHASSE_AVEC_PAGES,
+  });
+  res.status(201).json({ hunt: chasseRendue(hunt) });
+});
+
+/**
+ * Oublie une chasse et ce qu'elle avait ramené.
+ *
+ * Les pages **retenues** ne bougent pas : elles sont au corpus, elles ont leur
+ * propre archive, et elles ne doivent rien à la chasse qui les a trouvées. Ce
+ * qu'on efface ici, ce sont les candidates qu'on n'a pas prises — et leurs
+ * archives avec, faute de quoi le disque garderait pour toujours le HTML de
+ * pages que personne n'a voulues.
+ */
+evalRouter.delete('/hunts/:id(\\d+)', admin, async (req, res) => {
+  const id = Number(req.params.id);
+  const pages = await prisma.evalHuntPage.findMany({
+    where: { huntId: id },
+    select: { htmlPath: true },
+  });
+  try {
+    await prisma.evalHunt.delete({ where: { id } });
+  } catch {
+    res.status(404).json({ error: 'Chasse introuvable' });
+    return;
+  }
+  await deleteEvalPages(pages.map((p) => p.htmlPath));
+  res.json({ ok: true });
+});
+
+/** Le HTML gelé d'une candidate, tel que la précoche l'a vu. */
+evalRouter.get('/hunts/pages/:id(\\d+)/html', admin, async (req, res) => {
+  const page = await prisma.evalHuntPage.findUnique({
+    where: { id: Number(req.params.id) },
+    select: { htmlPath: true },
+  });
+  if (!page?.htmlPath) {
+    res.status(404).json({ error: 'Aucun HTML gelé pour cette candidate' });
+    return;
+  }
+  res.type('html').send(await readEvalPage(page.htmlPath));
+});
+
+/**
+ * Ce qu'un humain fait des candidates : le seul endroit où le corpus grandit.
+ *
+ * Une nature retient la page et l'écrit au corpus ; `null` l'écarte. Une
+ * candidate qu'on ne nomme pas **reste en attente** — valider par paquets ne
+ * doit pas trancher à la place de personne sur ce qu'on n'a pas regardé.
+ *
+ * L'archive change de main sans être retéléchargée : la page qu'un run
+ * rejouera est donc exactement celle sur laquelle la précoche a été faite, et
+ * non celle que le site servirait aujourd'hui. Une candidate injoignable le
+ * jour de la chasse entre quand même, en file de capture : c'est le seul cas
+ * où le corpus attend encore un gel.
+ */
+evalRouter.post('/hunts/:id(\\d+)/decide', admin, async (req, res) => {
+  const parsed = evalHuntDecisionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const huntId = Number(req.params.id);
+  const voulues = new Map(parsed.data.decisions.map((d) => [d.pageId, d.nature]));
+  const pages = await prisma.evalHuntPage.findMany({
+    where: { huntId, id: { in: [...voulues.keys()] }, decision: 'EN_ATTENTE' },
+  });
+
+  const retenues: number[] = [];
+  const doublons: string[] = [];
+  const aEffacer: (string | null)[] = [];
+
+  for (const page of pages) {
+    const nature = voulues.get(page.id) ?? null;
+    if (nature === null) {
+      aEffacer.push(page.htmlPath);
+      await prisma.evalHuntPage.update({
+        where: { id: page.id },
+        data: { decision: 'ECARTEE', decidedAt: new Date(), htmlPath: null },
+      });
+      continue;
+    }
+    try {
+      const entree = await prisma.evalNature.create({
+        data: {
+          url: page.url,
+          label: page.title.slice(0, 150),
+          nature,
+          proposed: page.proposed,
+          origin: origineDe(page.proposed, nature),
+          // Le HTML est déjà là : l'entrée naît gelée. Sans archive — la page
+          // était injoignable —, elle part en file de capture comme une
+          // adresse saisie à la main.
+          capture: page.htmlPath ? 'CAPTURED' : 'QUEUED',
+          capturedAt: page.htmlPath ? new Date() : null,
+          chars: page.chars,
+          htmlPath: page.htmlPath,
+          createdById: req.user!.id,
+        },
+      });
+      await prisma.evalHuntPage.update({
+        where: { id: page.id },
+        // L'archive appartient désormais à l'entrée du corpus. La laisser
+        // aussi ici ferait qu'écarter la candidate, plus tard, effacerait le
+        // fichier sous les pieds du corpus.
+        data: {
+          decision: 'RETENUE',
+          decidedAt: new Date(),
+          natureId: entree.id,
+          htmlPath: null,
+        },
+      });
+      retenues.push(page.id);
+    } catch (e) {
+      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
+      // Déjà au corpus, par une autre chasse ou à la main. On n'écrase pas une
+      // étiquette existante : elle a peut-être coûté une vérification.
+      doublons.push(page.url);
+      aEffacer.push(page.htmlPath);
+      await prisma.evalHuntPage.update({
+        where: { id: page.id },
+        data: { decision: 'ECARTEE', decidedAt: new Date(), htmlPath: null },
+      });
+    }
+  }
+
+  await deleteEvalPages(aEffacer);
+  const hunt = await prisma.evalHunt.findUnique({
+    where: { id: huntId },
+    include: CHASSE_AVEC_PAGES,
+  });
+  res.json({
+    retenues: retenues.length,
+    ecartees: pages.length - retenues.length - doublons.length,
+    doublons,
+    hunt: hunt ? chasseRendue(hunt) : null,
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════ LES RUNS
@@ -1423,6 +1660,129 @@ evalRouter.post('/capture/:kind(agenda|sortie|nature)/:id(\\d+)/fail', async (re
   } catch {
     res.status(404).json({ error: 'Entrée introuvable' });
   }
+});
+
+/**
+ * Réclame une chasse. Elle passe **après** les captures et **avant** les runs.
+ *
+ * Après les captures parce que geler ne coûte rien, là où une chasse lance de
+ * vraies recherches. Avant les runs pour la raison qui met déjà les captures
+ * avant eux : un run joué sur un corpus incomplet mesure ce qu'on avait sous
+ * la main plutôt que ce qu'on voulait mesurer.
+ */
+evalRouter.post('/hunts/next', async (req, res) => {
+  const parsed = evalHuntClaimSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const hunt = await prisma.evalHunt.findFirst({
+    where: { status: 'QUEUED' },
+    orderBy: { queuedAt: 'asc' },
+  });
+  if (!hunt) {
+    res.json({ hunt: null });
+    return;
+  }
+  await prisma.evalHunt.update({
+    where: { id: hunt.id },
+    data: { status: 'RUNNING', startedAt: new Date(), codeRef: parsed.data.codeRef },
+  });
+  res.json({
+    hunt: {
+      id: hunt.id,
+      prompt: hunt.prompt,
+      area: hunt.area,
+      queries: parseJson<string[]>(hunt.queries, []),
+      maxQueries: hunt.maxQueries,
+      maxPages: hunt.maxPages,
+      provider: hunt.provider,
+    },
+  });
+});
+
+/**
+ * Les candidates d'une chasse, par paquets, avec leur HTML gelé.
+ *
+ * Une chasse interrompue laisse donc ce qu'elle avait déjà trouvé, qui reste
+ * bon à valider — le contraire de tout ou rien.
+ *
+ * Deux fois la même adresse ne fait qu'une candidate : les moteurs remontent
+ * la même page sous deux requêtes, et la dédoublonner ici évite de faire
+ * trancher deux fois le même cas à un humain.
+ */
+evalRouter.post('/hunts/:id(\\d+)/pages', bigBody, async (req, res) => {
+  const parsed = evalHuntPagesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const huntId = Number(req.params.id);
+  const hunt = await prisma.evalHunt.findUnique({ where: { id: huntId }, select: { id: true } });
+  if (!hunt) {
+    res.status(404).json({ error: 'Chasse introuvable' });
+    return;
+  }
+  // Les fichiers d'abord, hors transaction : une archive orpheline coûte moins
+  // qu'une ligne pointant vers un fichier qui n'existe pas.
+  const archives = await Promise.all(
+    parsed.data.pages.map((page) => (page.html ? saveEvalPage(page.html) : Promise.resolve(''))),
+  );
+  let ecrites = 0;
+  for (const [index, page] of parsed.data.pages.entries()) {
+    const { html, nature, foundUrl, ...reste } = page;
+    try {
+      await prisma.evalHuntPage.create({
+        data: {
+          ...reste,
+          huntId,
+          foundUrl: foundUrl === page.url ? '' : foundUrl,
+          proposed: natureProposee(nature),
+          htmlPath: archives[index] || null,
+        },
+      });
+      ecrites += 1;
+    } catch (e) {
+      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
+      await deleteEvalPages([archives[index] || null]);
+    }
+  }
+  res.json({ ok: true, pages: ecrites });
+});
+
+/**
+ * Clôt une chasse, et lui fait dire ce qu'elle a été.
+ *
+ * Les requêtes **réellement lancées** s'écrivent ici, et pas au lancement : la
+ * console n'en impose pas toujours, et une chasse qui tait celles que le
+ * modèle a formulées ne se rejoue pas. Même raison que le modèle et
+ * l'empreinte du prompt d'un run — on ne déclare que ce qui est déjà vrai.
+ */
+evalRouter.post('/hunts/:id(\\d+)/finish', async (req, res) => {
+  const parsed = evalHuntFinishSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const { status, queries, overCap, model, costUsd, error } = parsed.data;
+  try {
+    await prisma.evalHunt.update({
+      where: { id: Number(req.params.id) },
+      data: {
+        status,
+        ranQueries: JSON.stringify(queries),
+        overCap,
+        model,
+        costUsd,
+        error: error ?? null,
+        endedAt: new Date(),
+      },
+    });
+  } catch {
+    res.status(404).json({ error: 'Chasse introuvable' });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 /** Réclame un run en file, et note de quoi il est le run. */
