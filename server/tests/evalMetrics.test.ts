@@ -56,6 +56,7 @@ import {
   relevanceOf,
   selectLines,
   selectScore,
+  sortieMuette,
   sumHarvest,
   sumSelect,
   verdictAspect,
@@ -645,7 +646,7 @@ test('la raison nomme ce qui a écarté le lien, et pas seulement qu’il l’es
 
   const nue = relevanceDetail({ verdict: 'SORTIE' }, scope);
   assert.equal(nue.relevance, 'INDECIDABLE');
-  assert.match(nue.raison, /décrit cette sortie/);
+  assert.match(nue.raison, /aucune sortie n'est attachée/);
 
   // Et la conclusion reste exactement celle d'avant : le détail explique la
   // mesure, il ne la change pas.
@@ -699,4 +700,38 @@ test('l’extraction montre les deux valeurs comparées, aspect par aspect', () 
   // plutôt que de se lire comme un vide étiqueté.
   assert.equal(par('cadre').verdict, null);
   assert.equal(par('cadre').attendu, '');
+});
+
+
+test('les deux indécidables ne se confondent pas : rien d’attaché, ou rien d’affirmé', () => {
+  const scope: RunScope = { dateFrom: '2026-09-01', dateTo: '2026-09-30', postalPrefixes: ['75'] };
+
+  // Les mêler a coûté cher : la console disait « la sortie n'existe pas » d'un
+  // lien dont la sortie était au corpus, et on cherchait à créer ce qui existait
+  // déjà. Les deux dettes ne se soldent pas du même geste — l'une en rattachant,
+  // l'autre en étiquetant.
+  const sansRien = relevanceDetail({ verdict: 'SORTIE' }, scope);
+  const attacheeMuette = relevanceDetail({ verdict: 'SORTIE', sortie: {} }, scope);
+
+  assert.equal(sansRien.relevance, 'INDECIDABLE');
+  assert.equal(attacheeMuette.relevance, 'INDECIDABLE');
+  assert.notEqual(sansRien.raison, attacheeMuette.raison);
+  assert.match(attacheeMuette.raison, /au corpus/);
+
+  // Une sortie reprise de la modération arrive **avec son public** et sans rien
+  // d'autre : elle n'est pas muette, et elle suffit à trancher. C'est ce qui
+  // fait qu'un corpus moissonné mesure l'étage 4 dès le premier run, sans
+  // attendre que quiconque ait étiqueté quoi que ce soit.
+  assert.equal(sortieMuette({ audience: 'ENFANTS' }), false);
+  assert.equal(
+    relevanceDetail({ verdict: 'SORTIE', sortie: { audience: 'ENFANTS' } }, scope).relevance,
+    'PERTINENTE',
+  );
+  assert.equal(sortieMuette({}), true);
+  assert.equal(sortieMuette({ dateStart: '2026-09-10' }), false);
+  // « jusqu'à 0 an » est une affirmation, pas un silence : la requête des dettes
+  // le testait avec `!ageMax` et rangeait donc cette sortie-là parmi les muettes,
+  // quand la mesure, elle, en déduisait « enfants ». Deux listes de champs, deux
+  // comptes différents — d'où un seul test, ici, pour les deux.
+  assert.equal(sortieMuette({ ageMax: 0 }), false);
 });

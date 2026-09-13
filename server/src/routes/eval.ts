@@ -70,6 +70,7 @@ import {
   readScore,
   relevanceOf,
   selectLines,
+  sortieMuette,
   selectScore,
   sumHarvest,
   sumSelect,
@@ -390,6 +391,45 @@ function labelled<T extends { url: string; verdict: EvalVerdict; sortie?: Sortie
   };
 }
 
+/**
+ * Rattache à leur sortie les liens « une sortie » qui portent la même adresse.
+ *
+ * ## La faute que ça corrige
+ *
+ * Le rattachement ne se faisait qu'au moment d'**étiqueter le lien** : on
+ * cherchait alors la sortie portant cette adresse, et s'il n'y en avait pas
+ * encore, le lien restait orphelin **pour toujours**. Rien ne repassait quand
+ * la sortie arrivait ensuite.
+ *
+ * Deux clics dans un ordre plutôt que dans l'autre — « Liens d'agenda déjà
+ * tranchés » avant « Sorties publiées » — et l'étage 4 ne mesurait plus rien :
+ * chaque lien comptait *indécidable*, le rappel n'existait pas, et la console
+ * répondait « la sortie n'existe pas » en la montrant dans l'onglet d'à côté.
+ * Un ordre de clics ne doit pas décider de ce qu'un banc sait mesurer.
+ *
+ * L'appariement se fait sur l'**adresse**, et c'est un fait, pas un jugement :
+ * la même adresse est la même page. Un lien déjà rattaché n'est jamais
+ * redirigé — on peut désigner une sortie à l'adresse différente (échange de
+ * langue, redirection), et ce choix-là appartient à l'humain.
+ */
+async function rattacherLiens(urls: string[]): Promise<number> {
+  const uniques = [...new Set(urls.filter(Boolean))];
+  if (!uniques.length) return 0;
+  const sorties = await prisma.evalSortie.findMany({
+    where: { url: { in: uniques } },
+    select: { id: true, url: true },
+  });
+  let rattaches = 0;
+  for (const sortie of sorties) {
+    const { count } = await prisma.evalLink.updateMany({
+      where: { url: sortie.url, verdict: 'SORTIE', sortieId: null },
+      data: { sortieId: sortie.id },
+    });
+    rattaches += count;
+  }
+  return rattaches;
+}
+
 function jour(value: Date | null): string | null {
   return value ? value.toISOString().slice(0, 10) : null;
 }
@@ -648,6 +688,9 @@ evalRouter.post('/sorties', admin, async (req, res) => {
     const sortie = await prisma.evalSortie.create({
       data: { ...parsed.data, createdById: req.user!.id },
     });
+    // Une sortie qui entre au corpus retrouve les liens qui l'annonçaient :
+    // sans ça, un lien étiqueté avant elle restait orphelin pour toujours.
+    await rattacherLiens([sortie.url]);
     res.status(201).json({ sortie: serializeSortie(sortie) });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
@@ -694,6 +737,11 @@ evalRouter.post('/links/:id(\\d+)/sortie', admin, async (req, res) => {
     update: {},
   });
   await prisma.evalLink.update({ where: { id: link.id }, data: { sortieId: sortie.id } });
+  // Et tous les liens de même adresse, sur les autres agendas : deux agendas
+  // peuvent annoncer la même sortie, et décrire celle-ci une fois doit les
+  // servir tous. Les laisser orphelins les aurait comptés indécidables alors
+  // que la sortie venait d'être créée.
+  await rattacherLiens([link.url]);
   res.status(201).json({ sortie: serializeSortie(sortie) });
 });
 
@@ -2181,6 +2229,8 @@ async function sortiesAEtiqueter(limit: number) {
     where: { eventId: { not: null }, expected: '{}' },
     select: {
       id: true,
+      // L'adresse sert au rattachement des liens qui annoncent cette sortie.
+      url: true,
       event: {
         select: {
           title: true,
@@ -2412,10 +2462,6 @@ evalRouter.get('/reste', admin, async (_req, res) => {
     }),
   ]);
 
-  // Le tri se fait ici et non en SQL : les faits vivent dans l'étiquette, et
-  // fouiller du JSON en base coûterait une requête illisible et sans index
-  // pour un filtre que le serveur fait en mémoire sans effort. À revoir si le
-  // corpus dépasse quelques dizaines de milliers de sorties.
   // Deux dettes, et elles ne se soldent pas du même geste : ou bien la sortie
   // n'existe pas au corpus — il faut la créer —, ou bien elle existe et
   // n'affirme rien — il faut la décrire. Les mêler sous un seul compte obligeait
@@ -2425,10 +2471,16 @@ evalRouter.get('/reste', admin, async (_req, res) => {
   // fouiller du JSON en base coûterait une requête illisible et sans index pour
   // un filtre que le serveur fait en mémoire sans effort. À revoir si le corpus
   // dépasse quelques dizaines de milliers de sorties.
+  //
+  // Le test de « muette », lui, vient de la **mesure** et n'est pas réécrit ici.
+  // Il l'a été, et les deux listes de champs avaient déjà divergé : celle-ci
+  // testait `!ageMax`, donc rangeait « jusqu'à 0 an » parmi les sorties qui ne
+  // disent rien, quand la mesure en déduisait « enfants » et tranchait. Une
+  // dette comptée sur d'autres champs que le taux n'annonce pas le travail qui
+  // ferait bouger le taux.
   const muette = (lien: (typeof sansSortie)[number]) => {
     if (!lien.sortie) return false;
-    const e = parseJson<FicheRendue>(lien.sortie.expected, {});
-    return !e.dateStart && !e.venuePostalCode && !e.ageMax && lien.sortie.audience === null;
+    return sortieMuette(labelled({ url: lien.url, verdict: 'SORTIE', sortie: lien.sortie }).sortie!);
   };
   const nu = ({ sortie, ...reste }: (typeof sansSortie)[number]) => reste;
 
@@ -2503,7 +2555,12 @@ evalRouter.post('/seed', admin, async (req, res) => {
       })),
       skipDuplicates: true,
     });
-    res.status(201).json({ added: created.count });
+    // Et les liens que ce panier avait déjà posés lors d'un passage précédent,
+    // quand la sortie n'était pas encore au corpus : `skipDuplicates` les
+    // laisse intacts, orphelins compris. Un second clic ne doit pas être sans
+    // effet sur eux.
+    const rattaches = await rattacherLiens(rows.map((row) => row.url));
+    res.status(201).json({ added: created.count, rattaches });
     return;
   }
 
@@ -2559,7 +2616,11 @@ evalRouter.post('/seed', admin, async (req, res) => {
       });
       added += 1;
     }
-    res.status(201).json({ added });
+    // Ce bouton est celui qu'on presse en découvrant qu'un étage 4 ne mesure
+    // rien : qu'il répare aussi le rattachement évite d'avoir à deviner lequel
+    // des deux manquait.
+    const rattaches = await rattacherLiens(sorties.map((sortie) => sortie.url));
+    res.status(201).json({ added, rattaches });
     return;
   }
 
@@ -2595,5 +2656,10 @@ evalRouter.post('/seed', admin, async (req, res) => {
     ),
     skipDuplicates: true,
   });
-  res.status(201).json({ added: created.count });
+  // Le même rattachement, et c'est ici qu'il manquait le plus : ce panier crée
+  // des sorties en masse, souvent **après** que « Liens d'agenda déjà tranchés »
+  // a posé les étiquettes de lien. Sans lui, l'ordre des deux clics décidait si
+  // l'étage 4 mesurait quelque chose.
+  const rattaches = await rattacherLiens(rows.map((row) => row.url));
+  res.status(201).json({ added: created.count, rattaches });
 });

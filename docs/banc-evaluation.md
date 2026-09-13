@@ -304,8 +304,35 @@ Chaque lien tombe alors dans une case, et une seule :
   payée pour rien ;
 * **écartée à raison** — hors recherche, et écartée. Le travail bien fait, qui
   n'apparaissait nulle part ;
-* **indécidable** — personne n'a décrit cette sortie. Hors de tout dénominateur,
-  et affiché pour qu'on sache ce qu'on ignore.
+* **indécidable** — le corpus ne permet pas de trancher. Hors de tout
+  dénominateur, et affiché pour qu'on sache ce qu'on ignore.
+
+L'indécidable a **deux causes**, qui ne se soldent pas du même geste, et la
+raison affichée les distingue : ou bien *aucune sortie n'est attachée au lien*,
+ou bien *elle l'est et son étiquette ne dit ni quand, ni où, ni pour qui*.
+
+#### Le lien mène à la sortie, et c'est la jointure qui porte la mesure
+
+L'étage 4 juge un lien d'agenda avec ce que la **sortie** déclare — c'est elle
+qui a une date, un lieu et un public, pas le lien qui y mène, et plusieurs
+agendas peuvent annoncer la même. Tout l'étage tient donc à `EvalLink.sortieId`,
+et cette jointure se fait sur l'**adresse** : la même adresse est la même page,
+ce qui est un fait et non un jugement.
+
+Elle ne se faisait qu'au moment d'étiqueter le lien. Si la sortie n'était pas
+encore au corpus, le lien restait orphelin — **définitivement**, rien ne
+repassant quand elle arrivait. Or les deux entrent par deux boutons différents :
+« Liens d'agenda déjà tranchés » avant « Sorties publiées », et tout ce passage-là
+devenait immesurable. L'étage 4 rendait alors *0 trouvée, 0 manquée* avec des
+dizaines d'indécidables, et la console répondait « la sortie n'existe pas au
+corpus » en la montrant, décrite, dans l'onglet d'à côté.
+
+Le rattachement se fait donc désormais **des deux côtés** : à l'étiquetage d'un
+lien, et à chaque entrée d'une sortie au corpus — création manuelle, paniers,
+« la décrire » depuis un lien (qui sert alors *tous* les liens de même adresse).
+La migration `0034` répare ce qui a déjà été saisi. Un rattachement posé à la
+main vers une sortie d'adresse différente — échange de langue, redirection —
+n'est jamais écrasé.
 
 Trois garde-fous, tous vérifiés par les tests :
 

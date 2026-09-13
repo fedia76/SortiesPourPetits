@@ -325,6 +325,27 @@ export interface SortieFacts {
  */
 const MAJORITE = 18;
 
+/**
+ * Une sortie **attachée mais muette** : l'objet existe au corpus, et son
+ * étiquette ne porte aucun des faits que l'étage 4 sait lire.
+ *
+ * Ce n'est pas la même dette que « aucune sortie n'est attachée », et les
+ * confondre coûtait cher : la console disait « la sortie n'existe pas » d'un
+ * lien dont la sortie était là, sous les yeux, dans l'onglet d'à côté. On
+ * cherchait alors à créer ce qui existait déjà.
+ *
+ * Le test vit ici, avec la mesure qui l'applique, et non dans la requête qui
+ * compte les dettes : une liste de champs recopiée à côté finit toujours par
+ * compter autre chose que ce que le taux compte.
+ */
+export function sortieMuette(sortie: SortieFacts): boolean {
+  return (
+    audienceOf(sortie) === null &&
+    !sortie.dateStart &&
+    !sortie.postalCode
+  );
+}
+
 export function audienceOf(sortie: SortieFacts): Audience | null {
   if (sortie.audience) return sortie.audience;
   if (sortie.ageMin != null && sortie.ageMin >= MAJORITE) return 'ADULTES';
@@ -397,7 +418,15 @@ export function relevanceDetail(
   if (!sortie) {
     return {
       relevance: 'INDECIDABLE',
-      raison: "personne n'a décrit cette sortie : il n'y a rien à quoi la comparer",
+      raison: "aucune sortie n'est attachée à ce lien : il n'y a rien à quoi le comparer",
+    };
+  }
+
+  if (sortieMuette(sortie)) {
+    return {
+      relevance: 'INDECIDABLE',
+      raison:
+        "la sortie est au corpus, mais son étiquette ne dit ni quand, ni où, ni pour qui",
     };
   }
 
@@ -453,7 +482,7 @@ export function relevanceDetail(
     : {
         relevance: 'INDECIDABLE',
         raison:
-          "la sortie est décrite, mais rien de ce qu'elle affirme ne rencontre la recherche de ce run",
+          "la sortie affirme des choses, mais aucune ne rencontre la recherche de ce run",
       };
 }
 

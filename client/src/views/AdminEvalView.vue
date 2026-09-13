@@ -807,8 +807,20 @@ const independance = computed(() => {
 
 async function pour(bucket: 'approuvees' | 'abandonnees' | 'illisibles' | 'liens' | 'fiches') {
   try {
-    const body = await api.post<{ added: number }>('/api/eval/seed', { bucket, limit: 25 });
-    notice.value = `${body.added} entrée(s) ajoutée(s) au corpus.`;
+    const body = await api.post<{ added: number; rattaches?: number }>('/api/eval/seed', {
+      bucket,
+      limit: 25,
+    });
+    // Les rattachements sont dits, et pas seulement faits : ce sont des liens
+    // qui comptaient *indécidables* et qui vont se mettre à peser dans le
+    // rappel de l'étage 4. Un chiffre qui bouge sans qu'on sache pourquoi est
+    // ce qui fait douter d'un banc.
+    notice.value =
+      `${body.added} entrée(s) ajoutée(s) au corpus.` +
+      (body.rattaches
+        ? ` ${body.rattaches} lien(s) d’agenda viennent d’y être rattachés : ils comptaient` +
+          ' indécidables pour l’étage 4, ils comptent maintenant.'
+        : '');
     await load();
   } catch (e) {
     fail(e);
