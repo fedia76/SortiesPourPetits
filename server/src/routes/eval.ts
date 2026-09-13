@@ -53,7 +53,6 @@ import {
   type EvalPageNature,
   type EvalVerdict,
 } from '@prisma/client';
-import express from 'express';
 import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { comptesChasse, natureProposee, origineDe, soucheCorpus } from '../lib/evalHunt';
@@ -111,11 +110,11 @@ evalRouter.use(requireRole(Role.MODERATOR));
 
 const admin = requireRole(Role.ADMIN);
 
-/**
- * Les comptes rendus du worker portent du HTML gzippé en base64 : quelques
- * centaines de kilo-octets, bien au-delà du plafond par défaut d'Express.
- */
-const bigBody = express.json({ limit: '12mb' });
+// Le plafond de corps de ces routes — les comptes rendus du worker portent du
+// HTML gzippé en base64, bien au-delà du plafond par défaut d'Express — se pose
+// dans `lib/bodyLimits`, avec le parseur global. Le déclarer ici ne servirait à
+// rien : Express applique le premier parseur monté, et celui-là a déjà lu, ou
+// refusé, le corps.
 
 function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   if (!raw) return fallback;
@@ -1562,7 +1561,7 @@ evalRouter.post('/capture/next', async (_req, res) => {
   res.json({ job: { kind: 'nature', id: nature.id, url: nature.url, pages: 1 } });
 });
 
-evalRouter.post('/capture/agenda/:id(\\d+)', bigBody, async (req, res) => {
+evalRouter.post('/capture/agenda/:id(\\d+)', async (req, res) => {
   const parsed = evalCaptureSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1625,7 +1624,7 @@ async function rendreCapture(
   else await prisma.evalNature.update({ where: { id }, data });
 }
 
-evalRouter.post('/capture/:kind(sortie|nature)/:id(\\d+)', bigBody, async (req, res) => {
+evalRouter.post('/capture/:kind(sortie|nature)/:id(\\d+)', async (req, res) => {
   const parsed = evalCaptureSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1711,7 +1710,7 @@ evalRouter.post('/hunts/next', async (req, res) => {
  * la même page sous deux requêtes, et la dédoublonner ici évite de faire
  * trancher deux fois le même cas à un humain.
  */
-evalRouter.post('/hunts/:id(\\d+)/pages', bigBody, async (req, res) => {
+evalRouter.post('/hunts/:id(\\d+)/pages', async (req, res) => {
   const parsed = evalHuntPagesSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1888,7 +1887,7 @@ evalRouter.post('/runs/:id(\\d+)/next-item', async (req, res) => {
   });
 });
 
-evalRouter.post('/runs/:id(\\d+)/links', bigBody, async (req, res) => {
+evalRouter.post('/runs/:id(\\d+)/links', async (req, res) => {
   const parsed = evalLinkResultSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1930,7 +1929,7 @@ evalRouter.post('/runs/:id(\\d+)/links', bigBody, async (req, res) => {
   res.json({ ok: true, links: rows.length });
 });
 
-evalRouter.post('/runs/:id(\\d+)/read', bigBody, async (req, res) => {
+evalRouter.post('/runs/:id(\\d+)/read', async (req, res) => {
   const parsed = evalReadResultSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1949,7 +1948,7 @@ evalRouter.post('/runs/:id(\\d+)/read', bigBody, async (req, res) => {
   res.json({ ok: true });
 });
 
-evalRouter.post('/runs/:id(\\d+)/extract', bigBody, async (req, res) => {
+evalRouter.post('/runs/:id(\\d+)/extract', async (req, res) => {
   const parsed = evalExtractResultSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
