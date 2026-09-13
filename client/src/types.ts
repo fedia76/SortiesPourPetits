@@ -1387,11 +1387,27 @@ export interface EvalRun {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  /**
+   * Combien d'entrées du corpus ce run avait à traiter — et, une fois clos, ce
+   * que le worker déclare avoir traité. C'est le dénominateur de l'avancement.
+   */
   items: number;
   queuedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  /**
+   * Le dernier signe de vie du worker sur ce run. Nul pour un run jamais
+   * réclamé, ou réclamé avant que cette colonne n'existe.
+   */
+  heartbeatAt: string | null;
   requestedBy?: { id: number; displayName: string } | null;
+  /**
+   * Ce qui est **fait**, compté depuis ce que le run a écrit. Sans lui,
+   * « En cours » ne disait pas la différence entre un run qui avance et un run
+   * qui n'avancera plus — et c'est exactement la question qu'on se pose en
+   * regardant cette ligne.
+   */
+  traites?: number;
   score?: EvalScore;
 }
 

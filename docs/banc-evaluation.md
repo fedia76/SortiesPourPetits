@@ -500,8 +500,42 @@ coût annoncé se planifie.
 4. les **runs** du banc — dont deux étages sur quatre appellent le modèle et se
    paient.
 
-Un run est clos **quoi qu'il arrive**, y compris sur un plantage : sans clôture
-il resterait « en cours » et le worker n'en prendrait plus d'autre.
+### Un travail clos, et ce qui arrive quand il ne l'est pas
+
+Un run et une chasse sont clos **quoi qu'il arrive** — le `finally` du worker
+s'en charge, plantage compris. Ce qu'un `finally` ne couvre pas, c'est la mort
+du processus : service arrêté, machine redémarrée, `SIGKILL`. La clôture
+n'arrive alors jamais, et la ligne restait « en cours » pour toujours, sans que
+rien côté site ne puisse la reprendre.
+
+D'où un **battement**. Le worker n'a rien à déclarer : le battement est l'appel
+qu'il fait déjà — `POST /runs/:id/next-item` pour une entrée, `POST
+/hunts/:id/pages` pour un paquet de candidates —, que le site horodate en
+passant. Ce qui ne se déclare pas ne ment pas.
+
+Au-delà de trente minutes sans battement, le site clôt le travail en échec et
+dit pourquoi. Ce seuil n'est **pas** une durée maximale de run : un étage 6 sur
+deux cents sorties dure des heures, et c'est normal. C'est l'écart maximal
+entre deux entrées, et lui se borne — le pire cas honnête est un appel de
+modèle allé au bout de ses reprises, un quart d'heure. Le seuil en garde le
+double.
+
+Deux conséquences qui rendent la reprise sûre :
+
+* un travail **jamais réclamé** n'est pas repris. Une file qui n'avance pas est
+  un worker arrêté, pas un travail mort : tout ce qui attend le redémarrage du
+  service doit repartir tout seul ;
+* un worker repris **qui était vivant** s'arrête proprement — le premier
+  `next-item` lui rend une file vide — et sa clôture tardive ne rend au
+  travail que ce qu'il a coûté. Elle ne le repasse pas en « terminé » : une
+  mesure tronquée présentée comme complète entrerait dans la courbe sans rien
+  pour la distinguer.
+
+La console affiche l'avancement d'un run en cours — combien d'entrées sur
+combien, et quand le worker s'est manifesté pour la dernière fois. Sans ces
+deux chiffres, « en cours » ne disait pas la différence entre un run qui avance
+et un run qui n'avancera plus, et la seule façon de trancher était d'ouvrir la
+base.
 
 ## Ce qui reste limité
 

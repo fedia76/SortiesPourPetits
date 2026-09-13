@@ -262,6 +262,35 @@ function drift(list: EvalRun[]): number | null {
 function when(value: string | null): string {
   return value ? new Date(value).toLocaleString('fr-FR') : '—';
 }
+
+/**
+ * L'avancement d'un run qui n'est pas terminé, en une ligne.
+ *
+ * C'est ce qui manquait le jour où un run est resté « En cours » un quart
+ * d'heure : il n'y avait rien à regarder pour savoir s'il avançait, et le seul
+ * moyen de trancher était d'ouvrir la base. Deux chiffres et une date le
+ * disent — combien d'entrées sont faites, et quand le worker s'est manifesté
+ * pour la dernière fois. Un écart qui grandit entre cette date et maintenant
+ * est le signe qu'il n'y a plus personne au bout.
+ */
+function avancement(run: EvalRun): string {
+  if (run.status === 'QUEUED') return 'rien ne la joue encore';
+  const faits = run.traites ?? 0;
+  const total = run.items || 0;
+  const parts = [total ? `${faits} / ${total} entrée(s)` : `${faits} entrée(s)`];
+  if (run.status === 'RUNNING') parts.push(`dernier signe de vie ${depuis(run.heartbeatAt)}`);
+  return parts.join(' · ');
+}
+
+/** « il y a 3 min », en français et sans dépendance. */
+function depuis(value: string | null): string {
+  if (!value) return 'inconnu';
+  const minutes = Math.floor((Date.now() - new Date(value).getTime()) / 60000);
+  if (minutes < 1) return "à l'instant";
+  if (minutes < 60) return `il y a ${minutes} min`;
+  const heures = Math.floor(minutes / 60);
+  return heures < 24 ? `il y a ${heures} h` : `il y a ${Math.floor(heures / 24)} j`;
+}
 </script>
 
 <template>
@@ -429,7 +458,7 @@ function when(value: string | null): string {
               <strong>#{{ run.id }}</strong>
               <div class="muted small">{{ run.label || 'sans étiquette' }}</div>
               <div v-if="run.status !== 'DONE'" class="muted small">
-                {{ EVAL_RUN_STATUS_LABELS[run.status] }}
+                {{ EVAL_RUN_STATUS_LABELS[run.status] }} — {{ avancement(run) }}
                 <span v-if="run.error"> — {{ run.error }}</span>
               </div>
             </td>
