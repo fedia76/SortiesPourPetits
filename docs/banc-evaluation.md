@@ -9,7 +9,7 @@ lui-même est décrit dans [`scraper/README.md`](../scraper/README.md).
 
 | | Où |
 |---|---|
-| Console | `/admin/evaluation` (administrateurs) |
+| Console | `/admin/evaluation` (administrateurs) — trois onglets, un par corpus : `?onglet=pages`, `agendas`, `sorties` |
 | Routes | [`server/src/routes/eval.ts`](../server/src/routes/eval.ts) |
 | Mesure | [`server/src/lib/evalMetrics.ts`](../server/src/lib/evalMetrics.ts) — pur, testé dans [`server/tests/`](../server/tests/evalMetrics.test.ts) |
 | Briques rejouées | [`scraper/sortiesbot/evaluation.py`](../scraper/sortiesbot/evaluation.py) |
@@ -166,6 +166,56 @@ n'est pas mesuré (voir « [Ce qui reste limité](#ce-qui-reste-limité) »).
 
 Le module de rejeu n'a pas non plus le droit de « corriger » quoi que ce soit au
 passage : il appelle et rapporte. Compléter est le travail de l'humain.
+
+## Le détail d'une mesure, et pourquoi il n'est pas un confort
+
+Un taux du banc n'est pas une note : c'est une **conclusion**, tombée de la
+confrontation d'un relevé et d'un corpus. Elle peut surprendre pour trois
+raisons, qui ne se corrigent pas au même endroit :
+
+* la brique a mal fait son travail — le seul cas qu'on veut voir ;
+* le corpus est incomplet ou faux, et la mesure accuse un trou plutôt qu'une
+  brique ;
+* la **recherche** du run écarte des liens à raison, et le taux baisse alors que
+  rien n'a empiré.
+
+Aucun total ne les distingue. « 12 manquées » ne dit ni lesquelles, ni pourquoi,
+et un chiffre qu'on ne peut pas remonter jusqu'à la ligne qui l'a produit ne
+laisse le choix qu'entre le croire et le jeter — c'est ainsi qu'on finit par ne
+plus ouvrir un banc.
+
+`GET /api/eval/runs/:id` rend donc, à côté du résumé, **la ligne** : pour les
+étages 3 et 4 chaque lien du relevé avec la case où la mesure l'a rangé, ce que
+la brique en a dit d'elle-même (`dropReason`, `selectReason`) et la phrase qui
+explique la case ; pour l'étage 5 l'attendu en regard du rendu, fragment par
+fragment ; pour l'étage 6 les deux valeurs comparées, aspect par aspect. La
+console l'affiche sous le run, depuis la courbe comme depuis l'historique.
+
+Deux règles tiennent tout ça :
+
+* **le score est le repli des lignes**, et pas l'inverse (`harvestLines`,
+  `selectLines` dans `evalMetrics.ts`). Deux comptes séparés — l'un pour
+  afficher, l'autre pour expliquer — divergent au premier changement de règle,
+  et c'est alors le détail qu'on cesse de croire, donc la mesure entière ;
+* **la raison est fabriquée par la mesure**, à l'endroit exact où la décision se
+  prend, jamais reconstituée dans la console. Une explication écrite à côté du
+  test finit toujours par décrire un test qui a changé.
+
+Les sept cases d'un lien :
+
+| Case | Ce qu'elle dit | Comptée dans |
+|---|---|---|
+| **trouvée** | le corpus la veut, la brique l'a retenue | rappel, précision |
+| **manquée** | le corpus la veut, la brique l'a laissée | rappel |
+| **bruit** | la brique l'a retenue, le corpus n'en veut pas | précision |
+| **écartée à raison** | le corpus n'en veut pas, la brique ne l'a pas prise | rien — du travail bien fait |
+| **indécidable** | personne n'a décrit la sortie | rien — une dette de corpus |
+| **sans étiquette** | retenue, et le corpus se tait | rien — un trou du corpus |
+| **jamais soumise** | l'étage 3 l'avait déjà perdue | rien — l'étage 4 ne paie pas pour elle |
+
+Les quatre dernières sont l'essentiel de ce qu'un total cache : trois
+« trouvées » et quarante « sans étiquette » donnent un rappel de 100 % qui ne dit
+rien d'autre que la taille du corpus.
 
 ## Comment chaque étage se mesure
 

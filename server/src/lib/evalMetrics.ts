@@ -105,6 +105,20 @@ export type Audience = 'ENFANTS' | 'ADULTES' | 'INDETERMINE';
  */
 export type Verdict = 'SORTIE' | 'PAGINATION' | 'SOUS_AGENDA' | 'AUTRE';
 
+/**
+ * Ce que chaque verdict veut dire, en clair.
+ *
+ * Ici et non dans la console : c'est la mesure qui fabrique ses phrases, et une
+ * raison qu'on recopierait à l'affichage finirait par décrire une règle qui a
+ * changé depuis.
+ */
+export const LIBELLES_VERDICT: Record<Verdict, string> = {
+  SORTIE: 'une sortie',
+  PAGINATION: 'la page suivante',
+  SOUS_AGENDA: 'un sous-agenda',
+  AUTRE: 'autre chose',
+};
+
 export interface LabelledLink {
   url: string;
   /** Ce que le lien **est**. La question de l'étage 3, et rien d'autre. */
@@ -152,25 +166,95 @@ export interface HarvestScore {
   precision: number | null;
 }
 
-export function harvestScore(labels: LabelledLink[], results: HarvestedLink[]): HarvestScore {
-  const labelByUrl = new Map(labels.map((l) => [l.url, l.verdict]));
+/**
+ * Ce qu'un lien est devenu dans la mesure, et dans quel compteur il est tombé.
+ *
+ * Les cinq premières cases sont celles des scores ; les deux dernières disent
+ * qu'un lien n'est compté **nulle part**, ce qui est la chose la plus difficile
+ * à deviner depuis un total. Un rappel de 100 % sur deux liens jugés et
+ * quarante hors compte a exactement l'air d'un rappel de 100 %.
+ */
+export type LinkCase =
+  | 'TROUVEE'
+  | 'MANQUEE'
+  | 'BRUIT'
+  | 'ECARTEE_A_RAISON'
+  | 'INDECIDABLE'
+  /** Retenu, mais le corpus ne dit rien de ce lien : un trou, pas une faute. */
+  | 'SANS_ETIQUETTE'
+  /** Étiqueté, mais le dépouillement ne l'a pas soumis au tri : l'étage 4 ne l'a jamais vu. */
+  | 'NON_SOUMISE';
+
+/** Un lien de la mesure, avec la case où il tombe et la phrase qui le dit. */
+export interface LinkLine {
+  url: string;
+  cas: LinkCase;
+  /** Ce que la brique en a fait. */
+  retenu: boolean;
+  /** Ce que le corpus dit du lien. Nul quand il n'est pas étiqueté. */
+  verdict: Verdict | null;
+  /** Ce qu'il vaut pour la recherche du run. Nul pour le dépouillement, qui ne la juge pas. */
+  relevance: Relevance | null;
+  raison: string;
+  /** La ligne ne compte pas dans le taux affiché — page plafonnée, ou hors dénominateur. */
+  horsTaux: boolean;
+}
+
+/**
+ * Le dépouillement, lien par lien.
+ *
+ * Le score en est le **repli**, et pas l'inverse : c'est la seule façon de
+ * garantir que le détail additionne au total. Deux comptes séparés, l'un pour
+ * afficher et l'autre pour expliquer, divergent au premier changement de règle,
+ * et c'est alors le détail qu'on cesse de croire — donc la mesure entière.
+ */
+export function harvestLines(labels: LabelledLink[], results: HarvestedLink[]): LinkLine[] {
   const harvestedUrls = new Set(results.filter((r) => r.harvested).map((r) => r.url));
+  const lines: LinkLine[] = [];
 
-  let found = 0;
-  let missed = 0;
   for (const label of labels) {
-    if (label.verdict !== 'SORTIE') continue;
-    if (harvestedUrls.has(label.url)) found += 1;
-    else missed += 1;
+    const retenu = harvestedUrls.has(label.url);
+    const sortie = label.verdict === 'SORTIE';
+    lines.push({
+      url: label.url,
+      cas: sortie ? (retenu ? 'TROUVEE' : 'MANQUEE') : retenu ? 'BRUIT' : 'ECARTEE_A_RAISON',
+      retenu,
+      verdict: label.verdict,
+      // Le dépouillement ne juge pas la pertinence : lui prêter un avis sur la
+      // recherche serait lui prêter un métier qu'il ne fait pas.
+      relevance: null,
+      raison: `le corpus dit « ${LIBELLES_VERDICT[label.verdict]} », le dépouillement ${
+        retenu ? "l'a retenu" : "ne l'a pas retenu"
+      }`,
+      horsTaux: !sortie,
+    });
   }
 
-  let noise = 0;
-  let unlabelled = 0;
+  const etiquetes = new Set(labels.map((l) => l.url));
   for (const url of harvestedUrls) {
-    const verdict = labelByUrl.get(url);
-    if (verdict === undefined) unlabelled += 1;
-    else if (verdict !== 'SORTIE') noise += 1;
+    if (etiquetes.has(url)) continue;
+    lines.push({
+      url,
+      cas: 'SANS_ETIQUETTE',
+      retenu: true,
+      verdict: null,
+      relevance: null,
+      raison: "retenu, mais le corpus ne dit rien de ce lien : hors de tout dénominateur",
+      horsTaux: true,
+    });
   }
+
+  return lines;
+}
+
+export function harvestScore(labels: LabelledLink[], results: HarvestedLink[]): HarvestScore {
+  const lines = harvestLines(labels, results);
+  const compte = (cas: LinkCase) => lines.filter((l) => l.cas === cas).length;
+
+  const found = compte('TROUVEE');
+  const missed = compte('MANQUEE');
+  const noise = compte('BRUIT');
+  const unlabelled = compte('SANS_ETIQUETTE');
 
   const sorties = found + missed;
   const judgedKept = found + noise;
@@ -272,18 +356,56 @@ export function audienceOf(sortie: SortieFacts): Audience | null {
  * comparer, donc rien à conclure — ni pour, ni contre. C'est une dette de
  * corpus, pas un jugement, et elle se solde en étiquetant.
  */
+/**
+ * Ce qu'un lien vaut pour une recherche, **et la phrase qui le dit**.
+ *
+ * La raison n'est pas du décor. Le chiffre seul — « 12 manquées » — n'est pas
+ * relisable : on ne sait pas si le tri a mal jugé, si la fenêtre écartait la
+ * sortie, ou si personne ne l'avait décrite. Un taux qu'on ne peut pas
+ * remonter jusqu'à la ligne qui l'a fait n'est pas une mesure, c'est une
+ * rumeur — et c'est ainsi qu'on finit par croire un banc sur parole.
+ *
+ * Elle se fabrique **ici**, à l'endroit exact où la décision se prend, et
+ * jamais reconstituée dans la console : une explication écrite à côté du test
+ * finit toujours par décrire un test qui a changé.
+ */
+export interface RelevanceDetail {
+  relevance: Relevance;
+  /** Pourquoi cette case-là, en une phrase lisible par un humain. */
+  raison: string;
+}
+
 export function relevanceOf(
   label: { verdict: Verdict; sortie?: SortieFacts | null },
   scope: RunScope,
 ): Relevance {
-  if (label.verdict !== 'SORTIE') return 'HORS_RECHERCHE';
+  return relevanceDetail(label, scope).relevance;
+}
+
+export function relevanceDetail(
+  label: { verdict: Verdict; sortie?: SortieFacts | null },
+  scope: RunScope,
+): RelevanceDetail {
+  if (label.verdict !== 'SORTIE') {
+    return {
+      relevance: 'HORS_RECHERCHE',
+      raison: `le corpus dit « ${LIBELLES_VERDICT[label.verdict]} » : ce lien ne mène pas à une sortie`,
+    };
+  }
 
   const sortie = label.sortie;
-  if (!sortie) return 'INDECIDABLE';
+  if (!sortie) {
+    return {
+      relevance: 'INDECIDABLE',
+      raison: "personne n'a décrit cette sortie : il n'y a rien à quoi la comparer",
+    };
+  }
 
-  if (audienceOf(sortie) === 'ADULTES') return 'HORS_RECHERCHE';
+  if (audienceOf(sortie) === 'ADULTES') {
+    return { relevance: 'HORS_RECHERCHE', raison: audienceRaison(sortie) };
+  }
 
-  let decidable = false;
+  const decidable: string[] = [];
 
   // Une sortie occupe une plage, pas un point : celle du 15 septembre au
   // 15 décembre est dans une fenêtre qui s'arrête au 11 octobre. La comparer
@@ -292,24 +414,55 @@ export function relevanceOf(
   if (sortie.dateStart) {
     const debut = sortie.dateStart.slice(0, 10);
     const fin = (sortie.dateEnd ?? sortie.dateStart).slice(0, 10);
-    if (scope.dateTo && debut > scope.dateTo) return 'HORS_RECHERCHE';
-    if (scope.dateFrom && fin < scope.dateFrom) return 'HORS_RECHERCHE';
-    if (scope.dateFrom || scope.dateTo) decidable = true;
+    if (scope.dateTo && debut > scope.dateTo) {
+      return {
+        relevance: 'HORS_RECHERCHE',
+        raison: `commence le ${debut}, après la fin de la fenêtre (${scope.dateTo})`,
+      };
+    }
+    if (scope.dateFrom && fin < scope.dateFrom) {
+      return {
+        relevance: 'HORS_RECHERCHE',
+        raison: `finit le ${fin}, avant le début de la fenêtre (${scope.dateFrom})`,
+      };
+    }
+    if (scope.dateFrom || scope.dateTo) {
+      decidable.push(`sa date (${debut}${fin !== debut ? ` → ${fin}` : ''}) tombe dans la fenêtre`);
+    }
   }
 
   if (sortie.postalCode && scope.postalPrefixes?.length) {
     const chiffres = sortie.postalCode.replace(/\D/g, '');
     if (chiffres) {
-      if (!scope.postalPrefixes.some((p) => chiffres.startsWith(p))) return 'HORS_RECHERCHE';
-      decidable = true;
+      if (!scope.postalPrefixes.some((p) => chiffres.startsWith(p))) {
+        return {
+          relevance: 'HORS_RECHERCHE',
+          raison: `code postal ${sortie.postalCode}, hors des départements visés (${scope.postalPrefixes.join(', ')})`,
+        };
+      }
+      decidable.push(`son code postal ${sortie.postalCode} est dans les départements visés`);
     }
   }
 
-  if (audienceOf(sortie) === 'ENFANTS') decidable = true;
+  if (audienceOf(sortie) === 'ENFANTS') decidable.push(audienceRaison(sortie));
 
   // La sortie est décrite, mais rien de ce qu'elle affirme ne rencontre les
   // réglages de ce run : il n'y a pas de quoi trancher.
-  return decidable ? 'PERTINENTE' : 'INDECIDABLE';
+  return decidable.length
+    ? { relevance: 'PERTINENTE', raison: decidable.join(' · ') }
+    : {
+        relevance: 'INDECIDABLE',
+        raison:
+          "la sortie est décrite, mais rien de ce qu'elle affirme ne rencontre la recherche de ce run",
+      };
+}
+
+/** D'où vient le public : dit, ou déduit de l'âge — les deux ne se relisent pas pareil. */
+function audienceRaison(sortie: SortieFacts): string {
+  const qui = audienceOf(sortie) === 'ADULTES' ? 'adultes' : 'enfants';
+  if (sortie.audience) return `public ${qui}, déclaré dans l'étiquette`;
+  const age = sortie.ageMin != null ? `dès ${sortie.ageMin} ans` : `jusqu'à ${sortie.ageMax} ans`;
+  return `public ${qui}, déduit de l'âge (${age})`;
 }
 
 /**
@@ -350,11 +503,21 @@ export interface SelectScore extends HarvestScore {
   cappedPages: number;
 }
 
-export function selectScore(
+/**
+ * Le tri, lien par lien : la case, et pourquoi.
+ *
+ * `plafonnee` sort du calcul plutôt que des lignes parce qu'elle est une
+ * propriété de la **page**, pas du lien : quand le tri a pris exactement son
+ * quota, aucune des sorties qu'il a laissées ne peut être départagée d'un
+ * refus. Les lignes le portent quand même (`horsTaux`), sans quoi le détail
+ * montrerait des « manquées » que le taux affiché ne compte pas, et les deux
+ * chiffres se contrediraient sous les yeux du relecteur.
+ */
+export function selectLines(
   labels: LabelledLink[],
   results: SelectedLink[],
   scope: RunScope = {},
-): SelectScore {
+): { lignes: LinkLine[]; plafonnee: boolean } {
   const submitted = results.filter((r) => r.selected !== null);
   // Les étiquettes sont restreintes à ce qui lui a été soumis. Sans ce filtre,
   // une sortie que l'étage 3 avait déjà perdue serait comptée « manquée » par
@@ -367,34 +530,76 @@ export function selectScore(
   // Le plafond : quand le tri a retenu exactement son quota, on ne peut pas
   // distinguer « écarté à tort » de « tronqué ». La page ne compte alors pas
   // dans le rappel.
-  const capped = scope.maxLinks !== undefined && keptUrls.size >= scope.maxLinks;
+  const plafonnee = scope.maxLinks !== undefined && keptUrls.size >= scope.maxLinks;
 
-  let found = 0;
-  let missed = 0;
-  let noise = 0;
-  let rightlyDropped = 0;
-  let undecidable = 0;
-
+  const lignes: LinkLine[] = [];
   for (const label of labels) {
-    if (!seen.has(label.url)) continue;
-    const kept = keptUrls.has(label.url);
-    switch (relevanceOf(label, scope)) {
-      case 'PERTINENTE':
-        if (kept) found += 1;
-        else missed += 1;
-        break;
-      case 'HORS_RECHERCHE':
-        if (kept) noise += 1;
-        else rightlyDropped += 1;
-        break;
-      default:
-        undecidable += 1;
+    if (!seen.has(label.url)) {
+      lignes.push({
+        url: label.url,
+        cas: 'NON_SOUMISE',
+        retenu: false,
+        verdict: label.verdict,
+        relevance: null,
+        raison: "le dépouillement ne l'a pas soumis au tri : l'étage 4 ne l'a jamais vu",
+        horsTaux: true,
+      });
+      continue;
     }
+    const retenu = keptUrls.has(label.url);
+    const { relevance, raison } = relevanceDetail(label, scope);
+    const cas: LinkCase =
+      relevance === 'PERTINENTE'
+        ? retenu
+          ? 'TROUVEE'
+          : 'MANQUEE'
+        : relevance === 'HORS_RECHERCHE'
+          ? retenu
+            ? 'BRUIT'
+            : 'ECARTEE_A_RAISON'
+          : 'INDECIDABLE';
+    lignes.push({
+      url: label.url,
+      cas,
+      retenu,
+      verdict: label.verdict,
+      relevance,
+      raison:
+        plafonnee && cas === 'MANQUEE'
+          ? `${raison} — mais la page est au plafond (${scope.maxLinks} liens) : hors du rappel`
+          : raison,
+      horsTaux: cas === 'INDECIDABLE' || (plafonnee && (cas === 'TROUVEE' || cas === 'MANQUEE')),
+    });
   }
 
-  const unlabelled = [...keptUrls].filter(
-    (url) => !labels.some((l) => l.url === url),
-  ).length;
+  const etiquetes = new Set(labels.map((l) => l.url));
+  for (const url of keptUrls) {
+    if (etiquetes.has(url)) continue;
+    lignes.push({
+      url,
+      cas: 'SANS_ETIQUETTE',
+      retenu: true,
+      verdict: null,
+      relevance: null,
+      raison: "retenu, mais le corpus ne dit rien de ce lien : hors de tout dénominateur",
+      horsTaux: true,
+    });
+  }
+
+  return { lignes, plafonnee };
+}
+
+export function selectScore(
+  labels: LabelledLink[],
+  results: SelectedLink[],
+  scope: RunScope = {},
+): SelectScore {
+  const { lignes, plafonnee } = selectLines(labels, results, scope);
+  const compte = (cas: LinkCase) => lignes.filter((l) => l.cas === cas).length;
+
+  const found = compte('TROUVEE');
+  const missed = compte('MANQUEE');
+  const noise = compte('BRUIT');
 
   const pertinentes = found + missed;
   const judgedKept = found + noise;
@@ -402,13 +607,13 @@ export function selectScore(
     found,
     missed,
     noise,
-    rightlyDropped,
-    undecidable,
-    unlabelled,
-    cappedPages: capped ? 1 : 0,
+    rightlyDropped: compte('ECARTEE_A_RAISON'),
+    undecidable: compte('INDECIDABLE'),
+    unlabelled: compte('SANS_ETIQUETTE'),
+    cappedPages: plafonnee ? 1 : 0,
     // Sur une page plafonnée, le rappel mesurerait le plafond : on ne le rend
     // pas plutôt que de rendre un chiffre qui n'accuse personne de juste.
-    recall: capped || pertinentes === 0 ? null : found / pertinentes,
+    recall: plafonnee || pertinentes === 0 ? null : found / pertinentes,
     precision: judgedKept > 0 ? found / judgedKept : null,
   };
 }
@@ -566,6 +771,46 @@ export function readScore(labels: ReadLabels, out: ReadOutput): ReadScore {
     tooShort: out.tooShort,
     imageOk: labels.image == null ? null : fold(labels.image) === fold(out.imageUrl),
     datesOk,
+  };
+}
+
+/**
+ * La lecture d'une page, question par question : l'attendu, le rendu, et
+ * lesquels des fragments manquent.
+ *
+ * `readScore` répond par oui, non ou rien ; ça suffit à faire une courbe et ça
+ * ne suffit jamais à comprendre une surprise. « 40 % de textes entiers » ne dit
+ * pas si la page est tronquée, si elle passe par du JavaScript, ou si c'est le
+ * fragment attendu qui était mal choisi — et les trois se corrigent à trois
+ * endroits différents.
+ */
+export interface ReadDetail {
+  image: { attendu: string | null; rendu: string; verdict: boolean | null };
+  dates: { attendues: string[] | null; rendues: string[]; verdict: boolean | null };
+  /** Les fragments retrouvés dans le texte, et ceux qui n'y sont pas. */
+  fragments: { trouves: string[]; manquants: string[]; verdict: boolean | null };
+  truncated: boolean;
+  tooShort: boolean;
+}
+
+export function readDetail(labels: ReadLabels, out: ReadOutput): ReadDetail {
+  const score = readScore(labels, out);
+  const haystack = fold(out.text);
+  const markers = labels.markers ?? [];
+  return {
+    image: { attendu: labels.image ?? null, rendu: out.imageUrl, verdict: score.imageOk },
+    dates: {
+      attendues: labels.declaredDates ?? null,
+      rendues: parseList(out.dates) ?? [],
+      verdict: score.datesOk,
+    },
+    fragments: {
+      trouves: markers.filter((m) => haystack.includes(fold(m))),
+      manquants: markers.filter((m) => !haystack.includes(fold(m))),
+      verdict: score.textOk,
+    },
+    truncated: score.truncated,
+    tooShort: score.tooShort,
   };
 }
 
@@ -949,4 +1194,56 @@ export function extractScore(
     else tally[verdict] += 1;
   }
   return { tally, byField };
+}
+
+/**
+ * Un aspect de la fiche, avec les deux valeurs qu'on a comparées.
+ *
+ * Sans elles, « FAUX » est une accusation sans pièce jointe : on ne sait pas si
+ * le modèle s'est trompé, si l'étiquette était fautive, ou si les deux disent
+ * la même chose autrement — et le troisième cas est une faute de la mesure,
+ * qu'aucun total ne révélera jamais.
+ */
+export interface AspectDetail {
+  key: string;
+  libelle: string;
+  verdict: FieldVerdict | null;
+  /** Ce que le corpus déclare, champ par champ. Vide quand il ne dit rien. */
+  attendu: string;
+  /** Ce que la brique a rendu sur ces mêmes champs. */
+  rendu: string;
+}
+
+/** Une valeur de fiche, telle qu'on la lit dans un tableau. */
+function montre(value: unknown): string {
+  if (value === null || value === undefined) return '∅';
+  if (typeof value === 'boolean') return value ? 'oui' : 'non';
+  if (Array.isArray(value)) return value.length ? value.join(', ') : '(liste vide)';
+  if (value === '') return '(vide)';
+  return String(value);
+}
+
+function ecrire(champs: Champ[], fiche: FicheRendue, cote: 'etiquette' | 'rendu'): string {
+  return champs
+    .map((champ) => {
+      const valeur = cote === 'etiquette' ? fiche[champ[0]] : renduDe(fiche, champ);
+      return `${String(champ[0])} : ${montre(valeur)}`;
+    })
+    .join(' · ');
+}
+
+export function aspectsDetail(attendue: FicheRendue, rendue: FicheRendue): AspectDetail[] {
+  return ASPECTS.map((aspect) => {
+    // Seuls les champs que l'étiquette porte sont jugés — c'est le test de
+    // `verdictAspect`, et l'afficher autrement montrerait une comparaison qui
+    // n'a pas eu lieu.
+    const juges = aspect.champs.filter(([champ]) => champ in attendue);
+    return {
+      key: aspect.key,
+      libelle: LIBELLES_ASPECTS[aspect.key] ?? aspect.key,
+      verdict: verdictAspect(aspect, attendue, rendue),
+      attendu: juges.length ? ecrire(juges, attendue, 'etiquette') : '',
+      rendu: ecrire(juges.length ? juges : aspect.champs, rendue, 'rendu'),
+    };
+  });
 }

@@ -13,8 +13,9 @@
  * qui a grandi depuis — et c'est voulu : c'est le corpus qui fait autorité,
  * pas la photographie qu'on en avait prise.
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
+import EvalRunDetail from '../components/EvalRunDetail.vue';
 import type {
   EvalRecherche, EvalRun, EvalScore, EvalStage } from '../types';
 import {
@@ -259,6 +260,28 @@ function drift(list: EvalRun[]): number | null {
   return last === null || before === null ? null : last - before;
 }
 
+/**
+ * Le run dont on regarde le détail. `0` : aucun.
+ *
+ * Un seul à la fois, et c'est délibéré : le détail est long — chaque lien du
+ * relevé avec sa case et sa raison —, et deux ouverts côte à côte ne se
+ * comparent de toute façon pas ligne à ligne.
+ */
+const ouvert = ref(0);
+
+/**
+ * Ouvrir le détail d'un run, et aller le voir.
+ *
+ * Depuis la courbe, la barre est en haut de page et la ligne du run en bas :
+ * ouvrir sans défiler donnerait l'impression que le clic n'a rien fait.
+ */
+async function voirLeDetail(run: EvalRun) {
+  ouvert.value = ouvert.value === run.id ? 0 : run.id;
+  if (!ouvert.value) return;
+  await nextTick();
+  document.getElementById(`run-${run.id}`)?.scrollIntoView({ block: 'center' });
+}
+
 function when(value: string | null): string {
   return value ? new Date(value).toLocaleString('fr-FR') : '—';
 }
@@ -414,12 +437,24 @@ function depuis(value: string | null): string {
       <!-- Une barre par run, dans l'ordre : la forme la plus honnête pour une
            poignée de points espacés de plusieurs jours. -->
       <ol class="bars">
-        <li v-for="run in serie.runs" :key="run.id" :title="`${run.label || 'sans étiquette'} — ${detail(run)}`">
-          <span class="bar-col">
-            <i :style="{ height: `${Math.round((headline(run.score) ?? 0) * 100)}%` }" />
-          </span>
-          <span class="bar-val">{{ pct(headline(run.score)) }}</span>
-          <span class="bar-tag">{{ run.label || `#${run.id}` }}</span>
+        <!--
+          La barre ouvre le détail du run : un point qui surprend sur la courbe
+          est très exactement le moment où on veut voir les lignes qui l'ont
+          fait, et c'était jusqu'ici un cul-de-sac.
+        -->
+        <li v-for="run in serie.runs" :key="run.id">
+          <button
+            class="bar"
+            :class="{ on: ouvert === run.id }"
+            :title="`${run.label || 'sans étiquette'} — ${detail(run)}`"
+            @click="voirLeDetail(run)"
+          >
+            <span class="bar-col">
+              <i :style="{ height: `${Math.round((headline(run.score) ?? 0) * 100)}%` }" />
+            </span>
+            <span class="bar-val">{{ pct(headline(run.score)) }}</span>
+            <span class="bar-tag">{{ run.label || `#${run.id}` }}</span>
+          </button>
         </li>
       </ol>
     </div>
@@ -453,7 +488,8 @@ function depuis(value: string | null): string {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="run in runs" :key="run.id">
+          <template v-for="run in runs" :key="run.id">
+          <tr :id="`run-${run.id}`">
             <td>
               <strong>#{{ run.id }}</strong>
               <div class="muted small">{{ run.label || 'sans étiquette' }}</div>
@@ -473,9 +509,30 @@ function depuis(value: string | null): string {
             <td class="num">{{ run.costUsd ? `${run.costUsd.toFixed(3)} $` : '—' }}</td>
             <td class="small">{{ when(run.finishedAt) }}</td>
             <td>
-              <button class="linklike" @click="forget(run)">Oublier</button>
+              <div class="row actions">
+                <!--
+                  Le détail n'est pas un confort : un taux du banc est une
+                  conclusion, et une conclusion qu'on ne peut pas remonter
+                  jusqu'à la ligne qui l'a produite ne laisse le choix qu'entre
+                  la croire et la jeter.
+                -->
+                <button
+                  class="linklike"
+                  :disabled="run.status !== 'DONE'"
+                  @click="voirLeDetail(run)"
+                >
+                  {{ ouvert === run.id ? 'Masquer' : 'Détail' }}
+                </button>
+                <button class="linklike" @click="forget(run)">Oublier</button>
+              </div>
             </td>
           </tr>
+          <tr v-if="ouvert === run.id" class="ligne-detail">
+            <td colspan="8">
+              <EvalRunDetail :key="run.id" :run="run" />
+            </td>
+          </tr>
+          </template>
         </tbody>
       </table>
     </div>
@@ -588,11 +645,34 @@ h2 {
 }
 
 .bars li {
+  min-width: 72px;
+}
+
+.bar {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.3rem;
-  min-width: 72px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0.2rem;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.bar.on {
+  background: var(--accent-soft);
+}
+
+.ligne-detail > td {
+  background: var(--bg);
+}
+
+.actions {
+  gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
 .bar-col {
