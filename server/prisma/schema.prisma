@@ -1043,6 +1043,19 @@ model EvalHunt {
   startedAt DateTime?
   endedAt   DateTime?
 
+  /// Le dernier signe de vie du worker sur ce travail.
+  ///
+  /// Écrit à la réclamation, puis à chaque entrée réclamée. Il n'a pas fallu
+  /// une ligne de worker pour l'obtenir : le battement **est** l'appel qu'il
+  /// fait déjà pour demander l'entrée suivante. Ce qui ne se déclare pas ne
+  /// ment pas.
+  ///
+  /// Sans lui, un worker tué en plein travail laissait la ligne « en cours »
+  /// pour toujours : rien côté site ne distinguait un travail lent d'un
+  /// travail mort, et il fallait une clôture à la main. Avec lui, l'écart
+  /// entre deux battements dit lequel des deux — voir `ABANDON_APRES_MS`.
+  heartbeatAt DateTime?
+
   author      User @relation("EvalHuntRequester", fields: [createdById], references: [id])
   createdById Int
 
@@ -1180,6 +1193,19 @@ model EvalRun {
   queuedAt   DateTime  @default(now())
   startedAt  DateTime?
   finishedAt DateTime?
+
+  /// Le dernier signe de vie du worker sur ce travail.
+  ///
+  /// Écrit à la réclamation, puis à chaque entrée réclamée. Il n'a pas fallu
+  /// une ligne de worker pour l'obtenir : le battement **est** l'appel qu'il
+  /// fait déjà pour demander l'entrée suivante. Ce qui ne se déclare pas ne
+  /// ment pas.
+  ///
+  /// Sans lui, un worker tué en plein travail laissait la ligne « en cours »
+  /// pour toujours : rien côté site ne distinguait un travail lent d'un
+  /// travail mort, et il fallait une clôture à la main. Avec lui, l'écart
+  /// entre deux battements dit lequel des deux — voir `ABANDON_APRES_MS`.
+  heartbeatAt DateTime?
 
   requestedBy   User? @relation("EvalRunRequester", fields: [requestedById], references: [id])
   requestedById Int?

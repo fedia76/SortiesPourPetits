@@ -53,11 +53,11 @@ import {
   type EvalPageNature,
   type EvalVerdict,
 } from '@prisma/client';
-import express from 'express';
 import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { comptesChasse, natureProposee, origineDe, soucheCorpus } from '../lib/evalHunt';
 import { deleteEvalPages, readEvalPage, saveEvalPage } from '../lib/evalPages';
+import { avancements, reprendreLesAbandonnes } from '../lib/evalRuns';
 import { requireRole } from '../middleware/auth';
 import {
   couverture,
@@ -111,11 +111,11 @@ evalRouter.use(requireRole(Role.MODERATOR));
 
 const admin = requireRole(Role.ADMIN);
 
-/**
- * Les comptes rendus du worker portent du HTML gzippé en base64 : quelques
- * centaines de kilo-octets, bien au-delà du plafond par défaut d'Express.
- */
-const bigBody = express.json({ limit: '12mb' });
+// Le plafond de corps de ces routes — les comptes rendus du worker portent du
+// HTML gzippé en base64, bien au-delà du plafond par défaut d'Express — se pose
+// dans `lib/bodyLimits`, avec le parseur global. Le déclarer ici ne servirait à
+// rien : Express applique le premier parseur monté, et celui-là a déjà lu, ou
+// refusé, le corps.
 
 function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   if (!raw) return fallback;
@@ -1037,6 +1037,7 @@ function chasseRendue<
 }
 
 evalRouter.get('/hunts', admin, async (_req, res) => {
+  await reprendreLesAbandonnes();
   const hunts = await prisma.evalHunt.findMany({
     orderBy: { queuedAt: 'desc' },
     take: 20,
@@ -1255,17 +1256,26 @@ evalRouter.get('/runs', admin, async (req, res) => {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
+  await reprendreLesAbandonnes();
   const runs = await prisma.evalRun.findMany({
     where: parsed.data.stage ? { stage: parsed.data.stage } : {},
     orderBy: { queuedAt: 'desc' },
     take: parsed.data.limit,
     include: { requestedBy: { select: { id: true, displayName: true } } },
   });
+  // Ce qui est fait, compté depuis ce que les runs ont écrit. Sans ce chiffre,
+  // « En cours » ne disait pas la différence entre un run qui avance et un run
+  // qui n'avancera plus.
+  const faits = await avancements(runs);
   // La mesure de chaque run, calculée ici : c'est elle qui fait la courbe, et
   // elle n'est stockée nulle part — un run ancien se re-mesure donc contre un
   // corpus qui a grandi depuis, ce qui est exactement ce qu'on veut.
   const scored = await Promise.all(
-    runs.map(async (run) => ({ ...run, score: await scoreRun(run.id, run.stage) })),
+    runs.map(async (run) => ({
+      ...run,
+      traites: faits.get(run.id) ?? 0,
+      score: await scoreRun(run.id, run.stage),
+    })),
   );
   res.json({ runs: scored });
 });
@@ -1280,7 +1290,11 @@ evalRouter.get('/runs/:id(\\d+)', admin, async (req, res) => {
     res.status(404).json({ error: 'Exécution introuvable' });
     return;
   }
-  res.json({ run: { ...run, score: await scoreRun(id, run.stage) }, detail: await runDetail(id, run.stage) });
+  const faits = await avancements([run]);
+  res.json({
+    run: { ...run, traites: faits.get(id) ?? 0, score: await scoreRun(id, run.stage) },
+    detail: await runDetail(id, run.stage),
+  });
 });
 
 evalRouter.delete('/runs/:id(\\d+)', admin, async (req, res) => {
@@ -1562,7 +1576,7 @@ evalRouter.post('/capture/next', async (_req, res) => {
   res.json({ job: { kind: 'nature', id: nature.id, url: nature.url, pages: 1 } });
 });
 
-evalRouter.post('/capture/agenda/:id(\\d+)', bigBody, async (req, res) => {
+evalRouter.post('/capture/agenda/:id(\\d+)', async (req, res) => {
   const parsed = evalCaptureSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1625,7 +1639,7 @@ async function rendreCapture(
   else await prisma.evalNature.update({ where: { id }, data });
 }
 
-evalRouter.post('/capture/:kind(sortie|nature)/:id(\\d+)', bigBody, async (req, res) => {
+evalRouter.post('/capture/:kind(sortie|nature)/:id(\\d+)', async (req, res) => {
   const parsed = evalCaptureSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1676,6 +1690,12 @@ evalRouter.post('/hunts/next', async (req, res) => {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
+  // Un worker qui réclame du travail est le meilleur moment pour solder ce qui
+  // traîne : il n'en joue qu'un à la fois, donc ce qui est encore « en cours »
+  // ici a de bonnes chances d'appartenir à un worker qui n'existe plus. C'est
+  // le seuil qui tranche, pas cette réclamation — mais c'est ici qu'il tombe
+  // sans qu'on ait à faire tourner une minuterie de plus.
+  await reprendreLesAbandonnes();
   const hunt = await prisma.evalHunt.findFirst({
     where: { status: 'QUEUED' },
     orderBy: { queuedAt: 'asc' },
@@ -1684,9 +1704,15 @@ evalRouter.post('/hunts/next', async (req, res) => {
     res.json({ hunt: null });
     return;
   }
+  const maintenant = new Date();
   await prisma.evalHunt.update({
     where: { id: hunt.id },
-    data: { status: 'RUNNING', startedAt: new Date(), codeRef: parsed.data.codeRef },
+    data: {
+      status: 'RUNNING',
+      startedAt: maintenant,
+      heartbeatAt: maintenant,
+      codeRef: parsed.data.codeRef,
+    },
   });
   res.json({
     hunt: {
@@ -1711,7 +1737,7 @@ evalRouter.post('/hunts/next', async (req, res) => {
  * la même page sous deux requêtes, et la dédoublonner ici évite de faire
  * trancher deux fois le même cas à un humain.
  */
-evalRouter.post('/hunts/:id(\\d+)/pages', bigBody, async (req, res) => {
+evalRouter.post('/hunts/:id(\\d+)/pages', async (req, res) => {
   const parsed = evalHuntPagesSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1723,6 +1749,9 @@ evalRouter.post('/hunts/:id(\\d+)/pages', bigBody, async (req, res) => {
     res.status(404).json({ error: 'Chasse introuvable' });
     return;
   }
+  // Une chasse ne réclame rien au fil de l'eau : ce paquet est le seul signe
+  // de vie qu'elle donne, et il tombe toutes les cinq pages.
+  await prisma.evalHunt.update({ where: { id: huntId }, data: { heartbeatAt: new Date() } });
   // Les fichiers d'abord, hors transaction : une archive orpheline coûte moins
   // qu'une ligne pointant vers un fichier qui n'existe pas.
   const archives = await Promise.all(
@@ -1765,24 +1794,23 @@ evalRouter.post('/hunts/:id(\\d+)/finish', async (req, res) => {
     return;
   }
   const { status, queries, overCap, model, costUsd, error } = parsed.data;
-  try {
-    await prisma.evalHunt.update({
-      where: { id: Number(req.params.id) },
-      data: {
-        status,
-        ranQueries: JSON.stringify(queries),
-        overCap,
-        model,
-        costUsd,
-        error: error ?? null,
-        endedAt: new Date(),
-      },
-    });
-  } catch {
+  const id = Number(req.params.id);
+  const avant = await prisma.evalHunt.findUnique({ where: { id }, select: { status: true } });
+  if (!avant) {
     res.status(404).json({ error: 'Chasse introuvable' });
     return;
   }
-  res.json({ ok: true });
+  // Même règle que pour un run : une chasse reprise par le site garde son
+  // verdict, et ne reçoit de sa clôture tardive que ce qu'elle a coûté.
+  const repris = avant.status !== 'RUNNING';
+  const declare = { ranQueries: JSON.stringify(queries), overCap, model, costUsd };
+  await prisma.evalHunt.update({
+    where: { id },
+    data: repris
+      ? { ...declare, endedAt: new Date() }
+      : { ...declare, status, error: error ?? null, endedAt: new Date() },
+  });
+  res.json({ ok: true, repris });
 });
 
 /** Réclame un run en file, et note de quoi il est le run. */
@@ -1792,6 +1820,8 @@ evalRouter.post('/runs/next', async (req, res) => {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
+  // Même moment, même raison que pour les chasses.
+  await reprendreLesAbandonnes();
   const run = await prisma.evalRun.findFirst({
     where: { status: 'QUEUED' },
     orderBy: { queuedAt: 'asc' },
@@ -1811,9 +1841,15 @@ evalRouter.post('/runs/next', async (req, res) => {
   //
   // Un run mis en file avant ce changement porte des réglages vides : le worker
   // retombe alors sur la configuration par défaut du banc, et le dit.
+  const maintenant = new Date();
   const claimed = await prisma.evalRun.update({
     where: { id: run.id },
-    data: { status: 'RUNNING', startedAt: new Date(), codeRef: parsed.data.codeRef },
+    data: {
+      status: 'RUNNING',
+      startedAt: maintenant,
+      heartbeatAt: maintenant,
+      codeRef: parsed.data.codeRef,
+    },
   });
   res.json({
     run: {
@@ -1839,6 +1875,17 @@ evalRouter.post('/runs/:id(\\d+)/next-item', async (req, res) => {
     res.status(404).json({ error: 'Exécution introuvable' });
     return;
   }
+  // Un run que le site a reconnu abandonné n'a plus d'entrée à donner. C'est
+  // ce qui rend la reprise sans danger : si le worker était vivant après tout,
+  // il s'arrête ici proprement et clôt le run avec ses vrais compteurs, au lieu
+  // de continuer à écrire dans une mesure que la console dit close.
+  if (run.status !== 'RUNNING') {
+    res.json({ item: null });
+    return;
+  }
+  // Le battement, gratuit : c'est l'appel que le worker fait déjà, une fois par
+  // entrée. Rien à déclarer, donc rien qui puisse mentir.
+  await prisma.evalRun.update({ where: { id: runId }, data: { heartbeatAt: new Date() } });
 
   if (run.stage === 'HARVEST' || run.stage === 'SELECT') {
     const done = await prisma.evalLinkResult.findMany({
@@ -1888,7 +1935,7 @@ evalRouter.post('/runs/:id(\\d+)/next-item', async (req, res) => {
   });
 });
 
-evalRouter.post('/runs/:id(\\d+)/links', bigBody, async (req, res) => {
+evalRouter.post('/runs/:id(\\d+)/links', async (req, res) => {
   const parsed = evalLinkResultSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1930,7 +1977,7 @@ evalRouter.post('/runs/:id(\\d+)/links', bigBody, async (req, res) => {
   res.json({ ok: true, links: rows.length });
 });
 
-evalRouter.post('/runs/:id(\\d+)/read', bigBody, async (req, res) => {
+evalRouter.post('/runs/:id(\\d+)/read', async (req, res) => {
   const parsed = evalReadResultSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1949,7 +1996,7 @@ evalRouter.post('/runs/:id(\\d+)/read', bigBody, async (req, res) => {
   res.json({ ok: true });
 });
 
-evalRouter.post('/runs/:id(\\d+)/extract', bigBody, async (req, res) => {
+evalRouter.post('/runs/:id(\\d+)/extract', async (req, res) => {
   const parsed = evalExtractResultSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0].message });
@@ -1984,15 +2031,30 @@ evalRouter.post('/runs/:id(\\d+)/finish', async (req, res) => {
     return;
   }
   const { status, error, ...counters } = parsed.data;
-  try {
-    const run = await prisma.evalRun.update({
-      where: { id: Number(req.params.id) },
-      data: { ...counters, status, error: error ?? null, finishedAt: new Date() },
-    });
-    res.json({ run });
-  } catch {
+  const id = Number(req.params.id);
+  const avant = await prisma.evalRun.findUnique({ where: { id }, select: { status: true } });
+  if (!avant) {
     res.status(404).json({ error: 'Exécution introuvable' });
+    return;
   }
+  // Un run que le site a déjà repris ne redevient pas « terminé ».
+  //
+  // Le worker qui revient après une reprise a cessé au premier `next-item`
+  // refusé, donc il clôt sur ce qu'il avait fait — et il le déclare DONE, parce
+  // que de son point de vue la file d'entrées était vide. L'accepter
+  // présenterait une mesure tronquée comme complète, et ce point-là entrerait
+  // dans la courbe sans rien pour le distinguer.
+  //
+  // Ses compteurs, eux, sont bons à prendre : les jetons ont été consommés et
+  // l'argent dépensé, que la mesure aille au bout ou non.
+  const repris = avant.status !== 'RUNNING';
+  const run = await prisma.evalRun.update({
+    where: { id },
+    data: repris
+      ? { ...counters, finishedAt: new Date() }
+      : { ...counters, status, error: error ?? null, finishedAt: new Date() },
+  });
+  res.json({ run, repris });
 });
 
 // ══════════════════ peupler le corpus avec ce que le pipeline a déjà fait

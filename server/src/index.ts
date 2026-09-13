@@ -3,6 +3,8 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { config } from './config';
 import { attachUser } from './middleware/auth';
+import { mountJsonParsers } from './lib/bodyLimits';
+import { reponseErreur } from './lib/httpErrors';
 import { safe } from './lib/asyncRoutes';
 import { authRouter } from './routes/auth';
 import { eventsRouter } from './routes/events';
@@ -22,7 +24,10 @@ if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
-app.use(express.json());
+// Les parseurs JSON, et leur ordre : voir `lib/bodyLimits`. Les routes du banc
+// portent du HTML gzippé et ont besoin d'un plafond large ; un plafond déclaré
+// sur la route elle-même n'aurait servi à rien.
+mountJsonParsers(app);
 app.use(cookieParser());
 
 // Limite les appels des programmes tiers, par clé d'API présentée.
@@ -68,14 +73,9 @@ app.use(siteRouter);
 // Gestion d'erreur centralisée (multer, JSON malformé, erreurs inattendues…)
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   if (res.headersSent) return;
-  const known =
-    err.name === 'MulterError' || err.message.startsWith('Format de photo');
-  if (known) {
-    res.status(400).json({ error: err.message });
-    return;
-  }
-  console.error(err);
-  res.status(500).json({ error: 'Erreur interne du serveur' });
+  const { status, error, log } = reponseErreur(err);
+  if (log) console.error(err);
+  res.status(status).json({ error });
 });
 
 app.listen(config.port, () => {
