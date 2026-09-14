@@ -23,6 +23,21 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
+import {
+  apparierReleve,
+  basculer,
+  cochees,
+  corrections,
+  enAttente,
+  etatDeCompletude,
+  motifsDeRejet,
+  pageSuivanteTrouvee,
+  phraseDePortee,
+  precocher,
+  restantes,
+  resumeSortie,
+  venueDeLEtiquette,
+} from '../lib/banc';
 import { messageDe } from '../lib/erreurs';
 import type {
   EvalAgenda,
@@ -35,10 +50,8 @@ import type {
   EvalAudience,
   EvalRunScope,
   EvalSortieFacts,
-  EvalLinkResult,
   EvalSortie,
   EvalCriteres,
-  EvalLabelOrigin,
   EvalReste,
   EvalSeedCounts,
   EvalVerdict,
@@ -318,44 +331,12 @@ async function openAgenda(agenda: EvalAgenda) {
   }
 }
 
-/** Les liens du relevé affiché, avec l'étiquette qu'ils portent déjà. */
-function rows(page: EvalAgenda['agendaPages'][number]) {
-  const labelled = new Map(page.links.map((l) => [l.url, l]));
-  const seenUrls = new Set<string>();
-  const out: { result: EvalLinkResult | null; label: (typeof page.links)[number] | null }[] = [];
-  for (const result of page.results ?? []) {
-    // La ligne technique de la pagination n'est pas un lien.
-    if (result.position < 0) continue;
-    seenUrls.add(result.url);
-    out.push({ result, label: labelled.get(result.url) ?? null });
-  }
-  // Les étiquettes que le relevé ne porte pas : un lien ajouté à la main, ou
-  // une sortie que la brique ne trouve plus. Les cacher reviendrait à effacer
-  // la mesure la plus intéressante.
-  for (const label of page.links) {
-    if (!seenUrls.has(label.url)) out.push({ result: null, label });
-  }
-  return out;
-}
-
 const totalJamaisRegardes = computed(() =>
   (reste.value?.jamaisRegardes ?? []).reduce((n, p) => n + p.manquants, 0),
 );
 
 /** La portée du run affiché, en une phrase. Vide s'il n'y a rien à dire. */
-const scopeText = computed(() => {
-  const s = openScope.value;
-  const bouts: string[] = [];
-  if (s.dateFrom && s.dateTo) bouts.push(`du ${s.dateFrom} au ${s.dateTo}`);
-  if (s.postalPrefixes?.length) bouts.push(`départements ${s.postalPrefixes.join(', ')}`);
-  if (s.maxLinks) bouts.push(`au plus ${s.maxLinks} liens par page`);
-  return bouts.join(' · ');
-});
-
-/** Ce que le relevé affiché a trouvé comme page suivante. */
-function foundNext(page: EvalAgenda['agendaPages'][number]): string {
-  return (page.results ?? []).find((r) => r.position < 0)?.selectReason ?? '';
-}
+const scopeText = computed(() => phraseDePortee(openScope.value));
 
 async function labelLink(pageId: number, url: string, text: string, verdict: EvalVerdict) {
   try {
@@ -396,22 +377,6 @@ async function creerSortie(linkId: number) {
  * sorties, parce que c'est là que la donnée vit. Afficher sans permettre de
  * modifier est la seule façon de montrer la frontière au lieu de l'expliquer.
  */
-function resume(sortie: EvalSortieFacts | null | undefined): string {
-  if (!sortie) return '';
-  const bouts: string[] = [];
-  if (sortie.dateStart) {
-    bouts.push(sortie.dateEnd && sortie.dateEnd !== sortie.dateStart
-      ? `du ${sortie.dateStart} au ${sortie.dateEnd}`
-      : `le ${sortie.dateStart}`);
-  }
-  if (sortie.postalCode) bouts.push(sortie.postalCode);
-  if (sortie.ageMin != null && sortie.ageMax != null) bouts.push(`${sortie.ageMin} à ${sortie.ageMax} ans`);
-  else if (sortie.ageMin != null) bouts.push(`dès ${sortie.ageMin} ans`);
-  else if (sortie.ageMax != null) bouts.push(`jusqu’à ${sortie.ageMax} ans`);
-  if (sortie.audience) bouts.push(EVAL_AUDIENCE_LABELS[sortie.audience]);
-  return bouts.length ? `— ${bouts.join(' · ')}` : '— rien d’affirmé';
-}
-
 async function unlabel(id: number) {
   try {
     await api.delete(`/api/eval/links/${id}`);
@@ -459,16 +424,6 @@ async function bulk(pageId: number, reason: string, verdict: EvalVerdict) {
   } catch (e) {
     fail(e);
   }
-}
-
-/** Les motifs de rejet du relevé affiché, avec leur compte. */
-function reasons(page: EvalAgenda['agendaPages'][number]) {
-  const counts = new Map<string, number>();
-  for (const result of page.results ?? []) {
-    if (result.position < 0 || result.harvested || !result.dropReason) continue;
-    counts.set(result.dropReason, (counts.get(result.dropReason) ?? 0) + 1);
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
 }
 
 async function refreshOpen() {
@@ -646,18 +601,6 @@ async function removeNature(page: EvalNature) {
  * pourquoi ; ce qui vient de la modération a été tranché ailleurs, fiche en
  * main, et n'a jamais été revu ici.
  */
-function venue(origin: EvalLabelOrigin): string {
-  return origin === 'MODERATION'
-    ? 'repris d’une sortie approuvée en modération'
-    : 'cliqué dans cette console';
-}
-
-/** De quoi souligner ce qui est complet, et ce que personne n'a encore touché. */
-function pleine(part: { faits: number; total: number }): string {
-  if (part.faits === 0) return 'vide';
-  return part.faits === part.total ? 'complete' : '';
-}
-
 /**
  * Les paniers, et **le chemin exact** qui mène à chacun.
  *
@@ -767,16 +710,7 @@ const PANIERS = [
  */
 function poserLesChasses(rows: EvalHunt[]) {
   chasses.value = rows;
-  const suivant: Record<number, EvalPageNature> = {};
-  for (const chasse of rows) {
-    for (const page of chasse.pages) {
-      if (page.decision !== 'EN_ATTENTE') continue;
-      const dejaVu = choix.value[page.id];
-      const propose = dejaVu ?? page.proposed;
-      if (propose) suivant[page.id] = propose;
-    }
-  }
-  choix.value = suivant;
+  choix.value = precocher(rows, choix.value);
 }
 
 async function lancerChasse() {
@@ -820,34 +754,11 @@ async function supprimerChasse(chasse: EvalHunt) {
 
 /** Cocher une nature, ou la décocher en recliquant dessus. */
 function choisir(page: EvalHuntPage, nature: EvalPageNature) {
-  const suivant = { ...choix.value };
-  if (suivant[page.id] === nature) delete suivant[page.id];
-  else suivant[page.id] = nature;
-  choix.value = suivant;
+  choix.value = basculer(choix.value, page.id, nature);
 }
 
 function retenue(page: EvalHuntPage): boolean {
   return Boolean(choix.value[page.id]);
-}
-
-/** Les candidates qui attendent encore qu'on en dise quelque chose. */
-function enAttente(chasse: EvalHunt): EvalHuntPage[] {
-  return chasse.pages.filter((p) => p.decision === 'EN_ATTENTE');
-}
-
-function cochees(chasse: EvalHunt): EvalHuntPage[] {
-  return enAttente(chasse).filter(retenue);
-}
-
-/**
- * Ce qu'on s'apprête à contredire.
- *
- * Affiché avant de valider, et pas après : c'est le seul chiffre qui dise si
- * la chasse apprend quelque chose au banc. Zéro correction sur trente pages
- * veut dire que le corpus vient de recopier l'étage 2.
- */
-function corrections(chasse: EvalHunt): number {
-  return cochees(chasse).filter((p) => p.proposed !== choix.value[p.id]).length;
 }
 
 /**
@@ -857,7 +768,7 @@ function corrections(chasse: EvalHunt): number {
  * décochée parce que l'étage 2 n'a pas su n'est pas une page qu'on a refusée.
  */
 async function validerChasse(chasse: EvalHunt) {
-  const prises = cochees(chasse);
+  const prises = cochees(chasse, choix.value);
   if (!prises.length) return;
   await envoyer(
     chasse,
@@ -867,12 +778,12 @@ async function validerChasse(chasse: EvalHunt) {
 
 /** Écarte tout ce qui reste : la dette de la chasse tombe à zéro. */
 async function ecarterRestantes(chasse: EvalHunt) {
-  const restantes = enAttente(chasse).filter((p) => !retenue(p));
-  if (!restantes.length) return;
-  if (!confirm(`Écarter ${restantes.length} candidate(s) ? Leur HTML gelé sera effacé.`)) return;
+  const restants = restantes(chasse, choix.value);
+  if (!restants.length) return;
+  if (!confirm(`Écarter ${restants.length} candidate(s) ? Leur HTML gelé sera effacé.`)) return;
   await envoyer(
     chasse,
-    restantes.map((p) => ({ pageId: p.id, nature: null })),
+    restants.map((p) => ({ pageId: p.id, nature: null })),
   );
 }
 
@@ -1237,14 +1148,14 @@ const corpusSize = computed(() => ({
         </div>
 
         <div v-if="enAttente(chasse).length" class="row add chasse-valide">
-          <button class="btn" :disabled="!cochees(chasse).length" @click="validerChasse(chasse)">
-            Mettre au corpus les {{ cochees(chasse).length }} cochée(s)
+          <button class="btn" :disabled="!cochees(chasse, choix).length" @click="validerChasse(chasse)">
+            Mettre au corpus les {{ cochees(chasse, choix).length }} cochée(s)
           </button>
           <button class="btn ghost" @click="ecarterRestantes(chasse)">
-            Écarter les {{ enAttente(chasse).length - cochees(chasse).length }} restante(s)
+            Écarter les {{ enAttente(chasse).length - cochees(chasse, choix).length }} restante(s)
           </button>
           <span class="muted small">
-            dont <strong>{{ corrections(chasse) }}</strong> correction(s) de ce que l’étage 2
+            dont <strong>{{ corrections(chasse, choix) }}</strong> correction(s) de ce que l’étage 2
             proposait. C’est le seul chiffre qui dise si cette chasse apprend quelque chose au
             banc : zéro correction, et le corpus recopie la brique qu’il mesure.
           </span>
@@ -1441,7 +1352,7 @@ const corpusSize = computed(() => ({
           <ul v-if="reste.aCreer.length" class="reste-detail">
             <li v-for="lien in reste.aCreer.slice(0, 5)" :key="lien.id">
               <a :href="lien.url" target="_blank">{{ lien.text || lien.url }}</a>
-              <span class="muted small">— {{ venue(lien.origin) }}</span>
+              <span class="muted small">— {{ venueDeLEtiquette(lien.origin) }}</span>
             </li>
           </ul>
         </div>
@@ -1590,10 +1501,10 @@ const corpusSize = computed(() => ({
               <em v-else class="muted">non étiquetée</em>
               <span v-if="openRunId" class="muted small">
                 — le relevé a trouvé
-                <code v-if="foundNext(page)">{{ foundNext(page) }}</code>
+                <code v-if="pageSuivanteTrouvee(page)">{{ pageSuivanteTrouvee(page) }}</code>
                 <em v-else>rien</em>
               </span>
-              <button class="linklike" @click="labelNext(page.id, foundNext(page))">
+              <button class="linklike" @click="labelNext(page.id, pageSuivanteTrouvee(page))">
                 c’est juste
               </button>
               <button class="linklike" @click="labelNext(page.id, '')">il n’y a pas de suite</button>
@@ -1606,9 +1517,9 @@ const corpusSize = computed(() => ({
             </div>
 
             <!-- Les motifs de rejet, expédiables en groupe -->
-            <div v-if="reasons(page).length" class="row reasons">
+            <div v-if="motifsDeRejet(page).length" class="row reasons">
               <span class="muted small">Écartés par le relevé :</span>
-              <span v-for="[reason, count] in reasons(page)" :key="reason" class="reason">
+              <span v-for="[reason, count] in motifsDeRejet(page)" :key="reason" class="reason">
                 {{ reason }} ({{ count }})
                 <button class="linklike" @click="bulk(page.id, reason, 'AUTRE')">
                   tout « autre chose »
@@ -1625,7 +1536,7 @@ const corpusSize = computed(() => ({
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in rows(page)" :key="row.result?.url ?? row.label?.url">
+                <tr v-for="row in apparierReleve(page)" :key="row.result?.url ?? row.label?.url">
                   <td>
                     <div class="link-text">{{ row.result?.text || row.label?.text || '(sans texte)' }}</div>
                     <a :href="row.result?.url ?? row.label?.url" target="_blank" class="muted small">
@@ -1694,7 +1605,7 @@ const corpusSize = computed(() => ({
                         <button class="linklike" @click="allerALaSortie(row.label.sortieId!)">
                           voir la sortie
                         </button>
-                        <span class="muted small">{{ resume(row.label.sortie) }}</span>
+                        <span class="muted small">{{ resumeSortie(row.label.sortie) }}</span>
                       </div>
 
                       <!-- Le formulaire de l'étage 4, et rien d'autre : trois
@@ -1853,7 +1764,7 @@ const corpusSize = computed(() => ({
           <ul v-if="reste.aDecrire.length" class="reste-detail">
             <li v-for="lien in reste.aDecrire.slice(0, 5)" :key="lien.id">
               <a :href="lien.url" target="_blank">{{ lien.text || lien.url }}</a>
-              <span class="muted small">— {{ venue(lien.origin) }}</span>
+              <span class="muted small">— {{ venueDeLEtiquette(lien.origin) }}</span>
             </li>
           </ul>
         </div>
@@ -1961,13 +1872,13 @@ const corpusSize = computed(() => ({
                 et les aligner sur une seule ligne faisait lire « 6/6 » comme une
                 complétude alors que c'était un dénominateur inventé.
               -->
-              <td class="num" :class="pleine(sortie.couverture.tri)">
+              <td class="num" :class="etatDeCompletude(sortie.couverture.tri)">
                 {{ sortie.couverture.tri.faits }}/{{ sortie.couverture.tri.total }}
               </td>
-              <td class="num" :class="pleine(sortie.couverture.lecture)">
+              <td class="num" :class="etatDeCompletude(sortie.couverture.lecture)">
                 {{ sortie.couverture.lecture.faits }}/{{ sortie.couverture.lecture.total }}
               </td>
-              <td class="num" :class="pleine(sortie.couverture.extraction)">
+              <td class="num" :class="etatDeCompletude(sortie.couverture.extraction)">
                 {{ sortie.couverture.extraction.faits }}/{{ sortie.couverture.extraction.total }}
               </td>
               <td>
