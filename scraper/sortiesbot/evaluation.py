@@ -88,8 +88,8 @@ from .config import Config
 from .harvest import (
     BORING_PATH,
     MIN_TEXT,
-    FetchError,
     Fetcher,
+    FetchError,
     _context_of,
     _soup,
     json_ld_dates,
@@ -249,7 +249,7 @@ def capture_pages(url: str, pages: int, fetcher: Fetcher | None = None) -> list[
 
         try:
             html = fetcher.get_html(current)
-        except FetchError as err:
+        except FetchError:
             if page_no == 1:
                 raise
             # Une page suivante injoignable arrête la capture sans la perdre :

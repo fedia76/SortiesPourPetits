@@ -58,20 +58,20 @@ doublon, essai sans soumission, erreur réseau) est seulement journalisée.
 
 from __future__ import annotations
 
-from typing import Iterator
-
-from .api import ApiError, SppApi
-from .config import Config, describe
-from .harvest import FetchError, Fetcher, Link, json_ld_dates
-from .journal import RunLog
-from .ledger import Ledger
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 
+from .api import ApiError, SppApi
 from .classify import PROGRAMME, SORTIE
+from .config import Config, describe
+from .harvest import Fetcher, FetchError, Link, json_ld_dates
+from .journal import RunLog
+from .ledger import Ledger
 from .models import Candidate, ExtractedEvent, FoundPage, SourceLink, Summary
 from .providers.base import Provider, ProviderError
 from .providers.serper_client import SerperClient
-from .stages import ORDER, describe as describe_stages
+from .stages import ORDER
+from .stages import describe as describe_stages
 from .stages.attribution import Attribution
 from .stages.base import Brick, PageContent, RunContext, RunResult
 from .stages.discovery import Discovery

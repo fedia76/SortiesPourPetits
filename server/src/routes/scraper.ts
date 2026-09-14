@@ -1310,7 +1310,7 @@ scraperRouter.get('/runs/:id/graph', async (req, res) => {
   const cost = new Map<string, { usd: number; tokens: number; searches: number; calls: number }>();
   for (const row of spend) {
     if (!row.stage) continue;
-    let d: Record<string, unknown> = {};
+    let d: Record<string, unknown>;
     try {
       d = row.data ? (JSON.parse(row.data) as Record<string, unknown>) : {};
     } catch {

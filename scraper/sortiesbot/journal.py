@@ -25,10 +25,11 @@ from __future__ import annotations
 import json
 import sys
 import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator, TextIO
+from typing import Any, TextIO
 
 from .stages import ACTOR, IN_OUT, LABEL, NUMBER, Stage
 
@@ -199,7 +200,7 @@ class RunLog:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._file = path.open("a", encoding="utf-8")
 
-    def __enter__(self) -> "RunLog":
+    def __enter__(self) -> RunLog:
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -217,7 +218,7 @@ class RunLog:
         return self._stage
 
     @contextmanager
-    def stage(self, stage: Stage, **fields: Any) -> Iterator["_StageScope"]:
+    def stage(self, stage: Stage, **fields: Any) -> Iterator[_StageScope]:
         """Ouvre un étage : tout ce qui est journalisé dedans lui est rattaché.
 
         Rend un objet sur lequel l'appelant pose ce que l'étage a produit

@@ -22,13 +22,12 @@ from __future__ import annotations
 import io
 
 import pytest
+from test_attribution import AUTRE_HTML, KIDIKLIK, MUSEE, MUSEE_HTML, FakeEngine, kidiklik_html
+from test_pipeline import FakeApi, FakeFetcher, FakeProvider, config
 
 from sortiesbot.journal import RunLog
 from sortiesbot.orchestrator import run_source
 from sortiesbot.store import SeenStore
-
-from test_attribution import AUTRE_HTML, FakeEngine, KIDIKLIK, MUSEE, MUSEE_HTML, kidiklik_html
-from test_pipeline import FakeApi, FakeFetcher, FakeProvider, config
 
 #: Ce que le site envoie au worker : la fiche telle qu'elle est en base, et la
 #: page dont il faut repartir — celle qui a été lue, pas celle qu'on montre.

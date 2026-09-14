@@ -34,7 +34,6 @@ import type {
   EvalAudience,
   EvalRunScope,
   EvalSortieFacts,
-  EvalLink,
   EvalLinkResult,
   EvalSortie,
   EvalCriteres,

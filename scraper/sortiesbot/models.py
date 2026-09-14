@@ -132,7 +132,7 @@ class ExtractedEvent:
     photo_url: str = ""
 
     @classmethod
-    def from_json(cls, data: dict[str, Any]) -> "ExtractedEvent":
+    def from_json(cls, data: dict[str, Any]) -> ExtractedEvent:
         def text(key: str) -> str:
             value = data.get(key)
             return "" if value is None else str(value).strip()
@@ -205,7 +205,7 @@ class Usage:
     #: bien moins, et un run peut mêler les deux.
     search_cost_usd: float = 0.0
 
-    def add(self, other: "Usage") -> None:
+    def add(self, other: Usage) -> None:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.web_searches += other.web_searches

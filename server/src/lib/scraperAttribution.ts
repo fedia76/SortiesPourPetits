@@ -185,8 +185,8 @@ function parse(raw: string | null): Data {
   }
 }
 
-const str = (d: Data, k: string) => (typeof d[k] === 'string' ? (d[k] as string) : '');
-const num = (d: Data, k: string) => (typeof d[k] === 'number' ? (d[k] as number) : 0);
+const str = (d: Data, k: string) => (typeof d[k] === 'string' ? d[k] : '');
+const num = (d: Data, k: string) => (typeof d[k] === 'number' ? d[k] : 0);
 
 /**
  * Le motif d'abandon, rendu groupable.

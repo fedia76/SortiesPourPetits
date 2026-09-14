@@ -89,9 +89,9 @@ from ..models import (
 )
 from ..providers.base import ProviderError
 from ..providers.serper_client import SerperClient
+from ..text import alphanum
 from . import Stage
 from .base import Brick, PageContent
-from ..text import alphanum
 
 #: Textes de lien qui annoncent la page de l'organisateur. Volontairement
 #: courts et sans accents : ils sont cherchés dans un texte replié.

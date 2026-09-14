@@ -492,7 +492,7 @@ class Environment:
     serper_key: str | None = None
 
     @classmethod
-    def from_env(cls) -> "Environment":
+    def from_env(cls) -> Environment:
         return cls(
             api_url=os.environ.get("SPP_API_URL", "http://localhost:3000").rstrip("/"),
             api_key=os.environ.get("SPP_API_KEY") or None,

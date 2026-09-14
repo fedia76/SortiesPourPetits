@@ -7,6 +7,9 @@ interdit.
 
 from __future__ import annotations
 
+import re
+from typing import ClassVar
+
 import pytest
 
 from sortiesbot.harvest import Fetcher, FetchError, decode_html, links_of, page_text
@@ -37,7 +40,7 @@ PAGE = "https://92.agendaculturel.fr/jeune-public/"
 
 def test_les_evenements_sortent_avec_leur_contexte():
     liens = links_of(AGENDA, PAGE)
-    assert [l.text for l in liens] == ["Les Caprices de l'enfant roi", "Simon le saumon"]
+    assert [lien.text for lien in liens] == ["Les Caprices de l'enfant roi", "Simon le saumon"]
     # Le contexte porte la date et le lieu : de quoi trier sans ouvrir la page.
     assert "30 août 2026" in liens[0].context
     assert "Théâtre de Vanves" in liens[0].context
@@ -149,7 +152,7 @@ def test_robots_txt_est_respecte(monkeypatch):
     fetcher = Fetcher(session=session)
 
     assert fetcher.get_html("https://site.fr/public/x") == "<html>ok</html>"
-    with pytest.raises(FetchError, match="robots.txt"):
+    with pytest.raises(FetchError, match=re.escape("robots.txt")):
         fetcher.get_html("https://site.fr/prive/secret")
 
 
@@ -333,7 +336,7 @@ def test_une_page_nest_telechargee_quune_fois_par_run():
     appels: list[str] = []
 
     class SessionSimulee:
-        headers: dict = {}
+        headers: ClassVar[dict[str, str]] = {}
 
         def get(self, url, timeout=None, stream=False):
             appels.append(url)
@@ -392,7 +395,6 @@ def test_une_page_qui_se_declare_sa_propre_suite_ne_boucle_pas():
 
 def test_un_agenda_maigre_va_chercher_ses_pages_suivantes(log_muet):
     """Peu de liens sur la première page : la suite vaut le téléchargement."""
-    from sortiesbot.stages.harvest import Harvest
 
     pages = {
         "https://x.fr/agenda/": agenda(3, "/agenda/2"),
@@ -407,7 +409,6 @@ def test_un_agenda_maigre_va_chercher_ses_pages_suivantes(log_muet):
 
 def test_un_agenda_deja_riche_sarrete_a_sa_premiere_page(log_muet):
     """Les liens partent au tri, qui est facturé : en ajouter le gonflerait."""
-    from sortiesbot.stages.harvest import Harvest
 
     pages = {
         "https://x.fr/agenda/": agenda(200, "/agenda/2"),
@@ -555,7 +556,7 @@ def test_utf8_declare_par_une_balise_meta():
 
 def test_utf8_sans_aucune_declaration():
     """Rien dans l'en-tête, rien dans le HTML : l'UTF-8 est le défaut moderne."""
-    assert decode_html("Spectacle très drôle".encode("utf-8")) == "Spectacle très drôle"
+    assert decode_html("Spectacle très drôle".encode()) == "Spectacle très drôle"
 
 
 def test_le_charset_de_l_en_tete_prime_sur_la_balise():
@@ -575,13 +576,13 @@ def test_les_octets_l_emportent_sur_un_en_tete_qui_ment():
     Un texte réellement latin-1 ne forme pratiquement jamais des séquences
     UTF-8 valides : quand il y en a, c'est la déclaration qui a tort.
     """
-    raw = "Été à Rouen".encode("utf-8")
+    raw = "Été à Rouen".encode()
     assert decode_html(raw, "text/html; charset=ISO-8859-1") == "Été à Rouen"
 
 
 def test_encodage_annonce_inconnu():
     """Un nom d'encodage mal orthographié ne doit pas faire perdre la page."""
-    assert "été" in decode_html("été".encode("utf-8"), "text/html; charset=utf8mb4-oups")
+    assert "été" in decode_html("été".encode(), "text/html; charset=utf8mb4-oups")
 
 
 def test_octets_qui_dementent_l_encodage_annonce():
@@ -591,7 +592,7 @@ def test_octets_qui_dementent_l_encodage_annonce():
 
 
 def test_bom_utf8():
-    raw = "﻿<html>Noël</html>".encode("utf-8")
+    raw = "﻿<html>Noël</html>".encode()
     assert decode_html(raw, "text/html; charset=iso-8859-1") == "<html>Noël</html>"
 
 
@@ -601,7 +602,7 @@ def test_get_html_decode_sans_consulter_response_encoding(monkeypatch):
     page = '<html><head><meta charset="utf-8"></head><body>Marché de Noël à Caen</body></html>'
 
     class Session:
-        headers: dict[str, str] = {}
+        headers: ClassVar[dict[str, str]] = {}
 
         def get(self, url, **_kwargs):
             if url.endswith("/robots.txt"):

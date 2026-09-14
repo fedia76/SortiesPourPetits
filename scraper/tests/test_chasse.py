@@ -31,14 +31,13 @@ import gzip
 from pathlib import Path
 
 import pytest
+from test_pipeline import FakeFetcher
 
 from sortiesbot.config import Config
 from sortiesbot.evaluation import hunt, hunt_page
 from sortiesbot.journal import RunLog
 from sortiesbot.models import FoundPage
 from sortiesbot.providers.base import ProviderError
-
-from test_pipeline import FakeFetcher
 
 PAGES = Path(__file__).parent / "fixtures" / "pages"
 

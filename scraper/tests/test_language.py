@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 
 import pytest
+from test_pipeline import FakeApi, FakeFetcher, FakeProvider, config, sortie
 
 from sortiesbot.harvest import FetchError
 from sortiesbot.journal import RunLog
@@ -33,8 +34,6 @@ from sortiesbot.language import (
 from sortiesbot.models import FoundPage
 from sortiesbot.orchestrator import run
 from sortiesbot.store import SeenStore
-
-from test_pipeline import FakeApi, FakeFetcher, FakeProvider, config, sortie
 
 EN_URL = "https://www.musee-exemple.fr/en/whats-on/dinosaur-workshop"
 FR_URL = "https://www.musee-exemple.fr/fr/agenda/atelier-dinosaures"
@@ -159,7 +158,7 @@ def test_la_page_elle_meme_nest_jamais_son_propre_candidat():
 def test_une_page_francaise_nest_pas_touchee():
     """Et surtout : pas une requête de plus. C'est le cas de figure normal."""
     fetcher = FakeFetcher({})
-    url, html = french_version(FR_URL, page(CORPS_FR, lang="fr"), fetcher)
+    url, _ = french_version(FR_URL, page(CORPS_FR, lang="fr"), fetcher)
     assert url == FR_URL
     assert fetcher.asked == []
 

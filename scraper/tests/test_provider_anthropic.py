@@ -114,7 +114,7 @@ class FakeApiServer:
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
-            def do_POST(self):  # noqa: N802 - imposé par BaseHTTPRequestHandler
+            def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
                 outer.requests.append(json.loads(self.rfile.read(length)))
                 body = sse(
@@ -153,7 +153,7 @@ def provider_for(server: FakeApiServer) -> AnthropicProvider:
 
 def test_la_recherche_ne_recoit_que_web_search(log):
     server = FakeApiServer(
-        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(LANCEES)])]
+        [message([*search_for("https://agenda.fr/jeune-public/"), text_block(LANCEES)])]
     )
     try:
         pages = provider_for(server).search(
@@ -177,8 +177,7 @@ def test_la_recherche_ne_rend_aucun_jugement(log):
     """Elle ne rend que des URL et des titres : c'est le contrat qu'un moteur
     ordinaire saura honorer le jour où il prendra la place de celui-ci."""
     server = FakeApiServer(
-        [message(search_for("https://agenda.fr/a", "https://agenda.fr/b")
-                 + [text_block(LANCEES)])]
+        [message([*search_for("https://agenda.fr/a", "https://agenda.fr/b"), text_block(LANCEES)])]
     )
     try:
         pages = provider_for(server).search(["x"], Config(name="t", theme="x"), log)
@@ -204,7 +203,7 @@ def test_le_modele_ne_peut_plus_inventer_durl():
     log = RunLog(path=None, verbose=True, stream=stream)
     invente = {"lancees": ["x"], "pages": ["https://paris.fr/listing/9475"]}
     server = FakeApiServer(
-        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(invente)])]
+        [message([*search_for("https://agenda.fr/jeune-public/"), text_block(invente)])]
     )
     try:
         pages = provider_for(server).search(["x"], Config(name="t", theme="x"), log)
@@ -294,7 +293,7 @@ def test_la_selection_ne_rend_que_des_numeros(log):
     finally:
         server.close()
 
-    assert [l.url for l in gardes] == ["https://agenda.fr/a.html", "https://agenda.fr/c.html"]
+    assert [lien.url for lien in gardes] == ["https://agenda.fr/a.html", "https://agenda.fr/c.html"]
     body = server.requests[0]
     assert "tools" not in body  # aucun outil : aucune boucle serveur possible
     # Les liens partent avec leur contexte, numérotés.
@@ -309,7 +308,7 @@ def test_la_selection_ignore_les_numeros_hors_bornes(log):
                                              Config(name="t", theme="x"), log)
     finally:
         server.close()
-    assert [l.url for l in gardes] == ["https://agenda.fr/a.html"]
+    assert [lien.url for lien in gardes] == ["https://agenda.fr/a.html"]
 
 
 def test_extraction_recoit_la_page_en_clair(log):
@@ -349,7 +348,7 @@ def test_reprise_apres_pause_turn(log):
         stop_reason="pause_turn",
     )
     server = FakeApiServer(
-        [paused, message(search_for("https://agenda.fr/jeune-public/") + [text_block(LANCEES)])]
+        [paused, message([*search_for("https://agenda.fr/jeune-public/"), text_block(LANCEES)])]
     )
     try:
         agendas = provider_for(server).search(["x"], Config(name="t", theme="spectacles"), log)
@@ -365,7 +364,7 @@ def test_journal_des_recherches():
     stream = io.StringIO()
     log = RunLog(path=None, verbose=True, stream=stream)
     server = FakeApiServer(
-        [message(search_for("https://agenda.fr/jeune-public/") + [text_block(LANCEES)])]
+        [message([*search_for("https://agenda.fr/jeune-public/"), text_block(LANCEES)])]
     )
     try:
         provider = provider_for(server)
@@ -541,7 +540,7 @@ def test_la_selection_rend_ses_motifs_sans_jamais_rendre_d_url():
     finally:
         server.close()
 
-    assert [l.url for l in kept] == ["https://agenda.fr/atelier"]
+    assert [lien.url for lien in kept] == ["https://agenda.fr/atelier"]
 
     selected = next(r for r in recus if r["kind"] == "selected")
     assert selected["dropped_reason"] == "le reste n'est que de la navigation et de la pagination"

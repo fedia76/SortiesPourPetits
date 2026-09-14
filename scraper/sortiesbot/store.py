@@ -29,12 +29,14 @@ empêcher un run ultérieur de traiter la page.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Protocol
+from typing import Any, Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from .text import alphanum, fold
+
+from .text import alphanum
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS seen_url (
@@ -129,7 +131,7 @@ class SeenStore:
     def close(self) -> None:
         self._db.close()
 
-    def __enter__(self) -> "SeenStore":
+    def __enter__(self) -> SeenStore:
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -242,7 +244,7 @@ class RemoteStore:
         self._asked: set[str] = set()
         self._pending: list[_Item] = []
 
-    def __enter__(self) -> "RemoteStore":
+    def __enter__(self) -> RemoteStore:
         return self
 
     def __exit__(self, *_exc: object) -> None:

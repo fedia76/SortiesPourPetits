@@ -21,14 +21,13 @@ import io
 from datetime import date, timedelta
 
 import pytest
+from test_pipeline import FakeApi, FakeFetcher
 
 from sortiesbot.config import Config, ConfigError, validated
 from sortiesbot.journal import RunLog
 from sortiesbot.models import ExtractedEvent, Usage
 from sortiesbot.orchestrator import run
 from sortiesbot.store import SeenStore, event_key
-
-from test_pipeline import FakeApi, FakeFetcher
 
 DEMAIN = (date.today() + timedelta(days=1)).isoformat()
 APRES = (date.today() + timedelta(days=3)).isoformat()

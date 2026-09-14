@@ -204,7 +204,7 @@ function detail(run: EvalRun): string {
  */
 function rechercheDe(run: EvalRun): { cle: string; texte: string } {
   if (run.stage !== 'SELECT') return { cle: '', texte: '' };
-  let r: Partial<EvalRecherche> = {};
+  let r: Partial<EvalRecherche>;
   try {
     r = JSON.parse(run.settings || '{}') as Partial<EvalRecherche>;
   } catch {

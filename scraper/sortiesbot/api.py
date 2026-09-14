@@ -9,8 +9,9 @@ humaine.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter

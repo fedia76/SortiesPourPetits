@@ -21,11 +21,11 @@ l'imbrication.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Iterator
+from typing import Any, ClassVar
 
-from . import Stage
 from ..api import SppApi
 from ..config import Config
 from ..harvest import Fetcher
@@ -34,6 +34,7 @@ from ..ledger import Ledger
 from ..models import Summary
 from ..providers.base import Provider
 from ..store import Memory
+from . import Stage
 
 
 @dataclass
@@ -139,6 +140,5 @@ class Brick:
         journalisé dedans, pas seulement l'ouverture.
         """
         trail = {k: fields.pop(k) for k in ("agenda", "page", "query") if k in fields}
-        with self.log.trail(**trail):
-            with self.log.stage(self.stage, **fields) as scope:
-                yield scope
+        with self.log.trail(**trail), self.log.stage(self.stage, **fields) as scope:
+            yield scope

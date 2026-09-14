@@ -14,5 +14,7 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["src", "tests", "scripts"]
+  // `prisma/` y est aussi : le seed est du TypeScript qui parle au schéma,
+  // et rien ne le compilait.
+  "include": ["src", "tests", "scripts", "prisma"]
 }

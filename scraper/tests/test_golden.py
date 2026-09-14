@@ -41,6 +41,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+from test_pipeline import FakeApi, FakeFetcher
 
 from sortiesbot.classify import INCONNU, classify
 from sortiesbot.config import Config
@@ -49,8 +50,6 @@ from sortiesbot.journal import RunLog
 from sortiesbot.models import ExtractedEvent, FoundPage, Usage
 from sortiesbot.orchestrator import run
 from sortiesbot.store import SeenStore
-
-from test_pipeline import FakeApi, FakeFetcher
 
 PAGES = Path(__file__).parent / "fixtures" / "pages"
 

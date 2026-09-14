@@ -197,6 +197,11 @@ eventsRouter.get('/:id', async (req, res) => {
   res.json({ event: serializeEvent(event) });
 });
 
+/** Le champ `data` d'un envoi multipart. `multer` ne type pas `req.body`. */
+function multipartData(req: { body?: unknown }): unknown {
+  return (req.body as Record<string, unknown> | undefined)?.data;
+}
+
 function parseEventBody(raw: unknown) {
   if (typeof raw !== 'string') return null;
   try {
@@ -231,7 +236,7 @@ async function upsertVenue(venue: {
 }
 
 eventsRouter.post('/', requireAuth, photoUpload.single('photo'), async (req, res) => {
-  const parsed = parseEventBody(req.body.data);
+  const parsed = parseEventBody(multipartData(req));
   if (!parsed) {
     res.status(400).json({ error: 'Corps de requête invalide' });
     return;
@@ -309,7 +314,7 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
     return;
   }
 
-  const parsed = parseEventBody(req.body.data);
+  const parsed = parseEventBody(multipartData(req));
   if (!parsed) {
     res.status(400).json({ error: 'Corps de requête invalide' });
     return;

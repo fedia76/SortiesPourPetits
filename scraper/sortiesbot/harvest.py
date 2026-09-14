@@ -31,9 +31,9 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 

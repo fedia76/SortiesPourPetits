@@ -4,9 +4,13 @@ name: Vérification
 # `main`, et donc seulement une fois qu'il est trop tard : une erreur de type
 # y casse la mise en production au lieu de casser une branche. Et les tests du
 # scraper, eux, ne tournaient nulle part.
+#
+# `main` était ignoré ici, ce qui laissait un trou : un commit poussé
+# directement sur la branche par défaut ne rencontrait aucune vérification et
+# partait en production tel quel. Ce workflow tourne donc partout, `main`
+# compris — le déploiement, lui, reste déclenché séparément.
 on:
   push:
-    branches-ignore: [main]
   pull_request:
   workflow_dispatch:
 
@@ -22,6 +26,13 @@ jobs:
       - name: Installer
         working-directory: scraper
         run: pip install -e ".[dev]"
+      # Avant les tests : une variable morte ou un import fantôme se voit en
+      # deux secondes, là où la suite en met vingt. Le dépôt portait une
+      # dizaine de « # noqa: BLE001 » — des suppressions écrites pour un
+      # linter qui ne tournait nulle part.
+      - name: Lint du scraper
+        working-directory: scraper
+        run: ruff check .
       - name: Tests
         working-directory: scraper
         run: python -m pytest -q
@@ -34,11 +45,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Types du front
+      - name: Types et lint du front
         working-directory: client
         run: |
           npm ci
           npm run typecheck
+          npm run lint
       # `build` compile `src`, et rien d'autre : ni les tests, ni `scripts/`. Le
       # script de reprise des étiquettes a pu écrire dans une table supprimée
       # pendant des semaines pour cette raison exacte, sans que rien ne le dise.
@@ -49,6 +61,13 @@ jobs:
           npm ci
           npm run build
           npm run typecheck
+      # Ce que la compilation ne voit pas : un `await` oublié dans une route,
+      # une promesse qui part sans personne pour la rattraper. C'est de la même
+      # famille que ce qui a éteint le site public une fois déjà (voir
+      # `lib/asyncRoutes`).
+      - name: Lint de l'API
+        working-directory: server
+        run: npm run lint
       # La mesure du banc est du calcul pur, et une erreur y fausserait tous les
       # chiffres sans rien casser : compiler ne suffit donc pas à la surveiller.
       # Ces tests ne demandent aucune dépendance de plus — le lanceur de Node,

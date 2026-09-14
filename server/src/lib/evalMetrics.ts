@@ -17,6 +17,8 @@
  * erreur fausserait silencieusement tous les chiffres.
  */
 
+import { texteDe } from './texte';
+
 // ═══════════════════════════════════════════════════ les verdicts dérivés
 
 /** Ce qu'un run a fait d'un champ, face à ce que le corpus déclare. */
@@ -1249,7 +1251,7 @@ function montre(value: unknown): string {
   if (typeof value === 'boolean') return value ? 'oui' : 'non';
   if (Array.isArray(value)) return value.length ? value.join(', ') : '(liste vide)';
   if (value === '') return '(vide)';
-  return String(value);
+  return texteDe(value);
 }
 
 function ecrire(champs: Champ[], fiche: FicheRendue, cote: 'etiquette' | 'rendu'): string {

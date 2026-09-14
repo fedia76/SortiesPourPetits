@@ -51,7 +51,7 @@ test('ce qui n’est même pas une chaîne est refusé sans broncher', () => {
   // `req.params` est typé `string`, mais une route peut se tromper de champ et
   // passer ce que `req.query` a rendu — un tableau, par exemple.
   for (const valeur of [undefined, null, 12, ['12'], { id: 12 }, true]) {
-    assert.equal(parseId(valeur), null, String(valeur));
+    assert.equal(parseId(valeur), null, JSON.stringify(valeur));
   }
 });
 
