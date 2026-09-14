@@ -7,17 +7,8 @@ import { usePolling } from '../composables/usePolling';
 import { setPageSeo } from '../lib/seo';
 import { useAuthStore } from '../stores/auth';
 import type { EventItem, ScraperRun } from '../types';
-import {
-  SETTING_LABELS,
-  SOURCE_SIGNAL_LABELS,
-  STATUS_LABELS,
-  ageLabel,
-  dayLabel,
-  hasCoordinates,
-  hasPrice,
-  nextDate,
-  priceLabel,
-} from '../types';
+import { SETTING_LABELS, SOURCE_SIGNAL_LABELS, STATUS_LABELS } from '../types';
+import { ageLabel, dayLabel, hasCoordinates, hasPrice, nextDate, priceLabel } from '../lib/sorties';
 
 const route = useRoute();
 const router = useRouter();

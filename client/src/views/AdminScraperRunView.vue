@@ -4,7 +4,8 @@ import { useRoute } from 'vue-router';
 import { api } from '../lib/api';
 import { estIntrouvable, messageDe } from '../lib/erreurs';
 import type { ScraperRun } from '../types';
-import { DECISION_LABELS, RUN_STATUS_LABELS, runLabel } from '../types';
+import { DECISION_LABELS, RUN_STATUS_LABELS } from '../types';
+import { runLabel } from '../lib/sorties';
 import { usePolling } from '../composables/usePolling';
 
 const route = useRoute();

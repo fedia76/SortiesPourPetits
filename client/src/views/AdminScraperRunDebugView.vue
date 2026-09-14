@@ -26,15 +26,8 @@ import type {
   ScraperTreeAgenda,
   ScraperTreePage,
 } from '../types';
-import {
-  AGENDA_STATUS_LABELS,
-  ATTRIBUTION_SIGNAL_HINTS,
-  ATTRIBUTION_SIGNAL_LABELS,
-  FATE_LABELS,
-  LOG_KIND_LABELS,
-  RUN_STATUS_LABELS,
-  runLabel,
-} from '../types';
+import { AGENDA_STATUS_LABELS, ATTRIBUTION_SIGNAL_HINTS, ATTRIBUTION_SIGNAL_LABELS, FATE_LABELS, LOG_KIND_LABELS, RUN_STATUS_LABELS } from '../types';
+import { runLabel } from '../lib/sorties';
 
 const route = useRoute();
 const runId = computed(() => Number(route.params.id));

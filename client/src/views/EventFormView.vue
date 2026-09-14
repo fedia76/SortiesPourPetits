@@ -6,7 +6,7 @@ import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
 import { messageDe } from '../lib/erreurs';
 import type { Category, EventInput, EventItem, Setting } from '../types';
-import { dayLabel, hasCoordinates, hasPrice } from '../types';
+import { dayLabel, hasCoordinates, hasPrice } from '../lib/sorties';
 
 const route = useRoute();
 const router = useRouter();

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { EventItem } from '../types';
-import { SETTING_LABELS, nextDate, priceLabel, shortAgeLabel } from '../types';
+import { SETTING_LABELS } from '../types';
+import { nextDate, priceLabel, shortAgeLabel } from '../lib/sorties';
 
 const props = defineProps<{ event: EventItem }>();
 

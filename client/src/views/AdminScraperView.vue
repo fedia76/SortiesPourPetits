@@ -3,7 +3,8 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { api } from '../lib/api';
 import { messageDe } from '../lib/erreurs';
 import type { ScraperConfig, ScraperMode, ScraperRun } from '../types';
-import { RUN_STATUS_LABELS, runLabel } from '../types';
+import { RUN_STATUS_LABELS } from '../types';
+import { runLabel } from '../lib/sorties';
 import { usePolling } from '../composables/usePolling';
 
 const configs = ref<ScraperConfig[]>([]);

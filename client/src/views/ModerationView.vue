@@ -3,15 +3,8 @@ import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
 import { messageDe } from '../lib/erreurs';
 import type { EventItem, RejectionMeaning, ScraperConfig } from '../types';
-import {
-  SETTING_LABELS,
-  STATUS_LABELS,
-  dayLabel,
-  hasCoordinates,
-  hasPrice,
-  priceLabel,
-  shortAgeLabel,
-} from '../types';
+import { SETTING_LABELS, STATUS_LABELS } from '../types';
+import { dayLabel, hasCoordinates, hasPrice, priceLabel, shortAgeLabel } from '../lib/sorties';
 
 /** Résultat de la recherche de doublons pour une sortie de la file. */
 interface DuplicateCheck {

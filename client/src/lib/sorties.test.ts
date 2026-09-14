@@ -1,5 +1,5 @@
 /**
- * Les règles que le client calcule, et dont deux sont **recopiées** du serveur.
+ * Ce qu'une sortie dit d'elle-même, et deux règles **recopiées** du serveur.
  *
  * `hasPrice` et `hasCoordinates` existent des deux côtés, faute de paquet
  * partagé entre les deux moitiés du dépôt. Elles avaient déjà divergé : le
@@ -14,6 +14,7 @@
  */
 import { describe, expect, test } from 'vitest';
 
+import type { ScraperRun } from '../types';
 import {
   UNKNOWN_PRICE,
   ageLabel,
@@ -24,8 +25,7 @@ import {
   priceLabel,
   runLabel,
   shortAgeLabel,
-  type ScraperRun,
-} from './types';
+} from './sorties';
 
 // ──────────────────────────────────────────────────────────────── le tarif
 
