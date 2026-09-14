@@ -13,6 +13,7 @@ import {
 import { hasCoordinates, hasPrice } from '../lib/incomplete';
 import { describeRejections } from '../lib/rejectionCodes';
 import { rankSimilar, significantWords, type SimilarityScore } from '../lib/similarity';
+import { parseId } from '../lib/routeParams';
 
 export const moderationRouter = safeRouter();
 
@@ -177,9 +178,9 @@ const MAX_CANDIDATES = 300;
  * à celle qu'on modère.
  */
 moderationRouter.get('/:id/similar', async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const parsed = similarSchema.safeParse(req.query);
-  if (!Number.isInteger(id) || !parsed.success) {
+  if (id === null || !parsed.success) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -239,9 +240,9 @@ moderationRouter.get('/:id/similar', async (req, res) => {
 });
 
 moderationRouter.post('/:id', async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const parsed = moderateSchema.safeParse(req.body);
-  if (!Number.isInteger(id) || !parsed.success) {
+  if (id === null || !parsed.success) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }

@@ -3,6 +3,7 @@ import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
 import { categorySchema } from '../lib/validators';
+import { parseId } from '../lib/routeParams';
 
 export const categoriesRouter = safeRouter();
 
@@ -31,9 +32,9 @@ categoriesRouter.post('/', requireRole(Role.ADMIN), async (req, res) => {
 });
 
 categoriesRouter.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const parsed = categorySchema.safeParse(req.body);
-  if (!Number.isInteger(id) || !parsed.success) {
+  if (id === null || !parsed.success) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -58,8 +59,8 @@ categoriesRouter.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
 });
 
 categoriesRouter.delete('/:id', requireRole(Role.ADMIN), async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
+  const id = parseId(req.params.id);
+  if (id === null) {
     res.status(400).json({ error: 'Identifiant invalide' });
     return;
   }

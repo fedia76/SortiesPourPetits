@@ -25,7 +25,16 @@ import { mountJsonParsers } from '../src/lib/bodyLimits';
 import { reponseErreur } from '../src/lib/httpErrors';
 
 const app = express();
-mountJsonParsers(app);
+// Le contrôle qui garde le plafond large. Ici il se pilote par un en-tête :
+// le sujet du fichier est l'ordre des parseurs, pas la façon d'authentifier.
+let autorise = true;
+mountJsonParsers(app, (_req, res, next) => {
+  if (!autorise) {
+    res.status(401).json({ error: 'Authentification requise' });
+    return;
+  }
+  next();
+});
 // Deux routes qui ne font rien d'autre que dire ce qu'elles ont reçu : le sujet
 // est le parseur, pas ce qu'il y a derrière.
 app.post('/api/eval/hunts/1/pages', (req, res) => res.json({ octets: JSON.stringify(req.body).length }));
@@ -69,6 +78,31 @@ test('un corps trop gros est une requête refusée, pas une panne', async () => 
   assert.equal(res.status, 413);
   const corps = (await res.json()) as { error: string };
   assert.equal(corps.error, 'Corps de requête trop volumineux');
+});
+
+test('le plafond large ne s’ouvre qu’à un appelant autorisé', async () => {
+  // Le contrôle de rôle vivait dans le routeur, donc **après** ce parseur :
+  // n'importe qui pouvait faire tamponner douze mégaoctets en mémoire et ne
+  // recevoir le 401 qu'une fois le corps lu.
+  autorise = false;
+  try {
+    const res = await poste('/api/eval/hunts/1/pages', 5 * 1024);
+    assert.equal(res.status, 401);
+  } finally {
+    autorise = true;
+  }
+});
+
+test('un appelant refusé sur le banc ne retombe pas sur le plafond serré', async () => {
+  // Le parseur large est court-circuité, pas remplacé : la requête s'arrête,
+  // elle ne repart pas vers `express.json()` pour y être lue de toute façon.
+  autorise = false;
+  try {
+    const res = await poste('/api/eval/hunts/1/pages', 300);
+    assert.equal(res.status, 401);
+  } finally {
+    autorise = true;
+  }
 });
 
 test('un JSON malformé ne passe pas non plus pour une panne', async () => {

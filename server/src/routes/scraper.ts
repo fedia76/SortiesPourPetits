@@ -7,6 +7,7 @@ import { TREE_MAX_ROWS, buildTree } from '../lib/scraperTree';
 import { groupProvenance, provenanceOf } from '../lib/scraperProvenance';
 import { describeRejections, wilsonLowerBound } from '../lib/rejectionCodes';
 import { describeStage } from '../lib/stages';
+import { parseId } from '../lib/routeParams';
 import { requireRole } from '../middleware/auth';
 import {
   aggregatorSchema,
@@ -152,9 +153,9 @@ scraperRouter.post('/configs', async (req, res) => {
 });
 
 scraperRouter.patch('/configs/:id', async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const parsed = scraperConfigUpdateSchema.safeParse(req.body);
-  if (!Number.isInteger(id) || !parsed.success) {
+  if (id === null || !parsed.success) {
     res.status(400).json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
     return;
   }
@@ -191,8 +192,8 @@ scraperRouter.patch('/configs/:id', async (req, res) => {
 });
 
 scraperRouter.delete('/configs/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
+  const id = parseId(req.params.id);
+  if (id === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -253,9 +254,9 @@ scraperRouter.post('/aggregators', async (req, res) => {
 });
 
 scraperRouter.patch('/aggregators/:id', async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const parsed = aggregatorUpdateSchema.safeParse(req.body);
-  if (!Number.isInteger(id) || !parsed.success) {
+  if (id === null || !parsed.success) {
     res.status(400).json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
     return;
   }
@@ -283,8 +284,8 @@ scraperRouter.patch('/aggregators/:id', async (req, res) => {
  * elle ne touche à rien d'autre, aucune sortie n'appartient à un agrégateur.
  */
 scraperRouter.delete('/aggregators/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
+  const id = parseId(req.params.id);
+  if (id === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -304,9 +305,9 @@ scraperRouter.delete('/aggregators/:id', async (req, res) => {
 
 /** Met une exécution en file. Le worker la prendra à son prochain passage. */
 scraperRouter.post('/configs/:id/run', async (req, res) => {
-  const configId = Number(req.params.id);
+  const configId = parseId(req.params.id);
   const parsed = scraperRunSchema.safeParse(req.body ?? {});
-  if (!Number.isInteger(configId) || !parsed.success) {
+  if (configId === null || !parsed.success) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -349,8 +350,8 @@ scraperRouter.get('/runs', async (_req, res) => {
 });
 
 scraperRouter.get('/runs/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
+  const id = parseId(req.params.id);
+  if (id === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -372,8 +373,8 @@ scraperRouter.get('/runs/:id', async (req, res) => {
 
 /** Annule une exécution restée en file (worker arrêté, essai abandonné). */
 scraperRouter.post('/runs/:id/cancel', async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
+  const id = parseId(req.params.id);
+  if (id === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -943,8 +944,8 @@ async function lastHunt(eventId: number) {
  * que de chercher à la main. Ce bouton rejoue la cascade sur cette fiche-là.
  */
 scraperRouter.post('/events/:id/source', async (req, res) => {
-  const eventId = Number(req.params.id);
-  if (!Number.isInteger(eventId)) {
+  const eventId = parseId(req.params.id);
+  if (eventId === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -983,8 +984,8 @@ scraperRouter.post('/events/:id/source', async (req, res) => {
  * trente secondes, et une exécution finie doit se voir sans recharger la page.
  */
 scraperRouter.get('/events/:id/source', async (req, res) => {
-  const eventId = Number(req.params.id);
-  if (!Number.isInteger(eventId)) {
+  const eventId = parseId(req.params.id);
+  if (eventId === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -1096,9 +1097,9 @@ scraperRouter.post('/next', async (_req, res) => {
 
 /** Journalise les pages traitées et alimente la mémoire commune. */
 scraperRouter.post('/runs/:id/items', async (req, res) => {
-  const runId = Number(req.params.id);
+  const runId = parseId(req.params.id);
   const parsed = scraperItemsSchema.safeParse(req.body);
-  if (!Number.isInteger(runId) || !parsed.success) {
+  if (runId === null || !parsed.success) {
     res.status(400).json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
     return;
   }
@@ -1161,9 +1162,9 @@ scraperRouter.post('/runs/:id/items', async (req, res) => {
  * `skipDuplicates` sur la clé (runId, seq).
  */
 scraperRouter.post('/runs/:id/logs', async (req, res) => {
-  const runId = Number(req.params.id);
+  const runId = parseId(req.params.id);
   const parsed = scraperLogsSchema.safeParse(req.body);
-  if (!Number.isInteger(runId) || !parsed.success) {
+  if (runId === null || !parsed.success) {
     res
       .status(400)
       .json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
@@ -1227,9 +1228,9 @@ function serializeLog(row: {
  * pendant qu'on lit.
  */
 scraperRouter.get('/runs/:id/logs', async (req, res) => {
-  const runId = Number(req.params.id);
+  const runId = parseId(req.params.id);
   const parsed = scraperLogQuerySchema.safeParse(req.query);
-  if (!Number.isInteger(runId) || !parsed.success) {
+  if (runId === null || !parsed.success) {
     res
       .status(400)
       .json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
@@ -1281,8 +1282,8 @@ scraperRouter.get('/runs/:id/logs', async (req, res) => {
  * arrive dès qu'on a cliqué « Oublier le journal détaillé ».
  */
 scraperRouter.get('/runs/:id/graph', async (req, res) => {
-  const runId = Number(req.params.id);
-  if (!Number.isInteger(runId)) {
+  const runId = parseId(req.params.id);
+  if (runId === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -1402,8 +1403,8 @@ scraperRouter.get('/runs/:id/graph', async (req, res) => {
  * télécharger deux mille lignes pour n'en afficher qu'un résumé.
  */
 scraperRouter.get('/runs/:id/tree', async (req, res) => {
-  const runId = Number(req.params.id);
-  if (!Number.isInteger(runId)) {
+  const runId = parseId(req.params.id);
+  if (runId === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -1437,8 +1438,8 @@ scraperRouter.get('/runs/:id/tree', async (req, res) => {
  * l'arbre, qui relit tout le journal.
  */
 scraperRouter.get('/runs/:id/attribution', async (req, res) => {
-  const runId = Number(req.params.id);
-  if (!Number.isInteger(runId)) {
+  const runId = parseId(req.params.id);
+  if (runId === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -1466,8 +1467,8 @@ scraperRouter.get('/runs/:id/attribution', async (req, res) => {
  * l'exécution et le sort de chaque page (`ScraperRunItem`) ne bougent pas.
  */
 scraperRouter.delete('/runs/:id/logs', async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
+  const id = parseId(req.params.id);
+  if (id === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -1503,8 +1504,8 @@ scraperRouter.delete('/runs/:id/logs', async (req, res) => {
  * quelque chose de vivant.
  */
 scraperRouter.delete('/runs/:id/data', async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
+  const id = parseId(req.params.id);
+  if (id === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -1602,9 +1603,9 @@ async function freezeProvenance(runId: number): Promise<void> {
 }
 
 scraperRouter.post('/runs/:id/finish', async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const parsed = scraperFinishSchema.safeParse(req.body);
-  if (!Number.isInteger(id) || !parsed.success) {
+  if (id === null || !parsed.success) {
     res.status(400).json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
     return;
   }
@@ -1641,9 +1642,9 @@ scraperRouter.post('/runs/:id/finish', async (req, res) => {
  * dire au modérateur d'où venait la proposition.
  */
 scraperRouter.post('/runs/:id/source', async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const parsed = scraperSourceSchema.safeParse(req.body);
-  if (!Number.isInteger(id) || !parsed.success) {
+  if (id === null || !parsed.success) {
     res.status(400).json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
     return;
   }

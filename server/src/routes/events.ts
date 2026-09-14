@@ -9,6 +9,7 @@ import { diffEvent, type ComparableEvent } from '../lib/eventCorrections';
 import { dateFilter } from '../lib/dateWindow';
 import { areaFilter } from '../lib/areas';
 import { rankEvents } from '../lib/relevance';
+import { parseId } from '../lib/routeParams';
 
 export const eventsRouter = safeRouter();
 
@@ -182,8 +183,8 @@ eventsRouter.get('/mine', requireAuth, async (req, res) => {
 });
 
 eventsRouter.get('/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
+  const id = parseId(req.params.id);
+  if (id === null) {
     res.status(400).json({ error: 'Identifiant invalide' });
     return;
   }
@@ -289,7 +290,11 @@ eventsRouter.post('/', requireAuth, photoUpload.single('photo'), async (req, res
 });
 
 eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
+  if (id === null) {
+    res.status(400).json({ error: 'Identifiant invalide' });
+    return;
+  }
   const existing = await prisma.event.findUnique({
     where: { id },
     // Le lieu et les dates servent à mesurer ce que la modération corrige ; un
@@ -372,7 +377,7 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
     include: EVENT_INCLUDE,
   });
 
-  await recordCorrections(id, existing, event);
+  await recordCorrections(id, existing, event, isModerator);
 
   res.json({ event: serializeEvent(event) });
 });
@@ -437,8 +442,11 @@ function comparable(event: Comparable): ComparableEvent {
  *   six mois après approbation est une amélioration du catalogue, pas une
  *   erreur d'extraction, et la compter ici polluerait la mesure exactement
  *   comme le comptage de liens avait pollué le classifieur ;
- * * c'est un **modérateur** qui édite. L'auteur d'une fiche importée est la
- *   clé d'API du scraper : personne d'autre ne passe par là.
+ * * c'est un **modérateur** qui édite. Ce contrôle était énoncé ici et absent
+ *   du code : en pratique l'auteur d'une fiche importée est le compte de la
+ *   clé d'API, et ce compte peut très bien remplir le formulaire comme
+ *   n'importe qui. Ses retouches seraient alors comptées comme des corrections
+ *   de modération, ce que la mesure n'a jamais voulu dire.
  *
  * Rien de tout ceci ne peut faire échouer la requête. Une mesure est un
  * confort ; refuser une correction de fiche parce qu'on n'a pas su la compter
@@ -448,8 +456,9 @@ async function recordCorrections(
   eventId: number,
   before: Comparable & { status: EventStatus; scraperItems: { id: number }[] },
   after: Comparable,
+  byModerator: boolean,
 ): Promise<void> {
-  if (before.status !== 'PENDING' || before.scraperItems.length === 0) return;
+  if (!byModerator || before.status !== 'PENDING' || before.scraperItems.length === 0) return;
   const corrections = diffEvent(comparable(before), comparable(after));
   if (corrections.length === 0) return;
   try {
@@ -463,7 +472,11 @@ async function recordCorrections(
 }
 
 eventsRouter.delete('/:id', requireAuth, async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
+  if (id === null) {
+    res.status(400).json({ error: 'Identifiant invalide' });
+    return;
+  }
   const existing = await prisma.event.findUnique({ where: { id } });
   if (!existing) {
     res.status(404).json({ error: 'Événement introuvable' });

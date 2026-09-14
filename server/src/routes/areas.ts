@@ -5,6 +5,7 @@ import { requireRole } from '../middleware/auth';
 import { areaSchema } from '../lib/validators';
 import { areaFilter } from '../lib/areas';
 import { dateFilter, today } from '../lib/dateWindow';
+import { parseId } from '../lib/routeParams';
 
 export const areasRouter = safeRouter();
 
@@ -47,9 +48,9 @@ areasRouter.post('/', requireRole(Role.ADMIN), async (req, res) => {
 });
 
 areasRouter.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const parsed = areaSchema.safeParse(req.body);
-  if (!Number.isInteger(id) || !parsed.success) {
+  if (id === null || !parsed.success) {
     res.status(400).json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
     return;
   }
@@ -77,8 +78,8 @@ areasRouter.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
  * Search Console : mieux vaut redessiner une zone que la supprimer.
  */
 areasRouter.delete('/:id', requireRole(Role.ADMIN), async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
+  const id = parseId(req.params.id);
+  if (id === null) {
     res.status(400).json({ error: 'Identifiant invalide' });
     return;
   }

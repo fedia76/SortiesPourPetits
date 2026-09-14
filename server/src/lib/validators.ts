@@ -57,6 +57,30 @@ export const areaSchema = z.object({
 const dateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
 const emptyToNull = (v: unknown) => (v === '' ? null : v);
 
+/**
+ * Ce jour existe-t-il vraiment au calendrier ?
+ *
+ * Le motif seul ne suffit pas : `2026-13-45` a la bonne forme, et c'est tout.
+ * `new Date()` en fait un `Invalid Date`, que Prisma refuse d'écrire — le
+ * visiteur recevait donc **500** pour une date qu'il avait mal saisie, alors
+ * que c'est sa requête qui est invalide, pas le serveur qui est tombé. Et
+ * `2026-02-31` est pire : JavaScript le décale silencieusement au 3 mars, si
+ * bien que la sortie partait en base avec une date que personne n'avait
+ * demandée.
+ *
+ * D'où l'aller-retour : on reformate ce qu'on a lu et on exige que ce soit le
+ * texte de départ. Un décalage se voit, une date impossible aussi.
+ */
+function isRealDay(iso: string): boolean {
+  const date = new Date(`${iso}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === iso;
+}
+
+const DATE_MESSAGE = 'Date invalide (AAAA-MM-JJ)';
+
+/** Un jour au format `2026-09-20`, vérifié au calendrier. */
+const isoDay = z.string().regex(dateOnlyRegex, DATE_MESSAGE).refine(isRealDay, DATE_MESSAGE);
+
 export const eventInputSchema = z
   .object({
     title: z.string().trim().min(3, 'Titre trop court').max(150),
@@ -103,11 +127,11 @@ export const eventInputSchema = z
     isPermanent: z.boolean().optional().default(false),
     dateStart: z.preprocess(
       emptyToNull,
-      z.string().regex(dateOnlyRegex, 'Date invalide (AAAA-MM-JJ)').nullable().optional(),
+      isoDay.nullable().optional(),
     ),
     dateEnd: z.preprocess(
       emptyToNull,
-      z.string().regex(dateOnlyRegex, 'Date invalide (AAAA-MM-JJ)').nullable().optional(),
+      isoDay.nullable().optional(),
     ),
     openTime: z.preprocess(emptyToNull, z.string().regex(timeRegex, 'Heure invalide (HH:MM)').nullable().optional()),
     closeTime: z.preprocess(emptyToNull, z.string().regex(timeRegex, 'Heure invalide (HH:MM)').nullable().optional()),
@@ -119,7 +143,7 @@ export const eventInputSchema = z
      * sinon il ressortirait un jeudi.
      */
     dates: z
-      .array(z.string().regex(dateOnlyRegex, 'Date invalide (AAAA-MM-JJ)'))
+      .array(isoDay)
       .max(400, 'Trop de dates : décrivez plutôt une période continue')
       .optional()
       .default([]),
@@ -159,8 +183,8 @@ export const searchSchema = z.object({
   free: z.enum(['true', 'false']).optional(),
   priceMax: z.coerce.number().min(0).optional(),
   age: z.coerce.number().int().min(0).max(18).optional(),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  from: isoDay.optional(),
+  to: isoDay.optional(),
   setting: z.enum(['INDOOR', 'OUTDOOR', 'BOTH']).optional(),
   categoryId: z.coerce.number().int().positive().optional(),
   /** Zone géographique, par son identifiant d'adresse : « le-havre ». */
@@ -747,8 +771,8 @@ export const evalSortieLabelSchema = z
 
     // ── ce que la sortie est, pour l'étage 4
     /** Premier et dernier jour. `dateEnd` nul sur une date unique. */
-    dateStart: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal(''), z.null()]),
-    dateEnd: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal(''), z.null()]),
+    dateStart: z.union([isoDay, z.literal(''), z.null()]),
+    dateEnd: z.union([isoDay, z.literal(''), z.null()]),
     /** Cinq chiffres, ou rien. Une ville en toutes lettres ne se compare pas. */
     venuePostalCode: z.union([z.string().regex(/^\d{5}$/), z.literal(''), z.null()]),
     ageMin: z.union([z.number().int().min(0).max(120), z.null()]),
@@ -822,8 +846,8 @@ export const EVAL_STAGES = ['HARVEST', 'SELECT', 'READ', 'EXTRACT'] as const;
  * même endroit, donc elles ne peuvent pas se contredire.
  */
 export const evalRechercheSchema = z.object({
-  dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dateFrom: isoDay,
+  dateTo: isoDay,
   /** Préfixes de code postal : « 75 », « 77 »… */
   postalPrefixes: z.array(z.string().regex(/^\d{2,5}$/)).max(101),
   /** Ce que le tri a le droit de retenir par page. */
