@@ -123,6 +123,9 @@ class FakeResponse:
 
             raise requests.HTTPError(f"HTTP {self.status_code}")
 
+    def close(self):
+        return None
+
     def iter_content(self, size):
         yield self.text.encode("utf-8")
 
@@ -338,7 +341,7 @@ def test_une_page_nest_telechargee_quune_fois_par_run():
     class SessionSimulee:
         headers: ClassVar[dict[str, str]] = {}
 
-        def get(self, url, timeout=None, stream=False):
+        def get(self, url, **_kwargs):
             appels.append(url)
             return _Reponse("<html><body><p>une page</p></body></html>")
 
@@ -357,10 +360,14 @@ class _Reponse:
 
     def __init__(self, texte: str):
         self._texte = texte
+        self.status_code = 200
         self.headers = {"Content-Type": "text/html"}
         self.encoding = "utf-8"
 
     def raise_for_status(self):
+        return None
+
+    def close(self):
         return None
 
     def iter_content(self, taille):
@@ -542,6 +549,9 @@ class _Octets:
     def raise_for_status(self):
         return None
 
+    def close(self):
+        return None
+
     def iter_content(self, _taille):
         yield self._raw
 
@@ -610,3 +620,216 @@ def test_get_html_decode_sans_consulter_response_encoding(monkeypatch):
             return _Octets(page.encode("utf-8"))
 
     assert "Marché de Noël à Caen" in Fetcher(session=Session()).get_html("https://site.fr/a")
+
+
+# ══════════════════════════════════════════════════ la politesse, vraiment tenue
+#
+# Le module s'annonce « Client HTTP poli : robots.txt respecté, un hôte à la
+# fois ». Deux moitiés de cette phrase étaient fausses : `requests` suivait les
+# redirections tout seul, donc le contrôle portait sur l'adresse de départ et
+# sur elle seule ; et le `Crawl-delay` que le site déclare était lu puis ignoré.
+
+
+class _Texte:
+    """Une réponse lue par son `.text` — c'est ainsi que `robots.txt` arrive."""
+
+    def __init__(self, texte: str):
+        self.status_code = 200
+        self.text = texte
+        self.headers = {"Content-Type": "text/plain"}
+
+    def raise_for_status(self):
+        return None
+
+    def close(self):
+        return None
+
+
+class _Redirection:
+    """Une réponse 3xx, avec l'adresse où elle envoie."""
+
+    def __init__(self, vers: str, code: int = 302):
+        self.status_code = code
+        self.headers = {"Location": vers}
+        self.text = ""
+
+    def raise_for_status(self):
+        return None
+
+    def close(self):
+        return None
+
+    def iter_content(self, _taille):
+        yield b""
+
+
+class _Chemin:
+    """Une session scriptée : un robots.txt par hôte, et un plan de route."""
+
+    def __init__(self, robots: dict[str, str], etapes: dict[str, object]):
+        self.robots = robots
+        self.etapes = etapes
+        self.headers: dict[str, str] = {}
+        self.demandes: list[str] = []
+
+    def get(self, url, **_kwargs):
+        if url.endswith("/robots.txt"):
+            hote = url[: -len("/robots.txt")]
+            return _Texte(self.robots.get(hote, ""))
+        self.demandes.append(url)
+        reponse = self.etapes.get(url)
+        if reponse is None:
+            return _Octets(b"", "text/html")
+        return reponse
+
+
+def test_une_redirection_vers_un_chemin_interdit_est_refusee(monkeypatch):
+    """Le contrôle portait sur l'adresse de départ, et sur elle seule.
+
+    Un site qui redirige vers un chemin `Disallow:` était donc lu sans que rien
+    ne s'y oppose — par un client qui s'annonce respectueux de `robots.txt`.
+    """
+    monkeypatch.setattr("sortiesbot.harvest.CRAWL_DELAY", 0)
+    session = _Chemin(
+        robots={"https://site.fr": "User-agent: *\nDisallow: /prive/\n"},
+        etapes={"https://site.fr/public/a": _Redirection("https://site.fr/prive/secret")},
+    )
+    fetcher = Fetcher(session=session)
+
+    with pytest.raises(FetchError, match=re.escape("robots.txt")):
+        fetcher.get_html("https://site.fr/public/a")
+
+    # La page interdite n'a pas été demandée.
+    assert "https://site.fr/prive/secret" not in session.demandes
+
+
+def test_une_redirection_vers_un_autre_hote_consulte_son_robots(monkeypatch):
+    """Le second hôte a ses propres règles, et elles s'appliquent."""
+    monkeypatch.setattr("sortiesbot.harvest.CRAWL_DELAY", 0)
+    session = _Chemin(
+        robots={"https://ailleurs.fr": "User-agent: *\nDisallow: /\n"},
+        etapes={"https://site.fr/a": _Redirection("https://ailleurs.fr/page")},
+    )
+
+    with pytest.raises(FetchError, match=re.escape("robots.txt")):
+        Fetcher(session=session).get_html("https://site.fr/a")
+
+
+def test_une_redirection_autorisee_est_suivie(monkeypatch):
+    monkeypatch.setattr("sortiesbot.harvest.CRAWL_DELAY", 0)
+    page = "<html><body><p>arrivée</p></body></html>"
+    session = _Chemin(
+        robots={},
+        etapes={
+            "https://site.fr/a": _Redirection("https://site.fr/b", code=301),
+            "https://site.fr/b": _Octets(page.encode("utf-8")),
+        },
+    )
+
+    assert "arrivée" in Fetcher(session=session).get_html("https://site.fr/a")
+    assert session.demandes == ["https://site.fr/a", "https://site.fr/b"]
+
+
+def test_une_redirection_relative_se_resout(monkeypatch):
+    monkeypatch.setattr("sortiesbot.harvest.CRAWL_DELAY", 0)
+    session = _Chemin(
+        robots={},
+        etapes={
+            "https://site.fr/dossier/a": _Redirection("/ailleurs"),
+            "https://site.fr/ailleurs": _Octets(b"<html>ok</html>"),
+        },
+    )
+    assert Fetcher(session=session).get_html("https://site.fr/dossier/a") == "<html>ok</html>"
+
+
+def test_une_boucle_de_redirection_ne_tourne_pas_indefiniment(monkeypatch):
+    monkeypatch.setattr("sortiesbot.harvest.CRAWL_DELAY", 0)
+    session = _Chemin(
+        robots={},
+        etapes={
+            "https://site.fr/a": _Redirection("https://site.fr/b"),
+            "https://site.fr/b": _Redirection("https://site.fr/a"),
+        },
+    )
+    with pytest.raises(FetchError, match="boucle"):
+        Fetcher(session=session).get_html("https://site.fr/a")
+
+
+def test_trop_de_redirections_sarrete(monkeypatch):
+    monkeypatch.setattr("sortiesbot.harvest.CRAWL_DELAY", 0)
+    etapes = {
+        f"https://site.fr/{i}": _Redirection(f"https://site.fr/{i + 1}") for i in range(20)
+    }
+    session = _Chemin(robots={}, etapes=etapes)
+    with pytest.raises(FetchError, match="redirections"):
+        Fetcher(session=session).get_html("https://site.fr/0")
+
+
+def test_une_3xx_sans_destination_nest_pas_une_redirection(monkeypatch):
+    """Une réponse à laquelle il manque un en-tête n'est pas un détour."""
+    monkeypatch.setattr("sortiesbot.harvest.CRAWL_DELAY", 0)
+
+    class _Bancale(_Octets):
+        def __init__(self):
+            super().__init__(b"<html>corps d'une 304</html>")
+            self.status_code = 304
+
+    session = _Chemin(robots={}, etapes={"https://site.fr/a": _Bancale()})
+    assert "304" in Fetcher(session=session).get_html("https://site.fr/a")
+
+
+def test_le_crawl_delay_du_site_est_respecte(monkeypatch):
+    """Il était lu — le fichier est analysé en entier — puis ignoré.
+
+    Un site qui demande dix secondes entre deux requêtes recevait la nôtre au
+    bout d'une.
+    """
+    attentes: list[float] = []
+    horloge = {"t": 1_000.0}
+    monkeypatch.setattr("sortiesbot.harvest.CRAWL_DELAY", 1.0)
+    monkeypatch.setattr("sortiesbot.harvest.time.monotonic", lambda: horloge["t"])
+    monkeypatch.setattr("sortiesbot.harvest.time.sleep", lambda d: attentes.append(d))
+
+    session = _Chemin(robots={"https://site.fr": "User-agent: *\nCrawl-delay: 10\n"}, etapes={})
+    fetcher = Fetcher(session=session)
+
+    fetcher.get_html("https://site.fr/a")
+    fetcher.get_html("https://site.fr/b")
+
+    assert attentes == [10.0], "le site demande dix secondes, il les obtient"
+
+
+def test_un_crawl_delay_plus_court_que_le_notre_ne_nous_presse_pas(monkeypatch):
+    """Un site qui n'exige rien n'obtient pas pour autant une rafale."""
+    attentes: list[float] = []
+    horloge = {"t": 1_000.0}
+    monkeypatch.setattr("sortiesbot.harvest.CRAWL_DELAY", 1.0)
+    monkeypatch.setattr("sortiesbot.harvest.time.monotonic", lambda: horloge["t"])
+    monkeypatch.setattr("sortiesbot.harvest.time.sleep", lambda d: attentes.append(d))
+
+    session = _Chemin(robots={"https://site.fr": "User-agent: *\nCrawl-delay: 0\n"}, etapes={})
+    fetcher = Fetcher(session=session)
+    fetcher.get_html("https://site.fr/a")
+    fetcher.get_html("https://site.fr/b")
+
+    assert attentes == [1.0]
+
+
+def test_chaque_etape_dune_redirection_attend_son_tour(monkeypatch):
+    """Une redirection est une requête de plus, pour le site comme pour nous."""
+    attentes: list[float] = []
+    horloge = {"t": 1_000.0}
+    monkeypatch.setattr("sortiesbot.harvest.CRAWL_DELAY", 1.0)
+    monkeypatch.setattr("sortiesbot.harvest.time.monotonic", lambda: horloge["t"])
+    monkeypatch.setattr("sortiesbot.harvest.time.sleep", lambda d: attentes.append(d))
+
+    session = _Chemin(
+        robots={},
+        etapes={
+            "https://site.fr/a": _Redirection("https://site.fr/b"),
+            "https://site.fr/b": _Octets(b"<html>ok</html>"),
+        },
+    )
+    Fetcher(session=session).get_html("https://site.fr/a")
+
+    assert attentes == [1.0], "la seconde étape attend son tour comme la première"

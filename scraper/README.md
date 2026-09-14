@@ -1095,7 +1095,16 @@ relisable, et seules les sorties déjà proposées sont sautées.
 
 Puisque le scraper télécharge lui-même, il assume ce qu'Anthropic assumait :
 `robots.txt` est lu et respecté, un `User-Agent` identifie le robot et renvoie
-vers le site, et une seconde sépare deux requêtes vers le même hôte.
+vers le site, et une seconde sépare deux requêtes vers le même hôte — **ou
+davantage si le site le demande** : un `Crawl-delay` déclaré dans `robots.txt`
+était lu puis ignoré, si bien qu'un site réclamant dix secondes recevait la
+requête suivante au bout d'une.
+
+Les **redirections** se suivent une par une, et chaque étape est traitée comme
+une requête à part entière : son adresse passe par `robots.txt`, son hôte
+attend son tour. `requests` les suivait tout seul, et le contrôle portait donc
+sur l'adresse de départ et sur elle seule — un site qui redirige vers un chemin
+`Disallow:`, ou vers un autre hôte, était lu sans que rien ne s'y oppose.
 
 La même seconde vaut pour le **géocodeur** (`geocode.CALL_DELAY`). Elle y
 manquait, et c'est ce qui a valu la volée de 403 de Photon décrite plus haut :
