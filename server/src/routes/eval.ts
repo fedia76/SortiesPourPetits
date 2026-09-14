@@ -140,6 +140,84 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 
 // ───────────────────────────────────────────── corpus des agendas (ét. 3/4)
 
+/**
+ * Les agendas que la recherche auto a réellement dépouillés, et ce qu'ils ont
+ * rendu.
+ *
+ * ## Pourquoi ce panier existe
+ *
+ * Le corpus des agendas se remplissait en collant des adresses à la main. Rien
+ * ne garantissait alors le moindre rapport entre ces agendas-là et ce que la
+ * modération avait déjà tranché — et sans recouvrement, « reprendre ce qu'un
+ * humain a validé » ne reprend rien : le panier des étiquettes de lien affiche
+ * zéro, chaque lien reste à étiqueter à la main, et l'étage 4 ne mesure rien
+ * parce qu'il n'a aucune sortie décrite à quoi se comparer.
+ *
+ * Un agenda que la production a dépouillé, lui, a **par construction** des
+ * liens qu'un modérateur a déjà jugés. C'est le même principe que la chasse
+ * pour l'étage 2 : on ne part pas d'une page blanche, on part de ce que le
+ * pipeline a déjà fait, et on corrige.
+ *
+ * ## Ce que le rendement passé ne promet pas
+ *
+ * Il compte ce que cet agenda a rendu **alors**, et la page qu'on gèlera est
+ * celle d'**aujourd'hui**. Les sorties expirent, les agendas tournent : un
+ * agenda choisi pour ses vingt sorties de juin peut n'en porter aucune en
+ * septembre. D'où le tri sur le rendement **récent**, et d'où le fait que le
+ * vrai recouvrement ne se connaît qu'après la capture et un run d'étage 3.
+ */
+evalRouter.get('/agendas/candidats', admin, async (_req, res) => {
+  const depuis = new Date(Date.now() - 90 * 24 * 3600 * 1000);
+  const rows = await prisma.$queryRaw<
+    {
+      url: string;
+      pages: bigint;
+      approuvees: bigint;
+      recentes: bigint;
+      refusees: bigint;
+      derniere: Date | null;
+      query: string | null;
+    }[]
+  >`
+    SELECT i.agendaUrl AS url,
+           COUNT(DISTINCT i.url) AS pages,
+           COUNT(DISTINCT CASE WHEN e.status = 'APPROVED' THEN i.url END) AS approuvees,
+           COUNT(DISTINCT CASE WHEN e.status = 'APPROVED' AND i.at >= ${depuis} THEN i.url END)
+             AS recentes,
+           COUNT(DISTINCT CASE WHEN e.status = 'REJECTED' THEN i.url END) AS refusees,
+           MAX(i.at) AS derniere,
+           MAX(i.query) AS query
+    FROM ScraperRunItem i
+    LEFT JOIN Event e ON e.id = i.eventId
+    WHERE i.agendaUrl IS NOT NULL AND i.agendaUrl <> ''
+    GROUP BY i.agendaUrl
+    HAVING approuvees > 0
+    ORDER BY recentes DESC, approuvees DESC
+    LIMIT 40
+  `;
+  // Ceux qui y sont déjà ne disparaissent pas de la liste : ils sont marqués.
+  // Les cacher ferait croire que la production n'a dépouillé que le reste, et
+  // c'est exactement le genre de trou qui fait rajouter un agenda en double
+  // sous une adresse à peine différente.
+  const dejaLa = await prisma.evalAgenda.findMany({
+    where: { url: { in: rows.map((r) => r.url) } },
+    select: { url: true },
+  });
+  const connus = new Set(dejaLa.map((a) => a.url));
+  res.json({
+    candidats: rows.map((row) => ({
+      url: row.url,
+      query: row.query ?? '',
+      pages: Number(row.pages),
+      approuvees: Number(row.approuvees),
+      recentes: Number(row.recentes),
+      refusees: Number(row.refusees),
+      derniere: row.derniere,
+      dejaAuCorpus: connus.has(row.url),
+    })),
+  });
+});
+
 evalRouter.get('/agendas', admin, async (_req, res) => {
   const agendas = await prisma.evalAgenda.findMany({
     orderBy: { createdAt: 'desc' },
@@ -159,17 +237,58 @@ evalRouter.get('/agendas', admin, async (_req, res) => {
       },
     },
   });
-  res.json({ agendas: agendas.map(serializeAgenda) });
+  // Combien de liens un run du banc a relevés sur cet agenda. C'est le
+  // dénominateur de l'étiquetage, et sans lui la console ne pouvait pas dire
+  // où en est un agenda : « 12 étiquettes » ne se lit pas de la même façon
+  // selon qu'il y a quinze liens ou deux cents.
+  const releves = await prisma.$queryRaw<{ agendaId: number; releves: bigint }[]>`
+    SELECT p.agendaId AS agendaId, COUNT(DISTINCT r.url) AS releves
+    FROM EvalLinkResult r
+    JOIN EvalAgendaPage p ON p.id = r.pageId
+    WHERE r.position >= 0
+    GROUP BY p.agendaId
+  `;
+  const parAgenda = new Map(releves.map((row) => [row.agendaId, Number(row.releves)]));
+  res.json({ agendas: agendas.map((agenda) => serializeAgenda(agenda, parAgenda.get(agenda.id) ?? 0)) });
 });
 
-function serializeAgenda(agenda: {
-  agendaPages: { htmlPath: string | null; _count: { links: number } }[];
-  [k: string]: unknown;
-}) {
+/**
+ * Un agenda tel que la console le lit — avec **où il en est**.
+ *
+ * La chaîne des gestes est une dépendance réelle et elle n'était écrite nulle
+ * part : ajouter l'agenda, le geler, jouer un run d'étage 3, et alors seulement
+ * il y a des liens à étiqueter — donc alors seulement l'étage 4 a de quoi
+ * mesurer. Sauter une étape ne produit aucune erreur : ça produit un zéro, plus
+ * loin, qu'on attribue à la brique.
+ */
+function serializeAgenda(
+  agenda: {
+    agendaPages: { htmlPath: string | null; _count: { links: number } }[];
+    [k: string]: unknown;
+  },
+  releves = 0,
+) {
   const { agendaPages, ...rest } = agenda;
+  const etiquetes = agendaPages.reduce((sum, p) => sum + p._count.links, 0);
   return {
     ...rest,
     pagesCaptured: agendaPages.length,
+    /** Liens qu'un run du banc a relevés : le dénominateur de l'étiquetage. */
+    releves,
+    /**
+     * L'étape où cet agenda est bloqué, et rien de plus — la console dit quoi
+     * faire, elle ne le fait pas.
+     */
+    etape:
+      agendaPages.length === 0
+        ? ('A_GELER' as const)
+        : releves === 0
+          ? ('SANS_RELEVE' as const)
+          : etiquetes === 0
+            ? ('A_ETIQUETER' as const)
+            : etiquetes < releves
+              ? ('EN_COURS' as const)
+              : ('COMPLET' as const),
     // Le chemin sur le disque du serveur ne sort jamais : la console n'a
     // besoin que de savoir si l'archive existe.
     agendaPages: agendaPages.map(({ htmlPath, _count, ...page }) => ({
@@ -178,7 +297,7 @@ function serializeAgenda(agenda: {
       labels: _count.links,
     })),
     /** Étiquettes posées sur l'ensemble de l'agenda. */
-    labels: agendaPages.reduce((sum, p) => sum + p._count.links, 0),
+    labels: etiquetes,
   };
 }
 
@@ -2222,6 +2341,82 @@ const BUCKETS = {
  * c'est la seule partie du banc qui se remplisse sans travail humain : le
  * travail a déjà eu lieu, en modération, fiche sous les yeux.
  */
+/**
+ * Ce qu'il faut lire d'une fiche approuvée pour en tirer une étiquette.
+ *
+ * Déclarée une fois, et utilisée par les deux chemins qui moissonnent la
+ * modération — « Étiqueter les sorties publiées », et la reprise des étiquettes
+ * de lien. Deux sélections parallèles auraient fini par diverger d'un champ,
+ * et l'étiquette obtenue aurait alors dépendu du bouton par lequel on est
+ * passé.
+ */
+const FICHE_APPROUVEE = {
+  title: true,
+  description: true,
+  isFree: true,
+  price: true,
+  ageMin: true,
+  ageMax: true,
+  isPermanent: true,
+  dateStart: true,
+  dateEnd: true,
+  openTime: true,
+  closeTime: true,
+  setting: true,
+  category: { select: { name: true } },
+  venue: { select: { name: true, address: true, postalCode: true, city: true } },
+  /// Les jours de représentation que le site a retenus. Les `weekdays` de la
+  /// prose, eux, ne lui sont jamais parvenus.
+  dates: { select: { day: true } },
+  // Ce qu'un modérateur a réécrit avant d'approuver. Ça ne change pas la
+  // valeur — elle est déjà dans la fiche publiée — mais ça dit d'où elle
+  // vient, et c'est ce qui garde l'hypothèse vérifiable.
+  corrections: { select: { field: true } },
+} as const;
+
+type FicheApprouvee = Prisma.EventGetPayload<{ select: typeof FICHE_APPROUVEE }>;
+
+/**
+ * L'étiquette que porte une fiche approuvée.
+ *
+ * Une copie de champs, pas une mise en forme : l'étiquette a exactement la
+ * forme que la brique rend, donc rien à faire concorder entre deux langages.
+ * `weekdays` reste absent — le site ne les reçoit pas, le pipeline s'en sert
+ * pour fabriquer les dates et les jette —, et une clé absente veut dire
+ * « personne n'a regardé », ce qui est la vérité.
+ */
+function etiquetteDeFiche(e: FicheApprouvee): { expected: string; origins: string } {
+  const attendue: FicheRendue = {
+    relevant: true,
+    several: false,
+    title: e.title,
+    description: e.description,
+    free: e.isFree,
+    price: e.price === null ? null : Number(e.price),
+    ageMin: e.ageMin,
+    ageMax: e.ageMax,
+    permanent: e.isPermanent,
+    dateStart: e.dateStart ? e.dateStart.toISOString().slice(0, 10) : '',
+    dateEnd: e.dateEnd ? e.dateEnd.toISOString().slice(0, 10) : '',
+    dates: e.dates.map((d) => d.day.toISOString().slice(0, 10)),
+    openTime: e.openTime ?? '',
+    closeTime: e.closeTime ?? '',
+    setting: e.setting ?? '',
+    category: e.category.name,
+    venueName: e.venue.name,
+    venueAddress: e.venue.address,
+    venuePostalCode: e.venue.postalCode,
+    venueCity: e.venue.city,
+  };
+  const corriges = e.corrections
+    .map((c) => CHAMP_VERS_FICHE[c.field])
+    .filter((cle): cle is keyof FicheRendue => Boolean(cle));
+  return {
+    expected: JSON.stringify(attendue),
+    origins: JSON.stringify(provenances(attendue, corriges)),
+  };
+}
+
 async function sortiesAEtiqueter(limit: number) {
   return prisma.evalSortie.findMany({
     // Jamais étiquetée : l'étiquette est le JSON vide. Pas de jointure à faire,
@@ -2231,33 +2426,7 @@ async function sortiesAEtiqueter(limit: number) {
       id: true,
       // L'adresse sert au rattachement des liens qui annoncent cette sortie.
       url: true,
-      event: {
-        select: {
-          title: true,
-          description: true,
-          isFree: true,
-          price: true,
-          ageMin: true,
-          ageMax: true,
-          isPermanent: true,
-          dateStart: true,
-          dateEnd: true,
-          openTime: true,
-          closeTime: true,
-          setting: true,
-          category: { select: { name: true } },
-          venue: {
-            select: { name: true, address: true, postalCode: true, city: true },
-          },
-          /// Les jours de représentation que le site a retenus. Les
-          /// `weekdays` de la prose, eux, ne lui sont jamais parvenus.
-          dates: { select: { day: true } },
-          // Ce qu'un modérateur a réécrit avant d'approuver. Ça ne change pas
-          // la valeur — elle est déjà dans la fiche publiée — mais ça dit d'où
-          // elle vient, et c'est ce qui garde l'hypothèse vérifiable.
-          corrections: { select: { field: true } },
-        },
-      },
+      event: { select: FICHE_APPROUVEE },
     },
     orderBy: { id: 'desc' },
     take: limit,
@@ -2354,15 +2523,21 @@ async function candidates(bucket: keyof typeof BUCKETS, limit: number) {
  * Elle la raccourcit.
  */
 async function linkLabelCandidates(limit: number) {
-  return prisma.$queryRaw<{ pageId: number; url: string; title: string | null }[]>`
-    SELECT p.id AS pageId, i.url AS url, i.title AS title
+  // `eventId` remonte avec le reste : c'est lui qui permet de **décrire** la
+  // sortie au passage, et non seulement de la nommer. Sans lui, on reposait une
+  // étiquette de lien qui comptait *indécidable* faute d'avoir de quoi la
+  // comparer — l'étiquette la moins utile qu'on puisse poser.
+  return prisma.$queryRaw<
+    { pageId: number; url: string; title: string | null; eventId: number }[]
+  >`
+    SELECT p.id AS pageId, i.url AS url, MAX(i.title) AS title, MAX(e.id) AS eventId
     FROM ScraperRunItem i
     JOIN Event e ON e.id = i.eventId AND e.status = 'APPROVED'
     JOIN EvalLinkResult r ON r.url = i.url
     JOIN EvalAgendaPage p ON p.id = r.pageId
     LEFT JOIN EvalLink l ON l.pageId = p.id AND l.url = i.url
     WHERE l.id IS NULL
-    GROUP BY p.id, i.url, i.title
+    GROUP BY p.id, i.url
     LIMIT ${limit}
   `;
 }
@@ -2534,15 +2709,92 @@ evalRouter.post('/seed', admin, async (req, res) => {
       res.status(409).json({ error: 'Aucune étiquette nouvelle à reprendre de la modération' });
       return;
     }
-    // La sortie du corpus qui porte la même adresse, s'il y en a une : le lien
-    // doit y mener, sinon il serait étiqueté « une sortie » sans que rien ne
-    // dise laquelle, et l'étage 4 le compterait indécidable alors que tout est
-    // là.
-    const sorties = await prisma.evalSortie.findMany({
-      where: { url: { in: rows.map((r) => r.url) } },
-      select: { id: true, url: true },
+
+    // ── les trois gestes, et pourquoi ils n'en font plus qu'un ──────────
+    //
+    // Ce panier posait l'étiquette de lien et s'arrêtait là. Si la sortie
+    // n'était pas déjà au corpus, le lien restait sans rien au bout : l'étage 4
+    // le comptait *indécidable*, et il fallait deviner qu'il fallait ensuite
+    // cliquer « Sorties publiées » puis « Étiqueter les sorties publiées », dans
+    // cet ordre, pour que l'étiquette serve à quelque chose. Trois boutons, un
+    // ordre à connaître, et aucun rattrapage si on se trompait.
+    //
+    // Or les trois gestes reposent sur **le même fait** : un modérateur a
+    // approuvé cette page. Il dit à la fois que le lien mène à une sortie, que
+    // cette sortie mérite d'être au corpus, et ce qu'elle affirme. Les séparer
+    // était un découpage d'implémentation, pas une distinction réelle.
+    const events = await prisma.event.findMany({
+      where: { id: { in: rows.map((row) => row.eventId) } },
+      select: { id: true, ...FICHE_APPROUVEE },
     });
-    const parUrl = new Map(sorties.map((s) => [s.url, s.id]));
+    const fiches = new Map(events.map((e) => [e.id, e]));
+
+    const dejaLa = await prisma.evalSortie.findMany({
+      where: { url: { in: rows.map((r) => r.url) } },
+      select: { id: true, url: true, expected: true },
+    });
+    const parUrl = new Map(dejaLa.map((sortie) => [sortie.url, sortie.id]));
+    // Celles qui sont là mais que personne n'a décrites. Les laisser vides
+    // aurait rattaché le lien à un objet muet — l'étage 4 l'aurait compté
+    // indécidable, ce qui est précisément l'état qu'on vient supprimer.
+    const muettes = new Map(dejaLa.filter((s) => s.expected === '{}').map((s) => [s.url, s.id]));
+
+    // La sortie manquante est créée **avec son étiquette**, pas vide : la
+    // remplir demandait sinon un second bouton, et une sortie au corpus qui
+    // n'affirme rien ne sert à aucun étage.
+    //
+    // Elle part aussi en file de capture, comme toute sortie du corpus. C'est
+    // assumé : la page d'une sortie approuvée est une entrée légitime des
+    // étages 5 et 6, et c'est très exactement ce que fait déjà le panier
+    // « Sorties publiées ». Le plafond du panier borne ce que ça coûte.
+    let creees = 0;
+    let decrites = 0;
+    for (const row of rows) {
+      const fiche = fiches.get(row.eventId);
+      if (!fiche) continue;
+      const { id, ...champs } = fiche;
+      const etiquette = {
+        ...etiquetteDeFiche(champs),
+        note: 'Reprise d’une fiche approuvée en modération.',
+        labelledAt: new Date(),
+        labelledById: req.user!.id,
+      };
+
+      const muette = muettes.get(row.url);
+      if (muette !== undefined) {
+        await prisma.evalSortie.update({
+          where: { id: muette },
+          data: { ...etiquette, eventId: row.eventId, audience: 'ENFANTS' },
+        });
+        muettes.delete(row.url);
+        decrites += 1;
+        continue;
+      }
+      if (parUrl.has(row.url)) continue;
+
+      // `upsert` plutôt que `create` : deux pages d'agenda peuvent annoncer la
+      // même sortie, et une adresse déjà prise ne doit pas faire échouer tout
+      // le panier.
+      const sortie = await prisma.evalSortie.upsert({
+        where: { url: row.url },
+        create: {
+          url: row.url,
+          label: (row.title ?? '').slice(0, 150),
+          origin: 'APPROUVEE',
+          eventId: row.eventId,
+          // Le public : la seule affirmation qu'aucune brique ne rend, et
+          // qu'approuver sur ce site tranche à lui seul.
+          audience: 'ENFANTS',
+          ...etiquette,
+          createdById: req.user!.id,
+        },
+        update: {},
+        select: { id: true, url: true },
+      });
+      parUrl.set(sortie.url, sortie.id);
+      creees += 1;
+    }
+
     const created = await prisma.evalLink.createMany({
       data: rows.map((row) => ({
         pageId: row.pageId,
@@ -2560,7 +2812,7 @@ evalRouter.post('/seed', admin, async (req, res) => {
     // laisse intacts, orphelins compris. Un second clic ne doit pas être sans
     // effet sur eux.
     const rattaches = await rattacherLiens(rows.map((row) => row.url));
-    res.status(201).json({ added: created.count, rattaches });
+    res.status(201).json({ added: created.count, creees, decrites, rattaches });
     return;
   }
 
@@ -2574,41 +2826,10 @@ evalRouter.post('/seed', admin, async (req, res) => {
     for (const sortie of sorties) {
       const e = sortie.event;
       if (!e) continue;
-      // Une copie de champs, pas une mise en forme : l'étiquette a exactement
-      // la forme que la brique rend, donc rien à faire concorder entre deux
-      // langages. `weekdays` reste absent — le site ne les reçoit pas, le
-      // pipeline s'en sert pour fabriquer les dates et les jette —, et une clé
-      // absente veut dire « personne n'a regardé », ce qui est la vérité.
-      const attendue: FicheRendue = {
-        relevant: true,
-        several: false,
-        title: e.title,
-        description: e.description,
-        free: e.isFree,
-        price: e.price === null ? null : Number(e.price),
-        ageMin: e.ageMin,
-        ageMax: e.ageMax,
-        permanent: e.isPermanent,
-        dateStart: e.dateStart ? e.dateStart.toISOString().slice(0, 10) : '',
-        dateEnd: e.dateEnd ? e.dateEnd.toISOString().slice(0, 10) : '',
-        dates: e.dates.map((d: { day: Date }) => d.day.toISOString().slice(0, 10)),
-        openTime: e.openTime ?? '',
-        closeTime: e.closeTime ?? '',
-        setting: e.setting ?? '',
-        category: e.category.name,
-        venueName: e.venue.name,
-        venueAddress: e.venue.address,
-        venuePostalCode: e.venue.postalCode,
-        venueCity: e.venue.city,
-      };
-      const corriges = e.corrections
-        .map((c: { field: string }) => CHAMP_VERS_FICHE[c.field])
-        .filter((cle): cle is keyof FicheRendue => Boolean(cle));
       await prisma.evalSortie.update({
         where: { id: sortie.id },
         data: {
-          expected: JSON.stringify(attendue),
-          origins: JSON.stringify(provenances(attendue, corriges)),
+          ...etiquetteDeFiche(e),
           note: 'Reprise d’une fiche approuvée en modération.',
           labelledAt: new Date(),
           labelledById: req.user!.id,
