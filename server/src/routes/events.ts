@@ -10,6 +10,7 @@ import { dateFilter } from '../lib/dateWindow';
 import { areaFilter } from '../lib/areas';
 import { rankEvents } from '../lib/relevance';
 import { parseId } from '../lib/routeParams';
+import { distanceByVenueId, venuesWithinQuery, type VenueDistance } from '../lib/venueDistance';
 
 export const eventsRouter = safeRouter();
 
@@ -115,26 +116,19 @@ eventsRouter.get('/', async (req, res) => {
     where.categoryId = f.categoryId;
   }
 
-  // Filtre distance : liste des lieux dans le rayon + distance de chacun.
-  // Formule de Haversine en SQL pur (compatible MySQL et MariaDB).
-  let distanceByVenueId: Map<number, number> | undefined;
+  // Filtre distance : lieux dans le rayon et distance de chacun (voir
+  // `lib/venueDistance`, qui sert aussi à la détection de doublons).
+  let distances: Map<number, number> | undefined;
   if (f.lat !== undefined && f.lng !== undefined && f.radiusKm !== undefined) {
-    const rows = await prisma.$queryRaw<{ id: number; distanceKm: number }[]>`
-      SELECT id,
-        6371 * 2 * ASIN(SQRT(
-          POWER(SIN(RADIANS(lat - ${f.lat}) / 2), 2) +
-          COS(RADIANS(${f.lat})) * COS(RADIANS(lat)) *
-          POWER(SIN(RADIANS(lng - ${f.lng}) / 2), 2)
-        )) AS distanceKm
-      FROM Venue
-      HAVING distanceKm <= ${f.radiusKm}
-    `;
-    distanceByVenueId = new Map(rows.map((r) => [r.id, Number(r.distanceKm)]));
-    if (distanceByVenueId.size === 0) {
+    const rows = await prisma.$queryRaw<VenueDistance[]>(
+      venuesWithinQuery(f.lat, f.lng, f.radiusKm),
+    );
+    distances = distanceByVenueId(rows);
+    if (distances.size === 0) {
       res.json({ events: [], total: 0, page: f.page, pageSize: f.pageSize });
       return;
     }
-    where.venueId = { in: [...distanceByVenueId.keys()] };
+    where.venueId = { in: [...distances.keys()] };
   }
 
   // Le classement ne se fait pas en SQL : le score mêle la précision de l'âge,
@@ -165,7 +159,7 @@ eventsRouter.get('/', async (req, res) => {
   const events = ids.map((id) => byId.get(id)).filter((e): e is EventWithRelations => !!e);
 
   res.json({
-    events: events.map((e) => serializeEvent(e, distanceByVenueId?.get(e.venueId))),
+    events: events.map((e) => serializeEvent(e, distances?.get(e.venueId))),
     total: ordered.length,
     page: f.page,
     pageSize: f.pageSize,

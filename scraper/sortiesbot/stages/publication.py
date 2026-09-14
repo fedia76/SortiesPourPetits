@@ -22,7 +22,6 @@ qu'elles ne sont pas corrigées.
 
 from __future__ import annotations
 
-import unicodedata
 
 from .. import geocode as geocoding
 from ..api import ApiError
@@ -33,21 +32,16 @@ from ..schedule import Schedule, resolve as resolve_schedule
 from ..store import event_key
 from . import Stage
 from .base import Brick, PageContent
-
-
-def _fold(text: str) -> str:
-    """Compare des noms de catégories sans se soucier de la casse ni des accents."""
-    stripped = unicodedata.normalize("NFKD", text.strip().lower())
-    return "".join(c for c in stripped if not unicodedata.combining(c))
+from ..text import fold
 
 
 def resolve_category(name: str, categories: dict[str, int], default: str) -> int:
     """Rattache la catégorie annoncée par le modèle à une catégorie du site."""
     if not categories:
         return 0  # dry-run sans API joignable : identifiant symbolique.
-    by_fold = {_fold(k): v for k, v in categories.items()}
+    by_fold = {fold(k): v for k, v in categories.items()}
     for candidate in (name, default):
-        found = by_fold.get(_fold(candidate or ""))
+        found = by_fold.get(fold(candidate or ""))
         if found is not None:
             return found
     raise Rejected(f"catégorie « {name or '?'} » inconnue et « {default} » absente du site")

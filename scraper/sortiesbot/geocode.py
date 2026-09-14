@@ -43,13 +43,13 @@ une information qu'on a vraiment.
 from __future__ import annotations
 
 import time
-import unicodedata
 from typing import Any, Callable, Iterable
 
 import requests
 
 from .harvest import USER_AGENT
 from .models import UNLOCATED, ExtractedEvent, Location
+from .text import fold
 
 PHOTON_URL = "https://photon.komoot.io/api/"
 BAN_URL = "https://api-adresse.data.gouv.fr/search/"
@@ -170,12 +170,6 @@ def _search(query: str) -> list[dict[str, Any]]:
     return _ban_search(query)
 
 
-def _fold(text: str) -> str:
-    """Compare deux noms de ville sans se soucier de la casse ni des accents."""
-    stripped = unicodedata.normalize("NFKD", text.strip().lower())
-    return "".join(c for c in stripped if not unicodedata.combining(c))
-
-
 def _departement(postal_code: str) -> str:
     """« 76600 » → « 76 ». Les codes d'outre-mer tiennent sur trois chiffres."""
     digits = "".join(c for c in postal_code if c.isdigit())[:5]
@@ -201,11 +195,11 @@ def agrees_with_page(location: Location, event: ExtractedEvent) -> bool:
     if attendu and trouve:
         return attendu == trouve
 
-    ville = _fold(event.venue_city)
+    ville = fold(event.venue_city)
     if ville and location.city:
         # « Paris » et « Paris 11e Arrondissement » désignent le même endroit ;
         # « Paris » et « Le Havre » non.
-        obtenue = _fold(location.city)
+        obtenue = fold(location.city)
         return ville in obtenue or obtenue in ville
     return True
 

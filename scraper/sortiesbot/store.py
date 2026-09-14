@@ -28,14 +28,13 @@ empêcher un run ultérieur de traiter la page.
 
 from __future__ import annotations
 
-import re
 import sqlite3
-import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from .text import alphanum, fold
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS seen_url (
@@ -81,15 +80,9 @@ def event_key(page_url: str, title: str) -> str:
     laisse au contraire la page se faire relire : seules les sorties déjà
     proposées sont sautées, et les nouvelles passent.
     """
-    slug = re.sub(r"[^a-z0-9]+", "-", _fold(title)).strip("-")
+    slug = alphanum(title, "-")
     key = f"{normalize_url(page_url)}#{slug or 'sans-titre'}"
     return key[:_KEY_MAX]
-
-
-def _fold(text: str) -> str:
-    """Minuscules sans accents : deux graphies d'un titre donnent une clé."""
-    stripped = unicodedata.normalize("NFKD", text.strip().lower())
-    return "".join(c for c in stripped if not unicodedata.combining(c))
 
 
 class Memory(Protocol):

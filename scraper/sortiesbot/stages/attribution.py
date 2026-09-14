@@ -66,7 +66,6 @@ un moteur, jamais produite de mémoire.
 from __future__ import annotations
 
 import re
-import unicodedata
 
 from ..harvest import (
     FetchError,
@@ -92,6 +91,7 @@ from ..providers.base import ProviderError
 from ..providers.serper_client import SerperClient
 from . import Stage
 from .base import Brick, PageContent
+from ..text import alphanum
 
 #: Textes de lien qui annoncent la page de l'organisateur. Volontairement
 #: courts et sans accents : ils sont cherchés dans un texte replié.
@@ -144,10 +144,12 @@ MOIS = (
 
 
 def fold(text: str) -> str:
-    """Replie un texte pour le comparer : sans casse, sans accents, sans ponctuation."""
-    stripped = unicodedata.normalize("NFKD", (text or "").lower())
-    plain = "".join(c for c in stripped if not unicodedata.combining(c))
-    return re.sub(r"[^a-z0-9]+", " ", plain).strip()
+    """Replie un texte pour le comparer : sans casse, sans accents, sans ponctuation.
+
+    La normalisation vient de `sortiesbot.text`, commune à tout le scraper ;
+    cet étage n'y ajoute que le découpage en mots.
+    """
+    return alphanum(text or "")
 
 
 def tokens(text: str, minimum: int) -> list[str]:

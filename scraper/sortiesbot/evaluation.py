@@ -70,7 +70,6 @@ from __future__ import annotations
 import base64
 import gzip
 import re
-import unicodedata
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
@@ -103,6 +102,7 @@ from .language import french_version
 from .models import ExtractedEvent, FoundPage
 from .providers.base import Provider, ProviderError
 from .stages.reading import MIN_PAGE_CHARS
+from .text import flatten
 
 #: Plafond de l'archive d'une page, en caractères de base64 — le même que celui
 #: du site, qui refuserait au-delà. Un million de caractères font environ 750 ko
@@ -663,16 +663,14 @@ _MONTHS = (
 _OVERLAP_MIN = 0.5
 
 
-def _flat(text: str) -> str:
-    """Minuscules, sans accents, espaces normalisés.
-
-    L'ancrage compare ce qu'un modèle a écrit à ce qu'une page dit, et les deux
-    ne s'accordent jamais sur les accents ni sur les espaces insécables. Comparer
-    à la lettre ferait crier à l'invention sur « Théâtre » contre « theatre ».
-    """
-    lowered = unicodedata.normalize("NFD", text.lower())
-    stripped = "".join(c for c in lowered if unicodedata.category(c) != "Mn")
-    return " ".join(stripped.split())
+#: L'ancrage compare ce qu'un modèle a écrit à ce qu'une page dit, et les deux
+#: ne s'accordent jamais sur les accents ni sur les espaces insécables —
+#: comparer à la lettre ferait crier à l'invention sur « Théâtre » contre
+#: « theatre ». C'est exactement ce que `text.flatten` fait, et il le fait pour
+#: tout le monde : cette fonction-ci était la cinquième de son espèce, et la
+#: seule en `NFD`, donc la seule que « 8 € » avec une espace insécable étroite
+#: prenait en défaut.
+_flat = flatten
 
 
 def _price_in(price: float, hay: str) -> bool:
