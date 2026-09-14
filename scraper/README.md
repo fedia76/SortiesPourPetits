@@ -740,12 +740,16 @@ peuple : elle lance les recherches de l'étage 1 depuis un prompt, ouvre tout ce
 qu'elles remontent, et précoche chaque page avec ce que l'étage 2 en dit — un
 humain n'a plus qu'à corriger ce qui est faux. Ce qu'il aura corrigé est gardé à
 part de ce qu'il aura laissé passer, sans quoi le corpus mesurerait la brique
-contre elle-même. Côté scraper il
-tient dans un seul module,
-[`sortiesbot/evaluation.py`](sortiesbot/evaluation.py), qui n'est qu'une
+contre elle-même. Côté scraper il tient en trois modules, qui ne sont qu'une
 enveloppe autour des **vraies** fonctions — `links_of`, `next_page`, `page_text`,
 `json_ld_dates`, `main_image`, `provider.select`, `provider.extract` — et le
-worker sert ses files comme il sert une recherche.
+worker sert leurs files comme il sert une recherche :
+
+| Module | Ce qu'il fait |
+|---|---|
+| [`sortiesbot/evaluation.py`](sortiesbot/evaluation.py) | Geler une page, et rejouer les étages 3, 4, 5 et 6 dessus |
+| [`sortiesbot/ancrage.py`](sortiesbot/ancrage.py) | Mesurer l'étage 6 : ce qu'une fiche affirme se lit-il dans la page ? |
+| [`sortiesbot/chasse.py`](sortiesbot/chasse.py) | Peupler le corpus de l'étage 2 depuis un prompt |
 
 Deux règles suffisent à comprendre le reste, et elles sont dans ce module :
 

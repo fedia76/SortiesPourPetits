@@ -33,8 +33,8 @@ from pathlib import Path
 import pytest
 from test_pipeline import FakeFetcher
 
+from sortiesbot.chasse import hunt, hunt_page
 from sortiesbot.config import Config
-from sortiesbot.evaluation import hunt, hunt_page
 from sortiesbot.journal import RunLog
 from sortiesbot.models import FoundPage
 from sortiesbot.providers.base import ProviderError
@@ -243,7 +243,7 @@ def test_la_page_reconnue_est_la_jumelle_francaise(log, monkeypatch):
     anglaise = "https://exemple.fr/en/whats-on"
     francaise = "https://exemple.fr/fr/agenda"
     monkeypatch.setattr(
-        "sortiesbot.evaluation.french_version",
+        "sortiesbot.chasse.french_version",
         lambda url, html, fetcher, log=None: (francaise, AGENDA_HTML),
     )
     page = hunt_page(

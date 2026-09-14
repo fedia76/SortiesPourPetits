@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from .api import ApiError, SppApi
+from .chasse import hunt
 from .config import (
     IDF_POSTAL_PREFIXES,
     Config,
@@ -40,7 +41,6 @@ from .evaluation import (
     capture_pages,
     extract_page,
     harvest_from_html,
-    hunt,
     read_from_html,
     select_from_html,
 )

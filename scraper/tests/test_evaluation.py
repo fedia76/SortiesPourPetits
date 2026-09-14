@@ -21,14 +21,12 @@ from dataclasses import replace
 
 import pytest
 
+from sortiesbot.ancrage import audit_fiche, fiche_payload, resolved_days
 from sortiesbot.evaluation import (
-    audit_fiche,
     audit_links,
     capture_pages,
     extract_page,
-    fiche_payload,
     harvest_from_html,
-    resolved_days,
 )
 from sortiesbot.harvest import FetchError, links_of
 from sortiesbot.models import ExtractedEvent
