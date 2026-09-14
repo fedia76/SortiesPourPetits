@@ -6,7 +6,14 @@ import AddressPicker from '../components/AddressPicker.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
 import { setPageSeo } from '../lib/seo';
-import type { Area, Category, EventItem, Setting } from '../types';
+import {
+  filtresDepuisQuery,
+  filtresVides,
+  pageDepuisQuery,
+  queryDepuisFiltres,
+  requeteApi,
+} from '../lib/searchQuery';
+import type { Area, Category, EventItem } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -20,115 +27,17 @@ const error = ref('');
 const categories = ref<Category[]>([]);
 const areas = ref<Area[]>([]);
 
-const RADIUS_DEFAUT = 10;
-
-const filters = reactive({
-  q: '',
-  free: false,
-  priceMax: '' as string | number,
-  age: '' as string | number,
-  from: '',
-  to: '',
-  setting: '' as '' | Setting,
-  categoryId: '' as '' | number,
-  address: '',
-  lat: null as number | null,
-  lng: null as number | null,
-  radiusKm: RADIUS_DEFAUT,
-});
-
-type Filtres = typeof filters;
+const filters = reactive(filtresVides());
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)));
 const geoActive = computed(() => filters.lat !== null && filters.lng !== null);
 
 /**
- * **Toute** la recherche vit dans l'adresse — la page et les filtres.
- *
- * La page s'y trouvait déjà, et pour une raison qui vaut mot pour mot pour le
- * reste : un robot ouvre l'accueil, y lit douze liens, et n'a aucun moyen
- * d'atteindre les suivants si « page 2 » n'est qu'un bouton. Les filtres, eux,
- * étaient restés dans la mémoire du composant — donc une recherche ne se
- * partageait pas, ne se mettait pas en favori, et le bouton Retour du
- * navigateur la perdait au lieu de la défaire.
- *
- * Contrepartie assumée : le serveur ne pré-rend que la page, pas les filtres
- * (voir `seo/pages.ts`, dont la clé de cache ne retient que `page`). Une
- * adresse filtrée reçoit donc d'abord le catalogue entier, que Vue remplace
- * une seconde plus tard. C'est déjà ce qui arrivait aux paramètres de
- * campagne, et l'adresse canonique reste `/` : un moteur n'a donc pas deux
- * pages à départager.
- */
-function pageFromUrl(): number {
-  const raw = Number(route.query.page);
-  return Number.isInteger(raw) && raw >= 1 ? raw : 1;
-}
-
-/** La première valeur d'un paramètre d'adresse, ou une chaîne vide. */
-function param(cle: string): string {
-  const brut = route.query[cle];
-  return typeof brut === 'string' ? brut : '';
-}
-
-/** Un nombre lu dans l'adresse, ou `null` si ce n'en est pas un. */
-function nombre(cle: string): number | null {
-  const texte = param(cle);
-  if (!texte) return null;
-  const valeur = Number(texte);
-  return Number.isFinite(valeur) ? valeur : null;
-}
-
-/**
- * Recopie l'adresse dans les filtres affichés.
- *
- * C'est l'adresse qui commande, jamais l'inverse : un retour arrière, un lien
- * partagé ou un lien suivi depuis la page pré-rendue changent l'adresse sans
- * passer par le formulaire, et le formulaire doit alors dire ce que l'adresse
- * dit.
+ * Recopie l'adresse dans les filtres affichés. La règle vit dans
+ * `lib/searchQuery`, avec son aller-retour ; ici on ne fait que l'appliquer.
  */
 function lireLAdresse() {
-  filters.q = param('q');
-  filters.free = param('free') === 'true';
-  filters.priceMax = param('priceMax');
-  filters.age = param('age');
-  filters.from = param('from');
-  filters.to = param('to');
-  filters.setting = (param('setting') || '') as '' | Setting;
-  const categorie = nombre('categoryId');
-  filters.categoryId = categorie ?? '';
-  filters.lat = nombre('lat');
-  filters.lng = nombre('lng');
-  filters.radiusKm = nombre('radiusKm') ?? RADIUS_DEFAUT;
-  filters.address = param('adresse');
-}
-
-/**
- * L'adresse qui décrit ces filtres.
- *
- * Ce qui vaut sa valeur par défaut n'y figure pas : une adresse qui énumère
- * douze paramètres vides ne se partage pas, et le `radiusKm` d'une recherche
- * sans position ne veut rien dire.
- */
-function ecrireLAdresse(f: Filtres, page: number): Record<string, string> {
-  const query: Record<string, string> = {};
-  if (f.q) query.q = f.q;
-  if (f.free) query.free = 'true';
-  else if (f.priceMax !== '') query.priceMax = String(f.priceMax);
-  if (f.age !== '') query.age = String(f.age);
-  if (f.from) query.from = f.from;
-  if (f.to) query.to = f.to;
-  if (f.setting) query.setting = f.setting;
-  if (f.categoryId !== '') query.categoryId = String(f.categoryId);
-  if (f.lat !== null && f.lng !== null) {
-    query.lat = String(f.lat);
-    query.lng = String(f.lng);
-    query.radiusKm = String(f.radiusKm);
-    // Ce que le visiteur a tapé, pour que le champ le réaffiche : le couple
-    // de coordonnées ne se relit pas.
-    if (f.address) query.adresse = f.address;
-  }
-  if (page > 1) query.page = String(page);
-  return query;
+  Object.assign(filters, filtresDepuisQuery(route.query));
 }
 
 /**
@@ -144,7 +53,7 @@ function naviguer(query: Record<string, string>) {
 
 /** Change de page en passant par l'adresse ; le `watch` ci-dessous recharge. */
 function goToPage(n: number) {
-  naviguer(ecrireLAdresse(filters, n));
+  naviguer(queryDepuisFiltres(filters, n));
 }
 
 /**
@@ -155,7 +64,7 @@ function goToPage(n: number) {
  * fois et une seule, quel que soit le geste qui a changé quelque chose.
  */
 function applyFilters() {
-  naviguer(ecrireLAdresse(filters, 1));
+  naviguer(queryDepuisFiltres(filters, 1));
 }
 
 /**
@@ -174,26 +83,10 @@ async function search(goTo = 1) {
   page.value = goTo;
   loading.value = true;
   error.value = '';
-  const params = new URLSearchParams();
-  if (filters.q) params.set('q', filters.q);
-  if (filters.free) params.set('free', 'true');
-  else if (filters.priceMax !== '') params.set('priceMax', String(filters.priceMax));
-  if (filters.age !== '') params.set('age', String(filters.age));
-  if (filters.from) params.set('from', filters.from);
-  if (filters.to) params.set('to', filters.to);
-  if (filters.setting) params.set('setting', filters.setting);
-  if (filters.categoryId !== '') params.set('categoryId', String(filters.categoryId));
-  if (geoActive.value) {
-    params.set('lat', String(filters.lat));
-    params.set('lng', String(filters.lng));
-    params.set('radiusKm', String(filters.radiusKm));
-  }
-  params.set('page', String(page.value));
-  params.set('pageSize', String(pageSize));
 
   try {
     const data = await api.get<{ events: EventItem[]; total: number }>(
-      `/api/events?${params.toString()}`,
+      `/api/events?${requeteApi(filters, goTo, pageSize)}`,
     );
     // Une recherche plus récente est partie entre-temps : la sienne fait foi.
     if (numero !== derniereRecherche) return;
@@ -250,15 +143,15 @@ watch(
   () => route.query,
   () => {
     lireLAdresse();
-    void search(pageFromUrl());
+    void search(pageDepuisQuery(route.query));
   },
 );
 
 onMounted(async () => {
   setPageSeo({
     title:
-      pageFromUrl() > 1
-        ? `Sorties avec les enfants — page ${pageFromUrl()}`
+      pageDepuisQuery(route.query) > 1
+        ? `Sorties avec les enfants — page ${pageDepuisQuery(route.query)}`
         : 'Sorties avec les enfants',
     description:
       'Des idées de sorties avec des enfants partout en France : spectacles, parcs, ' +
@@ -276,7 +169,7 @@ onMounted(async () => {
 // Avant même les catégories : la liste des résultats ne les attend pas, et
 // l'adresse porte déjà tout ce qu'il faut pour la demander.
 lireLAdresse();
-void search(pageFromUrl());
+void search(pageDepuisQuery(route.query));
 </script>
 
 <template>

@@ -32,7 +32,14 @@ export function usePolling(tick: () => unknown, intervalMs: number): Polling {
 
   const battre = () => {
     if (arrete || document.hidden) return;
-    void tick();
+    // Chaque vue gère ses propres erreurs — c'est elle qui sait quoi en dire à
+    // l'écran. Reste ce qu'elle n'aurait pas rattrapé : le laisser filer en
+    // rejet non traité l'enterrerait dans la console du navigateur sous un
+    // message qui ne nomme pas la vue. On le dit, et on continue de battre :
+    // une coupure réseau ne doit pas figer une console pour de bon.
+    Promise.resolve(tick()).catch((err: unknown) => {
+      console.error('[sondage] un rafraîchissement a échoué', err);
+    });
   };
 
   const armer = () => {

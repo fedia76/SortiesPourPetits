@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { setPageSeo } from '../lib/seo';
 
@@ -183,7 +183,17 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 });
 
-router.beforeEach(async (to) => {
+/**
+ * Qui a le droit d'ouvrir cette page.
+ *
+ * Ce garde ne **protège** rien : le serveur relit le rôle en base à chaque
+ * requête, et c'est lui la barrière. Il évite seulement d'ouvrir un écran qui
+ * répondrait 403 à sa première requête — et, pour ce qui demande un compte,
+ * il retient l'adresse voulue pour y ramener après la connexion.
+ *
+ * Exporté pour être éprouvé sans monter vingt-six vues.
+ */
+export async function gardeDAcces(to: RouteLocationNormalized) {
   const auth = useAuthStore();
   await auth.init();
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
@@ -191,7 +201,9 @@ router.beforeEach(async (to) => {
   }
   if (to.meta.requiresModerator && !auth.isModerator) return { name: 'home' };
   if (to.meta.requiresAdmin && !auth.isAdmin) return { name: 'home' };
-});
+}
+
+router.beforeEach(gardeDAcces);
 
 /**
  * Le titre d'une page, posé dès la navigation confirmée.

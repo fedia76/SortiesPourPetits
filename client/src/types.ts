@@ -338,7 +338,8 @@ export function runLabel(run: ScraperRun): string {
  * Un étage du pipeline, tel que la page de débogage le dessine.
  *
  * Les libellés ne sont pas définis ici : ils viennent du scraper
- * (`sortiesbot/stages.py`), transportés par l'événement `run_start`. Renommer
+ * (`sortiesbot/stages/__init__.py`), transportés par l'événement `run_start`.
+ * Renommer
  * une brique côté scraper suffit donc à la renommer partout.
  */
 export interface ScraperStageNode {

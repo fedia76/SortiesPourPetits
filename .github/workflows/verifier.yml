@@ -51,6 +51,13 @@ jobs:
           npm ci
           npm run typecheck
           npm run lint
+      # Onze mille lignes de Vue n'avaient aucun test. Ceux-ci portent sur ce
+      # qui décide quelque chose — l'aller-retour entre une adresse et un
+      # formulaire, un sondage qui doit se taire quand personne ne regarde, les
+      # libellés que le serveur et le client calculent chacun de leur côté.
+      - name: Tests du front
+        working-directory: client
+        run: npm test
       # `build` compile `src`, et rien d'autre : ni les tests, ni `scripts/`. Le
       # script de reprise des étiquettes a pu écrire dans une table supprimée
       # pendant des semaines pour cette raison exacte, sans que rien ne le dise.
