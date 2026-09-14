@@ -13,6 +13,7 @@
  */
 
 import { RejectionCode } from '@prisma/client';
+import { stageOf } from './stages';
 
 /** Un étage du pipeline, tel que `sortiesbot/stages/__init__.py` le numérote. */
 export interface BlamedStage {
@@ -21,17 +22,6 @@ export interface BlamedStage {
   number: number;
   label: string;
 }
-
-const STAGES: Record<string, BlamedStage> = {
-  discovery: { stage: 'discovery', number: 1, label: 'Découverte' },
-  identify: { stage: 'identify', number: 2, label: 'Reconnaissance' },
-  harvest: { stage: 'harvest', number: 3, label: 'Dépouillement' },
-  select: { stage: 'select', number: 4, label: 'Sélection' },
-  read: { stage: 'read', number: 5, label: 'Lecture' },
-  extract: { stage: 'extract', number: 6, label: 'Extraction' },
-  attribute: { stage: 'attribute', number: 7, label: 'Attribution' },
-  publish: { stage: 'publish', number: 8, label: 'Publication' },
-};
 
 export interface RejectionMeaning {
   code: RejectionCode;
@@ -121,11 +111,21 @@ export function meaningOf(code: RejectionCode): RejectionMeaning | undefined {
   return BY_CODE.get(code);
 }
 
-/** Le vocabulaire complet, tel que la console le reçoit et l'affiche. */
+/**
+ * Le vocabulaire complet, tel que la console le reçoit et l'affiche.
+ *
+ * Un identifiant d'étage inconnu est **écarté** en silence — c'est le seul
+ * choix tenable ici, une page de qualité ne doit pas tomber pour une faute de
+ * frappe — mais il ferait disparaître une imputation sans rien dire. D'où le
+ * test qui vérifie que chaque `blames` désigne un étage qui existe.
+ */
 export function describeRejections() {
   return REJECTION_MEANINGS.map((m) => ({
     ...m,
-    blames: m.blames.map((s) => STAGES[s]).filter((s): s is BlamedStage => Boolean(s)),
+    blames: m.blames.flatMap((id): BlamedStage[] => {
+      const etage = stageOf(id);
+      return etage ? [{ stage: etage.stage, number: etage.number, label: etage.label }] : [];
+    }),
   }));
 }
 

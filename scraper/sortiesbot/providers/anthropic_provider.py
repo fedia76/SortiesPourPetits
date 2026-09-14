@@ -72,6 +72,25 @@ PRICES = {
     "claude-haiku-4-5": (1.0, 5.0),
 }
 
+#: Ce qu'on facture à un modèle absent de `PRICES` : le tarif le plus cher
+#: qu'on connaisse, sur chacune des deux colonnes.
+#:
+#: Le repli était **zéro**, et c'était un trou dans le seul garde-fou financier
+#: du projet : `max_cost_usd` se compare à `usage.total_usd`, qui restait nul,
+#: donc le plafond de coût ne se déclenchait jamais. Le nom du modèle vient de
+#: la console, où il n'est validé que par sa longueur — écrire
+#: `claude-haiku-4-5-20251001` au lieu de `claude-haiku-4-5` suffisait à
+#: désarmer le plafond sans que rien ne le dise, et le run affichait « 0 $ ».
+#:
+#: Facturer à l'estime plutôt que refuser : un modèle qui vient de sortir doit
+#: pouvoir s'essayer sans redéploiement. Le run s'arrête alors **trop tôt**
+#: plutôt que jamais, ce qui est le bon sens de l'erreur, et le journal dit
+#: pourquoi son coût est faux.
+UNKNOWN_MODEL_PRICE = (
+    max(rate_in for rate_in, _ in PRICES.values()),
+    max(rate_out for _, rate_out in PRICES.values()),
+)
+
 #: Une étiquette et une phrase. Le modèle n'écrit jamais d'URL ici : il ne
 #: peut donc pas en inventer, comme à la sélection.
 CLASSIFY_SCHEMA: dict[str, Any] = {
@@ -223,6 +242,8 @@ class AnthropicProvider:
         #: Requête de chaque `server_tool_use`, par identifiant de bloc.
         #: C'est ce qui relie un résultat à la recherche qui l'a remonté.
         self._queries: dict[str, str] = {}
+        #: Modèles déjà signalés comme non tarifés : on le dit une fois.
+        self._unpriced: set[str] = set()
         if client is not None:
             self._client = client
             return
@@ -481,8 +502,28 @@ class AnthropicProvider:
         step.cost_usd = _token_cost(model, step)
         step.search_cost_usd = step.web_searches * SEARCH_PRICE_USD
         self.usage.add(step)
+        self._warn_unpriced(model, op, log)
         log.event("usage", op=op, model=model, **step.as_dict())
         return response
+
+    def _warn_unpriced(self, model: str, op: str, log: RunLog) -> None:
+        """Dit, une fois par modèle, que son coût est une estimation haute.
+
+        Sans cette ligne, un modèle hors tarif se voyait uniquement à un chiffre
+        qui n'alerte personne — et surtout pas à un plafond qui ne joue pas.
+        """
+        if model in PRICES or model in self._unpriced:
+            return
+        self._unpriced.add(model)
+        entree, sortie = UNKNOWN_MODEL_PRICE
+        log.warn(
+            op,
+            f"tarif inconnu pour « {model} » : facturé au plus cher tarif connu "
+            f"({entree} $ / {sortie} $ le million de jetons). Le coût affiché est "
+            "majoré et le plafond du run peut tomber trop tôt — ajoutez ce modèle "
+            "à PRICES.",
+            model=model,
+        )
 
     def _trace_block(
         self, block: Any, *, op: str, log: RunLog, step: Usage, found: dict[str, Any] | None
@@ -536,7 +577,8 @@ class AnthropicProvider:
 
 
 def _token_cost(model: str, usage: Usage) -> float:
-    rate_in, rate_out = PRICES.get(model, (0.0, 0.0))
+    """Ce que cet appel a coûté en jetons. Jamais zéro faute de tarif connu."""
+    rate_in, rate_out = PRICES.get(model, UNKNOWN_MODEL_PRICE)
     return (usage.input_tokens * rate_in + usage.output_tokens * rate_out) / 1_000_000
 
 

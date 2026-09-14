@@ -552,3 +552,77 @@ def test_la_selection_rend_ses_motifs_sans_jamais_rendre_d_url():
     schema = server.requests[0]["output_config"]["format"]["schema"]
     assert schema["properties"]["kept"]["items"]["properties"]["index"]["type"] == "integer"
     assert "url" not in schema["properties"]["kept"]["items"]["properties"]
+
+
+# ══════════════════════════════════════════════════════ le tarif des modèles
+#
+# `PRICES.get(model, (0.0, 0.0))` rendait zéro pour tout modèle absent de la
+# table. Or `max_cost_usd` se compare à ce total : un nom de modèle inconnu —
+# « claude-haiku-4-5-20251001 » au lieu de « claude-haiku-4-5 » — désarmait le
+# seul garde-fou financier du projet, et le run s'affichait à 0 $.
+
+
+def usage_de(entree: int, sortie: int):
+    from sortiesbot.models import Usage
+
+    return Usage(input_tokens=entree, output_tokens=sortie)
+
+
+def test_un_modele_connu_est_facture_a_son_tarif():
+    from sortiesbot.providers.anthropic_provider import _token_cost
+
+    # Haiku : 1 $ / 5 $ le million.
+    cout = _token_cost("claude-haiku-4-5", usage_de(1_000_000, 1_000_000))
+    assert cout == pytest.approx(6.0)
+
+
+def test_un_modele_inconnu_ne_coute_jamais_zero():
+    from sortiesbot.providers.anthropic_provider import (
+        UNKNOWN_MODEL_PRICE,
+        _token_cost,
+    )
+
+    cout = _token_cost("claude-haiku-4-5-20251001", usage_de(1_000_000, 1_000_000))
+    assert cout == pytest.approx(sum(UNKNOWN_MODEL_PRICE))
+    assert cout > 0, "c'est ce zéro qui désarmait max_cost_usd"
+
+
+def test_le_tarif_inconnu_est_le_plus_cher_qu_on_connaisse():
+    """Se tromper doit coûter cher, pas rien : le run s'arrête trop tôt."""
+    from sortiesbot.providers.anthropic_provider import (
+        PRICES,
+        UNKNOWN_MODEL_PRICE,
+        _token_cost,
+    )
+
+    inconnu = _token_cost("modele-de-demain", usage_de(1_000_000, 1_000_000))
+    for nom in PRICES:
+        assert _token_cost(nom, usage_de(1_000_000, 1_000_000)) <= inconnu + 1e-9
+    assert UNKNOWN_MODEL_PRICE == (5.0, 25.0)
+
+
+def test_le_plafond_de_cout_se_declenche_sur_un_modele_inconnu():
+    """Le bout du problème : c'est `total_usd` que le budget regarde."""
+    from sortiesbot.providers.anthropic_provider import _token_cost
+
+    usage = usage_de(0, 0)
+    usage.cost_usd = _token_cost("un-modele-jamais-vu", usage_de(200_000, 20_000))
+    assert usage.total_usd >= 1.00, "un run d'un dollar doit s'arrêter au plafond d'un dollar"
+
+
+def test_le_tarif_inconnu_est_signale_une_seule_fois():
+    """Un chiffre faux qui ne dit pas qu'il l'est ne sert à personne."""
+    from sortiesbot.providers.anthropic_provider import AnthropicProvider
+
+    recus: list[dict] = []
+    log = RunLog(path=None, verbose=False)
+    log.sink = recus.append
+
+    provider = AnthropicProvider(client=object())
+    provider._warn_unpriced("claude-haiku-4-5", "select", log)
+    provider._warn_unpriced("un-modele-jamais-vu", "select", log)
+    provider._warn_unpriced("un-modele-jamais-vu", "extract", log)
+
+    avertissements = [r for r in recus if r.get("level") == "warn"]
+    assert len(avertissements) == 1, "un modèle connu ne dit rien, un inconnu le dit une fois"
+    assert "un-modele-jamais-vu" in avertissements[0]["message"]

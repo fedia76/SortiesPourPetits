@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from sortiesbot.harvest import Fetcher, FetchError, links_of, page_text
+from sortiesbot.harvest import Fetcher, FetchError, decode_html, links_of, page_text
 
 AGENDA = """
 <html><body>
@@ -176,15 +176,11 @@ def test_page_inaccessible(monkeypatch):
         fetcher.get_html("https://site.fr/disparue")
 
 
-def test_geocodeur_bascule_sur_la_ban_quand_photon_refuse(monkeypatch):
-    """Un run entier a rendu 20 sorties non géolocalisées sur 20, toutes sur
-    des 403 de Photon. La BAN doit prendre le relais — et Photon ne doit pas
-    être rejoué vingt fois."""
+def _geocodeur_muet(monkeypatch, appels):
+    """Photon qui refuse, BAN qui répond, et aucun délai d'attente."""
     import requests
 
     from sortiesbot import geocode as g
-
-    appels = {"photon": 0, "ban": 0}
 
     def photon(query):
         appels["photon"] += 1
@@ -195,9 +191,19 @@ def test_geocodeur_bascule_sur_la_ban_quand_photon_refuse(monkeypatch):
         return [{"properties": {"city": "Orsay", "postcode": "91400"},
                  "geometry": {"coordinates": [2.1873, 48.6997]}}]
 
-    monkeypatch.setattr(g, "_photon_available", True)
+    monkeypatch.setattr(g, "CALL_DELAY", 0)
     monkeypatch.setattr(g, "_photon_search", photon)
     monkeypatch.setattr(g, "_ban_search", ban)
+    g.reset()
+    return g
+
+
+def test_geocodeur_bascule_sur_la_ban_quand_photon_refuse(monkeypatch):
+    """Un run entier a rendu 20 sorties non géolocalisées sur 20, toutes sur
+    des 403 de Photon. La BAN doit prendre le relais — et Photon ne doit pas
+    être rejoué vingt fois."""
+    appels = {"photon": 0, "ban": 0}
+    g = _geocodeur_muet(monkeypatch, appels)
 
     assert g._search("14bis avenue Saint Laurent, 91400, Orsay")[0]["properties"]["postcode"] == "91400"
     g._search("une autre adresse")
@@ -205,6 +211,54 @@ def test_geocodeur_bascule_sur_la_ban_quand_photon_refuse(monkeypatch):
 
     assert appels["photon"] == 1  # une rebuffade suffit, on n'insiste pas
     assert appels["ban"] == 3
+    g.reset()
+
+
+def test_la_mise_en_sourdine_de_photon_expire(monkeypatch):
+    """Le drapeau était définitif, dans un service qui tourne des semaines.
+
+    Un incident réseau privait donc tous les runs suivants des lieux d'intérêt
+    — parcs, musées, théâtres, que la BAN ne connaît pas — jusqu'au prochain
+    redémarrage, et rien ne le disait.
+    """
+    appels = {"photon": 0, "ban": 0}
+    g = _geocodeur_muet(monkeypatch, appels)
+
+    g._search("une adresse")
+    g._search("une autre")
+    assert appels["photon"] == 1, "on n'insiste pas pendant la mise en sourdine"
+
+    # Le temps passe : Photon mérite une nouvelle chance.
+    monkeypatch.setattr(g.time, "monotonic", lambda: g._photon_silent_until + 1)
+    g._search("une troisième")
+    assert appels["photon"] == 2
+    g.reset()
+
+
+def test_le_geocodeur_attend_entre_deux_appels(monkeypatch):
+    """La cadence qui manquait : c'est elle qui a valu la volée de 403.
+
+    Cinq tentatives par sortie, vingt sorties par run, et rien entre les deux.
+    """
+    from sortiesbot import geocode as g
+
+    attentes: list[float] = []
+    # Une horloge déjà avancée : le tout premier appel d'un processus n'a
+    # personne devant lui et ne doit pas attendre.
+    horloge = {"t": 1_000.0}
+
+    monkeypatch.setattr(g, "CALL_DELAY", 1.0)
+    monkeypatch.setattr(g.time, "monotonic", lambda: horloge["t"])
+    monkeypatch.setattr(g.time, "sleep", lambda d: attentes.append(d))
+    monkeypatch.setattr(g, "_photon_search", lambda q: [{"ok": True}])
+    g.reset()
+
+    g._search("une adresse")
+    assert attentes == [], "le premier appel part tout de suite"
+
+    g._search("tout de suite après")
+    assert attentes == [1.0], "le second attend son tour"
+    g.reset()
 
 
 # ------------------------------------------------------------------ la photo
@@ -463,3 +517,95 @@ def log_muet():
     from sortiesbot.journal import RunLog
 
     return RunLog(path=None, verbose=False, stream=io.StringIO())
+
+
+# ══════════════════════════════════════════════════════════ l'encodage des pages
+#
+# `requests` répond ISO-8859-1 pour tout `text/html` sans `charset` d'en-tête :
+# c'est la RFC 2616, et c'est faux sur le web français d'aujourd'hui. Le repli
+# `or "utf-8"` qui gardait ce champ ne se déclenchait donc jamais.
+
+
+class _Octets:
+    """Une réponse HTTP qui rend les octets qu'on lui donne, tels quels."""
+
+    def __init__(self, raw: bytes, content_type: str = "text/html"):
+        self._raw = raw
+        self.status_code = 200
+        self.text = ""
+        self.headers = {"Content-Type": content_type}
+        # Ce que `requests` aurait déduit de l'en-tête. Présent pour prouver
+        # qu'on ne s'en sert plus.
+        self.encoding = "ISO-8859-1"
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, _taille):
+        yield self._raw
+
+
+def test_utf8_declare_par_une_balise_meta():
+    """Le cas le plus courant, et celui qui produisait « Ã© » partout."""
+    page = '<html><head><meta charset="utf-8"></head><body>Théâtre à Noël</body></html>'
+    decode = decode_html(page.encode("utf-8"), "text/html")
+    assert "Théâtre à Noël" in decode
+    assert "Ã" not in decode
+
+
+def test_utf8_sans_aucune_declaration():
+    """Rien dans l'en-tête, rien dans le HTML : l'UTF-8 est le défaut moderne."""
+    assert decode_html("Spectacle très drôle".encode("utf-8")) == "Spectacle très drôle"
+
+
+def test_le_charset_de_l_en_tete_prime_sur_la_balise():
+    page = '<html><head><meta charset="utf-8"></head><body>caf\xe9</body></html>'
+    raw = page.encode("latin-1")
+    assert "café" in decode_html(raw, "text/html; charset=iso-8859-1")
+
+
+def test_latin1_reste_du_latin1():
+    """Une vraie page latin-1 ne doit pas être relue en UTF-8 de force."""
+    assert decode_html("Forêt".encode("latin-1"), "text/html; charset=ISO-8859-1") == "Forêt"
+
+
+def test_les_octets_l_emportent_sur_un_en_tete_qui_ment():
+    """Beaucoup de serveurs annoncent latin-1 par défaut en servant de l'UTF-8.
+
+    Un texte réellement latin-1 ne forme pratiquement jamais des séquences
+    UTF-8 valides : quand il y en a, c'est la déclaration qui a tort.
+    """
+    raw = "Été à Rouen".encode("utf-8")
+    assert decode_html(raw, "text/html; charset=ISO-8859-1") == "Été à Rouen"
+
+
+def test_encodage_annonce_inconnu():
+    """Un nom d'encodage mal orthographié ne doit pas faire perdre la page."""
+    assert "été" in decode_html("été".encode("utf-8"), "text/html; charset=utf8mb4-oups")
+
+
+def test_octets_qui_dementent_l_encodage_annonce():
+    """Annoncé UTF-8, servi en latin-1 : cp1252 accepte tout, comme un navigateur."""
+    decode = decode_html("Forêt".encode("latin-1"), "text/html; charset=utf-8")
+    assert decode == "Forêt"
+
+
+def test_bom_utf8():
+    raw = "﻿<html>Noël</html>".encode("utf-8")
+    assert decode_html(raw, "text/html; charset=iso-8859-1") == "<html>Noël</html>"
+
+
+def test_get_html_decode_sans_consulter_response_encoding(monkeypatch):
+    """Le bout en bout : `response.encoding` vaut ISO-8859-1 et on l'ignore."""
+    monkeypatch.setattr("sortiesbot.harvest.CRAWL_DELAY", 0)
+    page = '<html><head><meta charset="utf-8"></head><body>Marché de Noël à Caen</body></html>'
+
+    class Session:
+        headers: dict[str, str] = {}
+
+        def get(self, url, **_kwargs):
+            if url.endswith("/robots.txt"):
+                return _Octets(b"", "text/plain")
+            return _Octets(page.encode("utf-8"))
+
+    assert "Marché de Noël à Caen" in Fetcher(session=Session()).get_html("https://site.fr/a")

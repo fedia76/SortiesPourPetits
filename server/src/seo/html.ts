@@ -90,9 +90,20 @@ export interface RenderedPage {
   body: string;
 }
 
-/** Injecte une page dans le gabarit. `null` si le gabarit manque. */
+/**
+ * Injecte une page dans le gabarit. `null` si le gabarit manque.
+ *
+ * Les deux remplacements passent par une **fonction** et non par une chaîne,
+ * et c'est tout sauf un détail de style : `String.replace` interprète `$&`,
+ * `` $` ``, `$'` et `$1` dans une chaîne de remplacement. `escapeHtml`
+ * n'échappe pas le dollar — il n'a aucune raison de le faire, ce n'est pas un
+ * caractère HTML —, donc une sortie intitulée « Atelier 5$' » faisait recopier
+ * tout le reste du gabarit à l'intérieur du `<head>`, marqueur
+ * `<!--seo:body-->` compris. Le corps de la page n'était alors jamais rempli.
+ * Une fonction de remplacement rend le texte tel quel, sans rien interpréter.
+ */
 export function renderDocument(page: RenderedPage): string | null {
   const html = loadTemplate();
   if (html === null) return null;
-  return html.replace(HEAD_BLOCK, page.head).replace(BODY_MARK, page.body);
+  return html.replace(HEAD_BLOCK, () => page.head).replace(BODY_MARK, () => page.body);
 }

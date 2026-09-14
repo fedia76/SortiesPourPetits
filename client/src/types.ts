@@ -47,6 +47,14 @@ export interface Venue {
  * (voir server/src/lib/incomplete.ts) : une adresse qui n'a pas pu être
  * géocodée arrive à (0, 0), un tarif indéterminé arrive négatif. Le serveur
  * refuse d'approuver la sortie tant que ce n'est pas corrigé.
+ *
+ * ⚠️ Ces trois déclarations sont **recopiées** de `server/src/lib/incomplete.ts`,
+ * faute de paquet partagé entre les deux moitiés du dépôt. Elles avaient déjà
+ * divergé : le serveur répondait « tarif connu » pour une sortie payante sans
+ * prix, là où le client affichait « Tarif à compléter ». Le serveur garde
+ * l'approbation, donc c'est lui qui avait tort ; il dit maintenant la même
+ * chose qu'ici, et `server/tests/incomplete.test.ts` fixe la table de vérité
+ * commune. Les deux fichiers changent ensemble.
  */
 export const UNKNOWN_PRICE = -1;
 
@@ -55,7 +63,9 @@ export function hasCoordinates(venue: Pick<Venue, 'lat' | 'lng'>): boolean {
 }
 
 export function hasPrice(event: { isFree: boolean; price: number | null }): boolean {
-  return event.isFree || (event.price !== null && event.price >= 0);
+  if (event.isFree) return true;
+  if (event.price === null || event.price === undefined) return false;
+  return event.price >= 0;
 }
 
 /** Badge de tarif, y compris pour une sortie importée sans tarif connu. */
