@@ -304,8 +304,48 @@ Chaque lien tombe alors dans une case, et une seule :
   payée pour rien ;
 * **écartée à raison** — hors recherche, et écartée. Le travail bien fait, qui
   n'apparaissait nulle part ;
-* **indécidable** — personne n'a décrit cette sortie. Hors de tout dénominateur,
-  et affiché pour qu'on sache ce qu'on ignore.
+* **indécidable** — le corpus ne permet pas de trancher. Hors de tout
+  dénominateur, et affiché pour qu'on sache ce qu'on ignore.
+
+L'indécidable a **deux causes**, qui ne se soldent pas du même geste, et la
+raison affichée les distingue : ou bien *aucune sortie n'est attachée au lien*,
+ou bien *elle l'est et son étiquette ne dit ni quand, ni où, ni pour qui*.
+
+#### Le lien mène à la sortie, et c'est la jointure qui porte la mesure
+
+L'étage 4 juge un lien d'agenda avec ce que la **sortie** déclare — c'est elle
+qui a une date, un lieu et un public, pas le lien qui y mène, et plusieurs
+agendas peuvent annoncer la même. Tout l'étage tient donc à `EvalLink.sortieId`,
+et cette jointure se fait sur l'**adresse** : la même adresse est la même page,
+ce qui est un fait et non un jugement.
+
+Elle ne se faisait qu'au moment d'étiqueter le lien. Si la sortie n'était pas
+encore au corpus, le lien restait orphelin — **définitivement**, rien ne
+repassant quand elle arrivait. Or les deux entrent par deux boutons différents :
+« Liens d'agenda déjà tranchés » avant « Sorties publiées », et tout ce passage-là
+devenait immesurable. L'étage 4 rendait alors *0 trouvée, 0 manquée* avec des
+dizaines d'indécidables, et la console répondait « la sortie n'existe pas au
+corpus » en la montrant, décrite, dans l'onglet d'à côté.
+
+Le rattachement se fait donc désormais **des deux côtés** : à l'étiquetage d'un
+lien, et à chaque entrée d'une sortie au corpus — création manuelle, paniers,
+« la décrire » depuis un lien (qui sert alors *tous* les liens de même adresse).
+La migration `0034` répare ce qui a déjà été saisi. Un rattachement posé à la
+main vers une sortie d'adresse différente — échange de langue, redirection —
+n'est jamais écrasé.
+
+Et le panier « Liens d'agenda déjà tranchés » fait les **trois gestes d'un
+coup** : il pose l'étiquette du lien, crée la sortie au bout, et y recopie les
+faits de la fiche approuvée. Les trois reposent sur le même fait — un modérateur
+a approuvé cette page —, qui dit à la fois que le lien mène à une sortie, qu'elle
+mérite d'être au corpus, et ce qu'elle affirme. Les séparer était un découpage
+d'implémentation : il obligeait à connaître l'ordre de trois boutons, et ne
+rattrapait rien si on se trompait.
+
+Les faits d'une sortie se saisissent aussi **depuis la ligne du lien**, dans
+l'onglet des agendas. Ils ne sont pas pour autant recopiés sur le lien : le
+formulaire écrit dans la sortie, par la même route que l'autre onglet. C'est le
+geste qui se rapproche du travail, pas la donnée qui se dédouble.
 
 Trois garde-fous, tous vérifiés par les tests :
 
@@ -469,6 +509,52 @@ l'étage 2 attend toujours son run (voir « [Ce qui reste
 limité](#ce-qui-reste-limité) »). C'est même son principal effet de bord : elle
 rend le peuplement si rapide que la dette de mesure, elle, devient la seule qui
 reste.
+
+## Le corpus des agendas se sème depuis la production
+
+Coller une adresse d'agenda à la main marche, et c'est la mauvaise façon de
+commencer. Un agenda choisi au hasard n'a **aucun recouvrement** avec ce que la
+modération a déjà tranché : le panier « Liens d'agenda déjà tranchés » affiche
+alors zéro, chaque lien est à étiqueter à la main, aucune sortie n'est décrite au
+bout — et l'étage 4 rend *0 trouvée, 0 manquée*, des chiffres qui ressemblent à
+une brique en panne alors que c'est le corpus qui ne se recoupe pas.
+
+`ScraperRunItem.agendaUrl` porte, depuis la clôture de chaque run, l'agenda sur
+lequel chaque page a été repérée. La console propose donc les agendas que la
+production a **réellement dépouillés**, classés par ce qu'ils ont rendu
+d'approuvé. Ceux-là ont, par construction, des liens qu'un modérateur a déjà
+jugés.
+
+Le rendement passé ne promet rien pour autant : il compte ce que l'agenda a rendu
+**alors**, et la page qu'on gèle est celle d'**aujourd'hui**. Les sorties
+expirent, les agendas tournent. D'où le tri sur les trois derniers mois, et d'où
+le fait que le vrai recouvrement ne se connaît qu'après la capture et un run de
+dépouillement.
+
+### La chaîne des gestes, et pourquoi elle est affichée
+
+Elle est une **dépendance réelle**, et elle n'était écrite nulle part :
+
+```
+ajouter l'agenda ─► le geler ─► run d'étage 3 ─► étiqueter ─► l'étage 4 mesure
+                    (worker)    (relève les      (panier, puis
+                                 liens)           à la main)
+```
+
+Sauter une étape ne produit aucune erreur : ça produit un zéro, plus loin, qu'on
+attribue à la brique. Chaque agenda affiche donc où il en est — *à geler*,
+*aucun run joué*, *à étiqueter*, *en cours*, *complet* — et ce qu'il attend.
+
+### Ce que l'amorçage ne remplace pas
+
+Un corpus semé depuis la modération ne mesure qu'un rappel **conditionnel** :
+« parmi les sorties que la production a déjà su remonter **et** qu'un humain a
+approuvées, combien le tri en retient ». Les sorties que le pipeline n'a jamais
+remontées ne sont pas étiquetées — le tri peut donc les laisser tomber
+gratuitement, sans que le chiffre bouge.
+
+L'étiquetage à la main du **reste** de la page est la moitié qui produit le vrai
+rappel. L'amorçage ne la raccourcit pas : il évite de commencer devant rien.
 
 ## Peupler le corpus avec ce que la modération a déjà payé
 

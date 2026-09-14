@@ -25,6 +25,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
 import type {
   EvalAgenda,
+  EvalAgendaCandidat,
   EvalHunt,
   EvalHuntPage,
   EvalNature,
@@ -51,6 +52,8 @@ import {
   EVAL_RELEVANCE_HINTS,
   EVAL_RELEVANCE_LABELS,
   EVAL_CAPTURE_LABELS,
+  EVAL_ETAPE_LABELS,
+  EVAL_ETAPE_SUITE,
   EVAL_HUNT_STATUS_LABELS,
   EVAL_LABEL_ORIGIN_LABELS,
   EVAL_NATURE_ORIGIN_HINTS,
@@ -201,6 +204,103 @@ async function removeAgenda(agenda: EvalAgenda) {
   }
 }
 
+/**
+ * Les agendas que la recherche auto a dépouillés.
+ *
+ * Chargés à part et à la demande : c'est une requête d'agrégation sur tout
+ * l'historique du scraper, et elle n'a rien à faire dans le chargement d'une
+ * page qu'on ouvre dix fois par jour.
+ */
+const candidats = ref<EvalAgendaCandidat[]>([]);
+const candidatsOuverts = ref(false);
+const candidatsCharges = ref(false);
+
+async function voirLesCandidats() {
+  candidatsOuverts.value = !candidatsOuverts.value;
+  if (!candidatsOuverts.value || candidatsCharges.value) return;
+  try {
+    const body = await api.get<{ candidats: EvalAgendaCandidat[] }>('/api/eval/agendas/candidats');
+    candidats.value = body.candidats;
+    candidatsCharges.value = true;
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function adopter(candidat: EvalAgendaCandidat, pages: number) {
+  try {
+    await api.post('/api/eval/agendas', { url: candidat.url, pages });
+    notice.value =
+      'Agenda ajouté. Il part en file de capture ; une fois gelé, jouez un run ' +
+      'de dépouillement — c’est lui qui relèvera ses liens.';
+    candidatsCharges.value = false;
+    await voirLesCandidats();
+    candidatsOuverts.value = true;
+    await load();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+// ── décrire une sortie sans quitter la ligne du lien ───────────────────
+//
+// Les faits **ne sont pas recopiés sur le lien** : ce formulaire écrit dans la
+// sortie, le même objet que l'onglet d'à côté, par la même route. Une version
+// précédente les portait vraiment sur le lien, en double de ce que la sortie
+// disait déjà, et les deux divergeaient — c'est ce que « une sortie, une
+// étiquette » a supprimé, et ça ne revient pas.
+//
+// Ce qui revient, c'est le **geste** : l'étage 4 se relit lien par lien, sur
+// une page d'agenda, et devoir changer d'onglet pour décrire la sortie qu'on a
+// sous les yeux est la raison pour laquelle personne ne le faisait.
+
+const faits = ref<{
+  sortieId: number;
+  dateStart: string;
+  dateEnd: string;
+  postalCode: string;
+  ageMin: number | null;
+  ageMax: number | null;
+  audience: EvalAudience | null;
+} | null>(null);
+
+function decrire(sortieId: number, sortie: EvalSortieFacts | null | undefined) {
+  faits.value = {
+    sortieId,
+    dateStart: (sortie?.dateStart ?? '').slice(0, 10),
+    dateEnd: (sortie?.dateEnd ?? '').slice(0, 10),
+    postalCode: sortie?.postalCode ?? '',
+    ageMin: sortie?.ageMin ?? null,
+    ageMax: sortie?.ageMax ?? null,
+    audience: sortie?.audience ?? null,
+  };
+}
+
+/**
+ * Enregistre les seuls champs de l'étage 4.
+ *
+ * La route fusionne au lieu de réécrire : saisir une date ici n'efface pas
+ * l'illustration ni les fragments que la moisson avait remplis pour l'étage 5.
+ */
+async function enregistrerFaits() {
+  const f = faits.value;
+  if (!f) return;
+  try {
+    await api.patch(`/api/eval/sorties/${f.sortieId}`, {
+      dateStart: f.dateStart || null,
+      dateEnd: f.dateEnd || null,
+      venuePostalCode: f.postalCode.trim() || null,
+      ageMin: f.ageMin,
+      ageMax: f.ageMax,
+      audience: f.audience,
+    });
+    faits.value = null;
+    await refreshOpen();
+  } catch (e) {
+    fail(e);
+  }
+}
+
 async function openAgenda(agenda: EvalAgenda) {
   if (open.value?.id === agenda.id) {
     open.value = null;
@@ -275,8 +375,15 @@ async function labelLink(pageId: number, url: string, text: string, verdict: Eva
  */
 async function creerSortie(linkId: number) {
   try {
-    await api.post(`/api/eval/links/${linkId}/sortie`, {});
+    // La sortie créée n'affirme rien : la décrire est le geste qui suit, et il
+    // s'enchaîne ici plutôt que de se retrouver, plus tard, dans une liste de
+    // dettes qu'on relit sans se rappeler de quelle page il s'agissait.
+    const body = await api.post<{ sortie: { id: number } }>(
+      `/api/eval/links/${linkId}/sortie`,
+      {},
+    );
     await refreshOpen();
+    decrire(body.sortie.id, null);
   } catch (e) {
     fail(e);
   }
@@ -627,15 +734,16 @@ const PANIERS = [
     groupe: 'agendas' as const,
     titre: 'Liens d’agenda déjà tranchés',
     publiee: true,
-    ajoute: 'des étiquettes de lien, sur un agenda',
+    ajoute: 'l’étiquette du lien, et la sortie décrite au bout',
     chemin: [
       'Une adresse a donné une sortie <strong>approuvée</strong> en modération.',
       'Cette même adresse figure dans le relevé d’un <strong>run du banc</strong> sur une page d’agenda du corpus.',
       'Aucune étiquette n’existe encore pour ce lien sur cette page.',
-      'On pose « une sortie » : un humain l’a déjà vérifiée, ailleurs.',
+      'On pose « une sortie » sur le lien : un humain l’a déjà vérifiée, ailleurs.',
+      'Et on <strong>crée la sortie au bout</strong>, avec ses faits recopiés de la fiche approuvée — sans quoi l’étage 4 n’aurait rien à quoi comparer.',
     ],
     pourquoi:
-      'N’ajoute aucune sortie — seulement des étiquettes de lien. Reste à zéro tant qu’aucun run du banc n’a été joué sur vos agendas. Et n’apporte que des positifs : il ne dira jamais qu’un lien n’est pas une sortie.',
+      'Reste à zéro tant qu’aucun run du banc n’a été joué sur vos agendas : c’est le run qui relève les liens. N’apporte que des positifs — il ne dira jamais qu’un lien n’est pas une sortie —, donc il raccourcit la relecture sans la remplacer. Les sorties créées partent en file de capture, comme celles du panier « Sorties publiées ».',
   },
 ];
 
@@ -807,8 +915,31 @@ const independance = computed(() => {
 
 async function pour(bucket: 'approuvees' | 'abandonnees' | 'illisibles' | 'liens' | 'fiches') {
   try {
-    const body = await api.post<{ added: number }>('/api/eval/seed', { bucket, limit: 25 });
-    notice.value = `${body.added} entrée(s) ajoutée(s) au corpus.`;
+    const body = await api.post<{
+      added: number;
+      creees?: number;
+      decrites?: number;
+      rattaches?: number;
+    }>(
+      '/api/eval/seed',
+      { bucket, limit: 25 },
+    );
+    // Les rattachements sont dits, et pas seulement faits : ce sont des liens
+    // qui comptaient *indécidables* et qui vont se mettre à peser dans le
+    // rappel de l'étage 4. Un chiffre qui bouge sans qu'on sache pourquoi est
+    // ce qui fait douter d'un banc.
+    notice.value =
+      `${body.added} entrée(s) ajoutée(s) au corpus.` +
+      (body.creees
+        ? ` ${body.creees} sortie(s) créée(s) et décrite(s) depuis leur fiche approuvée.`
+        : '') +
+      (body.decrites
+        ? ` ${body.decrites} sortie(s) qui n’affirmaient rien viennent d’être décrites.`
+        : '') +
+      (body.rattaches
+        ? ` ${body.rattaches} lien(s) d’agenda viennent d’y être rattachés : ils comptaient` +
+          ' indécidables pour l’étage 4, ils comptent maintenant.'
+        : '');
     await load();
   } catch (e) {
     fail(e);
@@ -1317,6 +1448,74 @@ const corpusSize = computed(() => ({
       </div>
       <!-- ── Les agendas ────────────────────────────────────────────────── -->
       <h2>Agendas — étages 3 et 4</h2>
+      <!--
+        Coller une adresse marche, et c'est la mauvaise façon de commencer : un
+        agenda choisi au hasard n'a aucun recouvrement avec ce que la modération
+        a déjà tranché, donc rien à reprendre, donc tout à étiqueter à la main —
+        et en attendant, l'étage 4 mesure zéro. Le panier ci-dessous part de ce
+        que la production a réellement dépouillé.
+      -->
+      <p class="muted small">
+        <button class="linklike" @click="voirLesCandidats()">
+          {{ candidatsOuverts ? 'Masquer' : 'Choisir un agenda que la recherche auto a dépouillé' }}
+        </button>
+        — ceux-là ont, par construction, des liens qu’un modérateur a déjà jugés.
+      </p>
+
+      <div v-if="candidatsOuverts" class="card candidats">
+        <p class="muted small">
+          Le rendement compte ce que cet agenda a rendu <strong>alors</strong> ;
+          la page qu’on gèlera est celle d’<strong>aujourd’hui</strong>. Les
+          sorties expirent et les agendas tournent : d’où la colonne « 3 mois »,
+          la seule qui ait une chance d’être encore sur la page. Le vrai
+          recouvrement ne se connaît qu’après la capture et un run de
+          dépouillement.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Agenda</th>
+                <th class="num" title="Pages distinctes que la production a tirées de cet agenda.">
+                  Pages
+                </th>
+                <th class="num" title="Pages approuvées par un modérateur : autant d’étiquettes de lien déjà payées.">
+                  Approuvées
+                </th>
+                <th class="num" title="Approuvées ces trois derniers mois.">3 mois</th>
+                <th class="num" title="Pages refusées en modération : elles ne donnent aucune étiquette, mais elles disent que l’agenda produit du bruit.">
+                  Refusées
+                </th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="c in candidats" :key="c.url" :class="{ off: c.dejaAuCorpus }">
+                <td>
+                  <a :href="c.url" target="_blank" class="link-text">{{ c.url }}</a>
+                  <div v-if="c.query" class="muted small">remonté par « {{ c.query }} »</div>
+                </td>
+                <td class="num">{{ c.pages }}</td>
+                <td class="num">{{ c.approuvees }}</td>
+                <td class="num"><strong>{{ c.recentes }}</strong></td>
+                <td class="num">{{ c.refusees }}</td>
+                <td>
+                  <span v-if="c.dejaAuCorpus" class="muted small">déjà au corpus</span>
+                  <button v-else class="linklike" @click="adopter(c, newAgendaPages)">
+                    Ajouter ({{ newAgendaPages }} page(s))
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-if="candidatsCharges && !candidats.length" class="muted small">
+          Aucun agenda dépouillé n’a encore donné de sortie approuvée. La
+          filiation n’est journalisée que depuis qu’elle est recopiée à la
+          clôture des runs : les exécutions antérieures n’en portent pas.
+        </p>
+      </div>
+
       <div class="row add">
         <input v-model="newAgendaUrl" type="url" placeholder="https://exemple.fr/agenda" />
         <input v-model.number="newAgendaPages" type="number" min="1" max="10" title="Pages à geler" />
@@ -1330,7 +1529,8 @@ const corpusSize = computed(() => ({
           </button>
           <span class="badge">{{ EVAL_CAPTURE_LABELS[agenda.capture] }}</span>
           <span class="muted small">
-            {{ agenda.pagesCaptured }} page(s) gelée(s) · {{ agenda.labels }} étiquette(s)
+            {{ agenda.pagesCaptured }} page(s) gelée(s) ·
+            {{ agenda.labels }} / {{ agenda.releves }} lien(s) étiqueté(s)
           </span>
           <span class="spacer" />
           <button
@@ -1343,6 +1543,16 @@ const corpusSize = computed(() => ({
           <button class="linklike" @click="removeAgenda(agenda)">Retirer</button>
         </div>
         <p v-if="agenda.captureError" class="error small">{{ agenda.captureError }}</p>
+        <!--
+          Où en est cet agenda, et ce qu'il attend. La chaîne — geler, jouer un
+          run de dépouillement, étiqueter — est une dépendance réelle que rien
+          n'écrivait : la sauter ne produit aucune erreur, seulement un zéro
+          plus loin, qu'on attribue à la brique.
+        -->
+        <p class="etape" :class="agenda.etape.toLowerCase()">
+          <strong>{{ EVAL_ETAPE_LABELS[agenda.etape] }}</strong>
+          <span class="muted small">{{ EVAL_ETAPE_SUITE[agenda.etape] }}</span>
+        </p>
 
         <!-- Le détail : les étiquettes, et un relevé en regard -->
         <div v-if="open?.id === agenda.id" class="detail">
@@ -1464,22 +1674,84 @@ const corpusSize = computed(() => ({
                       </div>
 
                       <!--
-                        La date, le lieu et l'âge **ne se saisissent pas ici**.
-                        Ils décrivent la sortie, pas le lien, et une seule sortie
-                        peut être annoncée par plusieurs agendas. Les offrir sur
-                        cette ligne laissait croire qu'ils lui appartenaient — ce
-                        qu'ils faisaient d'ailleurs, dans une version précédente,
-                        en double de ce que le corpus des sorties disait déjà.
-                        On y renvoie plutôt qu'on ne les recopie.
+                        La date, le lieu et l'âge se saisissent ici, et ils
+                        n'appartiennent toujours pas au lien : ce formulaire
+                        écrit dans la **sortie**, le même objet que l'onglet d'à
+                        côté, par la même route. Une version précédente les
+                        portait vraiment sur le lien, en double de ce que le
+                        corpus disait déjà, et les deux divergeaient — c'est ce
+                        que « une sortie, une étiquette » a supprimé, et ça ne
+                        revient pas.
+                        Ce qui revient, c'est le geste : l'étage 4 se relit lien
+                        par lien, et devoir changer d'onglet pour décrire la
+                        sortie qu'on a sous les yeux est la raison pour laquelle
+                        personne ne le faisait.
                       -->
                       <div v-else class="hints">
-                        <button
-                          class="linklike"
-                          @click="allerALaSortie(row.label.sortieId!)"
-                        >
+                        <button class="linklike" @click="decrire(row.label.sortieId!, row.label.sortie)">
+                          décrire
+                        </button>
+                        <button class="linklike" @click="allerALaSortie(row.label.sortieId!)">
                           voir la sortie
                         </button>
                         <span class="muted small">{{ resume(row.label.sortie) }}</span>
+                      </div>
+
+                      <!-- Le formulaire de l'étage 4, et rien d'autre : trois
+                           faits, ceux que le tri regarde. -->
+                      <div v-if="faits && faits.sortieId === row.label.sortieId" class="faits-ligne-inline">
+                        <div class="row faits-ligne">
+                          <label class="hint">
+                            <span class="muted small">du</span>
+                            <input v-model="faits.dateStart" type="date" />
+                          </label>
+                          <label class="hint">
+                            <span class="muted small">au</span>
+                            <input
+                              v-model="faits.dateEnd"
+                              type="date"
+                              title="Vide sur une date unique."
+                            />
+                          </label>
+                          <label class="hint">
+                            <span class="muted small">à</span>
+                            <input
+                              v-model="faits.postalCode"
+                              type="text"
+                              inputmode="numeric"
+                              size="6"
+                              placeholder="75012"
+                              title="Cinq chiffres. Une ville en toutes lettres ne se compare à aucun département."
+                            />
+                          </label>
+                          <label class="hint">
+                            <span class="muted small">de</span>
+                            <input v-model.number="faits.ageMin" type="number" min="0" max="120" size="3" />
+                            <span class="muted small">à</span>
+                            <input v-model.number="faits.ageMax" type="number" min="0" max="120" size="3" />
+                            <span class="muted small">ans</span>
+                          </label>
+                        </div>
+                        <div class="chips">
+                          <button
+                            v-for="a in AUDIENCES"
+                            :key="a"
+                            class="chip tiny"
+                            :class="{ on: faits.audience === a }"
+                            :title="EVAL_AUDIENCE_HINTS[a]"
+                            @click="faits.audience = faits.audience === a ? null : a"
+                          >
+                            {{ EVAL_AUDIENCE_LABELS[a] }}
+                          </button>
+                        </div>
+                        <div class="row">
+                          <button class="btn" @click="enregistrerFaits()">Enregistrer</button>
+                          <button class="linklike" @click="faits = null">Annuler</button>
+                          <span class="muted small">
+                            Écrit dans la sortie. L’illustration et les fragments de
+                            l’étage 5 ne sont pas touchés.
+                          </span>
+                        </div>
                       </div>
 
                       <!--
@@ -1872,6 +2144,42 @@ h2 {
 .entry {
   padding: 0.9rem 1.1rem;
   margin-bottom: 0.8rem;
+}
+
+.etape {
+  margin: 0.4rem 0 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  border-left: 3px solid var(--line);
+  padding-left: 0.6rem;
+}
+
+.etape.a_geler,
+.etape.sans_releve {
+  border-left-color: var(--warn);
+}
+
+.etape.a_etiqueter,
+.etape.en_cours {
+  border-left-color: var(--accent);
+}
+
+.etape.complet {
+  border-left-color: var(--ok);
+}
+
+.faits-ligne-inline {
+  border-left: 3px solid var(--accent);
+  padding: 0.4rem 0 0.2rem 0.6rem;
+  margin-top: 0.4rem;
+}
+
+.candidats {
+  padding: 0.8rem 1rem;
+  margin-bottom: 1rem;
 }
 
 .entry-head {

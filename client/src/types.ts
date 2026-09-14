@@ -986,6 +986,62 @@ export interface EvalAgendaPage {
   labels?: number;
 }
 
+/**
+ * Un agenda que la recherche auto a dépouillé, et ce qu'il a rendu.
+ *
+ * Le corpus se remplissait en collant des adresses à la main, sans rapport avec
+ * ce que la modération avait déjà tranché. Sans recouvrement, « reprendre ce
+ * qu'un humain a validé » ne reprend rien, et l'étage 4 n'a rien à mesurer.
+ */
+export interface EvalAgendaCandidat {
+  url: string;
+  /** La requête web qui avait remonté cet agenda. Vide en mode « site ». */
+  query: string;
+  /** Pages distinctes que la production a tirées de cet agenda. */
+  pages: number;
+  /** Parmi elles, celles qu'un modérateur a approuvées. */
+  approuvees: number;
+  /** Les approuvées des trois derniers mois : ce qui a une chance d'y être encore. */
+  recentes: number;
+  refusees: number;
+  derniere: string | null;
+  dejaAuCorpus: boolean;
+}
+
+/**
+ * Où en est un agenda du corpus.
+ *
+ * La chaîne des gestes est une dépendance réelle : geler, jouer un run
+ * d'étage 3, étiqueter — et alors seulement l'étage 4 mesure. Sauter une étape
+ * ne produit aucune erreur, seulement un zéro plus loin, qu'on attribue à la
+ * brique.
+ */
+export type EvalAgendaEtape =
+  | 'A_GELER'
+  | 'SANS_RELEVE'
+  | 'A_ETIQUETER'
+  | 'EN_COURS'
+  | 'COMPLET';
+
+export const EVAL_ETAPE_LABELS: Record<EvalAgendaEtape, string> = {
+  A_GELER: 'à geler',
+  SANS_RELEVE: 'aucun run joué',
+  A_ETIQUETER: 'à étiqueter',
+  EN_COURS: 'étiquetage en cours',
+  COMPLET: 'tous les liens étiquetés',
+};
+
+export const EVAL_ETAPE_SUITE: Record<EvalAgendaEtape, string> = {
+  A_GELER: 'Le worker doit d’abord geler ses pages : rien ne peut être rejoué avant.',
+  SANS_RELEVE:
+    'Ses liens ne sont pas encore connus. Jouez un run de dépouillement depuis « Mesures » : c’est lui qui les relève.',
+  A_ETIQUETER:
+    'Ses liens sont relevés, aucun n’est étiqueté. Reprenez d’abord ce que la modération a déjà tranché, puis ouvrez-le.',
+  EN_COURS:
+    'Les liens non étiquetés sortent de tous les dénominateurs : le rappel ne porte que sur ce qui l’est.',
+  COMPLET: 'Chaque lien relevé porte une étiquette : le rappel de cet agenda est complet.',
+};
+
 export interface EvalAgenda {
   id: number;
   url: string;
@@ -998,6 +1054,9 @@ export interface EvalAgenda {
   createdAt: string;
   author?: { id: number; displayName: string };
   agendaPages: EvalAgendaPage[];
+  /** Liens qu'un run du banc a relevés : le dénominateur de l'étiquetage. */
+  releves: number;
+  etape: EvalAgendaEtape;
   pagesCaptured?: number;
   labels?: number;
 }
