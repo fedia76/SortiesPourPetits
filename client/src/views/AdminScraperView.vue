@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { api } from '../lib/api';
 import type { ScraperConfig, ScraperMode, ScraperRun } from '../types';
 import { RUN_STATUS_LABELS, runLabel } from '../types';
+import { usePolling } from '../composables/usePolling';
 
 const configs = ref<ScraperConfig[]>([]);
 const runs = ref<ScraperRun[]>([]);
@@ -75,7 +76,6 @@ function onModeChange() {
   else if (!cibleUnSite.value && form.maxPageChars === 30000) form.maxPageChars = 8000;
 }
 
-let timer: ReturnType<typeof setInterval> | undefined;
 /** Rafraîchissements ratés d'affilée : on n'alerte qu'à partir du second. */
 let misses = 0;
 
@@ -209,13 +209,12 @@ function when(value: string | null) {
   return value ? new Date(value).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 }
 
-onMounted(() => {
-  load();
-  // Une exécution passe par la file : sans rafraîchissement, la console
-  // resterait figée sur « En file » jusqu'à ce qu'on recharge la page.
-  timer = setInterval(load, 10_000);
-});
-onUnmounted(() => clearInterval(timer));
+// Une exécution passe par la file : sans rafraîchissement, la console
+// resterait figée sur « En file » jusqu'à ce qu'on recharge la page. Mais un
+// onglet en arrière-plan n'a personne à informer, et `usePolling` le sait.
+usePolling(load, 10_000);
+
+onMounted(load);
 </script>
 
 <template>

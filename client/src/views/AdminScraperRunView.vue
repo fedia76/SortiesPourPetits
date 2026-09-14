@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { ApiError, api } from '../lib/api';
 import type { ScraperRun } from '../types';
 import { DECISION_LABELS, RUN_STATUS_LABELS, runLabel } from '../types';
+import { usePolling } from '../composables/usePolling';
 
 const route = useRoute();
 const run = ref<ScraperRun | null>(null);
@@ -14,7 +15,6 @@ const notice = ref('');
 const offline = ref('');
 const loading = ref(true);
 
-let timer: ReturnType<typeof setInterval> | undefined;
 let misses = 0;
 
 async function load() {
@@ -24,13 +24,13 @@ async function load() {
     misses = 0;
     offline.value = '';
     // Une exécution terminée ne bouge plus : inutile de continuer à interroger.
-    if (res.run.status === 'DONE' || res.run.status === 'FAILED') clearInterval(timer);
+    if (res.run.status === 'DONE' || res.run.status === 'FAILED') suivi.stop();
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Erreur';
     // Seule une exécution introuvable est définitive. Une coupure ne doit pas
     // arrêter le suivi d'un run qui, lui, continue sur le serveur.
     if (e instanceof ApiError && e.status === 404) {
-      clearInterval(timer);
+      suivi.stop();
       error.value = message;
     } else {
       misses += 1;
@@ -150,11 +150,11 @@ function host(url: string) {
   }
 }
 
-onMounted(() => {
-  load();
-  timer = setInterval(load, 5_000);
-});
-onUnmounted(() => clearInterval(timer));
+// Le sondage s'interrompt quand l'onglet passe en arrière-plan et reprend —
+// en se rafraîchissant aussitôt — quand il revient (voir `usePolling`).
+const suivi = usePolling(load, 5_000);
+
+onMounted(load);
 </script>
 
 <template>

@@ -20,6 +20,8 @@ const error = ref('');
 const categories = ref<Category[]>([]);
 const areas = ref<Area[]>([]);
 
+const RADIUS_DEFAUT = 10;
+
 const filters = reactive({
   q: '',
   free: false,
@@ -32,43 +34,143 @@ const filters = reactive({
   address: '',
   lat: null as number | null,
   lng: null as number | null,
-  radiusKm: 10,
+  radiusKm: RADIUS_DEFAUT,
 });
+
+type Filtres = typeof filters;
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)));
 const geoActive = computed(() => filters.lat !== null && filters.lng !== null);
 
 /**
- * La page courante vit dans l'adresse.
+ * **Toute** la recherche vit dans l'adresse — la page et les filtres.
  *
- * Elle ne s'y trouvait pas, et c'est ce qui rendait le catalogue invisible :
- * un robot ouvre l'accueil, y lit douze liens, et n'a aucun moyen d'atteindre
- * les suivants — « page 2 » n'était qu'un bouton. Une page, une adresse : le
- * serveur peut la pré-rendre, le sitemap la désigner, et un lien vers une
- * page de résultats se partage.
+ * La page s'y trouvait déjà, et pour une raison qui vaut mot pour mot pour le
+ * reste : un robot ouvre l'accueil, y lit douze liens, et n'a aucun moyen
+ * d'atteindre les suivants si « page 2 » n'est qu'un bouton. Les filtres, eux,
+ * étaient restés dans la mémoire du composant — donc une recherche ne se
+ * partageait pas, ne se mettait pas en favori, et le bouton Retour du
+ * navigateur la perdait au lieu de la défaire.
+ *
+ * Contrepartie assumée : le serveur ne pré-rend que la page, pas les filtres
+ * (voir `seo/pages.ts`, dont la clé de cache ne retient que `page`). Une
+ * adresse filtrée reçoit donc d'abord le catalogue entier, que Vue remplace
+ * une seconde plus tard. C'est déjà ce qui arrivait aux paramètres de
+ * campagne, et l'adresse canonique reste `/` : un moteur n'a donc pas deux
+ * pages à départager.
  */
 function pageFromUrl(): number {
   const raw = Number(route.query.page);
   return Number.isInteger(raw) && raw >= 1 ? raw : 1;
 }
 
+/** La première valeur d'un paramètre d'adresse, ou une chaîne vide. */
+function param(cle: string): string {
+  const brut = route.query[cle];
+  return typeof brut === 'string' ? brut : '';
+}
+
+/** Un nombre lu dans l'adresse, ou `null` si ce n'en est pas un. */
+function nombre(cle: string): number | null {
+  const texte = param(cle);
+  if (!texte) return null;
+  const valeur = Number(texte);
+  return Number.isFinite(valeur) ? valeur : null;
+}
+
+/**
+ * Recopie l'adresse dans les filtres affichés.
+ *
+ * C'est l'adresse qui commande, jamais l'inverse : un retour arrière, un lien
+ * partagé ou un lien suivi depuis la page pré-rendue changent l'adresse sans
+ * passer par le formulaire, et le formulaire doit alors dire ce que l'adresse
+ * dit.
+ */
+function lireLAdresse() {
+  filters.q = param('q');
+  filters.free = param('free') === 'true';
+  filters.priceMax = param('priceMax');
+  filters.age = param('age');
+  filters.from = param('from');
+  filters.to = param('to');
+  filters.setting = (param('setting') || '') as '' | Setting;
+  const categorie = nombre('categoryId');
+  filters.categoryId = categorie ?? '';
+  filters.lat = nombre('lat');
+  filters.lng = nombre('lng');
+  filters.radiusKm = nombre('radiusKm') ?? RADIUS_DEFAUT;
+  filters.address = param('adresse');
+}
+
+/**
+ * L'adresse qui décrit ces filtres.
+ *
+ * Ce qui vaut sa valeur par défaut n'y figure pas : une adresse qui énumère
+ * douze paramètres vides ne se partage pas, et le `radiusKm` d'une recherche
+ * sans position ne veut rien dire.
+ */
+function ecrireLAdresse(f: Filtres, page: number): Record<string, string> {
+  const query: Record<string, string> = {};
+  if (f.q) query.q = f.q;
+  if (f.free) query.free = 'true';
+  else if (f.priceMax !== '') query.priceMax = String(f.priceMax);
+  if (f.age !== '') query.age = String(f.age);
+  if (f.from) query.from = f.from;
+  if (f.to) query.to = f.to;
+  if (f.setting) query.setting = f.setting;
+  if (f.categoryId !== '') query.categoryId = String(f.categoryId);
+  if (f.lat !== null && f.lng !== null) {
+    query.lat = String(f.lat);
+    query.lng = String(f.lng);
+    query.radiusKm = String(f.radiusKm);
+    // Ce que le visiteur a tapé, pour que le champ le réaffiche : le couple
+    // de coordonnées ne se relit pas.
+    if (f.address) query.adresse = f.address;
+  }
+  if (page > 1) query.page = String(page);
+  return query;
+}
+
+/**
+ * Va à cette adresse, et laisse passer les navigations que le routeur refuse.
+ *
+ * Il en refuse une, et c'est la bonne : demander deux fois la même adresse. Le
+ * `watch` ne se déclenche alors pas, et c'est ce qu'on veut — rien n'a changé,
+ * il n'y a rien à rechercher.
+ */
+function naviguer(query: Record<string, string>) {
+  router.push({ query }).catch(() => {});
+}
+
 /** Change de page en passant par l'adresse ; le `watch` ci-dessous recharge. */
 function goToPage(n: number) {
-  router.push({ query: { ...route.query, page: n > 1 ? String(n) : undefined } });
+  naviguer(ecrireLAdresse(filters, n));
 }
 
 /**
  * Une recherche relancée repart de la première page — un filtre plus étroit
- * n'a aucune raison de s'ouvrir sur la troisième. Quand l'adresse en désigne
- * une autre, c'est elle qu'on corrige : le `watch` fera la recherche, et la
- * page affichée restera celle que l'adresse annonce.
+ * n'a aucune raison de s'ouvrir sur la troisième.
+ *
+ * Tout passe par l'adresse : c'est le `watch` qui déclenche la recherche, une
+ * fois et une seule, quel que soit le geste qui a changé quelque chose.
  */
 function applyFilters() {
-  if (pageFromUrl() > 1) goToPage(1);
-  else search(1);
+  naviguer(ecrireLAdresse(filters, 1));
 }
 
+/**
+ * Numéro de la recherche en cours.
+ *
+ * Sans lui, deux recherches lancées coup sur coup — et le champ d'adresse est
+ * débouncé, donc c'est le cas courant — s'affichaient dans l'ordre où le
+ * réseau les rendait. Une requête large et lente écrasait alors le résultat
+ * d'une requête étroite et rapide, et le visiteur voyait des sorties que ses
+ * filtres excluaient.
+ */
+let derniereRecherche = 0;
+
 async function search(goTo = 1) {
+  const numero = ++derniereRecherche;
   page.value = goTo;
   loading.value = true;
   error.value = '';
@@ -93,12 +195,17 @@ async function search(goTo = 1) {
     const data = await api.get<{ events: EventItem[]; total: number }>(
       `/api/events?${params.toString()}`,
     );
+    // Une recherche plus récente est partie entre-temps : la sienne fait foi.
+    if (numero !== derniereRecherche) return;
     events.value = data.events;
     total.value = data.total;
   } catch (e) {
+    if (numero !== derniereRecherche) return;
     error.value = e instanceof Error ? e.message : 'Erreur de chargement';
   } finally {
-    loading.value = false;
+    // Le voyant ne s'éteint qu'avec la dernière recherche : l'éteindre depuis
+    // une réponse dépassée montrerait une page prête alors qu'elle attend.
+    if (numero === derniereRecherche) loading.value = false;
   }
 }
 
@@ -137,7 +244,15 @@ function useMyPosition() {
 
 // Un retour arrière, un lien partagé ou un lien suivi depuis la page
 // pré-rendue changent l'adresse sans remonter la vue : c'est elle qui commande.
-watch(() => route.query.page, () => search(pageFromUrl()));
+// Un seul observateur, sur l'adresse entière — les filtres y sont désormais,
+// et deux observateurs auraient lancé deux recherches pour un seul geste.
+watch(
+  () => route.query,
+  () => {
+    lireLAdresse();
+    void search(pageFromUrl());
+  },
+);
 
 onMounted(async () => {
   setPageSeo({
@@ -156,8 +271,12 @@ onMounted(async () => {
   ]);
   categories.value = cats;
   areas.value = zones;
-  search(pageFromUrl());
 });
+
+// Avant même les catégories : la liste des résultats ne les attend pas, et
+// l'adresse porte déjà tout ce qu'il faut pour la demander.
+lireLAdresse();
+void search(pageFromUrl());
 </script>
 
 <template>

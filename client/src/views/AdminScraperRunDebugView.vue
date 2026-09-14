@@ -12,9 +12,10 @@
  * sur `seq` plutôt qu'un décalage, pour que la pagination ne saute ni ne répète
  * de ligne pendant qu'une exécution écrit encore.
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ApiError, api } from '../lib/api';
+import { usePolling } from '../composables/usePolling';
 import type {
   ScraperAttribution,
   ScraperRun,
@@ -169,7 +170,7 @@ async function loadAll() {
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) {
       error.value = 'Exécution introuvable';
-      clearInterval(timer);
+      suivi.stop();
     } else {
       error.value = e instanceof Error ? e.message : 'Erreur';
     }
@@ -190,22 +191,18 @@ watch(
   { deep: true },
 );
 
-let timer: ReturnType<typeof setInterval> | undefined;
+// Une exécution en cours écrit encore : on la suit. Une exécution terminée ne
+// bouge plus, et le sondage s'arrête de lui-même au premier passage.
+const suivi = usePolling(() => {
+  const status = run.value?.status;
+  if (status === 'DONE' || status === 'FAILED') {
+    suivi.stop();
+    return;
+  }
+  return loadAll();
+}, 5_000);
 
-onMounted(() => {
-  loadAll();
-  // Une exécution en cours écrit encore : on la suit. Une exécution terminée
-  // ne bouge plus, et l'intervalle s'arrête de lui-même au premier passage.
-  timer = setInterval(() => {
-    const status = run.value?.status;
-    if (status === 'DONE' || status === 'FAILED') {
-      clearInterval(timer);
-      return;
-    }
-    loadAll();
-  }, 5_000);
-});
-onUnmounted(() => clearInterval(timer));
+onMounted(loadAll);
 
 // ------------------------------------------------------------------ filtres
 
