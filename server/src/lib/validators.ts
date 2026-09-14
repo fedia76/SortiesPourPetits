@@ -1,3 +1,4 @@
+import { RejectionCode } from '@prisma/client';
 import { z } from 'zod';
 import { UNKNOWN_PRICE } from './incomplete';
 
@@ -206,24 +207,20 @@ export const moderationPurgeSchema = z.object({
 export const moderateSchema = z.object({
   action: z.enum(['approve', 'reject']),
   reason: z.string().trim().max(1000).optional(),
-  // Le motif comptable, à côté du texte libre — voir `lib/rejectionCodes.ts`.
-  // Facultatif, et il doit le rester : un refus ne peut pas échouer parce
-  // qu'aucune case ne convenait, et une console plus ancienne continue de
-  // fonctionner sans lui.
-  code: z
-    .enum([
-      'HORS_SUJET',
-      'PAS_POUR_ENFANTS',
-      'DATE_FAUSSE',
-      'LIEU_FAUX',
-      'TARIF_FAUX',
-      'DESCRIPTION_INUTILISABLE',
-      'MAUVAIS_LIEN',
-      'DOUBLON',
-      'DEJA_PASSEE',
-      'AUTRE',
-    ])
-    .optional(),
+  /**
+   * Le motif comptable, à côté du texte libre — voir `lib/rejectionCodes.ts`.
+   *
+   * Facultatif, et il doit le rester : un refus ne peut pas échouer parce
+   * qu'aucune case ne convenait, et une console plus ancienne continue de
+   * fonctionner sans lui.
+   *
+   * La liste vient de l'**enum Prisma**, et non d'une copie tenue ici. Elle en
+   * était une, et `rejectionCodes.ts` prévenait pourtant en toutes lettres que
+   * « deux tables à tenir en parallèle auraient divergé au premier motif
+   * ajouté » : un onzième motif passait la migration, s'affichait dans la
+   * console, et se faisait refuser en 400 par cette ligne-ci.
+   */
+  code: z.nativeEnum(RejectionCode).optional(),
 });
 
 /** Réglages de la recherche de doublons proposée au modérateur. */

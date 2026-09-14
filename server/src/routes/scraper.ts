@@ -6,6 +6,7 @@ import { ATTRIBUTE_STAGE, buildAttribution } from '../lib/scraperAttribution';
 import { TREE_MAX_ROWS, buildTree } from '../lib/scraperTree';
 import { groupProvenance, provenanceOf } from '../lib/scraperProvenance';
 import { describeRejections, wilsonLowerBound } from '../lib/rejectionCodes';
+import { describeStage } from '../lib/stages';
 import { requireRole } from '../middleware/auth';
 import {
   aggregatorSchema,
@@ -1147,37 +1148,6 @@ scraperRouter.post('/runs/:id/items', async (req, res) => {
   res.json({ ok: true, recorded: parsed.data.items.length });
 });
 
-/**
- * Repli quand une exécution ne porte pas son propre graphe.
- *
- * La source de vérité reste `scraper/sortiesbot/stages.py`, transportée par
- * l'événement `run_start` : c'est elle qui donne les libellés, et renommer une
- * brique côté scraper la renomme partout. Ces tables ne servent que pour les
- * exécutions antérieures, dont on ne sait plus que l'identifiant d'étage.
- */
-const FALLBACK_ORDER = ['discovery', 'identify', 'harvest', 'select', 'read', 'extract', 'publish'];
-
-const FALLBACK_LABELS: Record<string, string> = {
-  discovery: 'Découverte',
-  identify: 'Reconnaissance',
-  harvest: 'Dépouillement',
-  select: 'Sélection',
-  read: 'Lecture',
-  extract: 'Extraction',
-  publish: 'Publication',
-};
-
-const FALLBACK_ACTORS: Record<string, string> = {
-  discovery: 'modele',
-  // Gratuite tant qu'un signal certain tranche, facturée sinon.
-  identify: 'mixte',
-  harvest: 'python',
-  select: 'modele',
-  read: 'python',
-  extract: 'modele',
-  publish: 'python',
-};
-
 // ------------------------------------------------------- journal détaillé
 
 /**
@@ -1303,8 +1273,12 @@ scraperRouter.get('/runs/:id/logs', async (req, res) => {
  * Le graphe des étages, avec ce que chacun a produit et ce qu'il a coûté.
  *
  * Les libellés ne sont pas écrits ici : ils viennent de l'événement
- * `run_start`, que le scraper remplit depuis `stages.py`. Une brique renommée
- * côté scraper l'est donc partout, sans redéploiement du serveur.
+ * `run_start`, que le scraper remplit depuis `sortiesbot/stages/__init__.py`.
+ * Une brique renommée côté scraper l'est donc partout, sans redéploiement du
+ * serveur.
+ *
+ * Le repli — `lib/stages.ts` — ne sert que si ce `run_start` manque, ce qui
+ * arrive dès qu'on a cliqué « Oublier le journal détaillé ».
  */
 scraperRouter.get('/runs/:id/graph', async (req, res) => {
   const runId = Number(req.params.id);
@@ -1386,7 +1360,7 @@ scraperRouter.get('/runs/:id/graph', async (req, res) => {
     return byStage
       .map((g) => g.stage)
       .filter((s): s is string => Boolean(s))
-      .map((s) => ({ stage: s, number: FALLBACK_ORDER.indexOf(s) + 1, label: FALLBACK_LABELS[s] ?? s, actor: FALLBACK_ACTORS[s] ?? '', takes: '', gives: '' }))
+      .map(describeStage)
       .sort((a, b) => a.number - b.number);
   })();
 

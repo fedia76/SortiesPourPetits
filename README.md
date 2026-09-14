@@ -19,7 +19,10 @@ Le Havre, Niort et Nancy.
 
 - **Comptes** : inscription / connexion (cookie de session httpOnly), trois
   niveaux — `USER` (propose des sorties), `MODERATOR` (approuve ou refuse),
-  `ADMIN` (gère les rôles des utilisateurs).
+  `ADMIN` (gère les rôles des utilisateurs). Le cookie dit **qui** appelle ; ce
+  qu'il a le droit de faire est relu en base à chaque requête, si bien qu'un
+  rôle retiré l'est tout de suite. Il ne l'était pas : le jeton portait le rôle
+  et le figeait sept jours.
 - **Sorties** : titre, description, prix ou gratuit, photo, lien vers la
   source de l'événement (facultatif — et, pour une sortie trouvée par la
   recherche automatique, celui de l'organisateur plutôt que de l'agenda qui la

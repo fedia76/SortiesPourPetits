@@ -8,10 +8,16 @@ d'événement donnent souvent un nom de salle plutôt qu'une adresse.
 
 Mais son instance publique est en « fair use » et refuse les clients qu'elle
 n'aime pas : un run entier a rendu vingt sorties non géolocalisées sur vingt,
-toutes sur des 403. D'où deux précautions — on s'annonce avec un User-Agent
-identifiable, et la Base Adresse Nationale prend le relais si Photon se
-dérobe. Elle ne connaît que les adresses, mais elle est gratuite, publique et
-sans quota.
+toutes sur des 403. D'où trois précautions — on s'annonce avec un User-Agent
+identifiable, on ne l'appelle pas plus d'une fois par seconde (`CALL_DELAY`,
+qui est la cadence qu'on lui devait depuis le début), et la Base Adresse
+Nationale prend le relais si Photon se dérobe. Elle ne connaît que les
+adresses, mais elle est gratuite, publique et sans quota.
+
+La mise en sourdine de Photon est **temporaire** (`PHOTON_COOLDOWN`). Elle a
+été un drapeau définitif, et c'était un bug : le worker tourne des semaines,
+et un seul délai réseau suffisait à priver tout le reste des lieux d'intérêt
+sans que personne le sache.
 
 Le contrôle porte sur deux choses, et sur rien d'autre :
 
@@ -36,6 +42,7 @@ une information qu'on a vraiment.
 
 from __future__ import annotations
 
+import time
 import unicodedata
 from typing import Any, Callable, Iterable
 
@@ -80,9 +87,46 @@ def _queries(event: ExtractedEvent) -> Iterable[str]:
             yield query
 
 
-#: Passe à faux dès la première rebuffade de Photon : inutile de rejouer un
-#: 403 pour chacune des vingt sorties d'un run.
-_photon_available = True
+#: Délai minimum entre deux appels au géocodeur, quel que soit le fournisseur.
+#:
+#: Il manquait, et c'est ce qui a causé la volée de 403 racontée en tête de
+#: module : `_queries` tente jusqu'à cinq adresses par sortie, un run en publie
+#: vingt, et tout ça partait en rafale sur une instance publique en « fair
+#: use ». Le drapeau qui suit soignait le symptôme, pas la cadence. Une seconde,
+#: comme `harvest.CRAWL_DELAY` : c'est ce qu'on s'impose déjà pour les sites
+#: qu'on lit, et ces deux services-ci sont gratuits.
+CALL_DELAY = 1.0
+
+#: Combien de temps on laisse Photon tranquille après une rebuffade.
+#:
+#: Assez longtemps pour ne pas rejouer un 403 sur chacune des vingt sorties du
+#: run — c'était le besoin d'origine. Mais **borné**, ce qui manquait : le
+#: drapeau booléen d'avant ne se réarmait jamais, et le worker est un service
+#: qui tourne des semaines. Un seul délai réseau dégradait donc le géocodage
+#: vers la BAN — qui ne connaît que les adresses, pas les parcs ni les musées —
+#: jusqu'au prochain redémarrage, sans que rien ne le dise.
+PHOTON_COOLDOWN = 300.0
+
+#: Instant avant lequel on ne redemande rien à Photon. Passé, il est réessayé.
+_photon_silent_until = 0.0
+#: Instant du dernier appel, tous fournisseurs confondus.
+_last_call = 0.0
+
+
+def reset() -> None:
+    """Oublie la cadence et la mise en sourdine. Pour les tests, et eux seuls."""
+    global _photon_silent_until, _last_call
+    _photon_silent_until = 0.0
+    _last_call = 0.0
+
+
+def _wait_turn() -> None:
+    """Un appel à la fois, et pas trop vite."""
+    global _last_call
+    since = time.monotonic() - _last_call
+    if since < CALL_DELAY:
+        time.sleep(CALL_DELAY - since)
+    _last_call = time.monotonic()
 
 
 def _photon_search(query: str) -> list[dict[str, Any]]:
@@ -113,14 +157,16 @@ def _ban_search(query: str) -> list[dict[str, Any]]:
 
 def _search(query: str) -> list[dict[str, Any]]:
     """Photon, puis la BAN s'il refuse ou ne trouve rien."""
-    global _photon_available
-    if _photon_available:
+    global _photon_silent_until
+    if time.monotonic() >= _photon_silent_until:
+        _wait_turn()
         try:
             results = _photon_search(query)
             if results:
                 return results
         except requests.RequestException:
-            _photon_available = False
+            _photon_silent_until = time.monotonic() + PHOTON_COOLDOWN
+    _wait_turn()
     return _ban_search(query)
 
 

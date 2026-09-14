@@ -65,7 +65,8 @@ function bigrams(text: string): Map<string, number> {
 /**
  * Coefficient de Sørensen–Dice sur les bigrammes de caractères, entre 0 et 1.
  * Tolère les fautes de frappe et l'ordre des mots, contrairement à une égalité
- * stricte : « Ferme pédagogique de Gally » et « La ferme de Gally » ≈ 0,7.
+ * stricte : « Spectacle de marionnettes » et « Spectacle de marionettes » ≈ 0,98,
+ * « Ferme pédagogique de Gally » et « La ferme de Gally » ≈ 0,63.
  */
 export function similarityRatio(a: string, b: string): number {
   const left = normalize(a);

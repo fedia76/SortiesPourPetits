@@ -1097,6 +1097,30 @@ Puisque le scraper télécharge lui-même, il assume ce qu'Anthropic assumait :
 `robots.txt` est lu et respecté, un `User-Agent` identifie le robot et renvoie
 vers le site, et une seconde sépare deux requêtes vers le même hôte.
 
+La même seconde vaut pour le **géocodeur** (`geocode.CALL_DELAY`). Elle y
+manquait, et c'est ce qui a valu la volée de 403 de Photon décrite plus haut :
+jusqu'à cinq tentatives d'adresse par sortie, vingt sorties par run, le tout en
+rafale sur une instance publique en « fair use ». Quand Photon refuse malgré
+tout, il est mis en sourdine cinq minutes (`PHOTON_COOLDOWN`) et la Base
+Adresse Nationale prend le relais — **cinq minutes, pas pour toujours** : le
+drapeau était définitif, et comme le worker tourne des semaines, un seul délai
+réseau privait tous les runs suivants des lieux d'intérêt que la BAN ne connaît
+pas.
+
+### L'encodage d'une page
+
+`response.encoding` de `requests` est inutilisable sur du HTML : faute de
+`charset` dans l'en-tête, il répond **ISO-8859-1**, comme le veut la RFC 2616.
+Une page française en UTF-8 qui ne déclare son encodage que dans une balise
+`<meta>` — le cas le plus courant — arrivait donc en « Ã© », et ce mojibake
+partait au modèle à la reconnaissance, au tri et à l'extraction avant de finir
+dans les descriptions en base.
+
+`harvest.decode_html` tranche comme un navigateur : BOM, puis `charset`
+d'en-tête, puis balise `<meta>`, puis UTF-8 par défaut. Et quand les octets
+démentent ce qui est annoncé — un serveur qui annonce latin-1 en servant de
+l'UTF-8, très répandu —, ce sont les octets qui gagnent.
+
 ### La version française d'une page
 
 Un moteur remonte volontiers l'adresse anglaise d'un site pourtant
@@ -1285,6 +1309,16 @@ de contexte refacturé — c'est un changement de mécanisme, pas un réglage.
 `max_cost_usd` (1 $ par défaut) arrête le run avant un appel payant s'il est
 dépassé ; ce qui a déjà été trouvé est conservé dans le JSON. Le journal
 totalise jetons, recherches et coût, par étape.
+
+Ce plafond se compare à un total, et ce total dépend de la table `PRICES` de
+[`providers/anthropic_provider.py`](sortiesbot/providers/anthropic_provider.py).
+Un modèle qui n'y figure pas — le nom vient de la console, où seule sa longueur
+est vérifiée, et `claude-haiku-4-5-20251001` n'est pas `claude-haiku-4-5` — s'y
+facturait **zéro**, ce qui affichait un run à 0 $ et désarmait le plafond. Il se
+facture désormais au tarif le plus cher qu'on connaisse, et le journal le dit
+en clair (`warn`, une fois par modèle). Le run tourne donc quand même sur un
+modèle qui vient de sortir, mais il s'arrête trop tôt plutôt que jamais —
+ajoutez-le à `PRICES` pour retrouver un coût juste.
 
 Pour mémoire, les mesures des versions précédentes : 3,24 $ avec Opus 5 et des
 pages de 30 000 jetons, 2,35 $ avec Sonnet 5 — dans les deux cas, la boucle

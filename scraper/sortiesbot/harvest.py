@@ -26,6 +26,7 @@ la matière première de l'étage attribution.
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import re
@@ -81,6 +82,85 @@ CONTEXT_MAX = 600
 
 class FetchError(RuntimeError):
     """Page inaccessible, refusée par robots.txt, ou inexploitable."""
+
+
+# ------------------------------------------------------------------ encodage
+
+#: Ce qu'un navigateur lit avant de choisir un encodage. La norme s'arrête à
+#: 1 024 octets ; on est un peu plus patient, des pages y mettent une balise
+#: `<meta>` de plus.
+_META_PRESCAN_BYTES = 2_048
+
+#: `<meta charset="utf-8">` comme `<meta http-equiv=… content="…charset=utf-8">` :
+#: les deux portent « charset= », c'est tout ce qu'on cherche.
+_META_CHARSET = re.compile(rb"""<meta[^>]*?charset\s*=\s*["']?\s*([a-zA-Z0-9_.:-]+)""", re.I)
+
+_BOMS = (
+    (codecs.BOM_UTF8, "utf-8-sig"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
+
+
+def _charset_of(content_type: str) -> str:
+    """Le `charset=` d'un en-tête `Content-Type`, ou rien s'il n'en déclare pas."""
+    for part in content_type.split(";")[1:]:
+        name, _, value = part.partition("=")
+        if name.strip().lower() == "charset":
+            return value.strip().strip("\"'")
+    return ""
+
+
+def _looks_utf8(raw: bytes) -> bool:
+    """Ces octets forment-ils de l'UTF-8 **multi-octets** valide ?
+
+    La question ne se pose que face à une déclaration qui annonce autre chose.
+    Un texte réellement latin-1 n'a pratiquement aucune chance de former des
+    séquences UTF-8 valides ; quand il y en a, c'est l'en-tête qui a tort.
+    """
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return any(byte >= 0x80 for byte in raw)
+
+
+def decode_html(raw: bytes, content_type: str = "") -> str:
+    """Décode une page dans l'encodage qu'elle déclare vraiment.
+
+    `response.encoding` de `requests` est inutilisable ici : faute de `charset`
+    dans l'en-tête, il répond **ISO-8859-1** pour tout `text/html`, comme le
+    veut la RFC 2616. Le repli `or "utf-8"` qui suivait ne se déclenchait donc
+    jamais, et une page française en UTF-8 qui ne déclare son encodage que dans
+    une balise `<meta>` — le cas le plus courant — arrivait en « Ã© ». Ce
+    mojibake partait au modèle à la reconnaissance, au tri et à l'extraction,
+    puis finissait dans les descriptions en base.
+
+    L'ordre est celui d'un navigateur : BOM, en-tête, `<meta>`, UTF-8 par
+    défaut. Et quand les octets démentent ce qui est annoncé, ce sont les
+    octets qui gagnent.
+    """
+    for bom, encoding in _BOMS:
+        if raw.startswith(bom):
+            return raw.decode(encoding, errors="replace")
+
+    declared = _charset_of(content_type)
+    if not declared:
+        found = _META_CHARSET.search(raw[:_META_PRESCAN_BYTES])
+        declared = found.group(1).decode("ascii", errors="ignore") if found else ""
+    if not declared or _looks_utf8(raw):
+        declared = "utf-8"
+
+    try:
+        return raw.decode(declared)
+    except LookupError:
+        # Encodage annoncé que Python ne connaît pas : on ne perd pas la page
+        # pour un nom mal orthographié.
+        return raw.decode("utf-8", errors="replace")
+    except UnicodeDecodeError:
+        # cp1252 accepte n'importe quel octet — c'est le dernier recours d'un
+        # navigateur devant une page mal étiquetée, et le nôtre.
+        return raw.decode("cp1252", errors="replace")
 
 
 @dataclass(frozen=True)
@@ -178,7 +258,8 @@ class Fetcher:
         try:
             response = self.session.get(url, timeout=TIMEOUT, stream=True)
             response.raise_for_status()
-            kind = (response.headers.get("Content-Type") or "").split(";")[0].strip()
+            content_type = response.headers.get("Content-Type") or ""
+            kind = content_type.split(";")[0].strip()
             if kind and not kind.startswith(("text/html", "application/xhtml")):
                 raise FetchError(f"type de contenu inexploitable ({kind})")
 
@@ -192,8 +273,7 @@ class Fetcher:
         except requests.RequestException as err:
             raise FetchError(f"page inaccessible ({err.__class__.__name__})") from err
 
-        encoding = response.encoding or "utf-8"
-        html = b"".join(chunks).decode(encoding, errors="replace")
+        html = decode_html(b"".join(chunks), content_type)
         self._pages[url] = html
         self._keep(url, html)
         return html
