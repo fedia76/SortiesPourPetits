@@ -23,6 +23,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type {
   EvalAgenda,
   EvalAgendaCandidat,
@@ -147,7 +148,7 @@ async function load() {
     souche.value = n.souche;
     poserLesChasses(c.hunts);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     loading.value = false;
   }
@@ -163,7 +164,7 @@ async function load() {
 onMounted(load);
 
 function fail(e: unknown) {
-  error.value = e instanceof Error ? e.message : 'Erreur';
+  error.value = messageDe(e);
 }
 
 // ── le corpus des agendas ──────────────────────────────────────────────

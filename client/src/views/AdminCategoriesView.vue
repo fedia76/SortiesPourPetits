@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type { Category } from '../types';
 
 const categories = ref<Category[]>([]);
@@ -24,7 +25,7 @@ async function create() {
     newName.value = '';
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     creating.value = false;
   }
@@ -48,7 +49,7 @@ async function rename(category: Category) {
     cancelEdit();
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -59,7 +60,7 @@ async function remove(category: Category) {
     await api.delete(`/api/categories/${category.id}`);
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import { ApiError, api } from '../lib/api';
+import { api } from '../lib/api';
+import { estIntrouvable, messageDe } from '../lib/erreurs';
 import type { ScraperRun } from '../types';
 import { DECISION_LABELS, RUN_STATUS_LABELS, runLabel } from '../types';
 import { usePolling } from '../composables/usePolling';
@@ -26,10 +27,10 @@ async function load() {
     // Une exécution terminée ne bouge plus : inutile de continuer à interroger.
     if (res.run.status === 'DONE' || res.run.status === 'FAILED') suivi.stop();
   } catch (e) {
-    const message = e instanceof Error ? e.message : 'Erreur';
+    const message = messageDe(e);
     // Seule une exécution introuvable est définitive. Une coupure ne doit pas
     // arrêter le suivi d'un run qui, lui, continue sur le serveur.
-    if (e instanceof ApiError && e.status === 404) {
+    if (estIntrouvable(e)) {
       suivi.stop();
       error.value = message;
     } else {
@@ -127,7 +128,7 @@ async function purge() {
       `${res.events} sortie(s) supprimée(s) et ${res.memory} page(s) oubliée(s).`;
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     purging.value = false;
   }

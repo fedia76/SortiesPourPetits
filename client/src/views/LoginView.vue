@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { messageDe } from '../lib/erreurs';
 
 const auth = useAuthStore();
 const route = useRoute();
@@ -19,7 +20,7 @@ async function submit() {
     await auth.login(email.value, password.value);
     router.push((route.query.redirect as string) ?? '/');
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur de connexion';
+    error.value = messageDe(e, 'Connexion impossible');
   } finally {
     loading.value = false;
   }

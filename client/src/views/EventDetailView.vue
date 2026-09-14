@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import { usePolling } from '../composables/usePolling';
 import { setPageSeo } from '../lib/seo';
 import { useAuthStore } from '../stores/auth';
@@ -139,7 +140,7 @@ async function battreHunt() {
     }
   } catch (e) {
     stopWatchingHunt();
-    huntError.value = e instanceof Error ? e.message : 'Erreur';
+    huntError.value = messageDe(e);
   }
 }
 
@@ -167,7 +168,7 @@ async function huntSource() {
     hunt.value = data.run;
     watchHunt();
   } catch (e) {
-    huntError.value = e instanceof Error ? e.message : 'Erreur';
+    huntError.value = messageDe(e);
   } finally {
     hunting.value = false;
   }
@@ -193,7 +194,7 @@ async function moderate(action: 'approve' | 'reject') {
     const data = await api.get<{ event: EventItem }>(`/api/events/${event.value.id}`);
     event.value = data.event;
   } catch (e) {
-    moderationError.value = e instanceof Error ? e.message : 'Erreur';
+    moderationError.value = messageDe(e);
   } finally {
     moderating.value = false;
   }
@@ -244,7 +245,7 @@ onMounted(async () => {
     // elle dure une minute, et la page se ferme plus vite que ça.
     if (canHunt.value) await loadHunt();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
     // Un titre, et rien de plus. Poser un `noindex` ici reviendrait à
     // désindexer une sortie parfaitement publique parce que l'API n'a pas
     // répondu une fois — et l'API ne répond pas pendant chaque redéploiement.

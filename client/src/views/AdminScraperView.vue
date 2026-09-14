@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type { ScraperConfig, ScraperMode, ScraperRun } from '../types';
 import { RUN_STATUS_LABELS, runLabel } from '../types';
 import { usePolling } from '../composables/usePolling';
@@ -91,7 +92,7 @@ async function load() {
     offline.value = '';
   } catch (e) {
     misses += 1;
-    if (misses >= 2) offline.value = e instanceof Error ? e.message : 'Erreur';
+    if (misses >= 2) offline.value = messageDe(e);
   } finally {
     loading.value = false;
   }
@@ -146,7 +147,7 @@ async function save() {
     editingId.value = null;
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     saving.value = false;
   }
@@ -158,7 +159,7 @@ async function toggle(config: ScraperConfig) {
     await api.patch(`/api/scraper/configs/${config.id}`, { enabled: !config.enabled });
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -169,7 +170,7 @@ async function remove(config: ScraperConfig) {
     await api.delete(`/api/scraper/configs/${config.id}`);
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -183,7 +184,7 @@ async function launch(config: ScraperConfig, submit: boolean) {
     await api.post(`/api/scraper/configs/${config.id}/run`, { submit });
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -193,7 +194,7 @@ async function cancelRun(run: ScraperRun) {
     await api.post(`/api/scraper/runs/${run.id}/cancel`);
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 

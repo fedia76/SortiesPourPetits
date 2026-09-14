@@ -5,6 +5,7 @@ import EventCard from '../components/EventCard.vue';
 import AddressPicker from '../components/AddressPicker.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import { setPageSeo } from '../lib/seo';
 import {
   filtresDepuisQuery,
@@ -94,7 +95,7 @@ async function search(goTo = 1) {
     total.value = data.total;
   } catch (e) {
     if (numero !== derniereRecherche) return;
-    error.value = e instanceof Error ? e.message : 'Erreur de chargement';
+    error.value = messageDe(e, 'Chargement impossible');
   } finally {
     // Le voyant ne s'éteint qu'avec la dernière recherche : l'éteindre depuis
     // une réponse dépassée montrerait une page prête alors qu'elle attend.

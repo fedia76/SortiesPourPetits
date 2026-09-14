@@ -14,7 +14,8 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { ApiError, api } from '../lib/api';
+import { api } from '../lib/api';
+import { estIntrouvable, messageDe } from '../lib/erreurs';
 import { usePolling } from '../composables/usePolling';
 import type {
   ScraperAttribution,
@@ -157,7 +158,7 @@ async function loadMore() {
     logs.value = [...logs.value, ...res.logs];
     hasMore.value = res.hasMore;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     loadingMore.value = false;
   }
@@ -168,11 +169,11 @@ async function loadAll() {
     await Promise.all([loadRun(), loadGraph(), loadTree(), loadAttribution(), loadLogs()]);
     error.value = '';
   } catch (e) {
-    if (e instanceof ApiError && e.status === 404) {
+    if (estIntrouvable(e)) {
       error.value = 'Exécution introuvable';
       suivi.stop();
     } else {
-      error.value = e instanceof Error ? e.message : 'Erreur';
+      error.value = messageDe(e);
     }
   } finally {
     loading.value = false;
@@ -185,7 +186,7 @@ watch(
   () => {
     loading.value = true;
     loadLogs()
-      .catch((e) => (error.value = e instanceof Error ? e.message : 'Erreur'))
+      .catch((e) => (error.value = messageDe(e)))
       .finally(() => (loading.value = false));
   },
   { deep: true },
@@ -252,7 +253,7 @@ async function toggleLinks(agenda: ScraperTreeAgenda, kind: 'link' | 'link_kept'
     );
     branchLinks.value = { ...branchLinks.value, [key]: res.logs };
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     branchLoading.value = '';
   }
@@ -408,7 +409,7 @@ async function purgeLogs() {
     hasMore.value = false;
     stages.value = [];
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     purging.value = false;
   }

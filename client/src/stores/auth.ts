@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
-import { api, ApiError } from '../lib/api';
+import { api } from '../lib/api';
+import { demandeUneConnexion } from '../lib/erreurs';
 import type { User } from '../types';
 
 export const useAuthStore = defineStore('auth', {
@@ -20,7 +21,9 @@ export const useAuthStore = defineStore('auth', {
         const { user } = await api.get<{ user: User }>('/api/auth/me');
         this.user = user;
       } catch (e) {
-        if (!(e instanceof ApiError && e.status === 401)) console.error(e);
+        // Un 401 est la réponse **normale** pour un visiteur : le
+        // journaliser remplirait la console de chaque visite.
+        if (!demandeUneConnexion(e)) console.error(e);
       } finally {
         this.initialized = true;
       }

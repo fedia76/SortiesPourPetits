@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type { EventItem, RejectionMeaning, ScraperConfig } from '../types';
 import {
   SETTING_LABELS,
@@ -70,7 +71,7 @@ async function checkDuplicates(event: EventItem) {
     // Un doublon probable mérite d'être vu sans avoir à déplier.
     state.open = data.similar.some((s) => (s.similarity?.score ?? 0) >= LIKELY_DUPLICATE_SCORE);
   } catch (e) {
-    state.error = e instanceof Error ? e.message : 'Erreur';
+    state.error = messageDe(e);
   } finally {
     state.loading = false;
   }
@@ -101,7 +102,7 @@ async function load() {
     );
     void checkAllDuplicates(data.events);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     loading.value = false;
   }
@@ -137,7 +138,7 @@ async function confirmRejection() {
     delete duplicates.value[pending.id];
     rejecting.value = null;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -147,7 +148,7 @@ async function approve(id: number) {
     events.value = events.value.filter((e) => e.id !== id);
     delete duplicates.value[id];
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -232,7 +233,7 @@ async function purgePending() {
     notice.value = `${res.deleted} sortie(s) supprimée(s).`;
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     purging.value = false;
   }
