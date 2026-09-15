@@ -86,13 +86,13 @@ donner voix au chapitre — c'est la leçon du comptage de liens.
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
 from .harvest import Link, _is_event, _ld_blocks, _soup, _walk, links_of
+from .text import flatten
 
 #: Les quatre réponses possibles. `INCONNU` en est une, pas une panne.
 #:
@@ -305,7 +305,7 @@ def _by_json_ld(html: str) -> Verdict | None:
             events += 1
             name = node.get("name")
             if isinstance(name, str) and name.strip():
-                names.add(_fold(name))
+                names.add(flatten(name))
 
     if listed and (events > 1 or len(names) > 1):
         return Verdict(
@@ -356,12 +356,6 @@ def _by_opengraph(html: str) -> Verdict | None:
     if value in ("event", "article:event", "activity"):
         return Verdict(SORTIE, "opengraph", f"og:type = {value}", "probable")
     return None
-
-
-def _fold(text: str) -> str:
-    """Compare des titres sans se soucier de la casse ni des accents."""
-    stripped = unicodedata.normalize("NFKD", text.strip().lower())
-    return " ".join("".join(c for c in stripped if not unicodedata.combining(c)).split())
 
 
 # ═══════════════════════════════════════════════ le condensé d'une page

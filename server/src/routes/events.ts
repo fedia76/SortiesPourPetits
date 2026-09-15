@@ -9,6 +9,8 @@ import { diffEvent, type ComparableEvent } from '../lib/eventCorrections';
 import { dateFilter } from '../lib/dateWindow';
 import { areaFilter } from '../lib/areas';
 import { rankEvents } from '../lib/relevance';
+import { parseId } from '../lib/routeParams';
+import { distanceByVenueId, venuesWithinQuery, type VenueDistance } from '../lib/venueDistance';
 
 export const eventsRouter = safeRouter();
 
@@ -114,26 +116,19 @@ eventsRouter.get('/', async (req, res) => {
     where.categoryId = f.categoryId;
   }
 
-  // Filtre distance : liste des lieux dans le rayon + distance de chacun.
-  // Formule de Haversine en SQL pur (compatible MySQL et MariaDB).
-  let distanceByVenueId: Map<number, number> | undefined;
+  // Filtre distance : lieux dans le rayon et distance de chacun (voir
+  // `lib/venueDistance`, qui sert aussi à la détection de doublons).
+  let distances: Map<number, number> | undefined;
   if (f.lat !== undefined && f.lng !== undefined && f.radiusKm !== undefined) {
-    const rows = await prisma.$queryRaw<{ id: number; distanceKm: number }[]>`
-      SELECT id,
-        6371 * 2 * ASIN(SQRT(
-          POWER(SIN(RADIANS(lat - ${f.lat}) / 2), 2) +
-          COS(RADIANS(${f.lat})) * COS(RADIANS(lat)) *
-          POWER(SIN(RADIANS(lng - ${f.lng}) / 2), 2)
-        )) AS distanceKm
-      FROM Venue
-      HAVING distanceKm <= ${f.radiusKm}
-    `;
-    distanceByVenueId = new Map(rows.map((r) => [r.id, Number(r.distanceKm)]));
-    if (distanceByVenueId.size === 0) {
+    const rows = await prisma.$queryRaw<VenueDistance[]>(
+      venuesWithinQuery(f.lat, f.lng, f.radiusKm),
+    );
+    distances = distanceByVenueId(rows);
+    if (distances.size === 0) {
       res.json({ events: [], total: 0, page: f.page, pageSize: f.pageSize });
       return;
     }
-    where.venueId = { in: [...distanceByVenueId.keys()] };
+    where.venueId = { in: [...distances.keys()] };
   }
 
   // Le classement ne se fait pas en SQL : le score mêle la précision de l'âge,
@@ -164,7 +159,7 @@ eventsRouter.get('/', async (req, res) => {
   const events = ids.map((id) => byId.get(id)).filter((e): e is EventWithRelations => !!e);
 
   res.json({
-    events: events.map((e) => serializeEvent(e, distanceByVenueId?.get(e.venueId))),
+    events: events.map((e) => serializeEvent(e, distances?.get(e.venueId))),
     total: ordered.length,
     page: f.page,
     pageSize: f.pageSize,
@@ -182,8 +177,8 @@ eventsRouter.get('/mine', requireAuth, async (req, res) => {
 });
 
 eventsRouter.get('/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
+  const id = parseId(req.params.id);
+  if (id === null) {
     res.status(400).json({ error: 'Identifiant invalide' });
     return;
   }
@@ -201,6 +196,11 @@ eventsRouter.get('/:id', async (req, res) => {
   }
   res.json({ event: serializeEvent(event) });
 });
+
+/** Le champ `data` d'un envoi multipart. `multer` ne type pas `req.body`. */
+function multipartData(req: { body?: unknown }): unknown {
+  return (req.body as Record<string, unknown> | undefined)?.data;
+}
 
 function parseEventBody(raw: unknown) {
   if (typeof raw !== 'string') return null;
@@ -236,7 +236,7 @@ async function upsertVenue(venue: {
 }
 
 eventsRouter.post('/', requireAuth, photoUpload.single('photo'), async (req, res) => {
-  const parsed = parseEventBody(req.body.data);
+  const parsed = parseEventBody(multipartData(req));
   if (!parsed) {
     res.status(400).json({ error: 'Corps de requête invalide' });
     return;
@@ -289,7 +289,11 @@ eventsRouter.post('/', requireAuth, photoUpload.single('photo'), async (req, res
 });
 
 eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
+  if (id === null) {
+    res.status(400).json({ error: 'Identifiant invalide' });
+    return;
+  }
   const existing = await prisma.event.findUnique({
     where: { id },
     // Le lieu et les dates servent à mesurer ce que la modération corrige ; un
@@ -310,7 +314,7 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
     return;
   }
 
-  const parsed = parseEventBody(req.body.data);
+  const parsed = parseEventBody(multipartData(req));
   if (!parsed) {
     res.status(400).json({ error: 'Corps de requête invalide' });
     return;
@@ -372,7 +376,7 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
     include: EVENT_INCLUDE,
   });
 
-  await recordCorrections(id, existing, event);
+  await recordCorrections(id, existing, event, isModerator);
 
   res.json({ event: serializeEvent(event) });
 });
@@ -437,8 +441,11 @@ function comparable(event: Comparable): ComparableEvent {
  *   six mois après approbation est une amélioration du catalogue, pas une
  *   erreur d'extraction, et la compter ici polluerait la mesure exactement
  *   comme le comptage de liens avait pollué le classifieur ;
- * * c'est un **modérateur** qui édite. L'auteur d'une fiche importée est la
- *   clé d'API du scraper : personne d'autre ne passe par là.
+ * * c'est un **modérateur** qui édite. Ce contrôle était énoncé ici et absent
+ *   du code : en pratique l'auteur d'une fiche importée est le compte de la
+ *   clé d'API, et ce compte peut très bien remplir le formulaire comme
+ *   n'importe qui. Ses retouches seraient alors comptées comme des corrections
+ *   de modération, ce que la mesure n'a jamais voulu dire.
  *
  * Rien de tout ceci ne peut faire échouer la requête. Une mesure est un
  * confort ; refuser une correction de fiche parce qu'on n'a pas su la compter
@@ -448,8 +455,9 @@ async function recordCorrections(
   eventId: number,
   before: Comparable & { status: EventStatus; scraperItems: { id: number }[] },
   after: Comparable,
+  byModerator: boolean,
 ): Promise<void> {
-  if (before.status !== 'PENDING' || before.scraperItems.length === 0) return;
+  if (!byModerator || before.status !== 'PENDING' || before.scraperItems.length === 0) return;
   const corrections = diffEvent(comparable(before), comparable(after));
   if (corrections.length === 0) return;
   try {
@@ -463,7 +471,11 @@ async function recordCorrections(
 }
 
 eventsRouter.delete('/:id', requireAuth, async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
+  if (id === null) {
+    res.status(400).json({ error: 'Identifiant invalide' });
+    return;
+  }
   const existing = await prisma.event.findUnique({ where: { id } });
   if (!existing) {
     res.status(404).json({ error: 'Événement introuvable' });

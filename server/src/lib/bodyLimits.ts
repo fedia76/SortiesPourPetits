@@ -22,8 +22,17 @@
  * lu (`req._body`), et le parseur global se retire alors de lui-même. Le reste
  * du site garde donc son plafond serré — ce qui est le but : le banc est
  * authentifié et ne parle qu'au worker, là où `POST /api/events` est ouvert.
+ *
+ * ## « Le banc est authentifié » — encore fallait-il le vérifier avant
+ *
+ * Il l'est, mais par `evalRouter.use(requireRole(...))`, c'est-à-dire **après**
+ * ce parseur. N'importe qui pouvait donc faire tamponner douze mégaoctets en
+ * mémoire sur `/api/eval` et ne recevoir le 401 qu'une fois le corps lu. Le
+ * plafond large ne s'ouvre plus qu'à un appelant qui a déjà montré patte
+ * blanche : `mountJsonParsers` réclame ce contrôle, plutôt que de supposer
+ * qu'il existe plus loin.
  */
-import express, { Express } from 'express';
+import express, { Express, RequestHandler } from 'express';
 
 /**
  * Ce qu'une route du banc accepte.
@@ -41,10 +50,14 @@ export const EVAL_PREFIX = '/api/eval';
 /**
  * Monte les parseurs JSON de l'application, dans le seul ordre qui marche.
  *
- * À appeler avant tout routeur : un parseur monté après un routeur ne voit
- * jamais les requêtes qu'il traite.
+ * À appeler avant tout routeur — un parseur monté après un routeur ne voit
+ * jamais les requêtes qu'il traite — et **après** ce qui identifie l'appelant,
+ * puisque `guardEval` en a besoin.
+ *
+ * `guardEval` garde le plafond large : il s'exécute avant que le moindre octet
+ * ne soit lu, et un appelant refusé ne coûte donc rien d'autre qu'un 401.
  */
-export function mountJsonParsers(app: Express): void {
-  app.use(EVAL_PREFIX, express.json({ limit: EVAL_BODY_LIMIT }));
+export function mountJsonParsers(app: Express, guardEval: RequestHandler): void {
+  app.use(EVAL_PREFIX, guardEval, express.json({ limit: EVAL_BODY_LIMIT }));
   app.use(express.json());
 }

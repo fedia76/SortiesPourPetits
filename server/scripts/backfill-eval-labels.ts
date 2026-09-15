@@ -70,7 +70,7 @@ export function expectedFrom(ficheRaw: string, verdictsRaw: string): FicheRendue
       if (champ in fiche) expected[champ] = fiche[champ];
     }
   }
-  return expected as FicheRendue;
+  return expected;
 }
 
 /**

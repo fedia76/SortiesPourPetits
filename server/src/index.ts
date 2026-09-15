@@ -2,7 +2,8 @@ import express, { NextFunction, Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { config } from './config';
-import { attachUser } from './middleware/auth';
+import { Role } from '@prisma/client';
+import { attachUser, requireRole } from './middleware/auth';
 import { mountJsonParsers } from './lib/bodyLimits';
 import { reponseErreur } from './lib/httpErrors';
 import { safe } from './lib/asyncRoutes';
@@ -24,10 +25,6 @@ if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
-// Les parseurs JSON, et leur ordre : voir `lib/bodyLimits`. Les routes du banc
-// portent du HTML gzippé et ont besoin d'un plafond large ; un plafond déclaré
-// sur la route elle-même n'aurait servi à rien.
-mountJsonParsers(app);
 app.use(cookieParser());
 
 // Limite les appels des programmes tiers, par clé d'API présentée.
@@ -49,6 +46,15 @@ app.use(
 // exception y aurait éteint le site avant même d'atteindre un gestionnaire.
 app.use(safe(attachUser));
 
+// Les parseurs JSON, et leur ordre : voir `lib/bodyLimits`. Les routes du banc
+// portent du HTML gzippé et ont besoin d'un plafond large ; un plafond déclaré
+// sur la route elle-même n'aurait servi à rien.
+//
+// Après `attachUser`, et pas avant : le plafond large est gardé par un contrôle
+// de rôle, sans quoi n'importe qui pouvait faire tamponner douze mégaoctets sur
+// `/api/eval` et ne recevoir le 401 qu'une fois le corps lu.
+mountJsonParsers(app, requireRole(Role.MODERATOR));
+
 app.use('/uploads', express.static(config.uploadsDir, { maxAge: '7d', immutable: true }));
 
 app.use('/api/auth', authRouter);
@@ -63,6 +69,14 @@ app.use('/api/eval', evalRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+// Une route d'API qui n'existe pas répond **en API**. Sans cette ligne elle
+// tombait sur le 404 par défaut d'Express, qui est une page HTML : un client
+// qui attend du JSON — le worker, le front — recevait un document, et le
+// message d'erreur qu'il en tirait ne ressemblait à rien.
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'Route inconnue' });
 });
 
 // Le site, en dernier : tout ce qui n'est pas une route d'API est une page à

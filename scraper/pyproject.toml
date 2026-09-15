@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.14"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -22,3 +22,52 @@ packages = ["sortiesbot", "sortiesbot.providers", "sortiesbot.stages"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# ────────────────────────────────────────────────────────────────────── ruff
+#
+# Il n'y avait aucun linter, ce qui ne se voyait pas — sauf à un détail : le
+# code porte une dizaine de « # noqa: BLE001 », des suppressions écrites pour
+# un outil qui ne tournait nulle part. On installe donc celui qu'elles
+# attendaient.
+#
+# Le formatage n'est pas imposé : reformater seize mille lignes noierait le
+# prochain diff utile. Ruff ne fait ici que ce qu'un relecteur ne voit pas —
+# un import mort, une variable inutilisée, un `except` trop large sans motif.
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+  "F",    # erreurs franches : import mort, variable inutilisée, f-string sans champ
+  "E",    # style pycodestyle, sans les règles que le formateur trancherait
+  "W",    # blancs de fin de ligne et compagnie
+  "I",    # ordre des imports
+  "UP",   # tournures que Python 3.10 rend inutiles
+  "B",    # pièges courants (flake8-bugbear), dont BLE001 est le voisin
+  "BLE",  # `except Exception` sans raison — d'où viennent les noqa existants
+  "SIM",  # simplifications sûres
+  "RUF",  # règles propres à ruff
+]
+ignore = [
+  # Une ligne trop longue est une affaire de jugement, et ce dépôt commente
+  # beaucoup : la trancher mécaniquement abîmerait des paragraphes entiers.
+  "E501",
+  # `zip(..., strict=)` : rien ici ne dépend de longueurs inégales.
+  "B905",
+  # « Caractère Unicode ambigu » : tout le projet est écrit en français, avec
+  # apostrophes typographiques et guillemets. Ce n'est pas une ambiguïté, c'est
+  # la langue.
+  "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Les tests s'autorisent des comparaisons et des assertions que le code n'a pas
+# à se permettre, et leurs fixtures portent volontiers du texte à rallonge.
+"tests/*" = [
+  "E402",
+  "SIM",
+  # Une fixture pytest s'importe puis se redéclare en paramètre de test :
+  # c'est la façon dont pytest marche, pas une redéfinition accidentelle.
+  "F811",
+]

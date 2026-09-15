@@ -11,7 +11,7 @@ Le Havre, Niort et Nancy.
 | Front | Vue 3 + TypeScript + Vite, Pinia, Vue Router |
 | Back | Node.js + TypeScript, Express |
 | BDD | MySQL 8 (ou MariaDB), accès via Prisma |
-| Géocodage | [Photon](https://photon.komoot.io) (OpenStreetMap, gratuit, sans clé ; l'[API Adresse](https://adresse.data.gouv.fr/api-doc/adresse) reste sélectionnable dans `client/src/lib/geocode.ts`) |
+| Géocodage | [Photon](https://photon.komoot.io) (OpenStreetMap, gratuit, sans clé). L'[API Adresse](https://adresse.data.gouv.fr/api-doc/adresse) se choisit au build : `VITE_GEOCODER=ban` |
 | Photos | Upload local, redimensionnement WebP via sharp |
 | Scraper | Python 3.10+, BeautifulSoup, API Claude (`web_search`) — voir [`scraper/`](scraper/README.md) |
 

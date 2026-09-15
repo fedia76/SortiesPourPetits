@@ -1,21 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
+import { usePolling } from '../composables/usePolling';
 import { setPageSeo } from '../lib/seo';
 import { useAuthStore } from '../stores/auth';
 import type { EventItem, ScraperRun } from '../types';
-import {
-  SETTING_LABELS,
-  SOURCE_SIGNAL_LABELS,
-  STATUS_LABELS,
-  ageLabel,
-  dayLabel,
-  hasCoordinates,
-  hasPrice,
-  nextDate,
-  priceLabel,
-} from '../types';
+import { SETTING_LABELS, SOURCE_SIGNAL_LABELS, STATUS_LABELS } from '../types';
+import { ageLabel, dayLabel, hasCoordinates, hasPrice, nextDate, priceLabel } from '../lib/sorties';
 
 const route = useRoute();
 const router = useRouter();
@@ -97,7 +90,6 @@ const sourceSignal = computed(() => {
 const hunt = ref<ScraperRun | null>(null);
 const hunting = ref(false);
 const huntError = ref('');
-let huntTimer: ReturnType<typeof setInterval> | undefined;
 
 /** Une recherche de source est en file ou en cours : on attend, on la suit. */
 const huntRunning = computed(
@@ -120,34 +112,40 @@ async function loadHunt() {
 /**
  * Suit l'exécution jusqu'à sa fin. Le worker passe toutes les trente
  * secondes : on interroge plus souvent que ça, mais pas au point de marteler
- * l'API pour une réponse qui met une minute à venir.
+ * l'API pour une réponse qui met une minute à venir. Et pas du tout quand
+ * l'onglet est en arrière-plan, ce dont `usePolling` se charge.
  */
-function watchHunt() {
-  if (huntTimer) return;
-  huntTimer = setInterval(async () => {
-    if (!event.value) return;
-    try {
-      const data = await api.get<{ run: ScraperRun | null }>(
-        `/api/scraper/events/${event.value.id}/source`,
-      );
-      hunt.value = data.run;
-      if (!huntRunning.value) {
-        stopWatchingHunt();
-        // La fiche a peut-être changé de lien : c'est le site qui l'a écrit,
-        // on le relit plutôt que de le deviner.
-        const fresh = await api.get<{ event: EventItem }>(`/api/events/${event.value.id}`);
-        event.value = fresh.event;
-      }
-    } catch (e) {
+async function battreHunt() {
+  if (!event.value) return;
+  try {
+    const data = await api.get<{ run: ScraperRun | null }>(
+      `/api/scraper/events/${event.value.id}/source`,
+    );
+    hunt.value = data.run;
+    if (!huntRunning.value) {
       stopWatchingHunt();
-      huntError.value = e instanceof Error ? e.message : 'Erreur';
+      // La fiche a peut-être changé de lien : c'est le site qui l'a écrit,
+      // on le relit plutôt que de le deviner.
+      const fresh = await api.get<{ event: EventItem }>(`/api/events/${event.value.id}`);
+      event.value = fresh.event;
     }
-  }, 5_000);
+  } catch (e) {
+    stopWatchingHunt();
+    huntError.value = messageDe(e);
+  }
+}
+
+const suiviHunt = usePolling(battreHunt, 5_000);
+// À l'arrêt tant qu'aucune recherche de source n'est en cours : une fiche
+// ordinaire n'a rien à suivre.
+suiviHunt.stop();
+
+function watchHunt() {
+  suiviHunt.start();
 }
 
 function stopWatchingHunt() {
-  clearInterval(huntTimer);
-  huntTimer = undefined;
+  suiviHunt.stop();
 }
 
 async function huntSource() {
@@ -161,13 +159,12 @@ async function huntSource() {
     hunt.value = data.run;
     watchHunt();
   } catch (e) {
-    huntError.value = e instanceof Error ? e.message : 'Erreur';
+    huntError.value = messageDe(e);
   } finally {
     hunting.value = false;
   }
 }
 
-onUnmounted(stopWatchingHunt);
 
 const moderating = ref(false);
 const moderationError = ref('');
@@ -188,7 +185,7 @@ async function moderate(action: 'approve' | 'reject') {
     const data = await api.get<{ event: EventItem }>(`/api/events/${event.value.id}`);
     event.value = data.event;
   } catch (e) {
-    moderationError.value = e instanceof Error ? e.message : 'Erreur';
+    moderationError.value = messageDe(e);
   } finally {
     moderating.value = false;
   }
@@ -239,7 +236,7 @@ onMounted(async () => {
     // elle dure une minute, et la page se ferme plus vite que ça.
     if (canHunt.value) await loadHunt();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
     // Un titre, et rien de plus. Poser un `noindex` ici reviendrait à
     // désindexer une sortie parfaitement publique parce que l'API n'a pas
     // répondu une fois — et l'API ne répond pas pendant chaque redéploiement.

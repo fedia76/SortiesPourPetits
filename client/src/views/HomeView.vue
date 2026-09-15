@@ -5,8 +5,16 @@ import EventCard from '../components/EventCard.vue';
 import AddressPicker from '../components/AddressPicker.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import { setPageSeo } from '../lib/seo';
-import type { Area, Category, EventItem, Setting } from '../types';
+import {
+  filtresDepuisQuery,
+  filtresVides,
+  pageDepuisQuery,
+  queryDepuisFiltres,
+  requeteApi,
+} from '../lib/searchQuery';
+import type { Area, Category, EventItem } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -20,85 +28,78 @@ const error = ref('');
 const categories = ref<Category[]>([]);
 const areas = ref<Area[]>([]);
 
-const filters = reactive({
-  q: '',
-  free: false,
-  priceMax: '' as string | number,
-  age: '' as string | number,
-  from: '',
-  to: '',
-  setting: '' as '' | Setting,
-  categoryId: '' as '' | number,
-  address: '',
-  lat: null as number | null,
-  lng: null as number | null,
-  radiusKm: 10,
-});
+const filters = reactive(filtresVides());
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)));
 const geoActive = computed(() => filters.lat !== null && filters.lng !== null);
 
 /**
- * La page courante vit dans l'adresse.
- *
- * Elle ne s'y trouvait pas, et c'est ce qui rendait le catalogue invisible :
- * un robot ouvre l'accueil, y lit douze liens, et n'a aucun moyen d'atteindre
- * les suivants — « page 2 » n'était qu'un bouton. Une page, une adresse : le
- * serveur peut la pré-rendre, le sitemap la désigner, et un lien vers une
- * page de résultats se partage.
+ * Recopie l'adresse dans les filtres affichés. La règle vit dans
+ * `lib/searchQuery`, avec son aller-retour ; ici on ne fait que l'appliquer.
  */
-function pageFromUrl(): number {
-  const raw = Number(route.query.page);
-  return Number.isInteger(raw) && raw >= 1 ? raw : 1;
+function lireLAdresse() {
+  Object.assign(filters, filtresDepuisQuery(route.query));
+}
+
+/**
+ * Va à cette adresse, et laisse passer les navigations que le routeur refuse.
+ *
+ * Il en refuse une, et c'est la bonne : demander deux fois la même adresse. Le
+ * `watch` ne se déclenche alors pas, et c'est ce qu'on veut — rien n'a changé,
+ * il n'y a rien à rechercher.
+ */
+function naviguer(query: Record<string, string>) {
+  router.push({ query }).catch(() => {});
 }
 
 /** Change de page en passant par l'adresse ; le `watch` ci-dessous recharge. */
 function goToPage(n: number) {
-  router.push({ query: { ...route.query, page: n > 1 ? String(n) : undefined } });
+  naviguer(queryDepuisFiltres(filters, n));
 }
 
 /**
  * Une recherche relancée repart de la première page — un filtre plus étroit
- * n'a aucune raison de s'ouvrir sur la troisième. Quand l'adresse en désigne
- * une autre, c'est elle qu'on corrige : le `watch` fera la recherche, et la
- * page affichée restera celle que l'adresse annonce.
+ * n'a aucune raison de s'ouvrir sur la troisième.
+ *
+ * Tout passe par l'adresse : c'est le `watch` qui déclenche la recherche, une
+ * fois et une seule, quel que soit le geste qui a changé quelque chose.
  */
 function applyFilters() {
-  if (pageFromUrl() > 1) goToPage(1);
-  else search(1);
+  naviguer(queryDepuisFiltres(filters, 1));
 }
 
+/**
+ * Numéro de la recherche en cours.
+ *
+ * Sans lui, deux recherches lancées coup sur coup — et le champ d'adresse est
+ * débouncé, donc c'est le cas courant — s'affichaient dans l'ordre où le
+ * réseau les rendait. Une requête large et lente écrasait alors le résultat
+ * d'une requête étroite et rapide, et le visiteur voyait des sorties que ses
+ * filtres excluaient.
+ */
+let derniereRecherche = 0;
+
 async function search(goTo = 1) {
+  const numero = ++derniereRecherche;
   page.value = goTo;
   loading.value = true;
   error.value = '';
-  const params = new URLSearchParams();
-  if (filters.q) params.set('q', filters.q);
-  if (filters.free) params.set('free', 'true');
-  else if (filters.priceMax !== '') params.set('priceMax', String(filters.priceMax));
-  if (filters.age !== '') params.set('age', String(filters.age));
-  if (filters.from) params.set('from', filters.from);
-  if (filters.to) params.set('to', filters.to);
-  if (filters.setting) params.set('setting', filters.setting);
-  if (filters.categoryId !== '') params.set('categoryId', String(filters.categoryId));
-  if (geoActive.value) {
-    params.set('lat', String(filters.lat));
-    params.set('lng', String(filters.lng));
-    params.set('radiusKm', String(filters.radiusKm));
-  }
-  params.set('page', String(page.value));
-  params.set('pageSize', String(pageSize));
 
   try {
     const data = await api.get<{ events: EventItem[]; total: number }>(
-      `/api/events?${params.toString()}`,
+      `/api/events?${requeteApi(filters, goTo, pageSize)}`,
     );
+    // Une recherche plus récente est partie entre-temps : la sienne fait foi.
+    if (numero !== derniereRecherche) return;
     events.value = data.events;
     total.value = data.total;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur de chargement';
+    if (numero !== derniereRecherche) return;
+    error.value = messageDe(e, 'Chargement impossible');
   } finally {
-    loading.value = false;
+    // Le voyant ne s'éteint qu'avec la dernière recherche : l'éteindre depuis
+    // une réponse dépassée montrerait une page prête alors qu'elle attend.
+    if (numero === derniereRecherche) loading.value = false;
   }
 }
 
@@ -137,13 +138,21 @@ function useMyPosition() {
 
 // Un retour arrière, un lien partagé ou un lien suivi depuis la page
 // pré-rendue changent l'adresse sans remonter la vue : c'est elle qui commande.
-watch(() => route.query.page, () => search(pageFromUrl()));
+// Un seul observateur, sur l'adresse entière — les filtres y sont désormais,
+// et deux observateurs auraient lancé deux recherches pour un seul geste.
+watch(
+  () => route.query,
+  () => {
+    lireLAdresse();
+    void search(pageDepuisQuery(route.query));
+  },
+);
 
 onMounted(async () => {
   setPageSeo({
     title:
-      pageFromUrl() > 1
-        ? `Sorties avec les enfants — page ${pageFromUrl()}`
+      pageDepuisQuery(route.query) > 1
+        ? `Sorties avec les enfants — page ${pageDepuisQuery(route.query)}`
         : 'Sorties avec les enfants',
     description:
       'Des idées de sorties avec des enfants partout en France : spectacles, parcs, ' +
@@ -156,8 +165,12 @@ onMounted(async () => {
   ]);
   categories.value = cats;
   areas.value = zones;
-  search(pageFromUrl());
 });
+
+// Avant même les catégories : la liste des résultats ne les attend pas, et
+// l'adresse porte déjà tout ce qu'il faut pour la demander.
+lireLAdresse();
+void search(pageDepuisQuery(route.query));
 </script>
 
 <template>

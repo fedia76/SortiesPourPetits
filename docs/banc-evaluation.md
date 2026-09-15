@@ -12,8 +12,9 @@ lui-même est décrit dans [`scraper/README.md`](../scraper/README.md).
 | Console | `/admin/evaluation` (administrateurs) — trois onglets, un par corpus : `?onglet=pages`, `agendas`, `sorties` |
 | Routes | [`server/src/routes/eval.ts`](../server/src/routes/eval.ts) |
 | Mesure | [`server/src/lib/evalMetrics.ts`](../server/src/lib/evalMetrics.ts) — pur, testé dans [`server/tests/`](../server/tests/evalMetrics.test.ts) |
-| Briques rejouées | [`scraper/sortiesbot/evaluation.py`](../scraper/sortiesbot/evaluation.py) |
-| Chasse | `hunt()` dans le même module ; la précoche se pèse dans [`server/src/lib/evalHunt.ts`](../server/src/lib/evalHunt.ts) |
+| Briques rejouées | [`scraper/sortiesbot/evaluation.py`](../scraper/sortiesbot/evaluation.py) — geler une page, rejouer les étages 3, 4, 5 et 6 dessus |
+| Ancrage de l'étage 6 | [`scraper/sortiesbot/ancrage.py`](../scraper/sortiesbot/ancrage.py) — ce qu'une fiche affirme se lit-il dans la page ? |
+| Chasse | [`scraper/sortiesbot/chasse.py`](../scraper/sortiesbot/chasse.py) ; la précoche se pèse dans [`server/src/lib/evalHunt.ts`](../server/src/lib/evalHunt.ts) |
 | Files du worker | [`scraper/sortiesbot/worker.py`](../scraper/sortiesbot/worker.py) |
 
 ## Pourquoi un banc

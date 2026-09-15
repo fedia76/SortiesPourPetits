@@ -69,12 +69,10 @@ _QUERY_KEYS = ("lang", "langue", "language", "locale", "hl", "l")
 #: peut éviter. On ne cherche pas à reconnaître une langue en général — juste à
 #: trancher entre deux.
 _FRENCH_WORDS = frozenset(
-    "le la les des une un du au aux et est sont pour avec dans sur par vous "
-    "nous plus tout tous cette ses son leur mais ou où que qui ne pas".split()
+    ["le", "la", "les", "des", "une", "un", "du", "au", "aux", "et", "est", "sont", "pour", "avec", "dans", "sur", "par", "vous", "nous", "plus", "tout", "tous", "cette", "ses", "son", "leur", "mais", "ou", "où", "que", "qui", "ne", "pas"]
 )
 _ENGLISH_WORDS = frozenset(
-    "the and of to for with you your our this that these from are is was will "
-    "have has all more about their there which what when".split()
+    ["the", "and", "of", "to", "for", "with", "you", "your", "our", "this", "that", "these", "from", "are", "is", "was", "will", "have", "has", "all", "more", "about", "their", "there", "which", "what", "when"]
 )
 
 #: En dessous, le décompte ne prouve rien : une page de trois phrases peut

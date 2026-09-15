@@ -47,7 +47,10 @@ class Ledger:
             return
         try:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-            self._file = open(self.path, "a", encoding="utf-8")
+            # Pas de `with` : cette poignée vit aussi longtemps que le
+            # registre, qui est lui-même un gestionnaire de contexte —
+            # sa fermeture est le rôle de `close()`.
+            self._file = open(self.path, "a", encoding="utf-8")  # noqa: SIM115
         except OSError as err:
             # Un instrument de mesure ne fait pas échouer ce qu'il mesure :
             # dossier illisible, disque plein, droits refusés — on perd le
@@ -79,7 +82,7 @@ class Ledger:
             self._file.close()
             self._file = None
 
-    def __enter__(self) -> "Ledger":
+    def __enter__(self) -> Ledger:
         return self
 
     def __exit__(self, *_: object) -> None:

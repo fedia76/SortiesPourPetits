@@ -19,6 +19,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type { ScraperConfig, ScraperQuality } from '../types';
 import { ATTRIBUTION_SIGNAL_HINTS, FIELD_LABELS, SOURCE_SIGNAL_LABELS } from '../types';
 
@@ -48,7 +49,7 @@ async function load() {
   try {
     data.value = await api.get<ScraperQuality>(`/api/scraper/quality?${params}`);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     loading.value = false;
   }

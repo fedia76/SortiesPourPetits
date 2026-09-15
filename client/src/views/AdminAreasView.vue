@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type { Area } from '../types';
 
 /**
@@ -54,7 +55,7 @@ async function save() {
     reset();
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     busy.value = false;
   }
@@ -76,7 +77,7 @@ async function remove(area: Area) {
     if (editingId.value === area.id) reset();
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 

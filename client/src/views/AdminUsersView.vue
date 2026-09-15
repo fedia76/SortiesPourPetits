@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import { useAuthStore } from '../stores/auth';
 import type { Role } from '../types';
 
@@ -35,7 +36,7 @@ async function changeRole(user: AdminUser, event: Event) {
     await api.patch(`/api/admin/users/${user.id}/role`, { role });
     user.role = role;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
     (event.target as HTMLSelectElement).value = user.role;
   }
 }

@@ -549,10 +549,6 @@ async function rattacherLiens(urls: string[]): Promise<number> {
   return rattaches;
 }
 
-function jour(value: Date | null): string | null {
-  return value ? value.toISOString().slice(0, 10) : null;
-}
-
 /**
  * Ce que la recherche d'un run demandait, relu depuis ses réglages.
  *
@@ -564,7 +560,7 @@ function jour(value: Date | null): string | null {
 function scopeOf(run: { settings: string; stage: string } | null): RunScope {
   if (!run || run.stage !== 'SELECT') return {};
   const raw = parseJson<Record<string, unknown>>(run.settings, {});
-  const text = (k: string) => (typeof raw[k] === 'string' ? (raw[k] as string) : undefined);
+  const text = (k: string) => (typeof raw[k] === 'string' ? raw[k] : undefined);
   return {
     dateFrom: text('dateFrom'),
     dateTo: text('dateTo'),
@@ -1999,7 +1995,7 @@ evalRouter.post('/hunts/:id(\\d+)/pages', async (req, res) => {
   );
   let ecrites = 0;
   for (const [index, page] of parsed.data.pages.entries()) {
-    const { html, nature, foundUrl, ...reste } = page;
+    const { html: _html, nature, foundUrl, ...reste } = page;
     try {
       await prisma.evalHuntPage.create({
         data: {
@@ -2572,7 +2568,7 @@ async function linkLabelCandidates(limit: number) {
  * La fenêtre part d'aujourd'hui, mais elle est **figée en dates absolues** dès
  * que le run est lancé : c'est ce qui rend un run rejouable à l'identique.
  */
-evalRouter.get('/recherche', admin, async (_req, res) => {
+evalRouter.get('/recherche', admin, (_req, res) => {
   const aujourdhui = new Date();
   const dans = (jours: number) =>
     new Date(aujourdhui.getTime() + jours * 86400000).toISOString().slice(0, 10);
@@ -2587,7 +2583,7 @@ evalRouter.get('/recherche', admin, async (_req, res) => {
   });
 });
 
-evalRouter.get('/criteres', admin, async (_req, res) => {
+evalRouter.get('/criteres', admin, (_req, res) => {
   res.json({ etages: criteresParEtage() });
 });
 
@@ -2657,7 +2653,7 @@ evalRouter.get('/reste', admin, async (_req, res) => {
     if (!lien.sortie) return false;
     return sortieMuette(labelled({ url: lien.url, verdict: 'SORTIE', sortie: lien.sortie }).sortie!);
   };
-  const nu = ({ sortie, ...reste }: (typeof sansSortie)[number]) => reste;
+  const nu = ({ sortie: _sortie, ...reste }: (typeof sansSortie)[number]) => reste;
 
   const aCreer = sansSortie.filter((l) => !l.sortieId).slice(0, 200).map(nu);
   const aDecrire = sansSortie.filter(muette).slice(0, 200).map(nu);
@@ -2752,7 +2748,7 @@ evalRouter.post('/seed', admin, async (req, res) => {
     for (const row of rows) {
       const fiche = fiches.get(row.eventId);
       if (!fiche) continue;
-      const { id, ...champs } = fiche;
+      const { id: _id, ...champs } = fiche;
       const etiquette = {
         ...etiquetteDeFiche(champs),
         note: 'Reprise d’une fiche approuvée en modération.',

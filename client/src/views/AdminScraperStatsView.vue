@@ -10,6 +10,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type { ScraperConfig, ScraperStats } from '../types';
 import { DECISION_LABELS, STATUS_LABELS } from '../types';
 
@@ -39,7 +40,7 @@ async function load() {
   try {
     stats.value = await api.get<ScraperStats>(`/api/scraper/stats?${params}`);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     loading.value = false;
   }

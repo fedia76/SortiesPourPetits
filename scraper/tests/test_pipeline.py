@@ -8,14 +8,15 @@ filtrage, le géocodage et la soumission.
 from __future__ import annotations
 
 import io
-from datetime import date as _date, timedelta as _timedelta
 from datetime import date, timedelta
+from datetime import date as _date
+from datetime import timedelta as _timedelta
 
 import pytest
 
 from sortiesbot.api import ApiError
 from sortiesbot.config import Config
-from sortiesbot.harvest import FetchError, Link
+from sortiesbot.harvest import FetchError
 from sortiesbot.journal import RunLog
 from sortiesbot.models import ExtractedEvent, FoundPage, Usage
 from sortiesbot.orchestrator import run

@@ -22,32 +22,26 @@ qu'elles ne sont pas corrigées.
 
 from __future__ import annotations
 
-import unicodedata
-
 from .. import geocode as geocoding
 from ..api import ApiError
 from ..models import Candidate, ExtractedEvent, SourceLink
 from ..payload import UNKNOWN_PRICE, OutOfPeriod, Rejected, build_payload
 from ..photo import PhotoError, download
-from ..schedule import Schedule, resolve as resolve_schedule
+from ..schedule import Schedule
+from ..schedule import resolve as resolve_schedule
 from ..store import event_key
+from ..text import fold
 from . import Stage
 from .base import Brick, PageContent
-
-
-def _fold(text: str) -> str:
-    """Compare des noms de catégories sans se soucier de la casse ni des accents."""
-    stripped = unicodedata.normalize("NFKD", text.strip().lower())
-    return "".join(c for c in stripped if not unicodedata.combining(c))
 
 
 def resolve_category(name: str, categories: dict[str, int], default: str) -> int:
     """Rattache la catégorie annoncée par le modèle à une catégorie du site."""
     if not categories:
         return 0  # dry-run sans API joignable : identifiant symbolique.
-    by_fold = {_fold(k): v for k, v in categories.items()}
+    by_fold = {fold(k): v for k, v in categories.items()}
     for candidate in (name, default):
-        found = by_fold.get(_fold(candidate or ""))
+        found = by_fold.get(fold(candidate or ""))
         if found is not None:
             return found
     raise Rejected(f"catégorie « {name or '?'} » inconnue et « {default} » absente du site")
@@ -109,12 +103,12 @@ class Publication(Brick):
         # provenance (`foundOnUrl`) — sans quoi la sortie porterait un lien
         # dont le contenu n'est pas celui d'où elle a été tirée.
         url = page.url
-    
+
         # Sur une page de programme, l'unité mémorisable n'est pas la page mais
         # chacune de ses sorties : sinon un programme lu une fois ne serait plus
         # jamais relu, et tout ce qu'il annoncera ensuite serait perdu.
         key = event_key(url, extracted.title) if candidate.multiple else None
-    
+
         if not extracted.relevant:
             summary.skipped_irrelevant += 1
             log.event("skip", reason=extracted.skip_reason or "hors sujet", url=url)
@@ -127,7 +121,7 @@ class Publication(Brick):
             )
             st.produced(f"écartée : {extracted.skip_reason or 'hors sujet'}")
             return
-    
+
         if key is not None:
             if key in self.ctx.keys or store.seen(url, key):
                 summary.duplicates += 1
@@ -143,14 +137,14 @@ class Publication(Brick):
                 st.produced("écartée : sortie déjà connue")
                 return
             self.ctx.keys.add(key)
-    
+
         log.event(
             "extract",
             url=url,
             title=extracted.title,
             venue=f"{extracted.venue_name} — {extracted.venue_city}".strip(" —"),
         )
-    
+
         if _out_of_area(extracted.venue_postal_code, config.postal_prefixes):
             summary.out_of_area += 1
             if not config.keep_out_of_scope:
@@ -160,7 +154,7 @@ class Publication(Brick):
                 st.produced(f"écartée : {reason}")
                 return
             log.event("out_of_scope", field="zone", url=url, detail=extracted.venue_postal_code)
-    
+
         geo = geocoding.geocode(extracted)
         log.event(
             "geocode", url=url, address=geo.query, located=geo.located,
@@ -168,7 +162,7 @@ class Publication(Brick):
         )
         if not geo.located:
             summary.ungeocoded += 1
-    
+
         # Le meilleur lien connu passe devant, et la page lue devient la
         # provenance. Sans source vérifiée, les deux se confondent : `foundOnUrl`
         # reste vide plutôt que de répéter `sourceUrl` pour rien.
@@ -204,11 +198,11 @@ class Publication(Brick):
             )
             st.produced(f"écartée : {err}")
             return
-    
+
         if payload["dateStart"] and payload["dateStart"] > config.date_to.isoformat():
             summary.out_of_period += 1
             log.event("out_of_scope", field="période", url=url, detail=payload["dateStart"])
-    
+
         # Dates réelles de la sortie.
         schedule = resolve_schedule(
             payload["dateStart"] or "",
@@ -232,13 +226,13 @@ class Publication(Brick):
             end=payload["dateEnd"],
             **schedule.as_dict(),
         )
-    
+
         if payload["price"] == UNKNOWN_PRICE:
             summary.unpriced += 1
             log.event("incomplete", field="tarif", url=url, title=payload["title"])
         if not geo.located:
             log.event("incomplete", field="adresse", url=url, title=payload["title"])
-    
+
         # Ce que la page déclare passe avant ce que le modèle a pu écrire : lui ne
         # voit que du texte, donc une URL de sa part est au mieux une devinette.
         # Les sorties d'un même programme partagent l'illustration de la page :
@@ -247,7 +241,7 @@ class Publication(Brick):
         photo_url = page.image or extracted.photo_url
         if not photo_url:
             log.event("photo", status="aucune image sur la page", url=url)
-    
+
         photo = None
         if self.ctx.submit and photo_url:
             try:
@@ -257,7 +251,7 @@ class Publication(Brick):
                 log.event("photo", status="téléchargée", url=photo_url)
             except PhotoError as err:
                 log.event("photo", status=f"ignorée ({err})", url=photo_url)
-    
+
         record = {
             "payload": payload,
             # La page lue, telle qu'elle a toujours été relevée ici : c'est ce
@@ -271,7 +265,7 @@ class Publication(Brick):
             "located": geo.located,
             "schedule": schedule.as_dict(),
         }
-    
+
         if not self.ctx.submit:
             self.ctx.result.events.append(record)
             log.event("dry_run", title=payload["title"], url=url)
@@ -287,7 +281,7 @@ class Publication(Brick):
             )
             st.produced(f"retenue sans soumission : {payload['title']}", retained=1)
             return
-    
+
         try:
             event = self.ctx.api.create_event(payload, photo)
         except ApiError as err:
@@ -298,7 +292,7 @@ class Publication(Brick):
             )
             st.produced(f"soumission en échec : {err}")
             return
-    
+
         event_id = event.get("id")
         record["event_id"] = event_id
         self.ctx.result.events.append(record)

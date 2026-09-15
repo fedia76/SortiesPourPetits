@@ -20,8 +20,8 @@ from .harvest import Fetcher
 from .journal import RunLog, run_log_path
 from .ledger import Ledger, ledger_path
 from .orchestrator import run
-from .providers.serper_client import client_or_none
 from .providers.base import ProviderError, get_provider
+from .providers.serper_client import client_or_none
 from .store import SeenStore
 
 ROOT = Path(__file__).resolve().parent.parent

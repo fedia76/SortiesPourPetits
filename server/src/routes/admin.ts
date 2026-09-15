@@ -3,6 +3,7 @@ import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
 import { updateRoleSchema } from '../lib/validators';
+import { parseId } from '../lib/routeParams';
 
 export const adminRouter = safeRouter();
 
@@ -24,9 +25,9 @@ adminRouter.get('/users', async (_req, res) => {
 });
 
 adminRouter.patch('/users/:id/role', async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const parsed = updateRoleSchema.safeParse(req.body);
-  if (!Number.isInteger(id) || !parsed.success) {
+  if (id === null || !parsed.success) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }

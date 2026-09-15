@@ -18,6 +18,7 @@
  */
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type {
   EvalAspectDetail,
   EvalLinkCase,
@@ -57,7 +58,7 @@ onMounted(async () => {
     );
     detail.value = body.detail;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     loading.value = false;
   }

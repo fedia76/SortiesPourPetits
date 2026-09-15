@@ -23,11 +23,12 @@ import sys
 import tempfile
 import time
 import traceback
-from dataclasses import replace as dataclass_replace
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .api import ApiError, SppApi
+from .chasse import hunt
 from .config import (
     IDF_POSTAL_PREFIXES,
     Config,
@@ -40,7 +41,6 @@ from .evaluation import (
     capture_pages,
     extract_page,
     harvest_from_html,
-    hunt,
     read_from_html,
     select_from_html,
 )
@@ -50,8 +50,8 @@ from .ledger import Ledger, ledger_path
 from .models import Summary
 from .orchestrator import run as run_pipeline
 from .orchestrator import run_source
-from .providers.serper_client import client_or_none
 from .providers.base import ProviderError, get_provider
+from .providers.serper_client import client_or_none
 from .store import RemoteStore
 
 ROOT = Path(__file__).resolve().parent.parent

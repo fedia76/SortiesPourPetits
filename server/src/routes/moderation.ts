@@ -13,6 +13,8 @@ import {
 import { hasCoordinates, hasPrice } from '../lib/incomplete';
 import { describeRejections } from '../lib/rejectionCodes';
 import { rankSimilar, significantWords, type SimilarityScore } from '../lib/similarity';
+import { parseId } from '../lib/routeParams';
+import { distanceByVenueId, venuesWithinQuery, type VenueDistance } from '../lib/venueDistance';
 
 export const moderationRouter = safeRouter();
 
@@ -177,9 +179,9 @@ const MAX_CANDIDATES = 300;
  * à celle qu'on modère.
  */
 moderationRouter.get('/:id/similar', async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const parsed = similarSchema.safeParse(req.query);
-  if (!Number.isInteger(id) || !parsed.success) {
+  if (id === null || !parsed.success) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }
@@ -191,22 +193,14 @@ moderationRouter.get('/:id/similar', async (req, res) => {
     return;
   }
 
-  // Lieux dans le rayon et distance de chacun (Haversine en SQL pur, comme la
-  // recherche publique : compatible MySQL et MariaDB, et l'index [lat, lng]
-  // n'aide pas ici mais la table Venue reste petite).
+  // Lieux dans le rayon et distance de chacun — la même requête que la
+  // recherche publique, et au même endroit (voir `lib/venueDistance`).
   const lat = Number(event.venue.lat);
   const lng = Number(event.venue.lng);
-  const nearbyVenues = await prisma.$queryRaw<{ id: number; distanceKm: number }[]>`
-    SELECT id,
-      6371 * 2 * ASIN(SQRT(
-        POWER(SIN(RADIANS(lat - ${lat}) / 2), 2) +
-        COS(RADIANS(${lat})) * COS(RADIANS(lat)) *
-        POWER(SIN(RADIANS(lng - ${lng}) / 2), 2)
-      )) AS distanceKm
-    FROM Venue
-    HAVING distanceKm <= ${radiusKm}
-  `;
-  const distanceByVenueId = new Map(nearbyVenues.map((v) => [v.id, Number(v.distanceKm)]));
+  const nearbyVenues = await prisma.$queryRaw<VenueDistance[]>(
+    venuesWithinQuery(lat, lng, radiusKm),
+  );
+  const distances = distanceByVenueId(nearbyVenues);
 
   // Un doublon posté à un lieu mal géocodé sort du rayon : on rattrape ces cas
   // par les mots marquants du titre. Les plus longs sont les plus distinctifs.
@@ -214,7 +208,7 @@ moderationRouter.get('/:id/similar', async (req, res) => {
     .sort((a, b) => b.length - a.length)
     .slice(0, TITLE_PROBE_WORDS);
 
-  const matchers: Prisma.EventWhereInput[] = [{ venueId: { in: [...distanceByVenueId.keys()] } }];
+  const matchers: Prisma.EventWhereInput[] = [{ venueId: { in: [...distances.keys()] } }];
   for (const word of probeWords) {
     matchers.push({ title: { contains: word } });
   }
@@ -230,7 +224,7 @@ moderationRouter.get('/:id/similar', async (req, res) => {
     take: MAX_CANDIDATES,
   });
 
-  const ranked = rankSimilar(event, candidates, distanceByVenueId, { radiusKm, minScore, limit });
+  const ranked = rankSimilar(event, candidates, distances, { radiusKm, minScore, limit });
 
   res.json({
     event: serializeEvent(event),
@@ -239,9 +233,9 @@ moderationRouter.get('/:id/similar', async (req, res) => {
 });
 
 moderationRouter.post('/:id', async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseId(req.params.id);
   const parsed = moderateSchema.safeParse(req.body);
-  if (!Number.isInteger(id) || !parsed.success) {
+  if (id === null || !parsed.success) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }

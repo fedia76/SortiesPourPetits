@@ -42,83 +42,6 @@ export interface Venue {
   lng: number;
 }
 
-/**
- * Champs qu'un programme d'import laisse à compléter par la modération
- * (voir server/src/lib/incomplete.ts) : une adresse qui n'a pas pu être
- * géocodée arrive à (0, 0), un tarif indéterminé arrive négatif. Le serveur
- * refuse d'approuver la sortie tant que ce n'est pas corrigé.
- *
- * ⚠️ Ces trois déclarations sont **recopiées** de `server/src/lib/incomplete.ts`,
- * faute de paquet partagé entre les deux moitiés du dépôt. Elles avaient déjà
- * divergé : le serveur répondait « tarif connu » pour une sortie payante sans
- * prix, là où le client affichait « Tarif à compléter ». Le serveur garde
- * l'approbation, donc c'est lui qui avait tort ; il dit maintenant la même
- * chose qu'ici, et `server/tests/incomplete.test.ts` fixe la table de vérité
- * commune. Les deux fichiers changent ensemble.
- */
-export const UNKNOWN_PRICE = -1;
-
-export function hasCoordinates(venue: Pick<Venue, 'lat' | 'lng'>): boolean {
-  return venue.lat !== 0 || venue.lng !== 0;
-}
-
-export function hasPrice(event: { isFree: boolean; price: number | null }): boolean {
-  if (event.isFree) return true;
-  if (event.price === null || event.price === undefined) return false;
-  return event.price >= 0;
-}
-
-/** Badge de tarif, y compris pour une sortie importée sans tarif connu. */
-export function priceLabel(event: { isFree: boolean; price: number | null }): string {
-  if (event.isFree) return 'Gratuit';
-  if (!hasPrice(event)) return 'Tarif à compléter';
-  return `${event.price} €`;
-}
-
-/**
- * Tranche d'âge en clair, y compris quand une seule borne est connue.
- *
- * Les deux bornes sont facultatives et indépendantes : n'afficher la tranche
- * que lorsque les deux sont renseignées faisait disparaître le « à partir de
- * 3 ans » de sorties qui ne se donnent pas d'âge maximum.
- */
-export function ageLabel(event: Pick<EventItem, 'ageMin' | 'ageMax'>): string | null {
-  const { ageMin, ageMax } = event;
-  if (ageMin !== null && ageMax !== null) return `De ${ageMin} à ${ageMax} ans`;
-  if (ageMin !== null) return `À partir de ${ageMin} ans`;
-  if (ageMax !== null) return `Jusqu'à ${ageMax} ans`;
-  return null;
-}
-
-/** Même tranche d'âge, en version courte pour un badge de vignette. */
-export function shortAgeLabel(event: Pick<EventItem, 'ageMin' | 'ageMax'>): string | null {
-  const { ageMin, ageMax } = event;
-  if (ageMin !== null && ageMax !== null) return `${ageMin}–${ageMax} ans`;
-  if (ageMin !== null) return `dès ${ageMin} ans`;
-  if (ageMax !== null) return `jusqu'à ${ageMax} ans`;
-  return null;
-}
-
-/**
- * Prochain jour où la sortie a lieu, à partir d'aujourd'hui.
- *
- * `null` quand elle n'énumère pas ses jours — le cas courant : sa période
- * suffit alors à la décrire. `undefined` quand elle est passée.
- */
-export function nextDate(event: Pick<EventItem, 'dates'>, today = new Date()): string | undefined {
-  const iso = today.toISOString().slice(0, 10);
-  return event.dates.find((d) => d >= iso);
-}
-
-/** « dimanche 20 septembre » — un jour de représentation, en clair. */
-export function dayLabel(day: string): string {
-  return new Date(`${day}T12:00:00`).toLocaleDateString('fr-FR', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
-}
-
 /** Pourquoi et à quel point une sortie ressemble à celle en cours de modération. */
 export interface Similarity {
   /** Note de 0 à 100 : plus c'est haut, plus le doublon est probable. */
@@ -327,18 +250,12 @@ export interface ScraperRun {
   items?: ScraperRunItem[];
 }
 
-/** Ce qu'une exécution a joué, dit en une ligne : c'est son nom dans la console. */
-export function runLabel(run: ScraperRun): string {
-  if (run.config) return run.config.name;
-  if (run.event) return `Source de « ${run.event.title} »`;
-  return 'Exécution';
-}
-
 /**
  * Un étage du pipeline, tel que la page de débogage le dessine.
  *
  * Les libellés ne sont pas définis ici : ils viennent du scraper
- * (`sortiesbot/stages.py`), transportés par l'événement `run_start`. Renommer
+ * (`sortiesbot/stages/__init__.py`), transportés par l'événement `run_start`.
+ * Renommer
  * une brique côté scraper suffit donc à la renommer partout.
  */
 export interface ScraperStageNode {

@@ -4,8 +4,9 @@ import { useRoute, useRouter } from 'vue-router';
 import AddressPicker from '../components/AddressPicker.vue';
 import type { GeoSuggestion } from '../lib/geocode';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type { Category, EventInput, EventItem, Setting } from '../types';
-import { dayLabel, hasCoordinates, hasPrice } from '../types';
+import { dayLabel, hasCoordinates, hasPrice } from '../lib/sorties';
 
 const route = useRoute();
 const router = useRouter();
@@ -168,7 +169,7 @@ async function submit() {
       : await api.sendForm<{ event: EventItem }>('/api/events', 'POST', payload, photo.value);
     router.push(`/sorties/${event.id}`);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur lors de l’envoi';
+    error.value = messageDe(e, 'Envoi impossible');
   } finally {
     loading.value = false;
   }

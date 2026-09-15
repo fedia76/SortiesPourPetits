@@ -31,9 +31,9 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
@@ -59,6 +59,9 @@ TIMEOUT = 20
 CRAWL_DELAY = 1.0
 #: Au-delà, on arrête de lire : aucune page d'agenda utile ne pèse 5 Mo.
 MAX_BYTES = 5 * 1024 * 1024
+#: Redirections suivies. Au-delà, le site ne sait pas où il nous envoie — et
+#: chacune coûte une requête et un délai de politesse.
+MAX_REDIRECTS = 5
 
 #: Chemins qui ne sont jamais un événement.
 BORING_PATH = re.compile(
@@ -220,6 +223,11 @@ class Fetcher:
                     parser = None  # type: ignore[assignment]
                 else:
                     parser.parse(response.text.splitlines())
+                    # `parse` seul laisse le fichier « jamais lu », et
+                    # `crawl_delay` refuse alors de répondre. C'est ce que
+                    # `read` fait, et on ne peut pas l'appeler : il passe par
+                    # urllib et perdrait notre User-Agent.
+                    parser.modified()
             except requests.RequestException:
                 # Pas de robots.txt lisible : on considère l'accès autorisé,
                 # comme le veut la convention.
@@ -231,12 +239,70 @@ class Fetcher:
         parser = self._robots_for(url)
         return True if parser is None else parser.can_fetch(USER_AGENT, url)
 
+    def _delay_for(self, url: str) -> float:
+        """Le délai à respecter pour cet hôte : le nôtre, ou le sien s'il en veut plus.
+
+        `robots.txt` peut déclarer un `Crawl-delay`. On le lisait déjà — le
+        fichier est analysé en entier — et on l'ignorait, ce qui rendait la
+        promesse de politesse à moitié fausse : un site qui demande dix
+        secondes entre deux requêtes recevait la nôtre au bout d'une.
+
+        On ne descend jamais **sous** notre propre seuil : un site qui ne
+        déclare rien, ou qui déclare zéro, n'obtient pas pour autant une
+        rafale.
+        """
+        parser = self._robots_for(url)
+        demande = parser.crawl_delay(USER_AGENT) if parser is not None else None
+        try:
+            return max(CRAWL_DELAY, float(demande)) if demande is not None else CRAWL_DELAY
+        except (TypeError, ValueError):
+            # Un `Crawl-delay` illisible ne vaut pas mieux qu'aucun.
+            return CRAWL_DELAY
+
     def _wait_turn(self, url: str) -> None:
         host = urlsplit(url).netloc
+        delay = self._delay_for(url)
         since = time.monotonic() - self._last_call.get(host, 0.0)
-        if since < CRAWL_DELAY:
-            time.sleep(CRAWL_DELAY - since)
+        if since < delay:
+            time.sleep(delay - since)
         self._last_call[host] = time.monotonic()
+
+    def _follow(self, url: str) -> requests.Response:
+        """Suit les redirections **une par une**, en vérifiant chacune.
+
+        `requests` les suit tout seul, et c'est précisément le problème : le
+        contrôle de `robots.txt` et le délai de politesse portaient alors sur
+        l'adresse de **départ**, et sur elle seule. Un site qui redirige vers
+        un chemin `Disallow:` — ou vers un autre hôte — était lu sans que rien
+        ne s'y oppose, par un client qui s'annonce pourtant comme respectueux
+        de `robots.txt`.
+
+        Chaque étape est donc traitée comme une requête à part entière : son
+        adresse est soumise à `robots.txt`, et son hôte attend son tour.
+        """
+        vues: set[str] = set()
+        for _ in range(MAX_REDIRECTS + 1):
+            if url in vues:
+                raise FetchError("boucle de redirection")
+            vues.add(url)
+
+            if not self.allowed(url):
+                raise FetchError("interdit par robots.txt")
+            self._wait_turn(url)
+            response = self.session.get(url, timeout=TIMEOUT, stream=True, allow_redirects=False)
+
+            # Le code **et** l'en-tête : une 3xx sans `Location` n'est pas une
+            # redirection, c'est une réponse à laquelle il manque quelque chose.
+            cible = response.headers.get("Location") if 300 <= response.status_code < 400 else None
+            if cible is None:
+                return response
+
+            response.close()
+            url = urljoin(url, cible)
+            if not url.startswith(("http://", "https://")):
+                raise FetchError("redirection hors du web")
+
+        raise FetchError("trop de redirections")
 
     # ---------------------------------------------------------- récupération
 
@@ -251,12 +317,9 @@ class Fetcher:
             raise FetchError("URL invalide")
         if url in self._pages:
             return self._pages[url]
-        if not self.allowed(url):
-            raise FetchError("interdit par robots.txt")
 
-        self._wait_turn(url)
         try:
-            response = self.session.get(url, timeout=TIMEOUT, stream=True)
+            response = self._follow(url)
             response.raise_for_status()
             content_type = response.headers.get("Content-Type") or ""
             kind = content_type.split(";")[0].strip()

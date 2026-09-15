@@ -15,7 +15,6 @@ from sortiesbot.schedule import (
     resolve,
 )
 
-
 # ------------------------------------------------------------------ JSON-LD
 
 

@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { messageDe } from '../lib/erreurs';
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -19,7 +20,7 @@ async function submit() {
     await auth.register(email.value, password.value, displayName.value);
     router.push('/');
   } catch (e) {
-    error.value = e instanceof Error ? e.message : "Erreur d'inscription";
+    error.value = messageDe(e, 'Inscription impossible');
   } finally {
     loading.value = false;
   }

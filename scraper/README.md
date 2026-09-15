@@ -740,12 +740,16 @@ peuple : elle lance les recherches de l'étage 1 depuis un prompt, ouvre tout ce
 qu'elles remontent, et précoche chaque page avec ce que l'étage 2 en dit — un
 humain n'a plus qu'à corriger ce qui est faux. Ce qu'il aura corrigé est gardé à
 part de ce qu'il aura laissé passer, sans quoi le corpus mesurerait la brique
-contre elle-même. Côté scraper il
-tient dans un seul module,
-[`sortiesbot/evaluation.py`](sortiesbot/evaluation.py), qui n'est qu'une
+contre elle-même. Côté scraper il tient en trois modules, qui ne sont qu'une
 enveloppe autour des **vraies** fonctions — `links_of`, `next_page`, `page_text`,
 `json_ld_dates`, `main_image`, `provider.select`, `provider.extract` — et le
-worker sert ses files comme il sert une recherche.
+worker sert leurs files comme il sert une recherche :
+
+| Module | Ce qu'il fait |
+|---|---|
+| [`sortiesbot/evaluation.py`](sortiesbot/evaluation.py) | Geler une page, et rejouer les étages 3, 4, 5 et 6 dessus |
+| [`sortiesbot/ancrage.py`](sortiesbot/ancrage.py) | Mesurer l'étage 6 : ce qu'une fiche affirme se lit-il dans la page ? |
+| [`sortiesbot/chasse.py`](sortiesbot/chasse.py) | Peupler le corpus de l'étage 2 depuis un prompt |
 
 Deux règles suffisent à comprendre le reste, et elles sont dans ce module :
 
@@ -1095,7 +1099,16 @@ relisable, et seules les sorties déjà proposées sont sautées.
 
 Puisque le scraper télécharge lui-même, il assume ce qu'Anthropic assumait :
 `robots.txt` est lu et respecté, un `User-Agent` identifie le robot et renvoie
-vers le site, et une seconde sépare deux requêtes vers le même hôte.
+vers le site, et une seconde sépare deux requêtes vers le même hôte — **ou
+davantage si le site le demande** : un `Crawl-delay` déclaré dans `robots.txt`
+était lu puis ignoré, si bien qu'un site réclamant dix secondes recevait la
+requête suivante au bout d'une.
+
+Les **redirections** se suivent une par une, et chaque étape est traitée comme
+une requête à part entière : son adresse passe par `robots.txt`, son hôte
+attend son tour. `requests` les suivait tout seul, et le contrôle portait donc
+sur l'adresse de départ et sur elle seule — un site qui redirige vers un chemin
+`Disallow:`, ou vers un autre hôte, était lu sans que rien ne s'y oppose.
 
 La même seconde vaut pour le **géocodeur** (`geocode.CALL_DELAY`). Elle y
 manquait, et c'est ce qui a valu la volée de 403 de Photon décrite plus haut :

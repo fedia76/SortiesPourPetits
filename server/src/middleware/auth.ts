@@ -123,14 +123,18 @@ export function attachUserWith(lookups: AuthLookups) {
       return;
     }
 
-    const token = req.cookies?.token;
-    if (!token) {
+    // `cookie-parser` ne type pas ce qu'il a lu : un cookie « token »
+    // fabriqué à la main peut porter n'importe quoi, un tableau compris.
+    const token: unknown = (req.cookies as Record<string, unknown> | undefined)?.token;
+    if (typeof token !== 'string') {
       next();
       return;
     }
 
     let payload: AuthUser;
     try {
+      // `jwt.verify` rend `any`. Seul l'identifiant sert ensuite : le rôle
+      // vient de la base, et c'est tout l'objet de cette fonction.
       payload = jwt.verify(token, config.jwtSecret) as AuthUser;
     } catch {
       // Jeton invalide ou expiré : on continue en anonyme.

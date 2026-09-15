@@ -16,6 +16,7 @@
  */
 import { computed, onMounted, reactive, ref } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type { Aggregator } from '../types';
 
 const aggregators = ref<Aggregator[]>([]);
@@ -45,7 +46,7 @@ async function load() {
     configs.value = data.configs;
     blocking.value = data.blocking;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     loading.value = false;
   }
@@ -71,7 +72,7 @@ async function save() {
     reset();
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     busy.value = false;
   }
@@ -89,7 +90,7 @@ async function toggle(a: Aggregator) {
     await api.patch(`/api/scraper/aggregators/${a.id}`, { enabled: !a.enabled });
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -107,7 +108,7 @@ async function remove(a: Aggregator) {
     if (editingId.value === a.id) reset();
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 

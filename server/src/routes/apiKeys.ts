@@ -3,6 +3,7 @@ import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { generateApiKey, hasRole, requireRole } from '../middleware/auth';
 import { createApiKeySchema } from '../lib/validators';
+import { parseId } from '../lib/routeParams';
 
 export const apiKeysRouter = safeRouter();
 
@@ -62,8 +63,8 @@ apiKeysRouter.post('/', async (req, res) => {
 
 /** Révocation (immédiate et définitive) ; la ligne est conservée pour l'historique. */
 apiKeysRouter.delete('/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
+  const id = parseId(req.params.id);
+  if (id === null) {
     res.status(400).json({ error: 'Requête invalide' });
     return;
   }

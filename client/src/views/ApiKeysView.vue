@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type { Role } from '../types';
 
 interface KeyAccount {
@@ -61,7 +62,7 @@ async function create() {
     newUserId.value = '';
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     creating.value = false;
   }
@@ -84,7 +85,7 @@ async function revoke(key: ApiKey) {
     await api.delete(`/api/keys/${key.id}`);
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 

@@ -1,12 +1,25 @@
 /**
- * Géocodage — deux fournisseurs disponibles, sélection via PROVIDER ci-dessous.
- * - "ban": API Adresse (Base Adresse Nationale) — gratuite, sans clé, adresses uniquement.
+ * Géocodage du formulaire — deux fournisseurs, et le même défaut que le
+ * scraper (`sortiesbot/geocode.py`), pour que les positions saisies à la main
+ * et celles d'un import viennent de la même source.
+ *
+ * - **photon** (défaut) : Photon, sur OpenStreetMap, via komoot. Gratuit, sans
+ *   clé, et il connaît les **lieux d'intérêt** — parcs, musées, aires de jeux —
+ *   ce qui compte ici : on saisit « Théâtre de Vanves » plus souvent qu'une
+ *   adresse postale. Son instance publique est en « fair use », et se
+ *   self-héberge si le trafic le demande. https://photon.komoot.io
+ * - **ban** : l'API Adresse (Base Adresse Nationale). Adresses uniquement,
+ *   mais publique, sans quota et sans conditions.
  *   https://adresse.data.gouv.fr/api-doc/adresse
- * - "photon": Photon (OpenStreetMap, via komoot) — gratuit, sans clé, inclut aussi les
- *   lieux d'intérêt (parcs, musées, aires de jeux...). Instance publique en "fair use",
- *   à self-host si le trafic devient important. https://photon.komoot.io
+ *
+ * Le choix se fait au **build**, par `VITE_GEOCODER=ban`. Il était écrit en dur
+ * ici, alors que le README l'annonçait comme sélectionnable : en changer
+ * demandait d'éditer ce fichier et de redéployer, ce qui n'est pas ce que « on
+ * peut choisir » veut dire pour la personne qui lit le README un soir
+ * d'incident.
  */
-const PROVIDER: 'ban' | 'photon' = 'photon';
+const PROVIDER: 'ban' | 'photon' =
+  import.meta.env.VITE_GEOCODER === 'ban' ? 'ban' : 'photon';
 
 export interface GeoSuggestion {
   label: string;

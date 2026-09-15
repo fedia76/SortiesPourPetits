@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 
 import pytest
+from test_pipeline import FakeApi, FakeFetcher, FakeProvider, config, sortie
 
 from sortiesbot.config import Config
 from sortiesbot.journal import RunLog
@@ -30,8 +31,6 @@ from sortiesbot.providers.serper_client import Reply
 from sortiesbot.stages.attribution import Attribution
 from sortiesbot.stages.base import PageContent, RunContext
 from sortiesbot.store import SeenStore
-
-from test_pipeline import FakeApi, FakeFetcher, FakeProvider, config, sortie
 
 # ── Un agrégateur, et le musée derrière lui ────────────────────────────────
 

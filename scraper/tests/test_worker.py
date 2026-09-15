@@ -10,14 +10,6 @@ import io
 from datetime import date
 
 import pytest
-
-from sortiesbot import worker
-from sortiesbot.api import ApiError
-from sortiesbot.config import Config, ConfigError, config_from_api
-from sortiesbot.journal import RunLog
-from sortiesbot.models import Summary, Usage
-from sortiesbot.store import RemoteStore, normalize_url
-
 from test_pipeline import (  # fakes partagés
     AGENDA_HTML,
     AGENDA_URL,
@@ -29,7 +21,13 @@ from test_pipeline import (  # fakes partagés
     geocodeur_simule,  # noqa: F401 — fixture autouse réutilisée telle quelle
     sortie,
 )
-from sortiesbot.models import FoundPage
+
+from sortiesbot import worker
+from sortiesbot.api import ApiError
+from sortiesbot.config import Config, ConfigError, config_from_api
+from sortiesbot.journal import RunLog
+from sortiesbot.models import FoundPage, Summary, Usage
+from sortiesbot.store import RemoteStore, normalize_url
 
 API_CONFIG = {
     "id": 4,
@@ -261,7 +259,7 @@ def test_une_execution_est_jouee_puis_close(tmp_path, monkeypatch, geocodeur_sim
     assert counters["submitted"] == 1
     assert counters["candidates"] == 1
     # La page soumise est désormais en mémoire, avec l'identifiant de la sortie.
-    memorisee = [i for i in api.items if i["decision"] == "submitted"][0]
+    memorisee = next(i for i in api.items if i["decision"] == "submitted")
     assert memorisee["key"] == normalize_url(EVENT_URL)
     assert memorisee["eventId"] == 101
 

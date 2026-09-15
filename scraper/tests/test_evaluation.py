@@ -21,17 +21,14 @@ from dataclasses import replace
 
 import pytest
 
+from sortiesbot.ancrage import audit_fiche, fiche_payload, resolved_days
 from sortiesbot.evaluation import (
-    audit_fiche,
     audit_links,
-    extract_page,
-    fiche_payload,
     capture_pages,
+    extract_page,
     harvest_from_html,
-    resolved_days,
 )
-from sortiesbot.harvest import links_of
-from sortiesbot.harvest import FetchError
+from sortiesbot.harvest import FetchError, links_of
 from sortiesbot.models import ExtractedEvent
 
 AGENDA = "https://agenda.exemple.fr/sorties"
@@ -480,7 +477,7 @@ def test_le_releve_est_plafonne():
 # ═════════════════════════════════════════════ étage 5 — la lecture d'une page
 
 
-from sortiesbot.evaluation import read_page  # noqa: E402
+from sortiesbot.evaluation import read_page
 
 FICHE = "https://theatre.exemple.fr/saison/le-petit-prince"
 

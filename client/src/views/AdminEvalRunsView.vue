@@ -15,6 +15,7 @@
  */
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import EvalRunDetail from '../components/EvalRunDetail.vue';
 import type {
   EvalRecherche, EvalRun, EvalScore, EvalStage } from '../types';
@@ -65,7 +66,7 @@ async function load() {
       prefixes.value = d.recherche.postalPrefixes.join(', ');
     }
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     loading.value = false;
   }
@@ -100,7 +101,7 @@ async function launch() {
     newLabel.value = '';
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     busy.value = false;
   }
@@ -119,7 +120,7 @@ async function forget(run: EvalRun) {
     await api.delete(`/api/eval/runs/${run.id}`);
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -204,7 +205,7 @@ function detail(run: EvalRun): string {
  */
 function rechercheDe(run: EvalRun): { cle: string; texte: string } {
   if (run.stage !== 'SELECT') return { cle: '', texte: '' };
-  let r: Partial<EvalRecherche> = {};
+  let r: Partial<EvalRecherche>;
   try {
     r = JSON.parse(run.settings || '{}') as Partial<EvalRecherche>;
   } catch {

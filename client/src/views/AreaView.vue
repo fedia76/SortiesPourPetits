@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import EventCard from '../components/EventCard.vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import { setPageSeo } from '../lib/seo';
 import type { Area, EventItem } from '../types';
 
@@ -72,7 +73,7 @@ async function load() {
     events.value = data.events;
     total.value = data.total;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur de chargement';
+    error.value = messageDe(e, 'Chargement impossible');
   } finally {
     loading.value = false;
   }

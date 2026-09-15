@@ -24,7 +24,6 @@ from ..harvest import FetchError, Link, links_of
 from . import Stage
 from .base import Brick
 
-
 #: Au-delà, la moisson suffit : les liens partent au tri, qui est facturé, et
 #: en ajouter revient à gonfler cet appel. C'est le même plafond que celui
 #: qu'une page seule atteint déjà dans `links_of`.

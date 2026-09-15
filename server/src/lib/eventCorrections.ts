@@ -1,3 +1,5 @@
+import { texteDe } from './texte';
+
 /**
  * Ce qu'un modérateur a changé sur une fiche importée, champ par champ.
  *
@@ -54,7 +56,7 @@ const MAX = 500;
 function show(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (Array.isArray(value)) return value.length ? value.join(' ').slice(0, MAX) : null;
-  const text = String(value).trim();
+  const text = texteDe(value).trim();
   return text ? text.slice(0, MAX) : null;
 }
 

@@ -43,15 +43,15 @@ def test_journal_jsonl(tmp_path: Path):
         log.event("query", query="spectacle enfant Paris")
         log.error("extraction", "page illisible", url="https://exemple.fr/a")
 
-    lignes = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
-    assert [l["kind"] for l in lignes] == ["query", "error"]
+    lignes = [json.loads(ligne) for ligne in path.read_text(encoding="utf-8").splitlines()]
+    assert [ligne["kind"] for ligne in lignes] == ["query", "error"]
     assert lignes[0]["query"] == "spectacle enfant Paris"
     # `op` nomme l'opération technique ; `stage` est réservé à l'étage du
     # pipeline, et vaut None hors de tout `log.stage(...)`.
     assert lignes[1]["op"] == "extraction"
     assert lignes[1]["level"] == "error"
     assert lignes[0]["stage"] is None
-    assert [l["seq"] for l in lignes] == [1, 2]
+    assert [ligne["seq"] for ligne in lignes] == [1, 2]
     assert "at" in lignes[0]
 
 
@@ -74,9 +74,9 @@ def test_le_journal_marque_l_etage_courant(tmp_path: Path):
             st.produced("1 lien retenu sur 12", kept=1, among=12)
         log.event("run_end")
 
-    lignes = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
-    assert [l["kind"] for l in lignes] == ["stage_start", "link", "stage_end", "run_end"]
-    assert [l["stage"] for l in lignes] == ["select", "select", "select", None]
+    lignes = [json.loads(ligne) for ligne in path.read_text(encoding="utf-8").splitlines()]
+    assert [ligne["kind"] for ligne in lignes] == ["stage_start", "link", "stage_end", "run_end"]
+    assert [ligne["stage"] for ligne in lignes] == ["select", "select", "select", None]
     fin = lignes[2]
     assert fin["produced"] == "1 lien retenu sur 12"
     assert fin["kept"] == 1 and fin["among"] == 12

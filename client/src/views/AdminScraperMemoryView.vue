@@ -10,6 +10,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type { ScrapedUrlEntry, ScraperMemory } from '../types';
 import { DECISION_LABELS, STATUS_LABELS } from '../types';
 
@@ -35,7 +36,7 @@ async function load() {
   try {
     memory.value = await api.get<ScraperMemory>(`/api/scraper/memory?${params}`);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     loading.value = false;
   }
@@ -103,7 +104,7 @@ async function purge(scope: 'all' | 'decision') {
     page.value = 1;
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     purging.value = false;
   }

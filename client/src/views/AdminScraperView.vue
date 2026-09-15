@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { api } from '../lib/api';
+import { messageDe } from '../lib/erreurs';
 import type { ScraperConfig, ScraperMode, ScraperRun } from '../types';
-import { RUN_STATUS_LABELS, runLabel } from '../types';
+import { RUN_STATUS_LABELS } from '../types';
+import { runLabel } from '../lib/sorties';
+import { usePolling } from '../composables/usePolling';
 
 const configs = ref<ScraperConfig[]>([]);
 const runs = ref<ScraperRun[]>([]);
@@ -75,7 +78,6 @@ function onModeChange() {
   else if (!cibleUnSite.value && form.maxPageChars === 30000) form.maxPageChars = 8000;
 }
 
-let timer: ReturnType<typeof setInterval> | undefined;
 /** Rafraîchissements ratés d'affilée : on n'alerte qu'à partir du second. */
 let misses = 0;
 
@@ -91,7 +93,7 @@ async function load() {
     offline.value = '';
   } catch (e) {
     misses += 1;
-    if (misses >= 2) offline.value = e instanceof Error ? e.message : 'Erreur';
+    if (misses >= 2) offline.value = messageDe(e);
   } finally {
     loading.value = false;
   }
@@ -146,7 +148,7 @@ async function save() {
     editingId.value = null;
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   } finally {
     saving.value = false;
   }
@@ -158,7 +160,7 @@ async function toggle(config: ScraperConfig) {
     await api.patch(`/api/scraper/configs/${config.id}`, { enabled: !config.enabled });
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -169,7 +171,7 @@ async function remove(config: ScraperConfig) {
     await api.delete(`/api/scraper/configs/${config.id}`);
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -183,7 +185,7 @@ async function launch(config: ScraperConfig, submit: boolean) {
     await api.post(`/api/scraper/configs/${config.id}/run`, { submit });
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -193,7 +195,7 @@ async function cancelRun(run: ScraperRun) {
     await api.post(`/api/scraper/runs/${run.id}/cancel`);
     await load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Erreur';
+    error.value = messageDe(e);
   }
 }
 
@@ -209,13 +211,12 @@ function when(value: string | null) {
   return value ? new Date(value).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 }
 
-onMounted(() => {
-  load();
-  // Une exécution passe par la file : sans rafraîchissement, la console
-  // resterait figée sur « En file » jusqu'à ce qu'on recharge la page.
-  timer = setInterval(load, 10_000);
-});
-onUnmounted(() => clearInterval(timer));
+// Une exécution passe par la file : sans rafraîchissement, la console
+// resterait figée sur « En file » jusqu'à ce qu'on recharge la page. Mais un
+// onglet en arrière-plan n'a personne à informer, et `usePolling` le sait.
+usePolling(load, 10_000);
+
+onMounted(load);
 </script>
 
 <template>

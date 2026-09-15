@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 
 import pytest
+from test_pipeline import FakeApi, FakeFetcher, FakeProvider, config, sortie
 
 from sortiesbot.journal import RunLog
 from sortiesbot.ledger import Ledger
@@ -26,8 +27,6 @@ from sortiesbot.models import FoundPage
 from sortiesbot.orchestrator import run
 from sortiesbot.providers.base import ProviderError
 from sortiesbot.store import SeenStore
-
-from test_pipeline import FakeApi, FakeFetcher, FakeProvider, config, sortie
 
 PAGES = Path(__file__).parent / "fixtures" / "pages"
 
@@ -92,7 +91,7 @@ def lance(log, url, html, verdicts=None, ledger=None, extra=None, **conf):
 def test_une_fiche_saute_le_depouillement_et_le_tri(journal):
     """Elle déclare un seul spectacle : inutile d'y chercher des liens."""
     log, events = journal
-    provider, result = lance(log, FICHE_URL, FICHE_HTML)
+    provider, _ = lance(log, FICHE_URL, FICHE_HTML)
 
     assert provider.selected == [], "aucun tri : ce n'est pas une liste"
     assert provider.extracted == [FICHE_URL], "elle part droit à la lecture"
@@ -306,8 +305,8 @@ def test_la_correction_part_au_registre(journal, tmp_path):
         run(config(), provider, store, FakeApi(), log,
             fetcher=FakeFetcher({MUETTE_URL: MUETTE_HTML}), ledger=ledger)
 
-    lignes = [json.loads(l) for l in chemin.read_text().splitlines()]
-    correction = [l for l in lignes if l["topic"] == "requalify"]
+    lignes = [json.loads(ligne) for ligne in chemin.read_text().splitlines()]
+    correction = [ligne for ligne in lignes if ligne["topic"] == "requalify"]
     assert len(correction) == 1
     assert (correction[0]["was"], correction[0]["now"]) == ("sortie", "programme")
     assert correction[0]["url"] == MUETTE_URL
