@@ -47,6 +47,15 @@ jobs:
           # `npm run` qui les vise échouait sur un fichier absent du VPS.
           rsync -az --delete server/scripts/ \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/server/scripts/"
+          # Et les sources, parce que ces scripts-là en importent : ils
+          # réutilisent les fonctions de `src/lib/` plutôt que d'en recopier
+          # une deuxième version qui dériverait. Envoyer `scripts/` sans
+          # `src/` ne corrigeait donc qu'une moitié de la panne — le fichier
+          # était bien là, et mourait sur `Cannot find module '../src/lib/…'`.
+          # Les viser dans `dist/` aurait cassé leur exécution en local, où
+          # rien n'est compilé ; c'est la source qui voyage.
+          rsync -az --delete server/src/ \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/server/src/"
           rsync -az server/package.json server/package-lock.json \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/server/"
 
