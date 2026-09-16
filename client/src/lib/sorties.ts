@@ -78,6 +78,24 @@ export function nextDate(event: Pick<EventItem, 'dates'>, today = new Date()): s
 }
 
 /** « dimanche 20 septembre » — un jour de représentation, en clair. */
+/**
+ * `musee-rodin.fr` plutôt qu'une URL de deux cents caractères.
+ *
+ * Partagée plutôt que recopiée : la fiche et la modération montrent les mêmes
+ * deux liens, et deux abréviations différentes de la même adresse feraient
+ * douter qu'il s'agit de la même page — exactement ce que ces deux champs
+ * existent pour lever.
+ */
+export function hostLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    // Une adresse que le navigateur ne sait pas lire est montrée telle quelle :
+    // c'est encore le plus utile pour qui doit la corriger.
+    return url;
+  }
+}
+
 export function dayLabel(day: string): string {
   return new Date(`${day}T12:00:00`).toLocaleDateString('fr-FR', {
     weekday: 'long',

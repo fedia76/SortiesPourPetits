@@ -14,12 +14,19 @@ const router = useRouter();
 const editId = computed(() => (route.name === 'edit-event' ? Number(route.params.id) : null));
 
 /**
- * La page où la recherche automatique avait repéré la sortie, quand ce n'est
- * pas celle qu'on propose. Affichée, jamais modifiable : c'est un fait sur la
- * façon dont la sortie est arrivée ici, pas un champ de la fiche. Corriger le
- * lien source au-dessus ne réécrit pas d'où il vient.
+ * La page que la recherche automatique a **lue**, et d'où la sortie vient.
+ *
+ * Affichée, jamais modifiable : c'est un fait sur la façon dont la sortie est
+ * arrivée ici, pas un champ de la fiche. Corriger le site officiel ne réécrit
+ * pas d'où il vient — le serveur y fait descendre l'ancien lien plutôt que de
+ * le perdre.
+ *
+ * Elle vaut `foundOnUrl` quand l'attribution a trouvé mieux, et le `sourceUrl`
+ * **du chargement** sinon : tant que rien de mieux n'a été trouvé, les deux
+ * champs portent la même adresse, et c'est précisément ce que le modérateur
+ * doit voir avant de la remplacer.
  */
-const foundOn = ref('');
+const pageLue = ref('');
 
 const form = reactive({
   title: '',
@@ -184,7 +191,7 @@ onMounted(async () => {
   form.title = event.title;
   form.description = event.description;
   form.sourceUrl = event.sourceUrl ?? '';
-  foundOn.value = event.foundOnUrl ?? '';
+  pageLue.value = event.fromScraper ? event.foundOnUrl || event.sourceUrl || '' : '';
   form.isFree = event.isFree;
   // Tarif indéterminé (import) : on repart vide pour forcer la saisie.
   form.price = hasPrice(event) ? event.price ?? '' : '';
@@ -375,8 +382,36 @@ onMounted(async () => {
         </p>
       </div>
 
+      <!--
+        Deux liens, deux faits, et ils tenaient dans un seul champ : la page où
+        la sortie a été trouvée, et le site de l'organisateur. Quand
+        l'attribution échoue — le cas courant — les deux valent la même adresse,
+        et le modérateur qui collait le site officiel par-dessus effaçait sans
+        le voir la seule trace de l'agenda d'où la sortie venait.
+
+        Ils sont donc montrés séparément et **en permanence**, même identiques.
+        Le premier ne se modifie pas : c'est ce qui s'est passé, pas ce qu'on
+        préfère. Le serveur l'y fait descendre tout seul quand le second change.
+      -->
+      <div v-if="pageLue" class="field">
+        <label for="found-on">Trouvée sur — la page que la recherche a lue</label>
+        <input id="found-on" :value="pageLue" type="url" readonly />
+        <p class="hint">
+          <a :href="pageLue" target="_blank" rel="noopener">Ouvrir cette page ↗</a> —
+          <template v-if="pageLue === form.sourceUrl">
+            c'est aussi le lien proposé ci-dessous : la recherche n'a pas su trouver
+            mieux. Si vous remplacez celui du dessous par le site de l'organisateur,
+            cette adresse-ci restera, comme provenance.
+          </template>
+          <template v-else>
+            l'agenda ou l'agrégateur qui a fait connaître la sortie. Ce champ ne se
+            modifie pas : c'est d'où elle vient, pas ce qu'on affiche.
+          </template>
+        </p>
+      </div>
+
       <div class="field">
-        <label for="source-url">Lien vers l'événement (source)</label>
+        <label for="source-url">Site officiel de la sortie — le lien affiché</label>
         <input
           id="source-url"
           v-model="form.sourceUrl"
@@ -386,15 +421,8 @@ onMounted(async () => {
         <p class="hint">
           De préférence la page de l'organisateur — le musée, le théâtre, la
           mairie — plutôt qu'un agenda qui la republie : c'est là que les
-          horaires et les annulations sont à jour.
-        </p>
-        <!-- Provenance d'une proposition automatique. Elle explique au
-             modérateur pourquoi le lien ci-dessus n'est pas celui de la page
-             lue, et lui donne de quoi vérifier en un clic. -->
-        <p v-if="foundOn && foundOn !== form.sourceUrl" class="hint">
-          Repérée sur
-          <a :href="foundOn" target="_blank" rel="noopener">{{ foundOn }}</a> par la
-          recherche automatique.
+          horaires et les annulations sont à jour. C'est le seul des deux que la
+          fiche montre aux parents.
         </p>
       </div>
 

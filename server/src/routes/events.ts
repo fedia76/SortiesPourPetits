@@ -8,6 +8,7 @@ import { eventInputSchema, searchSchema } from '../lib/validators';
 import { diffEvent, type ComparableEvent } from '../lib/eventCorrections';
 import { dateFilter } from '../lib/dateWindow';
 import { areaFilter } from '../lib/areas';
+import { liensApresCorrection } from '../lib/eventSource';
 import { rankEvents } from '../lib/relevance';
 import { parseId } from '../lib/routeParams';
 import { distanceByVenueId, venuesWithinQuery, type VenueDistance } from '../lib/venueDistance';
@@ -20,6 +21,7 @@ type EventWithRelations = Prisma.EventGetPayload<{
     category: true;
     author: { select: { id: true; displayName: true } };
     dates: { select: { day: true } };
+    scraperItems: { select: { id: true } };
   };
 }>;
 
@@ -28,6 +30,12 @@ const EVENT_INCLUDE = {
   category: true,
   author: { select: { id: true, displayName: true } },
   dates: { select: { day: true }, orderBy: { day: 'asc' } },
+  // Un seul item suffit à savoir que la fiche vient d'une recherche : c'est ce
+  // qui distingue « la page où on l'a trouvée » d'« un lien qu'un visiteur a
+  // tapé ». Sans lui, le formulaire de modification ne pouvait pas nommer les
+  // deux liens sans risquer d'appeler « trouvée sur » ce que personne n'avait
+  // trouvé nulle part.
+  scraperItems: { select: { id: true }, take: 1 },
 } as const satisfies Prisma.EventInclude;
 
 /** `2026-09-20`, sans décalage de fuseau : ces colonnes sont des DATE. */
@@ -37,8 +45,15 @@ function isoDay(value: Date): string {
 
 /** Convertit les Decimal Prisma en nombres pour le JSON. */
 function serializeEvent(event: EventWithRelations, distanceKm?: number) {
+  const { scraperItems, ...rest } = event;
   return {
-    ...event,
+    ...rest,
+    /**
+     * La fiche vient d'une recherche automatique. Ce qui en dépend : `foundOnUrl`
+     * et `sourceUrl` sont alors deux **faits** — la page lue et le meilleur lien
+     * connu —, là où une proposition de visiteur n'a qu'une adresse saisie.
+     */
+    fromScraper: scraperItems.length > 0,
     price: event.price === null ? null : Number(event.price),
     dateStart: event.dateStart ? isoDay(event.dateStart) : null,
     dateEnd: event.dateEnd ? isoDay(event.dateEnd) : null,
@@ -332,18 +347,12 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
     photoUrl = await savePhoto(req.file.buffer);
   }
 
-  // Changer le lien reprend la main sur ce que le scraper avait déduit : le
-  // signal ne décrit plus rien de vrai, et le garder ferait passer une saisie
-  // pour une trouvaille vérifiée. Le laisser tel quel si l'URL n'a pas bougé,
-  // en revanche, préserve ce qu'on savait d'elle — on peut corriger un titre
-  // sans effacer la provenance du lien.
-  //
-  // `foundOnUrl` ne bouge jamais ici : d'où la sortie *est arrivée* est un
-  // fait, pas une préférence, et rien de ce qu'on corrige sur la fiche ne le
-  // réécrit.
-  const sourceUrl = input.sourceUrl ?? null;
-  const sourceUrlSignal =
-    sourceUrl === existing.sourceUrl ? existing.sourceUrlSignal : sourceUrl && 'manuel';
+  // Les deux liens de la fiche et ce qu'une correction leur fait : le calcul
+  // vit dans `lib/eventSource.ts`, avec ses trois garde-fous et ses tests.
+  const { sourceUrl, foundOnUrl, sourceUrlSignal } = liensApresCorrection(
+    { ...existing, fromScraper: existing.scraperItems.length > 0 },
+    input.sourceUrl ?? null,
+  );
 
   const event = await prisma.event.update({
     where: { id },
@@ -351,6 +360,7 @@ eventsRouter.put('/:id', requireAuth, photoUpload.single('photo'), async (req, r
       title: input.title,
       description: input.description,
       sourceUrl,
+      foundOnUrl,
       sourceUrlSignal,
       isFree: input.isFree,
       price: input.isFree ? null : input.price,
