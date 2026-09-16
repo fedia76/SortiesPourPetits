@@ -334,6 +334,9 @@ export const scraperConfigSchema = z.object({
   // Le seul appel payant de l'attribution, et donc le seul qu'on puisse
   // couper. Les signaux gratuits, eux, tournent toujours.
   sourceSearch: z.boolean().optional(),
+  // Verse les agendas dépouillés au corpus du banc, à la clôture. Ne coûte
+  // qu'une capture par agenda nouveau, et seulement la première fois.
+  freezeAgendas: z.boolean().optional(),
   provider: z.enum(SCRAPER_PROVIDERS).optional(),
   // Seul modèle qu'on puisse vider : sans lui, la reconnaissance s'en tient
   // aux signaux gratuits et laisse la page partir en agenda.

@@ -25,7 +25,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { TREE_MAX_ROWS } from '../src/lib/scraperTree';
-import { groupProvenance, provenanceOf } from '../src/lib/scraperProvenance';
+import { filiationOf, groupProvenance } from '../src/lib/scraperProvenance';
 
 const prisma = new PrismaClient();
 
@@ -91,7 +91,10 @@ async function main(): Promise<void> {
     // plutôt que de laisser croire le run complet.
     if (rows.length >= TREE_MAX_ROWS) bilan.tronques.push(run.id);
 
-    const groupes = groupProvenance(provenanceOf(rows));
+    // Seule la filiation se rattrape ici : enrôler après coup les agendas
+    // d'un vieux run gèlerait la page d'aujourd'hui, c'est-à-dire justement
+    // ce que l'enrôlement à la clôture existe pour éviter.
+    const groupes = groupProvenance(filiationOf(rows).provenances);
     if (groupes.length === 0) {
       bilan.sansFiliation += 1;
       continue;

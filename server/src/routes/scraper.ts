@@ -4,7 +4,7 @@ import { prisma } from '../db';
 import { deletePhoto } from '../lib/upload';
 import { ATTRIBUTE_STAGE, buildAttribution } from '../lib/scraperAttribution';
 import { TREE_MAX_ROWS, buildTree } from '../lib/scraperTree';
-import { groupProvenance, provenanceOf } from '../lib/scraperProvenance';
+import { filiationOf, groupProvenance } from '../lib/scraperProvenance';
 import { describeRejections, wilsonLowerBound } from '../lib/rejectionCodes';
 import { describeStage } from '../lib/stages';
 import { parseId } from '../lib/routeParams';
@@ -1573,9 +1573,62 @@ scraperRouter.delete('/runs/:id/data', async (req, res) => {
 
 /** Clôt une exécution avec ses compteurs. */
 /**
+ * Enrôle au corpus du banc les agendas qu'un run vient de dépouiller.
+ *
+ * ## Pourquoi à la clôture, et pas quand on y pense
+ *
+ * Le banc mesure l'étage 3 sur des pages **gelées**. Elles l'étaient le jour
+ * où un humain pensait à ajouter l'agenda — des mois après le run qui l'avait
+ * rendu intéressant, sur une page d'où les sorties approuvées entre-temps
+ * avaient disparu. D'où des agendas à « 0 / 63 liens étiquetés » que rien ne
+ * pouvait amorcer : la reprise depuis la modération ne rapproche que les
+ * adresses **encore présentes** sur la page gelée.
+ *
+ * Geler le jour du run supprime cet écart. C'est le seul moment où la page
+ * porte à la fois les liens que le pipeline a suivis et ceux que la modération
+ * va trancher dans les jours qui viennent.
+ *
+ * ## Ce que ça n'est pas
+ *
+ * Ça ne pose **aucune étiquette** : la règle du corpus tient, rien de ce
+ * qu'une brique produit n'y entre. Ça choisit une entrée — exactement ce que
+ * le panier « agendas déjà dépouillés » fait déjà, à la main et trop tard.
+ *
+ * Tous les agendas du run, pas seulement ceux qui ont donné une sortie : un
+ * corpus fait des seules réussites de la brique mesurerait ses réussites. Le
+ * volume est borné par `maxAgendas`, et par l'unicité de l'URL — les mêmes
+ * agendas reviennent d'un run à l'autre et n'entrent qu'une fois.
+ */
+async function enrolerAgendas(runId: number, agendas: string[]): Promise<void> {
+  if (agendas.length === 0) return;
+  const run = await prisma.scraperRun.findUnique({
+    where: { id: runId },
+    select: { config: { select: { freezeAgendas: true } } },
+  });
+  // Une recherche de source n'a pas de configuration, donc pas de réglage :
+  // elle ne dépouille aucun agenda de toute façon.
+  if (!run?.config?.freezeAgendas) return;
+  await prisma.evalAgenda.createMany({
+    data: agendas.map((url) => ({
+      url,
+      // Une seule page : on mesure `links_of` sur une page donnée, pas la
+      // politique de pagination. C'est le défaut de la saisie à la main.
+      pages: 1,
+      note: `Enrôlé à la clôture de l'exécution #${runId}.`,
+      // Pas d'auteur : personne n'a regardé. Le dire en clair vaut mieux que
+      // d'attribuer l'agenda au premier administrateur venu.
+      createdById: null,
+    })),
+    // Un agenda déjà au corpus garde ses pages, ses étiquettes et sa note :
+    // le reverser en écraserait la date de capture pour rien.
+    skipDuplicates: true,
+  });
+}
+
+/**
  * Recopie sur les items d'un run l'agenda et la requête dont chaque page est
  * issue, à partir du journal — voir `lib/scraperProvenance.ts` pour le
- * pourquoi.
+ * pourquoi —, puis verse ces agendas au corpus du banc.
  *
  * Elle ne peut jamais faire échouer la clôture : une filiation manquante rend
  * une ligne muette sur son origine, une clôture manquante fige la
@@ -1590,12 +1643,16 @@ async function freezeProvenance(runId: number): Promise<void> {
       take: TREE_MAX_ROWS,
     });
     if (rows.length === 0) return;
-    for (const group of groupProvenance(provenanceOf(rows))) {
+    const { provenances, agendas } = filiationOf(rows);
+    for (const group of groupProvenance(provenances)) {
       await prisma.scraperRunItem.updateMany({
         where: { runId, url: { in: group.urls } },
         data: { agendaUrl: group.agendaUrl, query: group.query },
       });
     }
+    // Après la filiation : celle-ci est la mesure, l'enrôlement n'est qu'un
+    // confort. Si l'un des deux doit manquer, que ce soit le second.
+    await enrolerAgendas(runId, agendas);
   } catch {
     // Le journal a pu être purgé, ou l'arbre être illisible : la mesure perd
     // une exécution, le run n'en souffre pas.
