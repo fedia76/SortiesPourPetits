@@ -251,6 +251,12 @@ def test_agenda_dont_aucun_lien_nest_retenu_est_relu_comme_une_sortie(log):
 
 
 def test_url_deja_vue_nest_pas_relue(log):
+    """Un lien connu est écarté **avant le tri**, et non plus à la lecture.
+
+    Le filtre est passé de l'étage 5 à l'étage 3 : la page n'est toujours ni
+    téléchargée ni extraite, mais elle ne coûte plus non plus l'appel au tri,
+    où elle prenait de surcroît la place d'un lien neuf.
+    """
     provider, fetcher = standard()
     with SeenStore() as store:
         store.remember(EVENT_URL, "submitted")
@@ -259,7 +265,11 @@ def test_url_deja_vue_nest_pas_relue(log):
     # Ni téléchargement de la page, ni appel au modèle : le filtre est en amont.
     assert EVENT_URL not in fetcher.asked
     assert provider.extracted == []
-    assert result.summary.skipped_seen == 1
+    assert provider.selected == []
+    # Compté comme un lien épargné au tri, pas comme une page candidate
+    # écartée : ce n'en a jamais été une.
+    assert result.summary.skipped_known_links == 1
+    assert result.summary.skipped_seen == 0
 
 
 def test_page_de_sortie_inaccessible(log):
@@ -682,3 +692,65 @@ def test_une_page_sans_image_se_soumet_quand_meme(log):
 
     assert result.summary.submitted == 1
     assert result.events[0]["photo_url"] == ""
+
+
+# ═══════════════════════════════ la mémoire, consultée avant de dépenser
+#
+# Le filtre est passé du seul étage 5 aux étages 2 et 3. Ces trois tests-là ne
+# vérifient pas une optimisation : ils tiennent la frontière entre « déjà jugée
+# comme sortie » et « déjà vue », dont la confusion ferait disparaître des
+# agendas entiers sans qu'aucun compteur ne bouge.
+
+
+def test_un_resultat_de_recherche_deja_soumis_nest_pas_rouvert(log):
+    """Écarté avant l'étage 2 : ni téléchargement, ni appel au modèle."""
+    provider, fetcher = standard()
+    provider.agendas = [FoundPage(url=EVENT_URL, title="Le Chaperon")]
+    with SeenStore() as store:
+        store.remember(EVENT_URL, "submitted")
+        result = run(config(), provider, store, FakeApi(), log, submit=True, fetcher=fetcher)
+
+    assert fetcher.asked == []
+    assert provider.classified == []
+    assert result.summary.skipped_seen == 1
+
+
+def test_un_agenda_range_hors_sujet_garde_sa_seconde_chance(log):
+    """La régression que ce filtre pourrait introduire, et qu'il n'introduit pas.
+
+    Un agenda dont le dépouillement a échoué est relu pour lui-même, jugé « pas
+    une sortie », et mémorisé en `irrelevant`. C'est un agenda rangé sous le
+    verdict d'une sortie : l'écarter à la reconnaissance le tuerait pour
+    toujours — et rien ne le dirait, puisqu'il ne manquerait pas une sortie
+    mais un agenda entier.
+
+    Il doit donc être rouvert, reconnu, et dépouillé comme si de rien n'était.
+    """
+    provider, fetcher = standard()
+    with SeenStore() as store:
+        store.remember(AGENDA_URL, "irrelevant")
+        result = run(config(), provider, store, FakeApi(), log, submit=True, fetcher=fetcher)
+
+    assert AGENDA_URL in fetcher.asked
+    assert provider.selected == [AGENDA_URL]
+    assert result.summary.submitted == 1
+
+
+def test_un_agenda_sans_lien_neuf_nest_pas_relu_comme_une_sortie(log):
+    """Le repli `_itself` ne doit pas se déclencher sur un agenda qui a réussi.
+
+    Sans garde-fou, filtrer avant le tri conduit le tri à ne rien retenir — il
+    n'a rien reçu —, ce que la chaîne interprète comme « ce n'était pas un
+    agenda » et qui la fait lire la page comme une sortie. L'agenda serait payé
+    et rangé « hors sujet » pour avoir parfaitement fait son travail.
+    """
+    provider, fetcher = standard()
+    with SeenStore() as store:
+        store.remember(EVENT_URL, "submitted")
+        result = run(config(), provider, store, FakeApi(), log, submit=True, fetcher=fetcher)
+
+    # L'agenda a bien été dépouillé, mais ni trié ni extrait.
+    assert provider.selected == []
+    assert provider.extracted == []
+    assert result.summary.skipped_irrelevant == 0
+    assert result.summary.skipped_known_links == 1

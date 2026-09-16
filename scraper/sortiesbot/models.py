@@ -242,6 +242,16 @@ class Summary:
     next_pages: int = 0
     retained: int = 0
     skipped_seen: int = 0
+    #: Liens d'agenda écartés **avant le tri** parce que la mémoire les
+    #: connaissait déjà. Compté à part de `skipped_seen`, et absent du total
+    #: `skipped` de la console, parce que l'unité n'est pas la même : ce sont
+    #: des liens, pas des pages candidates. Les additionner donnerait un
+    #: nombre plus grand que celui des candidates, ce qui ne veut rien dire.
+    #:
+    #: C'est en revanche la mesure de ce que la mémoire fait économiser : ces
+    #: liens-là partaient au tri, qui est facturé, et y prenaient la place de
+    #: liens neufs.
+    skipped_known_links: int = 0
     skipped_blocked: int = 0
     skipped_irrelevant: int = 0
     #: Sorties listées par deux agendas différents.
@@ -275,6 +285,7 @@ class Summary:
             "agendas": self.agendas,
             "retained": self.retained,
             "skipped_seen": self.skipped_seen,
+            "skipped_known_links": self.skipped_known_links,
             "skipped_blocked": self.skipped_blocked,
             "skipped_irrelevant": self.skipped_irrelevant,
             "duplicates": self.duplicates,

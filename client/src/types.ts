@@ -77,6 +77,13 @@ export interface EventItem {
   foundOnUrl?: string | null;
   /** Ce qui a désigné `sourceUrl` — voir `SOURCE_SIGNAL_LABELS`. */
   sourceUrlSignal?: string | null;
+  /**
+   * La fiche vient d'une recherche automatique. Ce qui en dépend : `sourceUrl`
+   * et `foundOnUrl` sont alors deux **faits** — le meilleur lien connu et la
+   * page réellement lue —, là où une proposition de visiteur n'a qu'une
+   * adresse saisie, qui n'a été « trouvée » nulle part.
+   */
+  fromScraper?: boolean;
   isFree: boolean;
   price: number | null;
   photoUrl: string | null;

@@ -2,8 +2,24 @@
 
 Un run retombe forcément sur les pages des runs précédents : sans cette
 mémoire, on paierait la relecture de chaque page à chaque passage et la file
-de modération se remplirait de doublons. Le filtre est appliqué AVANT
-l'extraction, donc avant de dépenser le moindre jeton sur la page.
+de modération se remplirait de doublons.
+
+Elle est consultée à trois endroits, et chacun répond à une question
+différente :
+
+* **étage 2**, sur ce que la recherche web remonte — `seen_as_event`, la plus
+  étroite des trois : seule une page déjà jugée *en tant que sortie* est
+  écartée, et c'est ce qui évite de condamner un agenda que le dépouillement
+  avait raté (voir `DECISIONS_SORTIE`) ;
+* **entre les étages 3 et 4**, sur les liens d'un agenda — `seen` : ils
+  étaient de toute façon écartés à la lecture, mais après être passés par le
+  tri, qui se paie et qui ne rend qu'un nombre borné de liens. Les connus y
+  prenaient la place des neufs ;
+* **étage 5 puis 8**, à la lecture et à la publication — `seen` encore, le
+  dernier filet, et le seul qui sache raisonner sur une sortie de programme.
+
+Le filtre reste donc appliqué AVANT l'extraction, et depuis cette version
+avant le tri, donc avant de dépenser le moindre jeton sur la page.
 
 Deux implémentations, une seule interface (`Memory`) :
 
@@ -73,6 +89,25 @@ def normalize_url(url: str) -> str:
 #: Longueur maximale d'une clé : la colonne du site est un VARCHAR(500).
 _KEY_MAX = 500
 
+#: Les décisions qui prouvent que la page a été jugée **en tant que sortie**.
+#:
+#: La mémoire répond à une question précise — « a-t-on déjà jugé cette page en
+#: tant que sortie ? » — et pas à celle qu'on serait tenté de lui poser : « cette
+#: page vaut-elle d'être ouverte ? ». Les confondre a une conséquence exacte.
+#:
+#: Un agenda dont le dépouillement a échoué — aucun lien extrait, ou tri vide —
+#: est relu *pour lui-même* (`Orchestrator._itself`), passe à l'extraction, et
+#: finit mémorisé en `irrelevant`. C'est un agenda, rangé sous le verdict d'une
+#: sortie. L'écarter à la reconnaissance sur ce seul motif le tuerait pour
+#: toujours, sans qu'une ligne de journal ne le dise : il ne manquerait pas une
+#: sortie, il manquerait un agenda entier.
+#:
+#: D'où cette liste, et d'où l'absence remarquable d'`irrelevant`. Les quatre
+#: qui y figurent supposent toutes qu'une fiche a été **extraite** de la page :
+#: elle a donc bien été lue comme une sortie, et le redire coûterait sans rien
+#: apprendre.
+DECISIONS_SORTIE = frozenset({"submitted", "out_of_area", "out_of_period", "invalid"})
+
 
 def event_key(page_url: str, title: str) -> str:
     """Clé d'une sortie relevée sur une page qui en porte plusieurs.
@@ -100,6 +135,14 @@ class Memory(Protocol):
         l'unité pertinente — une sortie parmi les vingt d'un programme.
         """
 
+    def seen_as_event(self, url: str) -> bool:
+        """A-t-elle déjà été jugée **en tant que sortie** ?
+
+        Plus étroit que `seen`, et c'est tout l'intérêt : ce qui a été lu par
+        défaut, faute d'en avoir tiré des liens, ne compte pas. Voir
+        `DECISIONS_SORTIE`.
+        """
+
     def report(
         self,
         url: str,
@@ -115,6 +158,15 @@ class Memory(Protocol):
 
     def flush(self) -> None:
         """Écrit ce qui reste en attente."""
+
+
+def _jugee_comme_sortie(decision: str | None, event_id: int | None) -> bool:
+    """La règle, écrite une fois pour les deux mémoires.
+
+    `event_id` seul suffit : une page devenue une sortie du site a été jugée,
+    quelle que soit l'étiquette sous laquelle la décision a été rangée depuis.
+    """
+    return event_id is not None or (decision or "") in DECISIONS_SORTIE
 
 
 class SeenStore:
@@ -148,6 +200,12 @@ class SeenStore:
             "SELECT 1 FROM seen_url WHERE url = ?", (key or normalize_url(url),)
         ).fetchone()
         return row is not None
+
+    def seen_as_event(self, url: str) -> bool:
+        row = self._db.execute(
+            "SELECT decision, event_id FROM seen_url WHERE url = ?", (normalize_url(url),)
+        ).fetchone()
+        return row is not None and _jugee_comme_sortie(row[0], row[1])
 
     def report(
         self,
@@ -238,8 +296,12 @@ class RemoteStore:
         self.api = api
         self.run_id = run_id
         self.batch = batch
-        #: Clés que le site connaît déjà, parmi celles qu'on lui a soumises.
-        self._known: set[str] = set()
+        #: Clés que le site connaît déjà, et **ce qu'il en sait** : la décision
+        #: et la sortie au bout, quand il y en a une. La décision était jetée à
+        #: la réception, ce qui interdisait de distinguer une page lue comme
+        #: sortie d'une page lue faute de mieux — donc de filtrer tôt sans
+        #: risquer d'écarter un agenda pour toujours.
+        self._known: dict[str, tuple[str, int | None]] = {}
         #: Clés déjà soumises au site : inutile de les redemander.
         self._asked: set[str] = set()
         self._pending: list[_Item] = []
@@ -268,6 +330,12 @@ class RemoteStore:
         self._ask([key])
         return key in self._known
 
+    def seen_as_event(self, url: str) -> bool:
+        key = normalize_url(url)
+        self._ask([key])
+        connue = self._known.get(key)
+        return connue is not None and _jugee_comme_sortie(*connue)
+
     def report(
         self,
         url: str,
@@ -282,8 +350,10 @@ class RemoteStore:
         key = key or normalize_url(url)
         if remember:
             # Mémorisée côté site à la prochaine vidange ; côté worker, elle
-            # compte comme vue dès maintenant.
-            self._known.add(key)
+            # compte comme vue dès maintenant — et sous la décision qu'on vient
+            # de prendre, pour que le filtre du run en cours la lise comme le
+            # prochain run la lira.
+            self._known[key] = (decision, event_id)
             self._asked.add(key)
         self._pending.append(
             _Item(

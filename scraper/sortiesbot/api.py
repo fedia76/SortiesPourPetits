@@ -253,15 +253,22 @@ class SppApi:
         `promptHash` —, faute de le savoir avant de l'avoir réclamé."""
         self._post_json(f"/api/eval/runs/{run_id}/finish", {"status": status, **counters})
 
-    def known_urls(self, urls: list[str]) -> set[str]:
-        """Parmi ces URLs, celles que le site a déjà vu analyser."""
+    def known_urls(self, urls: list[str]) -> dict[str, tuple[str, int | None]]:
+        """Parmi ces URLs, celles que le site a déjà vu analyser — et son verdict.
+
+        La route rendait déjà `decision` et `eventId` ; ils étaient jetés ici,
+        et la mémoire ne savait donc répondre qu'à « connue ou pas ». Les
+        garder ne coûte rien de plus sur le réseau et permet de distinguer une
+        page lue *comme sortie* d'une page lue faute de mieux.
+        """
         if not urls:
-            return set()
-        known: set[str] = set()
+            return {}
+        known: dict[str, tuple[str, int | None]] = {}
         # La route accepte 500 URLs par appel ; on reste large sous la limite.
         for start in range(0, len(urls), 200):
             body = self._post_json("/api/scraper/seen", {"urls": urls[start : start + 200]})
-            known.update(row["url"] for row in body.get("seen", []))
+            for row in body.get("seen", []):
+                known[row["url"]] = (str(row.get("decision") or ""), row.get("eventId"))
         return known
 
     def categories(self) -> dict[str, int]:

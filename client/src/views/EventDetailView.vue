@@ -8,7 +8,15 @@ import { setPageSeo } from '../lib/seo';
 import { useAuthStore } from '../stores/auth';
 import type { EventItem, ScraperRun } from '../types';
 import { SETTING_LABELS, SOURCE_SIGNAL_LABELS, STATUS_LABELS } from '../types';
-import { ageLabel, dayLabel, hasCoordinates, hasPrice, nextDate, priceLabel } from '../lib/sorties';
+import {
+  ageLabel,
+  dayLabel,
+  hasCoordinates,
+  hasPrice,
+  hostLabel,
+  nextDate,
+  priceLabel,
+} from '../lib/sorties';
 
 const route = useRoute();
 const router = useRouter();
@@ -45,15 +53,6 @@ const incompleteHint = computed(() => {
   ].filter(Boolean);
   return missing.length ? `Complétez d’abord ${missing.join(' et ')}.` : '';
 });
-
-/** `musee-rodin.fr` plutôt qu'une URL de deux cents caractères. */
-function hostLabel(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
-}
 
 /**
  * D'où vient la proposition, quand ce n'est pas la page qu'on affiche.

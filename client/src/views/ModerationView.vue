@@ -4,7 +4,14 @@ import { api } from '../lib/api';
 import { messageDe } from '../lib/erreurs';
 import type { EventItem, RejectionMeaning, ScraperConfig } from '../types';
 import { SETTING_LABELS, STATUS_LABELS } from '../types';
-import { dayLabel, hasCoordinates, hasPrice, priceLabel, shortAgeLabel } from '../lib/sorties';
+import {
+  dayLabel,
+  hasCoordinates,
+  hasPrice,
+  hostLabel,
+  priceLabel,
+  shortAgeLabel,
+} from '../lib/sorties';
 
 /** Résultat de la recherche de doublons pour une sortie de la file. */
 interface DuplicateCheck {
@@ -348,6 +355,32 @@ onMounted(() => {
         · proposé par {{ e.author.displayName }}
       </p>
 
+      <!--
+        Les deux liens, séparés et toujours là — y compris quand ils portent la
+        même adresse, ce qui est le cas courant quand l'attribution n'a pas
+        trouvé le site de l'organisateur. C'est cette égalité qu'il faut voir :
+        elle dit que le lien affiché est encore celui de l'agenda, et que c'est
+        là qu'il y a du travail. Les cacher quand ils se confondent, c'est ce
+        qui faisait croire qu'il n'y avait qu'un seul champ.
+      -->
+      <p v-if="e.sourceUrl || e.foundOnUrl" class="liens">
+        <template v-if="e.origin">
+          <span class="muted small">Trouvée sur</span>
+          <a :href="e.foundOnUrl || e.sourceUrl!" target="_blank" rel="noopener">
+            {{ hostLabel(e.foundOnUrl || e.sourceUrl!) }} ↗
+          </a>
+        </template>
+        <template v-if="e.sourceUrl">
+          <span class="muted small">Site officiel</span>
+          <a :href="e.sourceUrl" target="_blank" rel="noopener">
+            {{ hostLabel(e.sourceUrl) }} ↗
+          </a>
+          <span v-if="e.origin && (e.foundOnUrl || e.sourceUrl) === e.sourceUrl" class="badge">
+            à trouver — c'est encore la page lue
+          </span>
+        </template>
+      </p>
+
       <!-- Sortie importée dont l'adresse n'a pas pu être géocodée. -->
       <p v-if="!hasCoordinates(e.venue)" class="incomplete">
         📍 Lieu non géolocalisé — <strong>{{ e.venue.address || 'adresse à préciser' }}</strong
@@ -570,6 +603,16 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
+  margin: 0.4rem 0;
+}
+
+/* Les deux liens tiennent sur une ligne quand la place le permet, et passent
+   l'un sous l'autre sur un téléphone : c'est là que la modération se fait. */
+.liens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.6rem;
   margin: 0.4rem 0;
 }
 
