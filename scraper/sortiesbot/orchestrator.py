@@ -292,11 +292,19 @@ class Run:
         trouvees: list[Candidate] = []
 
         # ── ÉTAGE 1/8 · Découverte ─────────────────── 1 fois par run ──────
-        for source in self.discovery.run():
+        remontees = self.discovery.run()
+        # Une seule question à la mémoire pour tout ce que la recherche a
+        # remonté : la boucle ne fait plus que consulter la réponse.
+        self.ctx.store.preload([page.url for page in remontees])
+
+        for source in remontees:
             # Tout ce qui se journalise dans cette piste descend de cette
             # page : c'est ce qui permet à la console de répondre à « quels
             # liens venaient de quelle page ? ».
             with self.log.trail(agenda=source.url):
+                if self._deja_jugee(source.url):
+                    continue
+
                 # ── ÉTAGE 2/8 · Reconnaissance ──── 1 fois par URL ─────────
                 reconnue = self.identification.run(source)
                 if reconnue is None:
@@ -321,8 +329,16 @@ class Run:
                     trouvees.append(self._itself(source.url))
                     continue
 
+                neufs = self._neufs(source.url, links)
+                if not neufs:
+                    # Tout était déjà connu. L'agenda a parfaitement fonctionné
+                    # — il n'a simplement rien de neuf — donc **pas** de repli
+                    # sur `_itself` : le relire comme une sortie le ferait
+                    # ranger « hors sujet » pour avoir bien fait son travail.
+                    continue
+
                 # ── ÉTAGE 4/8 · Sélection ───────── 1 fois par agenda ──────
-                kept = self.selection.run(source.url, links)
+                kept = self.selection.run(source.url, neufs)
                 if kept is None:
                     continue  # le modèle n'a pas répondu : on n'invente rien.
                 if not kept:
@@ -375,6 +391,74 @@ class Run:
             context=source.query,
             multiple=multiple,
         )
+
+    # ────────────────────────────────────── la mémoire, avant de dépenser
+    #
+    # Elle n'était consultée qu'à la lecture (étage 5) et à la publication
+    # (étage 8). Le tri — le seul des quatre premiers étages qui se paie —
+    # recevait donc chaque semaine les mêmes liens déjà lus et mémorisés, et
+    # ce n'était pas qu'une dépense : le modèle ne rend que
+    # `max_links_per_agenda` liens, et les connus **occupaient ces places**.
+    # Un agenda stable faisait ainsi réélire ses huit mêmes sorties pendant
+    # que les nouvelles restaient dehors.
+    #
+    # Les deux filtres sont ici, et non dans les briques, pour deux raisons :
+    # l'orchestrateur est déjà l'endroit qui décide *si* une page est lue, et
+    # surtout le banc rejoue `links_of` et le tri sur des pages gelées, sans
+    # mémoire. Un filtre glissé dans une brique ferait mesurer la mémoire du
+    # jour au lieu de la brique.
+
+    def _deja_jugee(self, url: str) -> bool:
+        """La recherche a remonté une page dont on a déjà fait une sortie.
+
+        Écarte avant le téléchargement de l'étage 2 — et avant l'appel au
+        modèle qui tranche les cas indécis.
+
+        Deux garde-fous, et ils ne sont pas facultatifs :
+
+        * seul ce que la mémoire a jugé **en tant que sortie** compte
+          (`DECISIONS_SORTIE`). Une page lue faute d'en avoir tiré des liens
+          est rangée « hors sujet » : c'est souvent un agenda que le
+          dépouillement a raté, et l'écarter ici le tuerait pour toujours ;
+        * en mode « site », jamais. Les points de départ sont le choix d'un
+          humain, et ce sont des agendas : les filtrer sur ce qu'une de leurs
+          pages est devenue reviendrait à désactiver la recherche.
+        """
+        if self.config.targets_site or not self.ctx.store.seen_as_event(url):
+            return False
+        self.summary.skipped_seen += 1
+        self.log.event("skip", reason="déjà jugée en tant que sortie", url=url)
+        # Journalisée, pas mémorisée : elle l'est déjà, et sous une décision
+        # qui vaut mieux que celle-ci.
+        self.ctx.store.report(url, "seen", remember=False)
+        return True
+
+    def _neufs(self, agenda: str, links: list[Link]) -> list[Link]:
+        """Les liens d'un agenda que la mémoire ne connaît pas encore.
+
+        Le filtre ne change pas quelles pages sont lues : un lien connu était
+        de toute façon écarté à l'étage 5. Il change **quand** on l'écarte —
+        avant le tri, donc avant de le payer et avant qu'il ne prenne la place
+        d'un lien neuf.
+
+        Le compte part au journal en une ligne par agenda, et non un item par
+        lien : deux cents lignes « déjà vue » par exécution noieraient la
+        console pour dire une chose qui tient dans un nombre.
+        """
+        store = self.ctx.store
+        store.preload([link.url for link in links])
+        neufs = [link for link in links if not store.seen(link.url)]
+        connus = len(links) - len(neufs)
+        if connus:
+            self.summary.skipped_known_links += connus
+            self.log.event(
+                "skip",
+                reason="liens déjà connus, écartés avant le tri",
+                url=agenda,
+                known=connus,
+                among=len(links),
+            )
+        return neufs
 
     def _itself(self, url: str) -> Candidate:
         """La page d'agenda relue pour elle-même, faute d'en tirer des liens."""

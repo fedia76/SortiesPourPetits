@@ -5,7 +5,7 @@ from pathlib import Path
 
 from sortiesbot.journal import RemoteJournal, RunLog, run_log_path
 from sortiesbot.stages import Stage
-from sortiesbot.store import SeenStore, normalize_url
+from sortiesbot.store import RemoteStore, SeenStore, normalize_url
 
 
 def test_normalisation_des_urls():
@@ -196,3 +196,88 @@ def test_un_champ_explicite_prime_sur_la_piste():
     with log.trail(agenda="https://a.fr"):
         log.event("candidate", agenda="https://b.fr")
     assert recs[0]["agenda"] == "https://b.fr"
+
+
+# ───────────────────────────── jugée comme sortie, ou seulement déjà vue
+#
+# La distinction sur laquelle repose le filtre de la reconnaissance. Elle ne se
+# voit dans aucun compteur : s'y tromper ne fait pas tomber un run, ça retire
+# silencieusement un agenda du champ de la recherche, pour toujours.
+
+
+def test_une_page_soumise_a_ete_jugee_comme_sortie():
+    with SeenStore() as store:
+        store.remember("https://exemple.fr/spectacle", "submitted", event_id=12)
+        assert store.seen_as_event("https://exemple.fr/spectacle")
+
+
+def test_les_verdicts_de_fiche_valent_jugement():
+    # Tous supposent qu'une fiche a été extraite de la page : elle a donc bien
+    # été lue comme une sortie, et la rouvrir n'apprendrait rien.
+    for decision in ("submitted", "out_of_area", "out_of_period", "invalid"):
+        with SeenStore() as store:
+            store.remember(f"https://exemple.fr/{decision}", decision)
+            assert store.seen_as_event(f"https://exemple.fr/{decision}"), decision
+
+
+def test_hors_sujet_ne_vaut_pas_jugement():
+    # C'est le déguisement d'un agenda dont le dépouillement a échoué : la page
+    # reste « déjà vue » — on ne la relira pas comme une sortie — mais elle
+    # garde le droit d'être reconnue et dépouillée.
+    with SeenStore() as store:
+        store.remember("https://agenda.fr/", "irrelevant")
+        assert store.seen("https://agenda.fr/")
+        assert not store.seen_as_event("https://agenda.fr/")
+
+
+def test_une_page_inconnue_na_ete_jugee_par_personne():
+    with SeenStore() as store:
+        assert not store.seen_as_event("https://jamais-vue.fr/")
+
+
+def test_la_memoire_distante_garde_le_verdict_du_site():
+    """La décision voyageait déjà sur le réseau ; elle était jetée à l'arrivée.
+
+    Sans elle, `RemoteStore` ne savait répondre qu'à « connue ou pas », et le
+    filtre de la reconnaissance aurait dû choisir entre ne rien filtrer et
+    écarter des agendas pour toujours.
+    """
+
+    class ApiMemoire:
+        def known_urls(self, urls):
+            verdicts = {
+                "https://exemple.fr/spectacle": ("submitted", 12),
+                "https://agenda.fr/": ("irrelevant", None),
+            }
+            return {u: verdicts[u] for u in urls if u in verdicts}
+
+        def report_items(self, run_id, items):
+            pass
+
+    store = RemoteStore(ApiMemoire(), run_id=1)
+    store.preload(["https://exemple.fr/spectacle", "https://agenda.fr/"])
+
+    assert store.seen_as_event("https://exemple.fr/spectacle")
+    # Connue, mais pas comme une sortie : elle reste dépouillable.
+    assert store.seen("https://agenda.fr/")
+    assert not store.seen_as_event("https://agenda.fr/")
+
+
+def test_la_memoire_distante_relit_ses_propres_verdicts():
+    """Ce que le run vient de décider vaut pour la suite du run.
+
+    Une sortie soumise à la première page d'un agenda ne doit pas être reproposée
+    à la seconde — et le site, lui, n'en sait encore rien : la vidange n'a pas eu
+    lieu.
+    """
+
+    class ApiVide:
+        def known_urls(self, urls):
+            return {}
+
+        def report_items(self, run_id, items):
+            pass
+
+    store = RemoteStore(ApiVide(), run_id=1)
+    store.report("https://exemple.fr/spectacle", "submitted", event_id=7)
+    assert store.seen_as_event("https://exemple.fr/spectacle")

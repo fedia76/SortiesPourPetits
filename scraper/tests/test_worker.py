@@ -71,7 +71,9 @@ class ScraperApi(FakeApi):
 
     def known_urls(self, urls):
         self.seen_calls.append(list(urls))
-        return {u for u in urls if u in self.known}
+        # Le site rend sa décision avec l'URL : une page connue du faux site
+        # l'est comme une sortie soumise, le cas courant en production.
+        return {u: ("submitted", None) for u in urls if u in self.known}
 
     def report_items(self, run_id, items):
         self.items.extend(items)

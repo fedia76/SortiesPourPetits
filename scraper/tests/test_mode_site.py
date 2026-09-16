@@ -326,3 +326,20 @@ def test_un_mode_inconnu_est_refuse():
 def test_le_mode_par_defaut_reste_la_recherche():
     assert Config(name="f", theme="x").mode == "recherche"
     assert not Config(name="f", theme="x").targets_site
+
+
+def test_un_seed_deja_soumis_reste_depouille(log):
+    """Le filtre de la reconnaissance ne s'applique jamais aux points de départ.
+
+    Un seed est le choix explicite d'un humain, et c'est un agenda. L'écarter
+    parce qu'une de ses pages est un jour devenue une sortie reviendrait à
+    éteindre la recherche sans rien dire à personne.
+    """
+    provider = SiteProvider({FESTIVAL_URL: [sortie("Atelier BD à quatre mains")]})
+    fetcher = FakeFetcher({FESTIVAL_URL: UNE_SEULE_PAGE})
+    with SeenStore() as store:
+        store.remember(FESTIVAL_URL, "submitted")
+        result = lance(config(), provider, fetcher, store, FakeApi(), log)
+
+    assert FESTIVAL_URL in fetcher.asked
+    assert result.summary.submitted == 1
