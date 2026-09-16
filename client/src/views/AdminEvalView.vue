@@ -1423,7 +1423,10 @@ const corpusSize = computed(() => ({
         <p v-if="candidatsCharges && !candidats.length" class="muted small">
           Aucun agenda dépouillé n’a encore donné de sortie approuvée. La
           filiation n’est journalisée que depuis qu’elle est recopiée à la
-          clôture des runs : les exécutions antérieures n’en portent pas.
+          clôture des runs : les exécutions antérieures n’en portent pas. Elle
+          se rattrape sans rien relire du web — leur journal la contient encore
+          tant qu’il n’a pas été purgé : <code>npm run db:backfill-provenance</code>
+          sur le serveur, puis <code>-- --apply</code>.
         </p>
       </div>
 

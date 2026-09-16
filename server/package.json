@@ -17,6 +17,7 @@
     "db:seed:prod": "tsx prisma/seed.prod.ts",
     "hash-password": "tsx scripts/hash-password.ts",
     "db:backfill-eval": "tsx scripts/backfill-eval-labels.ts",
+    "db:backfill-provenance": "tsx scripts/backfill-provenance.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },
