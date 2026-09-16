@@ -47,6 +47,7 @@ function blank() {
     postalPrefixes: '75,77,78,91,92,93,94,95',
     blockAggregators: false,
     sourceSearch: true,
+    freezeAgendas: true,
     provider: 'anthropic' as 'anthropic' | 'serper',
     queries: '',
     classifyModel: 'claude-haiku-4-5',
@@ -436,6 +437,23 @@ onMounted(load);
               en rester là. Coché, une requête Google (~0,001 $) est lancée pour les sorties
               dont la page ne cite pas sa source ; la page trouvée est vérifiée avant d'être
               retenue, dans les deux cas.
+            </span>
+          </div>
+
+          <div class="field">
+            <label class="checkbox">
+              <input v-model="form.freezeAgendas" type="checkbox" />
+              Geler les agendas dépouillés pour le banc
+            </label>
+            <span class="hint">
+              À la clôture de chaque exécution, les agendas qu'elle a ouverts entrent au
+              corpus du banc et leur page part en file de capture. C'est gratuit — une
+              lecture par agenda, la première fois seulement — et c'est le
+              <strong>seul moment</strong> où la page porte encore les liens que la
+              modération va trancher : ajouté six mois plus tard, le même agenda ne montre
+              plus que des sorties passées, et son étiquetage repart de zéro. Tous les
+              agendas y vont, pas seulement ceux qui ont donné une sortie : un corpus fait
+              des seules réussites du scraper ne mesurerait que ses réussites.
             </span>
           </div>
 

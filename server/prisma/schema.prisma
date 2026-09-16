@@ -350,6 +350,21 @@ model ScraperConfig {
   /// page lue ne la porte pas. Son seul appel payant, ~0,001 $ la fiche.
   sourceSearch     Boolean @default(true)
 
+  /// Verse au corpus du banc les agendas que cette recherche dépouille.
+  ///
+  /// Le banc mesure l'étage 3 sur des pages **gelées**, et il les gelait le
+  /// jour où un humain pensait à les ajouter — c'est-à-dire des mois après le
+  /// run qui les avait rendues intéressantes, sur une page d'où les sorties
+  /// approuvées avaient disparu. L'enrôlement à la clôture gèle la page du
+  /// jour du run : celle qui porte encore les liens que la modération va
+  /// trancher.
+  ///
+  /// Ça ne pose aucune étiquette — la règle du corpus tient : rien de ce
+  /// qu'une brique produit n'entre au corpus. Ça choisit une entrée, ce que
+  /// le panier « agendas déjà dépouillés » faisait déjà, à la main et trop
+  /// tard.
+  freezeAgendas    Boolean @default(true)
+
   /// Qui lance les recherches : « anthropic » (outil serveur) ou « serper »
   /// (Google). Le modèle reste derrière dans les deux cas pour le reste.
   provider        String @default("anthropic")
@@ -642,8 +657,15 @@ model EvalAgenda {
   note         String            @default("") @db.Text
   createdAt    DateTime          @default(now())
 
-  author      User @relation("EvalAgendaAuthor", fields: [createdById], references: [id])
-  createdById Int
+  /// Nul pour un agenda enrôlé par la clôture d'un run de production : il n'a
+  /// pas d'auteur dans la console, comme une étiquette venue de la modération.
+  /// Le champ `note` dit alors de quel run il vient.
+  /// `Restrict`, et pas `SetNull` : nul veut dire « enrôlé, sans auteur », et
+  /// une suppression de compte qui viderait le champ ferait passer un agenda
+  /// saisi à la main pour un agenda enrôlé. Supprimer un tel compte demande
+  /// donc toujours de dire quoi faire de ses agendas.
+  author      User? @relation("EvalAgendaAuthor", fields: [createdById], references: [id], onDelete: Restrict)
+  createdById Int?
 
   agendaPages EvalAgendaPage[]
 

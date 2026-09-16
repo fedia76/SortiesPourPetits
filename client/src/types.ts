@@ -192,6 +192,12 @@ export interface ScraperConfig {
   blockAggregators: boolean;
   /** Autorise l'attribution à chercher la page de l'organisateur (payant). */
   sourceSearch: boolean;
+  /**
+   * Verse au corpus du banc les agendas que cette recherche dépouille, à la
+   * clôture de chaque exécution. C'est ce qui gèle la page **du jour du run**,
+   * seule à porter encore les liens que la modération va trancher.
+   */
+  freezeAgendas: boolean;
   /** Qui lance les recherches : l'outil serveur du modèle, ou Google. */
   provider: 'anthropic' | 'serper';
   /** Pages suivantes d'un agenda, suivies tant que la moisson est maigre. */
@@ -979,7 +985,11 @@ export interface EvalAgenda {
   capturedAt: string | null;
   note: string;
   createdAt: string;
-  author?: { id: number; displayName: string };
+  /**
+   * Nul pour un agenda enrôlé par la clôture d'un run de production : personne
+   * ne l'a saisi, et `note` dit de quel run il vient.
+   */
+  author?: { id: number; displayName: string } | null;
   agendaPages: EvalAgendaPage[];
   /** Liens qu'un run du banc a relevés : le dénominateur de l'étiquetage. */
   releves: number;

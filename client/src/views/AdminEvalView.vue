@@ -1458,6 +1458,13 @@ const corpusSize = computed(() => ({
         </div>
         <p v-if="agenda.captureError" class="error small">{{ agenda.captureError }}</p>
         <!--
+          D'où vient cette entrée. Les agendas enrôlés par la clôture d'un run
+          arrivent seuls, en nombre, et sans ça rien ne les distinguait de ceux
+          qu'on a choisis : une liste qui grandit toute seule sans dire pourquoi
+          est exactement ce qui fait douter d'un corpus.
+        -->
+        <p v-if="agenda.note" class="muted small">{{ agenda.note }}</p>
+        <!--
           Où en est cet agenda, et ce qu'il attend. La chaîne — geler, jouer un
           run de dépouillement, étiqueter — est une dépendance réelle que rien
           n'écrivait : la sauter ne produit aucune erreur, seulement un zéro
