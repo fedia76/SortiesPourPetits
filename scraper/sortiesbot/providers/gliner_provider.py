@@ -87,6 +87,64 @@ CARACTERES_PAR_JETON = 3
 #: coupe soit entière dans au moins l'un des deux.
 PART_RECOUVREMENT = 0.15
 
+#: Tronçons traités en un seul passage groupé.
+#:
+#: Grouper fait gagner du temps, et **coûte de la mémoire** : les activations
+#: d'un encodeur croissent avec la taille du lot. Tant que la fenêtre était
+#: (faussement) large, une page tenait en deux tronçons et le lot était de deux.
+#: La fenêtre corrigée en produit une dizaine, et les passer d'un bloc a
+#: multiplié par cinq le pic d'un seul appel — sur une machine de quatre
+#: gigaoctets qui fait déjà tourner une base et un serveur Node, et **sans
+#: swap**, c'est la différence entre un run qui finit et un processus que le
+#: noyau tue.
+#:
+#: Quatre : assez pour que le groupage serve encore, assez peu pour que le pic
+#: ne dépende plus de la longueur de la page.
+LOT_MAX = 4
+
+#: Fils de calcul laissés à torch. `0` : ce qu'il décide lui-même.
+#:
+#: Par défaut il en prend autant qu'il y a de cœurs — quatre ici, c'est-à-dire
+#: tous, y compris ceux dont MySQL et l'API ont besoin pour répondre pendant que
+#: le banc tourne. Le worker n'est pas pressé : une passe deux fois plus lente
+#: sur un run qui dure de toute façon des minutes ne coûte rien, quand un site
+#: qui ne répond plus se voit tout de suite.
+FILS_TORCH = 2
+
+
+def _rendre_la_memoire() -> None:
+    """Rend au système les pages que l'allocateur garde pour lui.
+
+    Le symptôme, mesuré : le worker a été tué par le noyau à la **44ᵉ** entrée
+    sur 141, à 2,6 Go de RSS — après en avoir tenu 43. Un pic par appel aurait
+    frappé tôt, sur la première page un peu longue ; tenir quarante-trois
+    entrées puis mourir, c'est une **croissance**, pas un pic.
+
+    Rien ne s'accumule dans ce code — les spans, les tronçons et les réponses
+    sont tous par appel. Ce qui grossit est l'allocateur de la glibc : des
+    milliers d'allocations de tailles toutes différentes (un tronçon fait la
+    longueur que la coupe lui a donnée), réparties sur plusieurs arènes, une
+    par fil de calcul. La mémoire est bien libérée côté Python ; elle reste
+    simplement réservée au processus, et le RSS monte en cliquet.
+
+    `malloc_trim(0)` est ce qui la rend. Une fois par page, coût négligeable
+    devant une passe d'encodeur. L'autre moitié du remède ne peut pas s'écrire
+    ici : `MALLOC_ARENA_MAX` doit être posé **avant** le démarrage du
+    processus, et vit donc dans l'unité systemd.
+    """
+    try:
+        import ctypes
+        import ctypes.util
+
+        nom = ctypes.util.find_library("c")
+        if not nom:
+            return
+        libc = ctypes.CDLL(nom)
+        if hasattr(libc, "malloc_trim"):
+            libc.malloc_trim(0)
+    except Exception:  # noqa: BLE001 — une hygiène qui échoue ne casse rien
+        pass
+
 
 def fenetre_caracteres(tagger: Any = None, labels: list[str] | None = None) -> tuple[int, int]:
     """Combien de caractères par tronçon, et combien les tronçons partagent.
@@ -139,6 +197,13 @@ def charger(nom: str = MODELE_DEFAUT) -> Tagger:
             "le fournisseur « gliner » réclame la bibliothèque du même nom : "
             'pip install -e ".[gliner]" (elle tire torch, ~2 Go)'
         ) from err
+    if FILS_TORCH > 0:
+        try:
+            import torch
+
+            torch.set_num_threads(FILS_TORCH)
+        except Exception:  # noqa: BLE001 — un réglage de confort ne casse rien
+            pass
     try:
         # `GLiNER` est un aiguilleur : `from_pretrained` rend une sous-classe
         # concrète (`UniEncoderSpanGLiNER` et consorts) selon ce que la
@@ -283,6 +348,10 @@ class GlinerProvider:
                     spans.append(span)
 
         event = to_event(spans, today=self._today, seuil=self._seuil)
+        # Une fois la page finie, et pas au milieu : à ce point tout ce que
+        # l'encodeur a alloué est libéré côté Python, et il n'y a plus qu'à le
+        # rendre au système.
+        _rendre_la_memoire()
         # Ce que le journal doit garder : le modèle, ce qu'il a coûté (rien),
         # combien de spans il a posés, et **les champs qu'il ne remplit pas**.
         # Sans cette dernière ligne, un `MANQUE` sur `setting` se lirait comme
@@ -318,9 +387,18 @@ class GlinerProvider:
         n'ait pas à l'implémenter.
         """
         groupe = getattr(tagger, "batch_predict_entities", None)
-        if callable(groupe) and len(morceaux) > 1:
-            return list(groupe(morceaux, libelles, threshold=self._seuil))
-        return [tagger.predict_entities(m, libelles, threshold=self._seuil) for m in morceaux]
+        if not callable(groupe) or len(morceaux) < 2:
+            return [tagger.predict_entities(m, libelles, threshold=self._seuil) for m in morceaux]
+        # Par paquets bornés, jamais d'un bloc : le pic mémoire d'un appel ne
+        # doit pas dépendre de la longueur de la page.
+        rendus: list[list[dict[str, Any]]] = []
+        for debut in range(0, len(morceaux), LOT_MAX):
+            lot = morceaux[debut : debut + LOT_MAX]
+            if len(lot) == 1:
+                rendus.append(tagger.predict_entities(lot[0], libelles, threshold=self._seuil))
+            else:
+                rendus.extend(groupe(lot, libelles, threshold=self._seuil))
+        return rendus
 
     # ------------------------- les quatre autres appels restent à un modèle
 

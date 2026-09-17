@@ -21,6 +21,7 @@ import { api } from '../lib/api';
 import { messageDe } from '../lib/erreurs';
 import type {
   EvalAspectDetail,
+  EvalAspectTally,
   EvalLinkCase,
   EvalRun,
   EvalRunDetail,
@@ -50,6 +51,16 @@ const filtre = ref<EvalLinkCase | ''>('');
  * seule ligne qu'on est venu lire.
  */
 const toutMontrer = ref(false);
+
+/**
+ * Trier l'encart par aspect le plus raté, plutôt que dans l'ordre des douze.
+ *
+ * L'ordre canonique est le défaut, et ce n'est pas un détail de présentation :
+ * c'est lui qui rend **deux runs comparables ligne à ligne**. Le tri par le
+ * pire répond à l'autre question — « sur quoi cette brique-ci échoue-t-elle
+ * en particulier ? » —, et les deux valent d'être à un clic l'une de l'autre.
+ */
+const piresDAbord = ref(false);
 
 onMounted(async () => {
   try {
@@ -114,6 +125,32 @@ function troisEtats(value: boolean | null, oui: string, non: string): string {
 
 function aspectsVus(row: EvalRunDetailExtract): EvalAspectDetail[] {
   return toutMontrer.value ? row.aspects : row.aspects.filter((a) => a.verdict !== 'JUSTE');
+}
+
+/**
+ * Le décompte par aspect sur tout le run, tel que le serveur l'a calculé.
+ *
+ * Recalculé nulle part ici : les verdicts viennent de `verdictAspect`, côté
+ * serveur, et deux implémentations d'une même règle finissent par diverger
+ * sans que rien ne le dise.
+ */
+const parAspect = computed<EvalAspectTally[]>(() => {
+  const score = props.run.score;
+  if (!score || score.kind !== 'extract') return [];
+  const lignes = [...(score.parAspect ?? [])];
+  if (!piresDAbord.value) return lignes;
+  // Les aspects que personne n'a étiquetés vont à la fin : ils ne sont pas
+  // « les pires », ils ne sont pas jugés du tout.
+  return lignes.sort((a, b) => {
+    if (a.rate === null) return b.rate === null ? 0 : 1;
+    if (b.rate === null) return -1;
+    return a.rate - b.rate;
+  });
+});
+
+/** Un aspect que le corpus n'étiquette nulle part : une dette, pas une faute. */
+function sansEtiquette(ligne: EvalAspectTally): boolean {
+  return ligne.rate === null;
 }
 
 /**
@@ -323,6 +360,60 @@ function court(value: string, max = 90): string {
         fautive, ou si les deux disent la même chose autrement — et ce dernier
         cas est une faute de la mesure, qu’aucun total ne révèle.
       </p>
+      <!--
+        L'encart : le taux d'un run est une moyenne sur douze aspects très
+        différents, et il cache lequel lâche. Douze aspects médiocres et onze
+        corrects pour un effondré donnent le même chiffre.
+      -->
+      <div v-if="parAspect.length" class="card aspects-bilan">
+        <h4>
+          Aspect par aspect
+          <button class="linklike" @click="piresDAbord = !piresDAbord">
+            {{ piresDAbord ? 'dans l’ordre des douze' : 'les pires d’abord' }}
+          </button>
+        </h4>
+        <table class="aspects-table">
+          <thead>
+            <tr>
+              <th>Aspect</th>
+              <th class="num">Justes</th>
+              <th class="num">Faux</th>
+              <th class="num">Inventés</th>
+              <th class="num">Manqués</th>
+              <th class="num">Non jugés</th>
+              <th class="num">Taux</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="ligne in parAspect" :key="ligne.key" :class="{ muet: sansEtiquette(ligne) }">
+              <td>{{ ligne.libelle }}</td>
+              <td class="num juste">{{ ligne.JUSTE || '—' }}</td>
+              <td class="num faux">{{ ligne.FAUX || '—' }}</td>
+              <td class="num faux">{{ ligne.INVENTE || '—' }}</td>
+              <td class="num faux">{{ ligne.MANQUE || '—' }}</td>
+              <td class="num muted">{{ ligne.inconnu || '—' }}</td>
+              <td class="num">
+                <strong v-if="ligne.rate !== null">{{ Math.round(ligne.rate * 100) }} %</strong>
+                <span v-else class="muted">non jugé</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="muted small">
+          <strong>Non jugé n’est pas raté.</strong> C’est le corpus qui ne dit rien
+          de cet aspect-là : une dette d’étiquetage, pas une faute de la brique.
+          Un aspect entièrement non jugé ne compte donc dans aucun taux — le
+          sien, ni celui du run.
+        </p>
+        <p class="muted small">
+          <strong>Manqué</strong> : le corpus l’annonce, la brique a rendu vide.
+          <strong>Inventé</strong> : la brique l’a rempli, le corpus n’en dit rien.
+          <strong>Faux</strong> : les deux parlent, et ne disent pas la même chose.
+          Les trois se corrigent autrement, et c’est pourquoi ils ne sont pas
+          additionnés.
+        </p>
+      </div>
+
       <p class="muted small">
         <button class="linklike" @click="toutMontrer = !toutMontrer">
           {{ toutMontrer ? 'Ne montrer que ce qui cloche' : 'Montrer aussi les aspects justes' }}
@@ -477,6 +568,53 @@ tr.mou {
 .cas.sans_etiquette,
 .cas.non_soumise {
   color: var(--ink-soft);
+}
+
+.aspects-bilan {
+  margin-bottom: 1rem;
+}
+
+.aspects-bilan h4 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0 0 0.6rem;
+}
+
+.aspects-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.aspects-table th,
+.aspects-table td {
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--border, #eee);
+  text-align: left;
+}
+
+.aspects-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Les mêmes couleurs que les verdicts des lignes, qui ne valaient jusqu'ici
+   que sous `.cas`. Le vert et le rouge ne portent aucune information que le
+   chiffre ne porte pas : ils font gagner le coup d'œil, pas la lecture. */
+.aspects-table .juste {
+  color: var(--ok);
+}
+
+.aspects-table .faux {
+  color: var(--danger);
+}
+
+/* Un aspect que personne n'a étiqueté s'efface : il ne dit rien de la brique,
+   et le laisser au même poids ferait chercher une faute là où il n'y a qu'un
+   corpus muet. */
+.aspects-table tr.muet td {
+  opacity: 0.55;
 }
 
 .fiche-detail {

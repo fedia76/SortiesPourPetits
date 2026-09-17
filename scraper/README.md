@@ -476,6 +476,63 @@ Pour rejouer la panne seule, sans passer par un run :
   "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('urchade/gliner_multi-v2.1')"
 ```
 
+#### « Repris par le site » — un worker tué, pas un worker lent
+
+Ce motif dit une seule chose : plus aucun battement pendant trente minutes. Un
+battement tombe à chaque entrée réclamée, donc soit **une entrée a duré une
+demi-heure**, soit **le processus n'était plus là**. Les deux se distinguent
+dans le journal du service, et il faut regarder ça avant toute hypothèse :
+
+```bash
+journalctl -u sortiespourpetits-scraper --since '-2h' | tail -120
+dmesg -T | grep -i -e oom -e 'killed process'
+systemctl status sortiespourpetits-scraper   # « active since » récent = il a redémarré
+```
+
+* **une pile dans le journal** (le témoin d'entrée lente) → c'était bien une
+  entrée, et la pile dit où ;
+* **rien, puis un redémarrage du service** → le noyau a tué le processus. Les
+  lignes de progression s'arrêtent net au milieu d'une page, `Restart=on-failure`
+  relance le worker, et celui-ci ne reprend pas un run déjà `RUNNING` : la ligne
+  reste en cours jusqu'à ce que le site la reprenne, une demi-heure plus tard.
+
+C'est arrivé, et les chiffres valent d'être gardés : tué à la **44ᵉ** entrée sur
+141, à **2,6 Go** de RSS, après en avoir tenu quarante-trois. Un pic par appel
+aurait frappé tôt, sur la première page un peu longue ; tenir quarante-trois
+entrées puis mourir, c'est une **croissance**.
+
+Rien ne s'accumule dans le code du fournisseur — spans, tronçons et réponses
+sont tous par appel. Ce qui grossit est l'allocateur de la glibc : des milliers
+d'allocations de tailles toutes différentes, réparties sur une arène par fil de
+calcul, fragmentent au point que le RSS monte en cliquet sans redescendre. La
+mémoire est bien libérée côté Python ; elle reste réservée au processus.
+
+Quatre brides, et il faut les quatre :
+
+| Où | Quoi |
+|---|---|
+| `LOT_MAX` | borne les tronçons passés d'un bloc — le pic d'un appel ne suit plus la longueur de la page |
+| `_rendre_la_memoire()` | `malloc_trim(0)` après chaque page : rend au système ce que l'allocateur garde |
+| `MALLOC_ARENA_MAX=2` | dans l'unité systemd — **avant** le démarrage, sinon sans effet |
+| `FILS_TORCH` / `OMP_NUM_THREADS` | laisse des cœurs à MySQL et à l'API pendant qu'un run tourne |
+
+L'unité porte en plus `MemoryHigh`/`MemoryMax` : au-delà, le noyau de contrôle
+freine le worker plutôt que de le tuer net, et si ça ne suffit pas c'est
+toujours lui qui tombe — jamais la base ni l'API. Une unité modifiée se
+réinstalle depuis `deploy/` :
+
+```bash
+cp /opt/sortiespourpetits/deploy/sortiespourpetits-scraper.service /etc/systemd/system/
+systemctl daemon-reload && systemctl restart sortiespourpetits-scraper
+```
+
+Un fichier d'échange de deux gigaoctets reste le filet le plus simple :
+
+```bash
+fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+```
+
 #### Quand un run de banc semble coincé
 
 Un run de banc est **muet par construction** : son `RunLog` n'a ni fichier ni

@@ -11,12 +11,33 @@ User=deploy
 WorkingDirectory=/opt/sortiespourpetits/scraper
 # Les clés (ANTHROPIC_API_KEY, SPP_API_KEY) sont écrites par le déploiement.
 EnvironmentFile=/opt/sortiespourpetits/scraper/.env
+# Deux brides pour l'étiqueteur local de l'étage 6, sans effet sur le reste.
+#
+# `MALLOC_ARENA_MAX` doit être posé **avant** le démarrage : la glibc ouvre une
+# arène par fil de calcul, et des milliers d'allocations de tailles toutes
+# différentes y fragmentent si bien que le RSS monte en cliquet sans jamais
+# redescendre. Le worker a été tué par le noyau à la 44ᵉ page sur 141, à 2,6 Go,
+# après en avoir tenu 43 : une croissance, pas un pic.
+#
+# `OMP_NUM_THREADS` double côté OpenMP la bride que le code pose sur torch.
+# Prendre les quatre cœurs affamerait MySQL et l'API pendant qu'un run tourne,
+# et un site qui ne répond plus se voit tout de suite — le worker, lui, n'est
+# pas pressé.
+Environment="MALLOC_ARENA_MAX=2"
+Environment="OMP_NUM_THREADS=2"
 ExecStart=/opt/sortiespourpetits/scraper/.venv/bin/python -m sortiesbot.worker
 # Une recherche dure plusieurs minutes : on la laisse finir avant de couper.
 KillSignal=SIGTERM
 TimeoutStopSec=600
 Restart=on-failure
 RestartSec=10
+# Le plafond au-dessous duquel le noyau n'a pas à choisir pour nous. Au-delà,
+# le noyau de contrôle freine le worker plutôt que de le tuer net — et si ça ne
+# suffit pas, c'est toujours lui qui tombe, jamais MySQL ni l'API. Sans cette
+# ligne, l'OOM killer prend le plus gros, qui se trouve être le worker, mais
+# rien ne le garantissait.
+MemoryHigh=1800M
+MemoryMax=2200M
 NoNewPrivileges=true
 PrivateTmp=true
 

@@ -1388,7 +1388,32 @@ export type EvalScore =
       MANQUE: number;
       inconnu: number;
       rate: number | null;
+      /** Le même décompte, aspect par aspect. Voir `EvalAspectTally`. */
+      parAspect: EvalAspectTally[];
     };
+
+/**
+ * Le décompte d'un aspect sur tout un run.
+ *
+ * Le taux global d'un run d'extraction est une moyenne sur douze aspects très
+ * différents, et il cache ce qu'on veut savoir : **lequel lâche**. Douze
+ * aspects médiocres et onze corrects pour un effondré donnent le même chiffre,
+ * et n'appellent pas le même travail.
+ *
+ * `inconnu` compte à part, et c'est capital : un aspect que le corpus
+ * n'étiquette nulle part n'est pas un aspect raté, c'est une dette du corpus.
+ */
+export interface EvalAspectTally {
+  key: string;
+  libelle: string;
+  JUSTE: number;
+  FAUX: number;
+  INVENTE: number;
+  MANQUE: number;
+  inconnu: number;
+  /** JUSTE sur ce qui a été jugé, ou `null` si personne n'a rien étiqueté. */
+  rate: number | null;
+}
 
 export interface EvalRun {
   id: number;
