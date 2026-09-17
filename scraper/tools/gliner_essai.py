@@ -55,7 +55,13 @@ PLANCHER = 0.05
 
 
 def _page(source: str) -> tuple[str, str]:
-    """Le HTML et l'URL, que la source soit un fichier gelé ou une adresse."""
+    """Le HTML et l'URL, que la source soit une archive du corpus, un fichier ou une adresse.
+
+    Les pages du banc sont **gzippées** — `<32 hexa>.html.gz` sous
+    `$UPLOADS_DIR/eval/`, voir `server/src/lib/evalPages.ts`. C'est le cas qui
+    sert le plus, puisque ce sont elles que le banc rejoue : ne pas savoir les
+    ouvrir obligeait à les déballer à la main avant chaque essai.
+    """
     if source.startswith(("http://", "https://")):
         try:
             return Fetcher().get_html(source), source
@@ -63,6 +69,11 @@ def _page(source: str) -> tuple[str, str]:
             print(f"Téléchargement impossible : {err}", file=sys.stderr)
             return "", source
     chemin = Path(source)
+    if chemin.suffix == ".gz":
+        import gzip
+
+        with gzip.open(chemin, "rt", encoding="utf-8", errors="replace") as f:
+            return f.read(), chemin.resolve().as_uri()
     return chemin.read_text(encoding="utf-8", errors="replace"), chemin.resolve().as_uri()
 
 
