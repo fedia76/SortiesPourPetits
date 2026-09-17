@@ -556,6 +556,25 @@ def _code_ref() -> str:
 #: que la pile dira justement qu'on attend le SDK.
 ENTREE_LENTE_S = 180.0
 
+#: Après tant d'entrées **d'affilée** en échec, le run s'arrête.
+#:
+#: Ce seuil sépare deux choses que le banc confondait. Une page qui échoue est
+#: une mesure : elle se range et le run continue, c'est tout l'intérêt de ne pas
+#: s'arrêter au premier accident. Une **brique qui ne peut pas tourner** — la
+#: bibliothèque d'un fournisseur absente du venv, une clé d'API refusée, un
+#: point de contrôle introuvable — n'est pas une mesure : c'est la même faute
+#: répétée, et la rejouer cent fois ne produit pas cent renseignements, elle en
+#: produit zéro et enterre le seul qui compte.
+#:
+#: C'est arrivé au premier run GLiNER : `gliner` n'était pas dans le venv du
+#: worker, les cent entrées du corpus ont rendu la même `ProviderError` en une
+#: minute, et le run s'est **clos en DONE** avec un taux calculé sur cent
+#: fiches vides. Rien, dans la console, ne le distinguait d'une mesure.
+#:
+#: Cinq plutôt qu'une : une page peut légitimement faire échouer un appel, deux
+#: à la suite arrivent, cinq ne sont plus un accident.
+ECHECS_CONSECUTIFS_MAX = 5
+
 
 class _Temoin:
     """Le témoin d'entrée lente, et sa seule règle : ne jamais casser le run.
@@ -592,6 +611,16 @@ class _Temoin:
             self.possible = False
 
 
+class BriqueInerte(RuntimeError):
+    """La brique ne peut pas tourner — inutile de lui soumettre le corpus entier.
+
+    Distincte d'une `ApiError` ou d'un bug : ici le worker fonctionne, c'est ce
+    qu'on lui demande de jouer qui n'existe pas sur cette machine. Le motif doit
+    donc arriver **entier** dans la console, parce qu'il contient d'ordinaire la
+    commande à taper.
+    """
+
+
 def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> None:
     """Joue un run du banc : une brique, sur tout le corpus gelé.
 
@@ -622,6 +651,8 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
 
     traites = 0
     temoin = _Temoin()
+    echecs_suite = 0
+    dernier_echec = ""
     status, error = "DONE", None
     try:
         # Les catégories du site partent dans le prompt d'extraction : le modèle
@@ -678,6 +709,24 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
                 api.report_eval_extract(run_id, result)
             temoin.desarmer()
             traites += 1
+
+            # Le relevé d'une entrée peut porter une erreur — le rejeu de la
+            # brique a échoué sur cette page. On le range, on le dit, et on
+            # compte : c'est la répétition qui distingue l'accident de la
+            # panne.
+            echec = str(result.get("error") or "")
+            if echec:
+                echecs_suite += 1
+                dernier_echec = echec
+                if not quiet:
+                    print(f"  ✗ {echec}", flush=True)
+                if echecs_suite >= ECHECS_CONSECUTIFS_MAX:
+                    raise BriqueInerte(
+                        f"{echecs_suite} entrées d'affilée en échec, toutes pour la même "
+                        f"raison — la brique ne peut pas tourner : {dernier_echec}"
+                    )
+            else:
+                echecs_suite = 0
             if not quiet:
                 # Une ligne par entrée, et c'est le minimum : sans elle, un run
                 # de deux cents pages est un écran vide pendant une heure, et
@@ -687,6 +736,11 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
                     f"  {compte} · {time.monotonic() - depart:.1f} s · {item.get('url', '')}",
                     flush=True,
                 )
+    except BriqueInerte as err:
+        # Pas de trace : ce n'est pas un bug du worker, c'est une brique qu'on
+        # lui a demandé de jouer sans lui en donner les moyens. Le motif part
+        # dans la console, où il se lit sans ouvrir un journal.
+        status, error = "FAILED", str(err)
     except ApiError as err:
         status, error = "FAILED", str(err)
     except Exception as err:  # noqa: BLE001 — la trace part dans la console du service
