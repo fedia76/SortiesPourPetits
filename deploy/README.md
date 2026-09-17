@@ -258,6 +258,36 @@ sudo -u deploy /opt/sortiespourpetits/scraper/.venv/bin/pip install -e \
   '/opt/sortiespourpetits/scraper[gliner]'
 ```
 
+#### Torch, et les deux pièges de l'extra `gliner`
+
+Ils se ressemblent : tous deux font échouer l'installation en annonçant un
+disque plein, alors que `df -h` montre `/` à 25 %.
+
+**La variante CUDA.** `pip install torch` tire par défaut, sur Linux, torch
+compilé pour GPU **plus une demi-douzaine de paquets `nvidia-*`** : plusieurs
+gigaoctets de noyaux que ce VPS n'exécutera jamais. Le déploiement pose donc
+la roue **processeur** d'abord — environ deux cents mégaoctets, aucune
+dépendance nvidia — et l'extra trouve ensuite torch déjà satisfait. L'ordre
+est le mécanisme.
+
+**`/tmp` est un tmpfs.** pip y déballe ses roues, et ce tmpfs prend deux
+gigaoctets sur les quatre de RAM : un déballage de torch y meurt **sans que le
+disque bouge d'un pouce**, ce qui explique un message de place manquante que
+`df` dément. Le déploiement exporte donc `TMPDIR=/var/tmp`, qui est sur le
+disque.
+
+Si une tentative a déjà échoué, il reste des morceaux à balayer avant de
+recommencer :
+
+```bash
+sudo -u deploy rm -rf ~deploy/.cache/pip
+rm -rf /tmp/pip-* /var/tmp/pip-*
+```
+
+Et si le message parle de **quota** (`Errno 122`) plutôt que de place, c'est
+qu'un quota de système de fichiers est actif — `quota -s -u deploy` le dira,
+et là c'est l'hébergeur qu'il faut voir, pas le déploiement.
+
 Pour vérifier ce que le worker voit vraiment, à tout moment :
 
 ```bash
