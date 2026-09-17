@@ -63,6 +63,9 @@ import {
   aspectsDetail,
   couverture,
   criteresParEtage,
+  acheverAspectTallies,
+  cumulerAspects,
+  emptyAspectTallies,
   extractScore,
   harvestLines,
   harvestScore,
@@ -1582,6 +1585,12 @@ async function scoreRun(runId: number, stage: string) {
     include: { sortie: { select: { expected: true } } },
   });
   const tally = { JUSTE: 0, FAUX: 0, INVENTE: 0, MANQUE: 0, inconnu: 0 };
+  // Le même décompte, **aspect par aspect**. Le taux global d'un run est une
+  // moyenne sur douze choses très différentes, et il cache ce qu'on veut
+  // savoir : lequel lâche. Douze aspects médiocres et onze corrects pour un
+  // effondré donnent le même chiffre, et n'appellent pas le même travail.
+  const parAspect = emptyAspectTallies();
+
   for (const row of results) {
     // `row.fiche` est la fiche **structurée** que la brique a rendue — la
     // pièce à conviction que le banc stockait déjà sans s'en servir pour
@@ -1592,6 +1601,8 @@ async function scoreRun(runId: number, stage: string) {
     for (const key of Object.keys(tally) as (keyof typeof tally)[]) {
       tally[key] += score.tally[key];
     }
+    // `byField` était calculé puis jeté : c'est lui qui portait la réponse.
+    cumulerAspects(parAspect, score.byField);
   }
   const judged = tally.JUSTE + tally.FAUX + tally.INVENTE + tally.MANQUE;
   return {
@@ -1599,6 +1610,7 @@ async function scoreRun(runId: number, stage: string) {
     items: results.length,
     ...tally,
     rate: judged > 0 ? tally.JUSTE / judged : null,
+    parAspect: acheverAspectTallies(parAspect),
   };
 }
 

@@ -1212,6 +1212,62 @@ export function couverture(attendue: FicheRendue, audience: Audience | null): Co
   };
 }
 
+/**
+ * Le décompte d'un aspect sur tout un run, et ce qu'il apprend.
+ *
+ * Le taux global d'un run d'extraction est une moyenne sur douze aspects très
+ * différents, et il cache exactement ce qu'on veut savoir : **lequel lâche**.
+ * Un taux à 7 % peut être douze aspects médiocres, ou onze corrects et un
+ * effondré — et ce ne sont pas les mêmes travaux.
+ *
+ * `inconnu` compte à part, et c'est capital : un aspect que le corpus
+ * n'étiquette nulle part n'est pas un aspect raté, c'est une dette du corpus.
+ * Les mélanger ferait accuser la brique d'un silence qui n'est pas le sien.
+ */
+export interface AspectTally extends VerdictTally {
+  key: string;
+  libelle: string;
+  /** JUSTE sur ce qui a été jugé, ou `null` si personne n'a rien étiqueté. */
+  rate: number | null;
+}
+
+/** Un décompte vide par aspect, dans l'ordre canonique des douze. */
+export function emptyAspectTallies(): AspectTally[] {
+  return ASPECTS.map((a) => ({
+    key: a.key,
+    libelle: LIBELLES_ASPECTS[a.key] ?? a.key,
+    ...emptyTally(),
+    rate: null,
+  }));
+}
+
+/**
+ * Range les verdicts d'une fiche dans le décompte par aspect, en place.
+ *
+ * Ici plutôt que dans la route : la route ferait la même boucle, et une règle
+ * écrite à deux endroits finit par diverger sans que rien ne le dise. C'est
+ * aussi ce qui rend ce cumul testable sans base de données.
+ */
+export function cumulerAspects(
+  tallies: AspectTally[],
+  byField: Record<string, FieldVerdict | null>,
+): void {
+  for (const ligne of tallies) {
+    if (!(ligne.key in byField)) continue;
+    const verdict = byField[ligne.key];
+    if (verdict === null) ligne.inconnu += 1;
+    else ligne[verdict] += 1;
+  }
+}
+
+/** Le taux d'un décompte une fois tous les relevés cumulés. */
+export function acheverAspectTallies(tallies: AspectTally[]): AspectTally[] {
+  return tallies.map((t) => {
+    const juges = t.JUSTE + t.FAUX + t.INVENTE + t.MANQUE;
+    return { ...t, rate: juges > 0 ? t.JUSTE / juges : null };
+  });
+}
+
 export function extractScore(
   attendue: FicheRendue,
   rendue: FicheRendue,

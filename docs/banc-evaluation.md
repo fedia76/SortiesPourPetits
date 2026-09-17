@@ -436,6 +436,29 @@ Deux champs se comparent autrement, et les deux corrections datent de septembre
   comptait MANQUÉ toute sortie récurrente, pour une conversion qui a lieu deux
   étages plus loin.
 
+### Le taux d'un run cache lequel des douze aspects lâche
+
+Le chiffre de tête d'un run d'extraction est une moyenne sur douze aspects très
+différents. Douze aspects médiocres, ou onze corrects et un effondré, donnent le
+même taux — et n'appellent pas le même travail.
+
+Le détail d'un run porte donc un encart **aspect par aspect** : justes, faux,
+inventés, manqués, non jugés, et le taux de chacun. Dans l'ordre canonique des
+douze par défaut — c'est lui qui rend deux runs comparables ligne à ligne — avec
+un tri « les pires d'abord » à un clic.
+
+Les verdicts ne sont pas recalculés pour l'occasion : ce sont ceux de
+`verdictAspect`, cumulés par `cumulerAspects`. Une règle écrite à deux endroits
+finit par diverger sans que rien ne le dise.
+
+**Non jugé n'est pas raté**, et c'est la lecture qui compte le plus ici. Un
+aspect que le corpus n'étiquette nulle part ne pèse dans aucun taux — ni le
+sien, ni celui du run. Le compter comme une faute accuserait la brique d'un
+silence qui n'est pas le sien ; le compter comme une réussite flatterait le
+taux. La distinction se joue sur une nuance que rien d'autre ne révèle : une
+**clé absente** de l'étiquette vaut « personne n'a regardé », une **clé vide**
+vaut « vide à raison ».
+
 **Ce que coûte la mesure** est rendu avec elle : une extraction est un appel, et
 taire le prix donnerait l'impression que cette mesure-ci est gratuite comme les
 précédentes. C'est aussi pourquoi les catégories du site partent dans le prompt —
