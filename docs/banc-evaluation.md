@@ -445,10 +445,23 @@ champ qu'on l'empêchait de remplir.
 ### Rejouer l'étage 6 avec un autre fournisseur
 
 La même brique, le même corpus gelé, un autre fournisseur : c'est la
-comparaison qu'un banc existe pour rendre possible, et elle tient à une
-variable d'environnement du worker — `SPP_BENCH_PROVIDER=gliner`. Le run
-déclare à la clôture le modèle réellement interrogé, si bien que deux points de
-la courbe restent distinguables. Le mode d'emploi est dans le
+comparaison qu'un banc existe pour rendre possible, et elle se choisit au
+lancement, dans *Jouer une mesure* → *Par qui*. Le choix voyage dans
+`EvalRun.settings`, à côté de la recherche, et pour la même raison qu'elle :
+c'est la console qui décide sous quoi on mesure, pas la machine qui mesure.
+
+Deux conséquences, et la seconde compte autant que la première :
+
+* le run déclare à la clôture le modèle réellement interrogé
+  (`gliner:urchade/gliner_multi-v2.1`), si bien que deux points restent
+  distinguables — un run joué ne dit jamais ce qu'il était, et c'est
+  irrattrapable après coup ;
+* les deux fournisseurs font **deux courbes**. Un étiqueteur laisse
+  structurellement vides quatre des douze aspects : son taux est mécaniquement
+  plus bas sans que rien ait régressé, et les aligner ferait lire un
+  effondrement là où seul l'outil a changé.
+
+Le mode d'emploi est dans le
 [README du scraper](../scraper/README.md#extraire-en-local-plutôt-quavec-le-modèle).
 
 **Ce qu'il faut savoir avant de lire le tableau qui en sortira**, et qui ne

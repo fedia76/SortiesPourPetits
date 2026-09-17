@@ -419,7 +419,7 @@ def _bench_config() -> Config:
     return Config(name="banc", theme="sorties enfants")
 
 
-def _config_du_run(run: dict[str, Any], quiet: bool, env: Environment | None = None) -> Config:
+def _config_du_run(run: dict[str, Any], quiet: bool) -> Config:
     """La configuration **que le run déclare**, et non celle qu'on fabriquerait.
 
     Le sens de la flèche compte. Avant, le worker inventait une fenêtre et la
@@ -439,7 +439,7 @@ def _config_du_run(run: dict[str, Any], quiet: bool, env: Environment | None = N
                 "  Run sans recherche déclarée — configuration de repli du banc.",
                 flush=True,
             )
-        return _fournisseur_demande(_bench_config(), env, quiet)
+        return _fournisseur_du_run(_bench_config(), run, quiet)
 
     config = Config(
         name="banc",
@@ -451,34 +451,42 @@ def _config_du_run(run: dict[str, Any], quiet: bool, env: Environment | None = N
         # `horizon_days`, à partir d'aujourd'hui. On la lui impose.
         window=(str(recherche.get("dateFrom") or ""), str(recherche.get("dateTo") or "")),
     )
-    return _fournisseur_demande(config, env, quiet)
+    return _fournisseur_du_run(config, run, quiet)
 
 
-def _fournisseur_demande(config: Config, env: Environment | None, quiet: bool) -> Config:
-    """Le fournisseur que l'environnement réclame pour ce run de banc, s'il en réclame un.
+def _fournisseur_du_run(config: Config, run: dict[str, Any], quiet: bool) -> Config:
+    """Par qui ce run est joué — ce que **le run déclare**, et rien d'autre.
 
-    C'est l'unique interrupteur de l'expérience « étage 6 en local » : sans
-    `SPP_BENCH_PROVIDER`, rien ne change et le banc interroge le modèle comme
-    avant. Avec, la même brique est rejouée sur le même corpus gelé par un
-    autre fournisseur — ce qui est exactement la comparaison qu'un banc existe
-    pour rendre possible.
+    Même sens de flèche que pour la recherche, et pour la même raison : c'est
+    la console qui décide sous quoi on mesure, pas la machine qui mesure. Deux
+    runs lancés à dix minutes d'écart peuvent ainsi employer deux fournisseurs
+    différents sans qu'on touche au service, ce qui est exactement la
+    comparaison qu'un banc existe pour rendre possible.
 
-    Le nom est validé ici plutôt qu'au premier appel : une faute de frappe doit
-    arrêter le run avant qu'il ne commence, pas au milieu du corpus.
+    Un run mis en file avant ce changement ne porte pas la clé : il retombe
+    alors sur le fournisseur de production, et c'est le bon défaut — il a été
+    lancé quand c'était le seul.
+
+    Le nom est validé ici plutôt qu'au premier appel : une valeur inattendue
+    doit arrêter le run avant qu'il ne commence, pas au milieu du corpus.
     """
-    if env is None or not env.bench_provider:
+    demande = run.get("extraction") or {}
+    if not isinstance(demande, dict):
         return config
-    if env.bench_provider not in PROVIDERS:
+    fournisseur = str(demande.get("provider") or "").strip().lower()
+    if not fournisseur:
+        return config
+    if fournisseur not in PROVIDERS:
         raise ConfigError(
-            f"SPP_BENCH_PROVIDER inconnu : « {env.bench_provider} » "
+            f"fournisseur inconnu dans les réglages du run : « {fournisseur} » "
             f"(connus : {', '.join(PROVIDERS)})"
         )
     if not quiet:
-        print(f"  Fournisseur imposé pour ce run : {env.bench_provider}.", flush=True)
+        print(f"  Fournisseur déclaré par le run : {fournisseur}.", flush=True)
     return replace(
         config,
-        provider=env.bench_provider,
-        gliner_model=env.gliner_model or config.gliner_model,
+        provider=fournisseur,
+        gliner_model=str(demande.get("model") or "") or config.gliner_model,
     )
 
 
@@ -555,7 +563,7 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
         # Celle que le run déclare. Le modèle recevra donc exactement la
         # fenêtre contre laquelle le site le jugera — elles viennent de la même
         # ligne en base, et ne peuvent pas diverger.
-        config = _config_du_run(run, quiet, env)
+        config = _config_du_run(run, quiet)
         provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
 
     traites = 0

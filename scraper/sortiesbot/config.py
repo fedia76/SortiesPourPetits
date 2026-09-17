@@ -502,19 +502,6 @@ class Environment:
     anthropic_key: str | None
     #: Clé du moteur de recherche, quand la configuration en nomme un.
     serper_key: str | None = None
-    #: Le fournisseur qu'un **run de banc** doit employer, quand on veut en
-    #: essayer un autre que celui de la production.
-    #:
-    #: Une variable d'environnement plutôt qu'une colonne en base : la console
-    #: ne propose pas ce choix, et lui en ajouter un demanderait une migration,
-    #: une route et un champ dans l'interface pour une expérience qu'on voudra
-    #: peut-être retirer. Le run reste distinguable dans la console malgré
-    #: tout, parce que `_declare` inscrit le modèle réellement interrogé — ce
-    #: pour quoi cette colonne existe. Le jour où l'expérience se confirme,
-    #: c'est ce réglage-là qu'on promeut en champ de configuration.
-    bench_provider: str | None = None
-    #: Le point de contrôle de l'étiqueteur pour ce run de banc.
-    gliner_model: str | None = None
 
     @classmethod
     def from_env(cls) -> Environment:
@@ -523,8 +510,6 @@ class Environment:
             api_key=os.environ.get("SPP_API_KEY") or None,
             anthropic_key=os.environ.get("ANTHROPIC_API_KEY") or None,
             serper_key=os.environ.get("SERPER_API_KEY") or None,
-            bench_provider=(os.environ.get("SPP_BENCH_PROVIDER") or "").strip().lower() or None,
-            gliner_model=os.environ.get("SPP_GLINER_MODEL") or None,
         )
 
 

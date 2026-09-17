@@ -18,8 +18,9 @@ import { api } from '../lib/api';
 import { messageDe } from '../lib/erreurs';
 import EvalRunDetail from '../components/EvalRunDetail.vue';
 import type {
-  EvalRecherche, EvalRun, EvalScore, EvalStage } from '../types';
+  EvalExtraction, EvalProvider, EvalRecherche, EvalRun, EvalScore, EvalStage } from '../types';
 import {
+  EVAL_PROVIDER_LABELS,
   EVAL_RUN_STATUS_LABELS,
   EVAL_STAGE_COST,
   EVAL_STAGE_LABELS,
@@ -49,7 +50,24 @@ const newLabel = ref('');
 const recherche = ref<EvalRecherche | null>(null);
 const prefixes = ref('');
 
+/**
+ * Qui remplira la fiche, pour un run d'extraction.
+ *
+ * Même raison d'être que la recherche juste au-dessus, et même sens de flèche :
+ * le choix appartient à qui lance la mesure, pas au service qui la joue. Le
+ * mettre côté worker — une variable d'environnement, un fichier de
+ * configuration — obligerait à toucher au service entre deux runs, c'est-à-dire
+ * pour le seul usage qu'on en a : comparer deux fournisseurs sur le même
+ * corpus, à dix minutes d'écart.
+ */
+const provider = ref<EvalProvider>('anthropic');
+const glinerModel = ref('');
+
+const PROVIDERS: EvalProvider[] = ['anthropic', 'gliner'];
 const STAGES: EvalStage[] = ['HARVEST', 'SELECT', 'READ', 'EXTRACT'];
+
+/** Le fournisseur ne se choisit qu'à l'extraction : lui seul sait s'en servir. */
+const choixDuFournisseur = computed(() => newStage.value === 'EXTRACT');
 
 async function load() {
   loading.value = true;
@@ -93,6 +111,12 @@ async function launch() {
                 .filter(Boolean),
             },
           }
+        : {}),
+      // Et seule l'extraction a le choix du fournisseur. On ne l'envoie que
+      // s'il s'écarte de la production : un run qui ne dit rien est un run
+      // joué comme d'habitude, et sa ligne en base le dit aussi.
+      ...(choixDuFournisseur.value && provider.value !== 'anthropic'
+        ? { extraction: { provider: provider.value, model: glinerModel.value.trim() } }
         : {}),
     });
     notice.value =
@@ -199,18 +223,42 @@ function detail(run: EvalRun): string {
  * rien.
  */
 /**
- * La recherche d'un run, en une ligne — et la clé qui sépare les courbes.
+ * Sous quoi un run a été joué, en une ligne — et la clé qui sépare les courbes.
  *
- * Vide pour les étages qui n'en ont pas : ils gardent une seule courbe.
+ * Deux choses peuvent séparer deux courbes d'un même étage, et pour la même
+ * raison : le taux ne mesure plus la même chose de part et d'autre.
+ *
+ * * la **recherche**, pour le tri — les mêmes étiquettes donnent 100 % sous une
+ *   fenêtre et 0 % sous une autre ;
+ * * le **fournisseur**, pour l'extraction — un étiqueteur de spans laisse
+ *   structurellement vides quatre des douze aspects, faute de savoir rédiger
+ *   une description ou deviner un cadre. Son taux de champs justes est donc
+ *   mécaniquement plus bas, sans que rien ait régressé. Aligner ce point sur
+ *   ceux du modèle ferait lire un effondrement là où seul l'outil a changé —
+ *   exactement la faute que la séparation par recherche corrige déjà.
+ *
+ * Vide pour le reste : ces étages gardent une seule courbe.
  */
-function rechercheDe(run: EvalRun): { cle: string; texte: string } {
-  if (run.stage !== 'SELECT') return { cle: '', texte: '' };
-  let r: Partial<EvalRecherche>;
+function courbeDe(run: EvalRun): { cle: string; texte: string } {
+  let brut: Record<string, unknown>;
   try {
-    r = JSON.parse(run.settings || '{}') as Partial<EvalRecherche>;
+    brut = JSON.parse(run.settings || '{}') as Record<string, unknown>;
   } catch {
-    r = {};
+    brut = {};
   }
+
+  if (run.stage === 'EXTRACT') {
+    const extraction = (brut.extraction ?? {}) as Partial<EvalExtraction>;
+    // Un run lancé avant que le choix existe n'a pas la clé : il a été joué
+    // par le modèle, puisque c'était le seul. Le ranger ailleurs couperait la
+    // courbe en deux à la date du déploiement, pour rien.
+    if (!extraction.provider || extraction.provider === 'anthropic') return { cle: '', texte: '' };
+    const modele = extraction.model ? ` · ${extraction.model}` : '';
+    return { cle: `p:${extraction.provider}`, texte: `étiqueteur local${modele}` };
+  }
+
+  if (run.stage !== 'SELECT') return { cle: '', texte: '' };
+  const r = brut as Partial<EvalRecherche>;
   if (!r.dateFrom) return { cle: 'sans', texte: 'sans recherche déclarée' };
   const bouts = [
     `du ${r.dateFrom} au ${r.dateTo}`,
@@ -239,7 +287,7 @@ const series = computed(() => {
   const groupes = new Map<string, { stage: EvalStage; recherche: string; runs: EvalRun[] }>();
   for (const run of runs.value) {
     if (run.status !== 'DONE' || headline(run.score) === null) continue;
-    const { cle, texte } = rechercheDe(run);
+    const { cle, texte } = courbeDe(run);
     const id = `${run.stage}|${cle}`;
     const groupe = groupes.get(id) ?? { stage: run.stage, recherche: texte, runs: [] };
     groupe.runs.push(run);
@@ -359,7 +407,7 @@ function depuis(value: string | null): string {
         ce que le modèle croit qu'on cherche — et servent à juger ce qu'il a
         rendu. Elles étaient codées en dur dans le worker, donc injoignables.
       -->
-      <fieldset v-if="newStage === 'SELECT' && recherche" class="recherche">
+      <fieldset v-if="newStage === 'SELECT' && recherche" class="reglage">
         <legend>Sous quelle recherche</legend>
         <div class="row launch-row">
           <div class="field">
@@ -399,10 +447,62 @@ function depuis(value: string | null): string {
         </p>
       </fieldset>
 
+      <!--
+        Seule l'extraction a le choix du fournisseur, et c'est à qui lance la
+        mesure de le faire : le mettre côté worker obligerait à toucher au
+        service entre deux runs, donc pour le seul usage qu'on en a — comparer.
+      -->
+      <fieldset v-if="choixDuFournisseur" class="reglage">
+        <legend>Par qui</legend>
+        <div class="row launch-row">
+          <div class="field grow">
+            <label for="ev-provider">Qui remplit la fiche</label>
+            <select id="ev-provider" v-model="provider">
+              <option v-for="p in PROVIDERS" :key="p" :value="p">
+                {{ EVAL_PROVIDER_LABELS[p] }}
+              </option>
+            </select>
+          </div>
+          <div v-if="provider === 'gliner'" class="field grow">
+            <label for="ev-gliner">Point de contrôle</label>
+            <input
+              id="ev-gliner"
+              v-model="glinerModel"
+              type="text"
+              maxlength="120"
+              placeholder="urchade/gliner_multi-v2.1"
+            />
+          </div>
+        </div>
+        <p v-if="provider === 'gliner'" class="muted small">
+          L’étiqueteur ne rend que des <strong>morceaux de la page</strong> : il
+          ne peut pas inventer une valeur, et il ne coûte rien. En échange, il
+          laisse vides les quatre champs qui ne sont pas des morceaux de page —
+          la description, le cadre, la catégorie, « plusieurs sorties ». Le banc
+          les comptera <strong>manquants</strong>, et c’est la mesure juste.
+        </p>
+        <p v-if="provider === 'gliner'" class="muted small">
+          À lire avant le tableau : <strong>onze aspects sur douze</strong> sont
+          jugés par « la valeur se lit-elle dans la page ? ». Un étiqueteur ne
+          rend que des sous-chaînes, donc il ne peut pas échouer à cette
+          question — par construction, pas par mérite. Le taux d’ancrage montera
+          sans rien prouver ; ce qui arbitre est la comparaison aux fiches
+          étiquetées, aspect par aspect.
+        </p>
+        <p v-if="provider === 'gliner'" class="muted small">
+          Ce run fera sa <strong>propre courbe</strong>, à côté de celle du
+          modèle. Les aligner ferait lire un effondrement là où seul l’outil a
+          changé.
+        </p>
+      </fieldset>
+
       <p class="muted small">
-        {{ EVAL_STAGE_COST[newStage] }}. L’étiquette n’est pas du décor : c’est
-        elle qui rendra ce point de la courbe lisible dans six mois — « run #47 »
-        ne dit rien.
+        {{
+          choixDuFournisseur && provider === 'gliner'
+            ? 'gratuit — un étiqueteur local, sur le processeur'
+            : EVAL_STAGE_COST[newStage]
+        }}. L’étiquette n’est pas du décor : c’est elle qui rendra ce point de la
+        courbe lisible dans six mois — « run #47 » ne dit rien.
       </p>
     </div>
 
@@ -566,14 +666,17 @@ function depuis(value: string | null): string {
   font-style: italic;
 }
 
-.recherche {
+/* Les deux blocs de réglages du lancement : « sous quelle recherche » et
+   « par qui ». Un nom qui décrit la place, pas le contenu — sans quoi le
+   second aurait porté la classe du premier. */
+.reglage {
   border: 1px solid var(--border, #ddd);
   border-radius: 6px;
   padding: 0.6rem 0.9rem 0.4rem;
   margin: 0.6rem 0 0.8rem;
 }
 
-.recherche legend {
+.reglage legend {
   font-size: 0.85rem;
   font-weight: 600;
   padding: 0 0.4rem;

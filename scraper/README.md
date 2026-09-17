@@ -343,23 +343,38 @@ pip install -e ".[gliner]"        # tire torch, ~2 Go — d'où l'extra
 
 # une page, pour voir les spans et régler les libellés
 python -m tools.gliner_essai tests/fixtures/pages/spectacle-avec-json-ld.html --spans
-
-# puis le corpus entier, depuis la console : /admin/evaluation → étage 6
-SPP_BENCH_PROVIDER=gliner python -m sortiesbot.worker
 ```
 
-`SPP_BENCH_PROVIDER` est l'unique interrupteur, et c'est une variable
-d'environnement plutôt qu'un champ de la console **à dessein** : y ajouter une
-colonne demanderait une migration, une route et un champ d'interface pour une
-expérience qu'on voudra peut-être retirer. Le run reste distinguable malgré
-tout, parce qu'il déclare à la clôture le modèle réellement interrogé
-(`gliner:urchade/gliner_multi-v2.1`) — ce pour quoi cette colonne existe. Le
-jour où l'expérience se confirme, c'est ce réglage qu'on promeut.
+Puis le corpus entier, **depuis la console** : *Évaluation* → *Jouer une
+mesure* → brique « extraction » → *Par qui*. Rien à faire côté serveur : le run
+porte son fournisseur, le worker le lit et obéit.
 
-`SPP_GLINER_MODEL` change le point de contrôle (`glinerModel` en YAML). La
-bibliothèque est un **extra** : le fournisseur s'importe sans elle et dit quoi
-installer, si bien que ni l'intégration continue ni le VPS ne portent torch
-pour rien.
+Le choix voyage dans `EvalRun.settings`, à côté de la recherche, et c'est le
+même sens de flèche que pour elle — **la console décide sous quoi on mesure, la
+machine se contente de mesurer**. Pas de colonne pour lui : cette clé est
+prévue pour ça (« les réglages en vigueur, en JSON »), et un run lancé avant ce
+changement ne la porte simplement pas, donc retombe sur le modèle — le bon
+défaut, puisqu'il a été lancé quand c'était le seul.
+
+C'était d'abord une variable d'environnement du worker. Mauvaise place : elle
+obligeait à modifier une unité systemd et à redémarrer le service entre deux
+runs, c'est-à-dire pour le seul usage qu'on en a — comparer.
+
+Le **point de contrôle** se saisit à côté, et se règle aussi par `glinerModel`
+en YAML pour un run en ligne de commande. La bibliothèque est un **extra** : le
+fournisseur s'importe sans elle et dit quoi installer, si bien que ni
+l'intégration continue ni le VPS ne portent torch pour rien.
+
+Le run déclare à la clôture le modèle réellement interrogé
+(`gliner:urchade/gliner_multi-v2.1` au lieu de `claude-haiku-4-5`) : sans quoi
+deux points de la courbe porteraient le même nom, ce qui est irrattrapable
+après coup.
+
+**Et il fait sa propre courbe.** Un étiqueteur laisse structurellement vides
+quatre des douze aspects : son taux de champs justes est mécaniquement plus bas
+sans que rien ait régressé. Aligner ce point sur ceux du modèle ferait lire un
+effondrement là où seul l'outil a changé — exactement la faute que la
+séparation par recherche corrige déjà pour l'étage 4.
 
 #### Ce que le banc ne pourra pas vous dire
 

@@ -537,44 +537,62 @@ def test_un_etage_de_python_pur_ne_declare_aucun_modele():
 #
 # L'expérience « extraction en local » ne tient qu'à une chose : pouvoir
 # rejouer la même brique sur le même corpus gelé avec un autre fournisseur, et
-# que les deux runs restent distinguables dans la console. Ces quatre tests
-# verrouillent exactement ça.
+# que les deux runs restent distinguables dans la console. Le choix vient du
+# **run**, comme la recherche — c'est la console qui décide sous quoi on
+# mesure, pas la machine qui mesure.
 
 
-def _env(**kwargs):
-    from sortiesbot.config import Environment
-
-    base = {"api_url": "http://x", "api_key": "k", "anthropic_key": "a"}
-    return Environment(**{**base, **kwargs})
-
-
-def test_sans_variable_le_banc_ne_change_pas_de_fournisseur():
-    """Le réglage est un interrupteur : absent, rien de l'existant ne bouge."""
-    config = worker._config_du_run({"id": 20, "stage": "EXTRACT"}, quiet=True, env=_env())
+def test_sans_declaration_le_banc_ne_change_pas_de_fournisseur():
+    """Un run lancé avant ce changement n'a pas la clé, et garde le bon défaut."""
+    config = worker._config_du_run({"id": 20, "stage": "EXTRACT"}, quiet=True)
     assert config.provider == "anthropic"
 
 
-def test_la_variable_impose_le_fournisseur_du_run_de_banc():
+def test_le_run_impose_son_fournisseur():
     config = worker._config_du_run(
-        {"id": 21, "stage": "EXTRACT"}, quiet=True, env=_env(bench_provider="gliner")
+        {"id": 21, "stage": "EXTRACT", "extraction": {"provider": "gliner"}}, quiet=True
     )
     assert config.provider == "gliner"
 
 
 def test_le_point_de_controle_se_choisit_aussi():
     config = worker._config_du_run(
-        {"id": 22, "stage": "EXTRACT"},
+        {
+            "id": 22,
+            "stage": "EXTRACT",
+            "extraction": {"provider": "gliner", "model": "fastino/gliner2-multi-v1"},
+        },
         quiet=True,
-        env=_env(bench_provider="gliner", gliner_model="fastino/gliner2-multi-v1"),
     )
     assert config.gliner_model == "fastino/gliner2-multi-v1"
 
 
-def test_un_fournisseur_mal_orthographie_arrete_le_run_avant_le_corpus():
-    with pytest.raises(ConfigError, match="SPP_BENCH_PROVIDER"):
+def test_un_point_de_controle_vide_garde_celui_par_defaut():
+    config = worker._config_du_run(
+        {"id": 23, "stage": "EXTRACT", "extraction": {"provider": "gliner", "model": ""}},
+        quiet=True,
+    )
+    assert config.gliner_model == Config(name="x", theme="x").gliner_model
+
+
+def test_un_fournisseur_inattendu_arrete_le_run_avant_le_corpus():
+    with pytest.raises(ConfigError, match="fournisseur inconnu"):
         worker._config_du_run(
-            {"id": 23, "stage": "EXTRACT"}, quiet=True, env=_env(bench_provider="glinerr")
+            {"id": 24, "stage": "EXTRACT", "extraction": {"provider": "glinerr"}}, quiet=True
         )
+
+
+def test_le_fournisseur_survit_a_une_recherche_declaree():
+    """Les deux réglages voyagent ensemble : l'un ne doit pas effacer l'autre."""
+    run = {
+        "id": 25,
+        "stage": "EXTRACT",
+        "recherche": {"theme": "spectacles", "dateFrom": "2026-07-01", "dateTo": "2026-07-31"},
+        "extraction": {"provider": "gliner"},
+    }
+    config = worker._config_du_run(run, quiet=True)
+    assert config.provider == "gliner"
+    assert config.theme == "spectacles"
 
 
 def test_un_run_gliner_ne_se_declare_pas_joue_par_haiku():
@@ -584,7 +602,7 @@ def test_un_run_gliner_ne_se_declare_pas_joue_par_haiku():
     après coup : un run joué ne dit jamais ce qu'il était.
     """
     config = worker._config_du_run(
-        {"id": 24, "stage": "EXTRACT"}, quiet=True, env=_env(bench_provider="gliner")
+        {"id": 26, "stage": "EXTRACT", "extraction": {"provider": "gliner"}}, quiet=True
     )
     declare = worker._declare("EXTRACT", config)
     assert declare["model"].startswith("gliner:")

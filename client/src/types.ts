@@ -1344,6 +1344,20 @@ export interface EvalRecherche {
   theme: string;
 }
 
+/** Qui remplit la fiche, pour un run de l'étage 6. */
+export type EvalProvider = 'anthropic' | 'gliner';
+
+export interface EvalExtraction {
+  provider: EvalProvider;
+  /** Point de contrôle de l'étiqueteur. Vide : celui par défaut du scraper. */
+  model?: string;
+}
+
+export const EVAL_PROVIDER_LABELS: Record<EvalProvider, string> = {
+  anthropic: 'Le modèle (Haiku) — celui de la production',
+  gliner: 'Un étiqueteur local (GLiNER) — gratuit, sans rédaction',
+};
+
 /** Le résumé chiffré d'un run, calculé à la lecture et jamais stocké. */
 export type EvalScore =
   | ({ kind: 'links' } & EvalHarvestScore &

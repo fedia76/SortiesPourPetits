@@ -1384,7 +1384,7 @@ evalRouter.post('/runs', admin, async (req, res) => {
     res.status(400).json({ error: parsed.error.issues[0].message });
     return;
   }
-  const { stage, label, recherche } = parsed.data;
+  const { stage, label, recherche, extraction } = parsed.data;
   const items = await countRunnable(stage);
   if (items === 0) {
     res.status(409).json({
@@ -1396,12 +1396,20 @@ evalRouter.post('/runs', admin, async (req, res) => {
     // La recherche est fixée **ici**, au lancement, et en dates absolues. Le
     // worker la lira au lieu de la fabriquer : c'est la console qui décide sous
     // quoi on mesure, pas la machine qui mesure.
+    //
+    // Le fournisseur voyage dans les mêmes réglages, sous sa propre clé. Pas
+    // de colonne pour lui : `settings` est prévue pour ça — « les réglages en
+    // vigueur, en JSON » —, et un run lancé avant ce changement n'a
+    // simplement pas la clé, donc retombe sur le fournisseur de production.
     data: {
       stage,
       label,
       items,
       requestedById: req.user!.id,
-      settings: JSON.stringify(recherche ?? {}),
+      settings: JSON.stringify({
+        ...(recherche ?? {}),
+        ...(extraction ? { extraction } : {}),
+      }),
     },
   });
   res.status(201).json({ run });
@@ -2087,12 +2095,19 @@ evalRouter.post('/runs/next', async (req, res) => {
       codeRef: parsed.data.codeRef,
     },
   });
+  // Les deux réglages voyagent ensemble en base et se séparent ici : le worker
+  // reçoit « sous quelle recherche » et « par qui » comme deux choses
+  // distinctes, parce qu'elles le sont. Mêler le fournisseur à la recherche
+  // ferait qu'un run d'extraction — qui n'a pas de recherche — devrait en
+  // porter une factice pour dire qui le joue.
+  const { extraction, ...recherche } = parseJson<Record<string, unknown>>(claimed.settings, {});
   res.json({
     run: {
       id: claimed.id,
       stage: claimed.stage,
       label: claimed.label,
-      recherche: parseJson<Record<string, unknown>>(claimed.settings, {}),
+      recherche,
+      extraction: extraction ?? null,
     },
   });
 });
