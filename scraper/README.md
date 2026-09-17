@@ -389,6 +389,44 @@ par aspect. C'est là qu'on verra si l'étiqueteur choisit le **bon** tarif parm
 les cinq qu'affiche une page de théâtre — ce que l'ancrage, lui, ne distingue
 pas d'un mauvais.
 
+#### Quand un run de banc semble coincé
+
+Un run de banc est **muet par construction** : son `RunLog` n'a ni fichier ni
+console, pour que la mesure ne dépende pas de ce qu'on journalise. Conséquence,
+un worker bloqué ne se distinguait en rien d'un worker lent — même absence de
+sortie, même processus vivant —, et trancher demandait de se connecter au VPS.
+
+Deux témoins pour ça, et les deux sont dans le journal du service
+(`journalctl -u sortiespourpetits-scraper -f`) :
+
+* **une ligne par entrée** — `42/160 · 2.3 s · https://…`. Le total vient du
+  run, parce qu'un compteur sans lui ne dit pas s'il reste dix entrées ou cent ;
+* **la pile, quand une entrée dépasse `ENTREE_LENTE_S`** (trois minutes). Le
+  worker ne s'arrête pas : il crache où il en est et continue. C'est ce qui
+  transforme « il a gelé » en « il attend dans `predict_entities` », sans
+  redémarrer quoi que ce soit.
+
+Ce témoin **ne peut pas mettre le run en échec**, et ce n'est pas une
+précaution de principe : `faulthandler` écrit sur un descripteur de fichier, et
+un `sys.stderr` qui n'en a pas fait lever l'armement. Écrit naïvement, il
+arrêtait le run à la première entrée avec un message parlant de `fileno` — un
+instrument qui met en échec ce qu'il observe. Il tente une fois, puis se tait
+pour de bon.
+
+Si ça ne suffit pas, la pile d'un processus vivant se lit sans le toucher :
+
+```bash
+pip install py-spy
+py-spy dump --pid $(pgrep -f sortiesbot.worker)
+```
+
+Et les trois choses à regarder avant tout, dans cet ordre : la console dit-elle
+le run *en cours* ou *repris* (au-delà de trente minutes sans battement, le site
+le déclare mort — ce n'est pas un gel, c'est une reprise) ; `free -h` et
+`dmesg | grep -i oom` (torch sur un VPS étroit fait tomber la machine dans le
+*swap*, ce qui ressemble exactement à un gel) ; et `top`, pour savoir si le
+processus brûle du processeur ou s'il attend.
+
 ### Le journal, et où il va
 
 Un même événement part vers trois destinations :

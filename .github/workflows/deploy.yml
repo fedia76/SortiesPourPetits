@@ -145,6 +145,21 @@ jobs:
           | ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
               "umask 077 && cat > '${{ secrets.VPS_APP_DIR }}/scraper/.env'"
 
+          # Les extras du scraper, vides par défaut, et résolus **ici** plutôt
+          # que sur le VPS : une variable du shell distant devrait être
+          # échappée à travers les guillemets du ssh, et une erreur
+          # d'échappement se découvrirait en production.
+          #
+          # Pourquoi une variable de dépôt plutôt qu'une ligne en dur : le
+          # worker tourne dans ce venv et nulle part ailleurs, donc ce qui n'y
+          # est pas installé n'existe pas pour lui — la console pouvait offrir
+          # le fournisseur « gliner » sans que le worker sache le charger. Mais
+          # l'extra tire torch, deux gigaoctets, et l'imposer à tous les
+          # déploiements pour une expérience de banc serait un mauvais marché.
+          # `SCRAPER_EXTRAS=gliner` l'active ; son absence ne change rien.
+          EXTRAS='${{ vars.SCRAPER_EXTRAS }}'
+          if [ -n "$EXTRAS" ]; then SPEC=".[$EXTRAS]"; else SPEC="."; fi
+
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "
             set -e
             cd '${{ secrets.VPS_APP_DIR }}/scraper'
@@ -156,7 +171,7 @@ jobs:
               exit 1
             }
             .venv/bin/pip install --quiet --upgrade pip
-            .venv/bin/pip install --quiet -e .
+            .venv/bin/pip install --quiet -e '$SPEC'
           "
 
       # Le worker exécute les recherches lancées depuis la console

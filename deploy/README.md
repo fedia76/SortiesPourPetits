@@ -232,6 +232,38 @@ Selon la version de Python du serveur, le paquet peut être versionné
 (`python3.14-venv`, `python3.12-venv`…) : le message d'erreur du déploiement
 indique lequel installer.
 
+### Les extras du scraper, et pourquoi ils ne s'installent pas à la main
+
+Le worker tourne dans **un venv, et nulle part ailleurs** :
+`ExecStart=/opt/sortiespourpetits/scraper/.venv/bin/python -m sortiesbot.worker`.
+Ce qu'on installe en root avec `pip install` atterrit dans le Python du
+système, que le service ne voit pas — et sur un Ubuntu récent, `pip` refuse
+même de le faire (`externally-managed-environment`, PEP 668).
+
+Un extra s'active donc par la **variable de dépôt** `SCRAPER_EXTRAS`
+(*Settings → Secrets and variables → Actions → Variables*), que le
+déploiement lit :
+
+| Valeur | Ce que le VPS installe |
+|---|---|
+| *(absente)* | `pip install -e .` — le cas normal |
+| `gliner` | `pip install -e ".[gliner]"` — l'étiqueteur de l'étage 6, **et torch, ~2 Go** |
+
+Pour un essai ponctuel sans toucher au dépôt, c'est le pip **du venv** qu'il
+faut appeler, et sous le compte qui le possède — sans quoi les fichiers
+appartiennent à root et le déploiement suivant échoue :
+
+```bash
+sudo -u deploy /opt/sortiespourpetits/scraper/.venv/bin/pip install -e \
+  '/opt/sortiespourpetits/scraper[gliner]'
+```
+
+Pour vérifier ce que le worker voit vraiment, à tout moment :
+
+```bash
+/opt/sortiespourpetits/scraper/.venv/bin/python -c 'import gliner, torch; print(gliner.__file__)'
+```
+
 ### Installer le worker
 
 En marche normale, les recherches se lancent depuis la console

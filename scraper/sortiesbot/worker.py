@@ -17,6 +17,7 @@ quelque chose.
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import hashlib
 import signal
 import sys
@@ -538,6 +539,59 @@ def _code_ref() -> str:
         return ""
 
 
+#: Au-delà, une entrée de banc est réputée coincée et le worker **crache sa
+#: pile** sur la sortie d'erreur, sans s'arrêter.
+#:
+#: Ce n'est pas un plafond, c'est un témoin. Un run de banc est muet par
+#: construction — son `RunLog` n'a ni fichier ni console —, si bien qu'un worker
+#: bloqué ne se distingue en rien d'un worker lent : même absence de sortie,
+#: même processus vivant. La seule façon de trancher était de se connecter au
+#: VPS et d'attacher un débogueur à un processus qui, souvent, avait déjà été
+#: redémarré.
+#:
+#: Trois minutes laissent passer tout ce qui est honnête ici — un étiquetage de
+#: page tient en quelques secondes, un appel de modèle en quelques dizaines —
+#: et attrapent ce qui ne l'est pas. Le pire cas honnête du modèle, lui, est un
+#: appel qui va au bout de ses reprises : il dumpera, et c'est très bien, parce
+#: que la pile dira justement qu'on attend le SDK.
+ENTREE_LENTE_S = 180.0
+
+
+class _Temoin:
+    """Le témoin d'entrée lente, et sa seule règle : ne jamais casser le run.
+
+    `faulthandler` écrit sur un **descripteur de fichier**, pas sur un objet
+    Python. Si `sys.stderr` n'en a pas — un flux remplacé par un harnais de
+    test, un superviseur qui le détourne —, l'armement lève
+    `io.UnsupportedOperation`. Un instrument qui met en échec ce qu'il observe
+    est pire que pas d'instrument du tout : le run s'arrêtait à la première
+    entrée, et le message parlait de `fileno`.
+
+    On tente donc une fois. Si ça ne passe pas, le témoin se tait pour de bon
+    et le run continue sans lui.
+    """
+
+    def __init__(self, seuil: float = ENTREE_LENTE_S):
+        self.seuil = seuil
+        self.possible = True
+
+    def armer(self) -> None:
+        if not self.possible:
+            return
+        try:
+            faulthandler.dump_traceback_later(self.seuil, repeat=False)
+        except Exception:  # noqa: BLE001 — un témoin muet vaut mieux qu'un run mort
+            self.possible = False
+
+    def desarmer(self) -> None:
+        if not self.possible:
+            return
+        try:
+            faulthandler.cancel_dump_traceback_later()
+        except Exception:  # noqa: BLE001 — même raison, symétrique
+            self.possible = False
+
+
 def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> None:
     """Joue un run du banc : une brique, sur tout le corpus gelé.
 
@@ -567,6 +621,7 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
         provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
 
     traites = 0
+    temoin = _Temoin()
     status, error = "DONE", None
     try:
         # Les catégories du site partent dans le prompt d'extraction : le modèle
@@ -575,10 +630,17 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
         # mesurait un appel qui n'existe pas en production. Un site injoignable
         # met donc le run en échec plutôt que de rendre une mesure fausse.
         categories = sorted(api.categories()) if stage == "EXTRACT" else []
+        total = int(run.get("items") or 0)
         while not _stop:
             item = api.next_eval_item(run_id)
             if not item:
                 break
+            depart = time.monotonic()
+            # Armé avant l'entrée, désarmé après : si celle-ci dépasse le
+            # seuil, la pile part sur la sortie d'erreur — donc dans le journal
+            # du service — et le travail continue. Une entrée lente le dit une
+            # fois, elle ne noie pas le journal.
+            temoin.armer()
             html = str(item.get("html") or "")
             if stage in ("HARVEST", "SELECT"):
                 page_id = int(item["pageId"])
@@ -614,13 +676,26 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
                 )
                 result["sortieId"] = sortie_id
                 api.report_eval_extract(run_id, result)
+            temoin.desarmer()
             traites += 1
+            if not quiet:
+                # Une ligne par entrée, et c'est le minimum : sans elle, un run
+                # de deux cents pages est un écran vide pendant une heure, et
+                # « il est bloqué » ne se distingue pas de « il travaille ».
+                compte = f"{traites}/{total}" if total else str(traites)
+                print(
+                    f"  {compte} · {time.monotonic() - depart:.1f} s · {item.get('url', '')}",
+                    flush=True,
+                )
     except ApiError as err:
         status, error = "FAILED", str(err)
     except Exception as err:  # noqa: BLE001 — la trace part dans la console du service
         traceback.print_exc()
         status, error = "FAILED", f"{err.__class__.__name__} : {err}"
     finally:
+        # Un témoin armé survivrait au run et dumperait dans le vide, au milieu
+        # du travail suivant.
+        temoin.desarmer()
         usage = getattr(provider, "usage", None)
         payload: dict[str, Any] = {
             "items": traites,
