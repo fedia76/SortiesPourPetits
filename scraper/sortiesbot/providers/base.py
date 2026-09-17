@@ -103,6 +103,20 @@ def get_provider(
         from .serper_provider import SerperProvider
 
         return SerperProvider(AnthropicProvider(api_key=api_key), api_key=serper_key)
+    if config.provider == "gliner":
+        from .gliner_provider import GlinerProvider
+
+        # Un modèle reste branché derrière pour les quatre autres appels, qu'un
+        # étiqueteur ne sait pas rendre — mais seulement si une clé est là. Sans
+        # clé, le fournisseur se construit quand même et ne saura faire que
+        # l'extraction : c'est exactement ce dont un run de banc a besoin, et
+        # réclamer une clé pour ne jamais s'en servir aurait fermé la porte au
+        # seul cas d'usage de cette expérience.
+        return GlinerProvider(
+            AnthropicProvider(api_key=api_key) if api_key else None,
+            gliner_model=config.gliner_model,
+        )
     raise ProviderError(
-        f"Fournisseur inconnu : « {config.provider} » (connus : anthropic, serper)"
+        f"Fournisseur inconnu : « {config.provider} » "
+        f"(connus : anthropic, serper, gliner)"
     )

@@ -531,3 +531,61 @@ def test_un_etage_de_python_pur_ne_declare_aucun_modele():
     """Annoncer un modèle qu'on n'a pas appelé serait une déclaration fausse, et
     la colonne servirait à comparer ce qui ne se compare pas."""
     assert worker._declare("HARVEST", None) == {"model": "", "promptHash": ""}
+
+
+# ───────────────────────────── l'étage 6 rejoué par un autre fournisseur
+#
+# L'expérience « extraction en local » ne tient qu'à une chose : pouvoir
+# rejouer la même brique sur le même corpus gelé avec un autre fournisseur, et
+# que les deux runs restent distinguables dans la console. Ces quatre tests
+# verrouillent exactement ça.
+
+
+def _env(**kwargs):
+    from sortiesbot.config import Environment
+
+    base = {"api_url": "http://x", "api_key": "k", "anthropic_key": "a"}
+    return Environment(**{**base, **kwargs})
+
+
+def test_sans_variable_le_banc_ne_change_pas_de_fournisseur():
+    """Le réglage est un interrupteur : absent, rien de l'existant ne bouge."""
+    config = worker._config_du_run({"id": 20, "stage": "EXTRACT"}, quiet=True, env=_env())
+    assert config.provider == "anthropic"
+
+
+def test_la_variable_impose_le_fournisseur_du_run_de_banc():
+    config = worker._config_du_run(
+        {"id": 21, "stage": "EXTRACT"}, quiet=True, env=_env(bench_provider="gliner")
+    )
+    assert config.provider == "gliner"
+
+
+def test_le_point_de_controle_se_choisit_aussi():
+    config = worker._config_du_run(
+        {"id": 22, "stage": "EXTRACT"},
+        quiet=True,
+        env=_env(bench_provider="gliner", gliner_model="fastino/gliner2-multi-v1"),
+    )
+    assert config.gliner_model == "fastino/gliner2-multi-v1"
+
+
+def test_un_fournisseur_mal_orthographie_arrete_le_run_avant_le_corpus():
+    with pytest.raises(ConfigError, match="SPP_BENCH_PROVIDER"):
+        worker._config_du_run(
+            {"id": 23, "stage": "EXTRACT"}, quiet=True, env=_env(bench_provider="glinerr")
+        )
+
+
+def test_un_run_gliner_ne_se_declare_pas_joue_par_haiku():
+    """Deux points de la courbe doivent porter deux modèles différents.
+
+    Sans ça, la comparaison que ce run existe pour rendre serait irrattrapable
+    après coup : un run joué ne dit jamais ce qu'il était.
+    """
+    config = worker._config_du_run(
+        {"id": 24, "stage": "EXTRACT"}, quiet=True, env=_env(bench_provider="gliner")
+    )
+    declare = worker._declare("EXTRACT", config)
+    assert declare["model"].startswith("gliner:")
+    assert "haiku" not in declare["model"]

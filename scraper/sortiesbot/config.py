@@ -45,7 +45,12 @@ MODE_SITE = "site"
 MODES = (MODE_SEARCH, MODE_SITE)
 
 #: Qui lance les recherches. Le modèle reste derrière dans les deux cas.
-PROVIDERS = ("anthropic", "serper")
+#:
+#: « gliner » est à part : ce n'est pas un moteur mais un **étiqueteur de
+#: spans**, et il ne remplace que l'extraction. Un run complet nommé ainsi
+#: échouera aux quatre autres appels sans clé de modèle — c'est voulu, ce
+#: fournisseur est celui d'un run de banc d'extraction.
+PROVIDERS = ("anthropic", "serper", "gliner")
 
 #: Sites qui **republient** l'information sans en être la source. On les lit
 #: volontiers — ce sont d'excellents agendas, c'est même pour ça qu'ils
@@ -160,6 +165,12 @@ class Config:
     search_model: str = "claude-haiku-4-5"
     select_model: str = "claude-haiku-4-5"
     extraction_model: str = "claude-haiku-4-5"
+    #: Le point de contrôle de l'étiqueteur, quand `provider` vaut « gliner ».
+    #: Une clé à part plutôt qu'un détournement d'`extraction_model` : les deux
+    #: voyagent ensemble dans la déclaration d'un run de banc, et confondre le
+    #: nom d'un modèle Anthropic avec celui d'un dépôt Hugging Face rendrait la
+    #: table des prix et la colonne « modèle » de la console incompréhensibles.
+    gliner_model: str = "urchade/gliner_multi-v2.1"
     search_prompt: str = prompts.SEARCH
     #: Requêtes web à lancer. Vides : un appel au modèle les formule, ce qui
     #: coûte quelques centimes de centime et varie d'un run à l'autre. Les
@@ -444,6 +455,7 @@ def config_from_api(raw: dict[str, Any]) -> Config:
             search_model=str(raw.get("searchModel") or defaults.search_model),
             select_model=str(raw.get("selectModel") or defaults.select_model),
             extraction_model=str(raw.get("extractionModel") or defaults.extraction_model),
+            gliner_model=str(raw.get("glinerModel") or defaults.gliner_model),
             search_prompt=prompt("searchPrompt", defaults.search_prompt),
             queries_prompt=prompt("queriesPrompt", defaults.queries_prompt),
             classify_prompt=prompt("classifyPrompt", defaults.classify_prompt),
@@ -490,6 +502,19 @@ class Environment:
     anthropic_key: str | None
     #: Clé du moteur de recherche, quand la configuration en nomme un.
     serper_key: str | None = None
+    #: Le fournisseur qu'un **run de banc** doit employer, quand on veut en
+    #: essayer un autre que celui de la production.
+    #:
+    #: Une variable d'environnement plutôt qu'une colonne en base : la console
+    #: ne propose pas ce choix, et lui en ajouter un demanderait une migration,
+    #: une route et un champ dans l'interface pour une expérience qu'on voudra
+    #: peut-être retirer. Le run reste distinguable dans la console malgré
+    #: tout, parce que `_declare` inscrit le modèle réellement interrogé — ce
+    #: pour quoi cette colonne existe. Le jour où l'expérience se confirme,
+    #: c'est ce réglage-là qu'on promeut en champ de configuration.
+    bench_provider: str | None = None
+    #: Le point de contrôle de l'étiqueteur pour ce run de banc.
+    gliner_model: str | None = None
 
     @classmethod
     def from_env(cls) -> Environment:
@@ -498,6 +523,8 @@ class Environment:
             api_key=os.environ.get("SPP_API_KEY") or None,
             anthropic_key=os.environ.get("ANTHROPIC_API_KEY") or None,
             serper_key=os.environ.get("SERPER_API_KEY") or None,
+            bench_provider=(os.environ.get("SPP_BENCH_PROVIDER") or "").strip().lower() or None,
+            gliner_model=os.environ.get("SPP_GLINER_MODEL") or None,
         )
 
 
@@ -546,4 +573,5 @@ def describe(config: Config) -> dict[str, Any]:
         "search_model": config.search_model,
         "select_model": config.select_model,
         "extraction_model": config.extraction_model,
+        "gliner_model": config.gliner_model,
     }

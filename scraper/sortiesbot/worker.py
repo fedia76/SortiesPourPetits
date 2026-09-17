@@ -24,6 +24,7 @@ import tempfile
 import time
 import traceback
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ from .api import ApiError, SppApi
 from .chasse import hunt
 from .config import (
     IDF_POSTAL_PREFIXES,
+    PROVIDERS,
     Config,
     ConfigError,
     Environment,
@@ -417,7 +419,7 @@ def _bench_config() -> Config:
     return Config(name="banc", theme="sorties enfants")
 
 
-def _config_du_run(run: dict[str, Any], quiet: bool) -> Config:
+def _config_du_run(run: dict[str, Any], quiet: bool, env: Environment | None = None) -> Config:
     """La configuration **que le run déclare**, et non celle qu'on fabriquerait.
 
     Le sens de la flèche compte. Avant, le worker inventait une fenêtre et la
@@ -437,9 +439,9 @@ def _config_du_run(run: dict[str, Any], quiet: bool) -> Config:
                 "  Run sans recherche déclarée — configuration de repli du banc.",
                 flush=True,
             )
-        return _bench_config()
+        return _fournisseur_demande(_bench_config(), env, quiet)
 
-    return Config(
+    config = Config(
         name="banc",
         theme=str(recherche.get("theme") or "sorties enfants"),
         postal_prefixes=[str(p) for p in (recherche.get("postalPrefixes") or [])]
@@ -448,6 +450,35 @@ def _config_du_run(run: dict[str, Any], quiet: bool) -> Config:
         # La fenêtre est absolue : `Config` la calcule d'ordinaire depuis
         # `horizon_days`, à partir d'aujourd'hui. On la lui impose.
         window=(str(recherche.get("dateFrom") or ""), str(recherche.get("dateTo") or "")),
+    )
+    return _fournisseur_demande(config, env, quiet)
+
+
+def _fournisseur_demande(config: Config, env: Environment | None, quiet: bool) -> Config:
+    """Le fournisseur que l'environnement réclame pour ce run de banc, s'il en réclame un.
+
+    C'est l'unique interrupteur de l'expérience « étage 6 en local » : sans
+    `SPP_BENCH_PROVIDER`, rien ne change et le banc interroge le modèle comme
+    avant. Avec, la même brique est rejouée sur le même corpus gelé par un
+    autre fournisseur — ce qui est exactement la comparaison qu'un banc existe
+    pour rendre possible.
+
+    Le nom est validé ici plutôt qu'au premier appel : une faute de frappe doit
+    arrêter le run avant qu'il ne commence, pas au milieu du corpus.
+    """
+    if env is None or not env.bench_provider:
+        return config
+    if env.bench_provider not in PROVIDERS:
+        raise ConfigError(
+            f"SPP_BENCH_PROVIDER inconnu : « {env.bench_provider} » "
+            f"(connus : {', '.join(PROVIDERS)})"
+        )
+    if not quiet:
+        print(f"  Fournisseur imposé pour ce run : {env.bench_provider}.", flush=True)
+    return replace(
+        config,
+        provider=env.bench_provider,
+        gliner_model=env.gliner_model or config.gliner_model,
     )
 
 
@@ -470,6 +501,11 @@ def _declare(stage: str, config: Config | None) -> dict[str, str]:
         return {"model": "", "promptHash": ""}
     prompt = config.select_prompt if stage == "SELECT" else config.extraction_prompt
     model = config.select_model if stage == "SELECT" else config.extraction_model
+    if stage == "EXTRACT" and config.provider == "gliner":
+        # Sans cette ligne, un run GLiNER se déclarerait joué par Haiku : deux
+        # points de la courbe porteraient le même modèle, et la comparaison que
+        # ce run existe pour rendre serait irrattrapable après coup.
+        model = f"gliner:{config.gliner_model}"
     return {
         "model": model,
         "promptHash": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
@@ -519,7 +555,7 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
         # Celle que le run déclare. Le modèle recevra donc exactement la
         # fenêtre contre laquelle le site le jugera — elles viennent de la même
         # ligne en base, et ne peuvent pas diverger.
-        config = _config_du_run(run, quiet)
+        config = _config_du_run(run, quiet, env)
         provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
 
     traites = 0
