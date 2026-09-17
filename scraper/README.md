@@ -405,10 +405,28 @@ est vide, et trois causes très différentes donnent le même zéro :
    barre posée à 0,50 ;
 3. **il a vu et n'a rien trouvé.** Le libellé ne lui parle pas.
 
-Le script les distingue, sans consommer de run :
+Le script les distingue, sans consommer de run. Trois sources possibles, et
+c'est la première qui compte — ce sont les pages que le banc rejoue vraiment :
 
 ```bash
+# 1. le corpus gelé, sur le VPS : $UPLOADS_DIR/eval/<32 hexa>.html.gz
+#    (le script ouvre les .gz directement, pas besoin de les déballer)
+python -m tools.gliner_essai /opt/sortiespourpetits/server/uploads/eval/a1b2….html.gz
+
+# 2. les pages du dépôt, pour un essai hors VPS
 python -m tools.gliner_essai tests/fixtures/pages/spectacle-avec-json-ld.html
+
+# 3. une page du web, pour un essai à chaud
+python -m tools.gliner_essai https://exemple.fr/spectacle
+```
+
+Les archives portent un nom aléatoire : c'est la base qui dit laquelle est
+quoi. Pour retrouver celle d'une sortie précise, ou simplement les cinq
+premières du corpus :
+
+```sql
+SELECT id, url, htmlPath FROM EvalSortie
+WHERE capture = 'CAPTURED' AND htmlPath IS NOT NULL ORDER BY id LIMIT 5;
 ```
 
 Il montre, passe par passe, la tranche de page réellement soumise et jusqu'où
