@@ -48,8 +48,8 @@ test('un aspect que le corpus n’étiquette pas reste non jugé', () => {
   // `setting: undefined` ne suffirait pas — `'setting' in objet` reste vrai
   // dès que la clé existe, et c'est ce test-là que `verdictAspect` applique
   // pour décider entre « vide à raison » et « personne n'a regardé ».
-  const attendue = { title: 'Atelier' } as never;
-  const rendue = { title: 'Atelier', setting: 'INDOOR' } as never;
+  const attendue = { title: 'Atelier' };
+  const rendue = { title: 'Atelier', setting: 'INDOOR' };
   cumulerAspects(tallies, extractScore(attendue, rendue).byField);
   const cadre = ligne(tallies, 'cadre');
   assert.equal(cadre.inconnu, 1);
@@ -76,13 +76,13 @@ test('un champ manqué et un champ inventé ne se confondent pas', () => {
   // Le corpus annonce un titre, la brique rend vide → MANQUE.
   cumulerAspects(
     tallies,
-    extractScore({ title: 'Le Petit Chaperon rouge' } as never, { title: '' } as never).byField,
+    extractScore({ title: 'Le Petit Chaperon rouge' }, { title: '' }).byField,
   );
   // Le corpus dit que le titre est **vide**, la brique en rend un → INVENTE.
   // Nuance qui compte : une clé absente vaut « non jugé », pas « inventé ».
   cumulerAspects(
     tallies,
-    extractScore({ title: '' } as never, { title: 'Navigation du site' } as never).byField,
+    extractScore({ title: '' }, { title: 'Navigation du site' }).byField,
   );
   const titre = ligne(tallies, 'titre');
   assert.equal(titre.MANQUE, 1);
@@ -95,7 +95,7 @@ test('plusieurs fiches se cumulent sur le même aspect', () => {
   for (const titre of ['Atelier', 'Atelier', 'Atelier']) {
     cumulerAspects(
       tallies,
-      extractScore({ title: titre } as never, { title: titre } as never).byField,
+      extractScore({ title: titre }, { title: titre }).byField,
     );
   }
   assert.equal(ligne(tallies, 'titre').JUSTE, 3);
@@ -105,18 +105,18 @@ test('une clé absente vaut « non jugé », une clé vide vaut « vide à raiso
   // La distinction est toute la raison d'être de `inconnu`, et elle ne se lit
   // nulle part ailleurs : les deux cas rendent une fiche vide côté brique.
   const absente = emptyAspectTallies();
-  cumulerAspects(absente, extractScore({} as never, {} as never).byField);
+  cumulerAspects(absente, extractScore({}, {}).byField);
   assert.equal(ligne(absente, 'titre').inconnu, 1);
   assert.equal(ligne(absente, 'titre').JUSTE, 0);
 
   const vide = emptyAspectTallies();
-  cumulerAspects(vide, extractScore({ title: '' } as never, { title: '' } as never).byField);
+  cumulerAspects(vide, extractScore({ title: '' }, { title: '' }).byField);
   assert.equal(ligne(vide, 'titre').JUSTE, 1);
   assert.equal(ligne(vide, 'titre').inconnu, 0);
 });
 
 test('le cumul ignore une clé qui n’est pas un aspect', () => {
   const tallies = emptyAspectTallies();
-  cumulerAspects(tallies, { pasUnAspect: 'FAUX' } as never);
+  cumulerAspects(tallies, { pasUnAspect: 'FAUX' });
   assert.ok(tallies.every((t) => t.FAUX === 0));
 });
