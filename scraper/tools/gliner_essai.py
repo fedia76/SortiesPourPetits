@@ -1,24 +1,28 @@
-"""Voir ce que l'étiqueteur tire d'une page, sans console, sans banc, sans worker.
+"""Voir ce que l'étiqueteur regarde, et ce qu'il a failli trouver.
 
-Le chemin normal de l'expérience passe par la console d'évaluation : on lance
-un run d'étage 6 avec `SPP_BENCH_PROVIDER=gliner`, et le banc mesure. Mais
-entre « j'installe la bibliothèque » et « je lance un run sur cent soixante
-pages », il manque la boucle de trente secondes — celle où l'on regarde une
-seule page, où l'on voit quel libellé remonte du bruit, et où l'on récrit
-`spans.LABELS` avant de mesurer quoi que ce soit.
+Le banc dit *combien* de champs sont justes. Il ne dit pas **pourquoi** un
+champ est vide, et c'est la seule question qui fasse avancer un réglage. Trois
+causes donnent le même zéro au tableau, et elles demandent trois corrections
+opposées :
 
-C'est ce que fait ce script. Il n'a rien à faire dans la suite de tests : il
-charge un modèle de plusieurs centaines de mégaoctets, et la première
-exécution le télécharge.
+1. **le modèle n'a pas vu le texte** — la fenêtre d'un encodeur se compte en
+   jetons, pas en pages, et ce qui dépasse est ignoré *en silence* ;
+2. **il a vu, il a trouvé, et le seuil l'a écarté** — le span est là, à 0,31,
+   sous une barre posée à 0,50 ;
+3. **il a vu et n'a rien trouvé** — le libellé ne lui parle pas.
+
+Ce script les distingue. Il montre, pour chaque passe, la tranche de page
+réellement soumise et jusqu'où le modèle a posé des spans ; puis, champ par
+champ, **tout** ce qu'il a proposé jusqu'à un plancher bien plus bas que le
+seuil de production, en marquant ce que la production aurait gardé.
 
     pip install -e ".[gliner]"
     python -m tools.gliner_essai tests/fixtures/pages/spectacle-avec-json-ld.html
-    python -m tools.gliner_essai https://exemple.fr/spectacle
+    python -m tools.gliner_essai <page> --seuil 0.3
+    python -m tools.gliner_essai <page> --libelles "tarif=price,prix d'entrée=price"
 
-Il affiche trois choses, et la troisième est la seule qui compte : les spans
-bruts avec leur score, la fiche assemblée, puis **l'audit d'ancrage**, celui-là
-même que le banc appliquera. Les champs que la brique ne prétend pas remplir y
-sont annoncés, pour qu'un aspect vide ne se lise pas comme un échec.
+La dernière forme est celle qui sert le plus : les libellés sont un réglage à
+part entière, et le premier à mesurer plutôt qu'à deviner.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,22 +38,24 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sortiesbot.ancrage import audit_fiche, fiche_payload  # noqa: E402
-from sortiesbot.config import Config  # noqa: E402
 from sortiesbot.evaluation import read_from_html  # noqa: E402
 from sortiesbot.harvest import Fetcher, FetchError  # noqa: E402
-from sortiesbot.journal import RunLog  # noqa: E402
 from sortiesbot.providers.base import ProviderError  # noqa: E402
-from sortiesbot.providers.gliner_provider import MODELE_DEFAUT, GlinerProvider  # noqa: E402
-from sortiesbot.spans import LABELS, SEUIL_DEFAUT, unfilled_fields  # noqa: E402
+from sortiesbot.providers.gliner_provider import (  # noqa: E402
+    MODELE_DEFAUT,
+    GlinerProvider,
+    _decouper,
+    fenetre_caracteres,
+)
+from sortiesbot.spans import LABELS, SEUIL_DEFAUT, Span, to_event, unfilled_fields  # noqa: E402
+
+#: Jusqu'où descendre pour montrer ce que le modèle a *failli* rendre. Bien
+#: sous le seuil de production : c'est tout l'intérêt.
+PLANCHER = 0.05
 
 
 def _page(source: str) -> tuple[str, str]:
-    """Le HTML et l'URL, que la source soit un fichier gelé ou une adresse.
-
-    Le fichier gelé est le cas normal : c'est celui du corpus, donc celui que
-    le banc rejouera. L'URL est là pour l'essai à chaud sur une page qu'on
-    vient de voir passer.
-    """
+    """Le HTML et l'URL, que la source soit un fichier gelé ou une adresse."""
     if source.startswith(("http://", "https://")):
         try:
             return Fetcher().get_html(source), source
@@ -59,12 +66,33 @@ def _page(source: str) -> tuple[str, str]:
     return chemin.read_text(encoding="utf-8", errors="replace"), chemin.resolve().as_uri()
 
 
+def _libelles(brut: str | None) -> dict[str, str]:
+    """Un jeu de libellés donné en ligne de commande, ou celui de production.
+
+    Forme : `libellé=champ,libellé=champ`. Le champ doit être l'un de ceux que
+    `spans.LABELS` nourrit, sans quoi la fiche ne saurait qu'en faire.
+    """
+    if not brut:
+        return dict(LABELS)
+    champs = set(LABELS.values())
+    out: dict[str, str] = {}
+    for paire in brut.split(","):
+        libelle, _, champ = paire.partition("=")
+        libelle, champ = libelle.strip(), champ.strip()
+        if not libelle or champ not in champs:
+            raise SystemExit(f"Libellé « {paire.strip()} » : champ attendu parmi {sorted(champs)}")
+        out[libelle] = champ
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("source", help="un fichier HTML gelé, ou une URL")
     parser.add_argument("--modele", default=MODELE_DEFAUT, help=f"défaut : {MODELE_DEFAUT}")
     parser.add_argument("--seuil", type=float, default=SEUIL_DEFAUT)
-    parser.add_argument("--spans", action="store_true", help="afficher les spans bruts")
+    parser.add_argument("--plancher", type=float, default=PLANCHER)
+    parser.add_argument("--libelles", help="« libellé=champ,libellé=champ » à la place des nôtres")
+    parser.add_argument("--texte", action="store_true", help="afficher le texte de chaque passe")
     args = parser.parse_args(argv)
 
     html, url = _page(args.source)
@@ -72,41 +100,86 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Rien à lire depuis « {args.source} ».", file=sys.stderr)
         return 2
 
-    # L'étage 5 d'abord : le texte que l'étiqueteur reçoit doit être celui que
-    # le banc lui donnera, sinon ce qu'on regarde ici ne dit rien de ce qu'on
-    # mesurera là-bas.
+    # L'étage 5 d'abord : le texte soumis ici doit être celui que le banc
+    # donnera, sinon ce qu'on regarde ne dit rien de ce qu'on mesurera.
     lecture = read_from_html(html, url)
     texte = lecture.get("text", "")
-    print(f"Page  : {url}")
-    print(f"Texte : {len(texte)} caractères (étage 5)")
-    print(f"Modèle: {args.modele} · seuil {args.seuil}\n")
 
-    provider = GlinerProvider(gliner_model=args.modele, seuil=args.seuil)
+    provider = GlinerProvider(gliner_model=args.modele, seuil=args.plancher)
     try:
         tagger = provider._charger()
     except ProviderError as err:
-        # Le cas de loin le plus fréquent au premier lancement : la
-        # bibliothèque n'est pas là. Une trace de vingt lignes cacherait la
-        # seule chose à lire, qui est la commande à taper.
         print(str(err), file=sys.stderr)
         return 2
 
-    if args.spans:
-        bruts = tagger.predict_entities(texte[:6000], list(LABELS), threshold=args.seuil)
-        print("── Spans bruts ──")
-        for brut in sorted(bruts, key=lambda b: -float(b.get("score", 0))):
-            champ = LABELS.get(str(brut.get("label", "")), "?")
-            print(f"  {float(brut.get('score', 0)):.2f}  {champ:<20} {brut.get('text', '')!r}")
-        print()
+    libelles = _libelles(args.libelles)
+    budget, recouvrement = fenetre_caracteres(tagger, list(libelles))
+    morceaux = _decouper(texte, budget, recouvrement)
 
-    fiches = provider.extract(url, texte, Config(name="essai", theme="essai"), [], RunLog(None, verbose=False))
-    event = fiches[0]
+    print(f"Page   : {url}")
+    print(f"Texte  : {len(texte)} caractères (étage 5)")
+    print(f"Modèle : {args.modele}")
+    print(
+        f"Fenêtre: {budget} car. par passe · {len(morceaux)} passe(s) · "
+        f"seuil {args.seuil} · plancher {args.plancher}"
+    )
+    print(f"Champs : {len(libelles)} libellé(s)\n")
 
-    print("── Fiche ──")
+    # ── 1. ce que le modèle a eu sous les yeux, passe par passe
+    print("── Ce qu'il a regardé ──")
+    spans: list[Span] = []
+    for numero, (decalage, morceau) in enumerate(morceaux, start=1):
+        bruts = tagger.predict_entities(morceau, list(libelles), threshold=args.plancher)
+        for b in bruts:
+            spans.append(
+                Span(
+                    label=str(b.get("label", "")),
+                    text=str(b.get("text", "")),
+                    start=int(b.get("start", 0)) + decalage,
+                    end=int(b.get("end", 0)) + decalage,
+                    score=float(b.get("score", 0.0)),
+                )
+            )
+        # Jusqu'où, dans CE tronçon, le modèle a-t-il posé quelque chose ? Si
+        # tout s'arrête bien avant la fin, c'est qu'il n'a pas lu jusque-là —
+        # la fenêtre est trop large, et le reste part à la poubelle en silence.
+        loin = max((int(b.get("end", 0)) for b in bruts), default=0)
+        fin = decalage + len(morceau)
+        marque = ""
+        if bruts and loin < len(morceau) * 0.6:
+            marque = "  ⚠ rien au-delà de ce point : fenêtre probablement trop large"
+        print(
+            f"  passe {numero:>2}  car. {decalage:>5} → {fin:<5}  "
+            f"{len(bruts):>3} span(s)  dernier à {decalage + loin if bruts else '—'}{marque}"
+        )
+        if args.texte:
+            print(f"        « {morceau[:160]}… »")
+    print()
+
+    # ── 2. ce qu'il a proposé, champ par champ, seuil compris
+    print(f"── Ce qu'il a proposé, par champ (plancher {args.plancher}) ──")
+    par_champ: dict[str, list[Span]] = defaultdict(list)
+    for span in spans:
+        par_champ[libelles.get(span.label, "?")].append(span)
+
+    for champ in sorted(set(libelles.values())):
+        propositions = sorted(par_champ.get(champ, []), key=lambda s: -s.score)
+        if not propositions:
+            print(f"  {champ:<20} rien, pas même sous le seuil")
+            continue
+        for rang, span in enumerate(propositions[:4]):
+            retenu = "  ← retenu" if span.score >= args.seuil else ""
+            sous = "  ← SOUS LE SEUIL" if rang == 0 and span.score < args.seuil else ""
+            nom = champ if rang == 0 else ""
+            print(f"  {nom:<20} {span.score:.2f}  « {span.text[:60]} »{retenu}{sous}")
+    print()
+
+    # ── 3. la fiche que la production en tirerait, et l'audit du banc
+    event = to_event([s for s in spans if s.score >= args.seuil], seuil=args.seuil)
+    print("── La fiche, au seuil de production ──")
     print(json.dumps(fiche_payload(event), ensure_ascii=False, indent=2, sort_keys=True))
 
     print("\n── Ancrage (les instruments du banc) ──")
-    hors_portee = set(unfilled_fields())
     for aspect in audit_fiche(event, texte, list(lecture.get("dates", []))):
         drapeaux = ", ".join(aspect["flags"]) or "—"
         note = ""
@@ -114,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
             note = "  (hors portée d'un étiqueteur)"
         print(f"  {aspect['label']:<22} {aspect['value'] or '∅':<40} {drapeaux}{note}")
 
-    print(f"\nChamps qu'un étiqueteur ne rend pas : {', '.join(sorted(hors_portee))}")
+    print(f"\nChamps qu'un étiqueteur ne rend pas : {', '.join(sorted(unfilled_fields()))}")
     return 0
 
 

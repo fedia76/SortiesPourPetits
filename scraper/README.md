@@ -389,6 +389,47 @@ par aspect. C'est là qu'on verra si l'étiqueteur choisit le **bon** tarif parm
 les cinq qu'affiche une page de théâtre — ce que l'ancrage, lui, ne distingue
 pas d'un mauvais.
 
+#### Quand l'étiqueteur ne trouve presque rien
+
+Le banc dit *combien* de champs sont justes. Il ne dit pas **pourquoi** un champ
+est vide, et trois causes très différentes donnent le même zéro :
+
+1. **le modèle n'a pas vu le texte.** Sa fenêtre se compte en jetons — 384 chez
+   GLiNER (`gliner/config.py`, `max_len`) —, pas en pages, et ce qui dépasse est
+   ignoré *en silence*. C'est la faute que ce dépôt a commise : la découpe
+   faisait des tronçons de 6 000 caractères là où le modèle en lisait environ
+   1 200. Il voyait le fil d'Ariane et le bandeau de cookies, jamais le tarif.
+   La fenêtre se dérive désormais de ce que le modèle déclare, et le journal
+   inscrit celle qui a servi (`fenetre`, `passes`) ;
+2. **il a trouvé, et le seuil l'a écarté.** Le span est là, à 0,31, sous une
+   barre posée à 0,50 ;
+3. **il a vu et n'a rien trouvé.** Le libellé ne lui parle pas.
+
+Le script les distingue, sans consommer de run :
+
+```bash
+python -m tools.gliner_essai tests/fixtures/pages/spectacle-avec-json-ld.html
+```
+
+Il montre, passe par passe, la tranche de page réellement soumise et jusqu'où
+le modèle a posé des spans — si tout s'arrête au premier tiers, la fenêtre est
+trop large et le reste part à la poubelle. Puis, champ par champ, **tout** ce
+qu'il a proposé jusqu'à un plancher très bas, en marquant ce que la production
+aurait gardé et ce qui est passé juste en dessous.
+
+Deux réglages s'essaient sans toucher au code, et c'est l'ordre dans lequel les
+essayer :
+
+```bash
+python -m tools.gliner_essai <page> --seuil 0.3
+python -m tools.gliner_essai <page> --libelles "prix d'entrée=price,billetterie=price"
+```
+
+Les **libellés** sont le premier réglage à mesurer. GLiNER a été entraîné sur
+des noms de types d'entités, pas sur des phrases, et ses libellés partagent la
+fenêtre du modèle avec le texte de la page : une parenthèse dans un libellé,
+ce sont des jetons pris à la page.
+
 #### « tiktoken is required » — et pourquoi il ne l'est pas
 
 Au premier chargement du modèle multilingue, `transformers` peut échouer sur :
