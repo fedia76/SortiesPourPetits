@@ -12,11 +12,27 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.14"]
-# L'étiqueteur de spans de l'étage 6, en option — il tire torch, soit environ
-# deux gigaoctets. L'imposer à l'intégration continue et au VPS, qui n'en ont
-# pas l'usage, pour une expérience qui ne concerne qu'un run de banc serait un
-# mauvais marché. Le fournisseur s'importe sans lui et dit quoi installer.
-gliner = ["gliner>=0.2.13"]
+# L'étiqueteur de spans de l'étage 6, en option — il tire torch. Sur un VPS
+# sans carte graphique, la roue **processeur** : deux cents mégaoctets au lieu
+# de plusieurs gigaoctets de noyaux CUDA (voir `.github/workflows/deploy.yml`).
+# L'imposer à l'intégration continue et au VPS, qui n'en ont pas l'usage, pour
+# une expérience qui ne concerne qu'un run de banc serait un mauvais marché.
+# Le fournisseur s'importe sans lui et dit quoi installer.
+#
+# `protobuf` n'est pas un oubli de notre part, c'en est un de la chaîne :
+# `gliner` réclame `sentencepiece` et s'arrête là, quand `transformers` déclare
+# les deux **ensemble** dans chacun de ses propres extras, et que chaque
+# convertisseur SentencePiece de `convert_slow_tokenizer.py` ouvre par
+# `requires_backends(self, "protobuf")`. Le modèle multilingue de GLiNER est
+# bâti sur mDeBERTa-v3, dont le tokeniseur est un `spm.model` : sans protobuf,
+# la conversion échoue, et `transformers` se rabat sur son lecteur tiktoken —
+# dont le message réclame `tiktoken`, qui n'a rien à voir avec ce modèle. Une
+# demi-journée perdue à installer ce que l'erreur nommait.
+gliner = [
+  "gliner>=0.2.13",
+  "sentencepiece>=0.1.91",
+  "protobuf",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

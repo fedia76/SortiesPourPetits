@@ -389,6 +389,34 @@ par aspect. C'est là qu'on verra si l'étiqueteur choisit le **bon** tarif parm
 les cinq qu'affiche une page de théâtre — ce que l'ancrage, lui, ne distingue
 pas d'un mauvais.
 
+#### « tiktoken is required » — et pourquoi il ne l'est pas
+
+Au premier chargement du modèle multilingue, `transformers` peut échouer sur :
+
+```
+ValueError: `tiktoken` is required to read a `tiktoken` file.
+```
+
+**N'installez pas `tiktoken`.** Ce message est celui du dernier convertisseur
+essayé, pas de la cause. `urchade/gliner_multi-v2.1` est bâti sur mDeBERTa-v3,
+dont le tokeniseur est un `spm.model` SentencePiece ; le convertir en
+tokeniseur rapide demande **protobuf** — chaque convertisseur SentencePiece de
+`convert_slow_tokenizer.py` ouvre par `requires_backends(self, "protobuf")`, et
+`transformers` déclare `sentencepiece` et `protobuf` ensemble dans chacun de
+ses extras. `gliner`, lui, ne réclame que le premier.
+
+C'est donc `protobuf` qui manque, et il est désormais dans l'extra. Quand la
+conversion SentencePiece échoue, `transformers` se rabat sur son lecteur
+tiktoken et remonte *son* erreur — qui nomme une bibliothèque sans rapport avec
+ce modèle.
+
+Pour rejouer la panne seule, sans passer par un run :
+
+```bash
+/opt/sortiespourpetits/scraper/.venv/bin/python -c \
+  "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('urchade/gliner_multi-v2.1')"
+```
+
 #### Quand un run de banc semble coincé
 
 Un run de banc est **muet par construction** : son `RunLog` n'a ni fichier ni
