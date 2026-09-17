@@ -36,6 +36,27 @@ before(async () => {
   ({ escapeHtml, renderDocument } = await import('../src/seo/html'));
 });
 
+/** Le document rendu pour une page qui transmet cet état initial. */
+function renduAvecEtat(state: Record<string, unknown>): string {
+  const document = renderDocument({
+    status: 200,
+    head: '<title>Peu importe</title>',
+    body: '<h1>Peu importe</h1>',
+    state,
+  });
+  assert.ok(document !== null, 'le gabarit de test doit être trouvé');
+  return document;
+}
+
+/** Le JSON du bloc d'état, tel que le navigateur le lira. */
+function etatRelu(document: string): unknown {
+  const bloc = /<script type="application\/json" id="etat-initial">([\s\S]*?)<\/script>/.exec(
+    document,
+  );
+  assert.ok(bloc, 'le document doit porter son état initial');
+  return JSON.parse(bloc[1]);
+}
+
 /** Le document rendu pour une page dont le titre est `titre`. */
 function rendu(titre: string): string {
   const document = renderDocument({
@@ -93,4 +114,53 @@ test('le corps aussi est à l’abri : les deux remplacements sont concernés', 
   assert.ok(document !== null);
   assert.ok(document.includes("<p>Tarif : 8$' l’entrée</p>"));
   assert.match(document, /<\/body><\/html>$/);
+});
+
+/**
+ * L'état initial : ce que le serveur a déjà demandé à sa propre API, offert à
+ * l'application pour qu'elle n'ait pas à le redemander.
+ *
+ * Trois exigences, et elles tiennent toutes à ce que ce bloc est du texte posé
+ * dans un document : il doit se relire à l'identique, il ne doit pas pouvoir
+ * sortir de son `<script>`, et il ne doit pas pouvoir piloter l'assemblage du
+ * gabarit — même piège que le titre, puisqu'il passe par le même `replace`.
+ */
+test("l'état initial se relit à l'identique", () => {
+  const etat = { '/api/events/509': { event: { id: 509, title: 'Atelier poterie' } } };
+  assert.deepEqual(etatRelu(renduAvecEtat(etat)), etat);
+});
+
+test("une description ne peut pas fermer le script de l'état", () => {
+  const etat = {
+    '/api/events/1': { event: { description: 'Fin </script><script>alert(1)</script>' } },
+  };
+  const document = renduAvecEtat(etat);
+  const bloc = /id="etat-initial">([\s\S]*?)<\/script>/.exec(document);
+  assert.ok(bloc);
+
+  // Aucun `<` ni `&` ne survit dans le bloc : il n'y a donc pas de balise à
+  // fermer, et le texte se relit pourtant tel quel.
+  assert.ok(!bloc[1].includes('<'), 'aucun « < » ne doit rester dans le bloc');
+  assert.ok(!bloc[1].includes('&'), 'aucun « & » ne doit rester dans le bloc');
+  assert.deepEqual(etatRelu(document), etat);
+  assert.ok(!document.includes('<script>alert(1)</script>'));
+});
+
+test("un dollar dans l'état n'altère pas le gabarit", () => {
+  const etat = { "/api/events/2": { event: { title: "Atelier 5$' euros" } } };
+  const document = renduAvecEtat(etat);
+  assert.ok(!document.includes('<!--seo:body-->'), 'le corps doit avoir été rempli');
+  assert.deepEqual(etatRelu(document), etat);
+  assert.equal(document.match(/<\/html>/g)?.length, 1);
+});
+
+test("une page sans état ne pose pas de bloc vide", () => {
+  const document = renderDocument({
+    status: 404,
+    head: '<title>Page introuvable</title>',
+    body: '<h1>Page introuvable</h1>',
+  });
+  assert.ok(document !== null);
+  assert.ok(!document.includes('id="etat-initial"'));
+  assert.ok(!renduAvecEtat({}).includes('id="etat-initial"'));
 });

@@ -8,10 +8,17 @@
   // `scripts/` y est pour la même raison, et elle est née d'un dégât réel : le
   // script de reprise des étiquettes écrivait dans une table supprimée depuis
   // des semaines, et rien ne le disait puisque rien ne le compilait.
+  //
+  // `rootDir` remonte à la racine du dépôt, et c'est délibéré : un test tient
+  // l'accord entre le serveur et le front — l'adresse d'API que l'un écrit dans
+  // l'état initial et que l'autre reconnaît —, donc il importe un fichier de
+  // `client/src`. Rien n'est émis (`noEmit`), il n'y a donc aucune arborescence
+  // de sortie à préserver ; `tsconfig.json`, lui, garde son `rootDir: src` et
+  // ne voit jamais ni les tests ni le front.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": ".",
+    "rootDir": "..",
     "types": ["node"]
   },
   // `prisma/` y est aussi : le seed est du TypeScript qui parle au schéma,

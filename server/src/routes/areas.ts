@@ -3,30 +3,17 @@ import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
 import { areaSchema } from '../lib/validators';
-import { areaFilter } from '../lib/areas';
-import { dateFilter, today } from '../lib/dateWindow';
+import { areasWithCounts } from '../lib/publicLists';
 import { parseId } from '../lib/routeParams';
 
 export const areasRouter = safeRouter();
 
 /**
- * Liste publique des zones, avec le nombre de sorties visibles dans chacune.
- *
- * Ce compte n'est pas décoratif : il sert à ne pas mettre en avant une zone
- * vide. Une page qui annonce des sorties et n'en montre aucune déçoit le
- * visiteur et, répétée, apprend à Google que le site promet plus qu'il ne tient.
+ * Liste publique des zones. Le pré-rendu écrit la même chose dans l'état
+ * initial du document, d'où la brique partagée (`lib/publicLists`).
  */
 areasRouter.get('/', async (_req, res) => {
-  const areas = await prisma.area.findMany({ orderBy: [{ position: 'asc' }, { name: 'asc' }] });
-  const upcoming: Prisma.EventWhereInput = { status: 'APPROVED', AND: [dateFilter(today())] };
-  const counts = await Promise.all(
-    areas.map((area) =>
-      prisma.event.count({ where: { AND: [upcoming, areaFilter(area.postalPrefixes)] } }),
-    ),
-  );
-  res.json({
-    areas: areas.map((area, i) => ({ ...area, eventCount: counts[i] })),
-  });
+  res.json({ areas: await areasWithCounts() });
 });
 
 areasRouter.post('/', requireRole(Role.ADMIN), async (req, res) => {

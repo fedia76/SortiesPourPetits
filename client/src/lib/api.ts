@@ -1,3 +1,5 @@
+import { reponsePreRendue } from './etatInitial';
+
 /**
  * Ce que l'API a répondu quand ce n'est pas ce qu'on attendait.
  *
@@ -40,7 +42,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const ILLISIBLE = Symbol('corps illisible');
 
 export const api = {
+  /**
+   * Une lecture — et, au premier affichage, souvent pas un appel du tout.
+   *
+   * Le document porte les réponses qui correspondent à la page demandée (voir
+   * `lib/etatInitial.ts`) : quand l'une d'elles répond à cet appel, elle est
+   * rendue telle quelle et le réseau n'est pas sollicité. C'est réservé au
+   * `get` : lui seul relit ce que le serveur venait d'écrire.
+   */
   get<T>(path: string): Promise<T> {
+    const prerendu = reponsePreRendue<T>(path);
+    if (prerendu !== undefined) return Promise.resolve(prerendu);
     return request<T>(path);
   },
   post<T>(path: string, data?: unknown): Promise<T> {

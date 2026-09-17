@@ -39,6 +39,21 @@ siteRouter.get('/index.html', (_req, res) => res.redirect(301, '/'));
  *
  * Hors production, tout est interdit : une préproduction indexée est un
  * accident coûteux à réparer, et le silence est ici la bonne valeur par défaut.
+ *
+ * ## Pourquoi `/api/` n'y figure plus
+ *
+ * Il y figurait, et c'était une faute — celle qui a valu au site des pages
+ * « en double » dans la Search Console. Le moteur de rendu de Google applique
+ * la `robots.txt` à **tout** ce que la page demande, y compris ses `fetch` :
+ * l'application, qui remplace le document pré-rendu puis rechargeait ses
+ * données depuis `/api/`, se voyait refuser l'appel et n'affichait qu'une
+ * erreur. Toutes les pages du site rendaient alors la même chose, et Google
+ * les a traitées pour ce qu'elles étaient devenues : des doublons.
+ *
+ * Interdire le parcours n'a jamais empêché l'indexation, seulement la lecture.
+ * Ce qu'on veut dire — « n'indexe pas mes réponses JSON » — se dit avec un
+ * en-tête `X-Robots-Tag`, posé sur `/api` dans `index.ts`, qui suppose
+ * justement que le robot ait le droit de lire la réponse pour l'y trouver.
  */
 siteRouter.get('/robots.txt', (req, res) => {
   const base = baseUrl(req);
@@ -48,7 +63,6 @@ siteRouter.get('/robots.txt', (req, res) => {
         'Allow: /',
         ...PRIVATE_PREFIXES.map((p) => `Disallow: ${p}`),
         `Disallow: /*${EDIT_SUFFIX}`,
-        'Disallow: /api/',
         '',
         `Sitemap: ${base}/sitemap.xml`,
         '',

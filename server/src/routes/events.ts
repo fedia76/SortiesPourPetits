@@ -9,69 +9,12 @@ import { diffEvent, type ComparableEvent } from '../lib/eventCorrections';
 import { dateFilter } from '../lib/dateWindow';
 import { areaFilter } from '../lib/areas';
 import { liensApresCorrection } from '../lib/eventSource';
-import { rankEvents } from '../lib/relevance';
+import { EVENT_INCLUDE, rankedPage, serializeEvent } from '../lib/eventSearch';
 import { parseId } from '../lib/routeParams';
 import { distanceByVenueId, venuesWithinQuery, type VenueDistance } from '../lib/venueDistance';
 
 export const eventsRouter = safeRouter();
 
-type EventWithRelations = Prisma.EventGetPayload<{
-  include: {
-    venue: true;
-    category: true;
-    author: { select: { id: true; displayName: true } };
-    dates: { select: { day: true } };
-    scraperItems: { select: { id: true } };
-  };
-}>;
-
-const EVENT_INCLUDE = {
-  venue: true,
-  category: true,
-  author: { select: { id: true, displayName: true } },
-  dates: { select: { day: true }, orderBy: { day: 'asc' } },
-  // Un seul item suffit à savoir que la fiche vient d'une recherche : c'est ce
-  // qui distingue « la page où on l'a trouvée » d'« un lien qu'un visiteur a
-  // tapé ». Sans lui, le formulaire de modification ne pouvait pas nommer les
-  // deux liens sans risquer d'appeler « trouvée sur » ce que personne n'avait
-  // trouvé nulle part.
-  scraperItems: { select: { id: true }, take: 1 },
-} as const satisfies Prisma.EventInclude;
-
-/** `2026-09-20`, sans décalage de fuseau : ces colonnes sont des DATE. */
-function isoDay(value: Date): string {
-  return value.toISOString().slice(0, 10);
-}
-
-/** Convertit les Decimal Prisma en nombres pour le JSON. */
-function serializeEvent(event: EventWithRelations, distanceKm?: number) {
-  const { scraperItems, ...rest } = event;
-  return {
-    ...rest,
-    /**
-     * La fiche vient d'une recherche automatique. Ce qui en dépend : `foundOnUrl`
-     * et `sourceUrl` sont alors deux **faits** — la page lue et le meilleur lien
-     * connu —, là où une proposition de visiteur n'a qu'une adresse saisie.
-     */
-    fromScraper: scraperItems.length > 0,
-    price: event.price === null ? null : Number(event.price),
-    dateStart: event.dateStart ? isoDay(event.dateStart) : null,
-    dateEnd: event.dateEnd ? isoDay(event.dateEnd) : null,
-    dates: event.dates.map((d) => isoDay(d.day)),
-    venue: {
-      ...event.venue,
-      lat: Number(event.venue.lat),
-      lng: Number(event.venue.lng),
-    },
-    distanceKm: distanceKm === undefined ? undefined : Math.round(distanceKm * 10) / 10,
-  };
-}
-
-/**
- * Recherche publique avec tous les filtres, y compris la distance.
- * Le filtre géographique passe par ST_Distance_Sphere de MySQL sur la
- * table Venue, puis on restreint la requête Prisma aux lieux trouvés.
- */
 /**
  * Lignes `EventDate` à écrire. Dédoublonnées : la contrainte d'unicité
  * ferait échouer la création entière pour un doublon dans le formulaire.
@@ -81,6 +24,11 @@ function eventDates(input: { isPermanent: boolean; dates: string[] }) {
   return [...new Set(input.dates)].sort().map((day) => ({ day: new Date(day) }));
 }
 
+/**
+ * Recherche publique avec tous les filtres, y compris la distance.
+ * Le filtre géographique passe par ST_Distance_Sphere de MySQL sur la
+ * table Venue, puis on restreint la requête Prisma aux lieux trouvés.
+ */
 eventsRouter.get('/', async (req, res) => {
   const parsed = searchSchema.safeParse(req.query);
   if (!parsed.success) {
@@ -146,36 +94,16 @@ eventsRouter.get('/', async (req, res) => {
     where.venueId = { in: [...distances.keys()] };
   }
 
-  // Le classement ne se fait pas en SQL : le score mêle la précision de l'âge,
-  // la brièveté de la période et l'imminence, dont deux dépendent de ce qui a
-  // été demandé (voir `lib/relevance.ts`). On relève donc de quoi classer —
-  // cinq colonnes, pas les fiches — puis on ne charge en entier que la page
-  // demandée. Le compte total tombe du même coup, sans seconde requête.
-  const matches = await prisma.event.findMany({
-    where,
-    select: {
-      id: true,
-      ageMin: true,
-      ageMax: true,
-      isPermanent: true,
-      dateStart: true,
-      dateEnd: true,
-    },
+  const { events, total } = await rankedPage(where, {
+    age: f.age,
+    from,
+    page: f.page,
+    pageSize: f.pageSize,
   });
-  const ordered = rankEvents(matches, { age: f.age, from });
-  const ids = ordered.slice((f.page - 1) * f.pageSize, f.page * f.pageSize);
-
-  // `findMany` rend ce que la base veut ; l'ordre est celui du classement, et
-  // c'est ici qu'on le remet — sans quoi la page s'afficherait par identifiant.
-  const rows = ids.length
-    ? await prisma.event.findMany({ where: { id: { in: ids } }, include: EVENT_INCLUDE })
-    : [];
-  const byId = new Map(rows.map((e) => [e.id, e]));
-  const events = ids.map((id) => byId.get(id)).filter((e): e is EventWithRelations => !!e);
 
   res.json({
     events: events.map((e) => serializeEvent(e, distances?.get(e.venueId))),
-    total: ordered.length,
+    total,
     page: f.page,
     pageSize: f.pageSize,
   });

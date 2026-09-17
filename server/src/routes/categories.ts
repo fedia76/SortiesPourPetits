@@ -2,6 +2,7 @@ import { Prisma, Role } from '@prisma/client';
 import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { requireRole } from '../middleware/auth';
+import { allCategories } from '../lib/publicLists';
 import { categorySchema } from '../lib/validators';
 import { parseId } from '../lib/routeParams';
 
@@ -9,8 +10,7 @@ export const categoriesRouter = safeRouter();
 
 /** Liste publique : utilisée par le formulaire de sortie et les filtres de recherche. */
 categoriesRouter.get('/', async (_req, res) => {
-  const categories = await prisma.category.findMany({ orderBy: { name: 'asc' } });
-  res.json({ categories });
+  res.json({ categories: await allCategories() });
 });
 
 categoriesRouter.post('/', requireRole(Role.ADMIN), async (req, res) => {
