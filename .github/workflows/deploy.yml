@@ -160,6 +160,24 @@ jobs:
           EXTRAS='${{ vars.SCRAPER_EXTRAS }}'
           if [ -n "$EXTRAS" ]; then SPEC=".[$EXTRAS]"; else SPEC="."; fi
 
+          # Torch en version **processeur**, posé avant l'extra qui le réclame.
+          #
+          # `pip install torch` sur Linux tire par défaut la variante CUDA :
+          # torch lui-même, puis une demi-douzaine de paquets `nvidia-*` —
+          # plusieurs gigaoctets, pour des noyaux GPU que ce VPS n'exécutera
+          # jamais. C'est ce qui a fait déborder le déploiement, et le `df` du
+          # disque n'en montrait rien parce que ce n'est pas là que ça
+          # débordait. La roue CPU pèse environ deux cents mégaoctets et n'a
+          # aucune dépendance nvidia.
+          #
+          # Posé **en premier** : l'extra trouve alors torch déjà satisfait et
+          # ne va pas chercher la variante CUDA. L'ordre est le mécanisme, pas
+          # une précaution.
+          PRE=''
+          case ",$EXTRAS," in
+            *,gliner,*) PRE=".venv/bin/pip install --quiet --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch" ;;
+          esac
+
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "
             set -e
             cd '${{ secrets.VPS_APP_DIR }}/scraper'
@@ -170,8 +188,14 @@ jobs:
               echo ' par exemple python3.14-venv)'
               exit 1
             }
+            # pip déballe ses roues dans TMPDIR, et /tmp est un tmpfs sur ce
+            # VPS : deux gigaoctets pris sur les quatre de RAM, où un déballage
+            # de torch meurt sans que le disque bouge d'un pouce. /var/tmp est
+            # sur le disque, et il y reste vingt-neuf gigaoctets.
+            export TMPDIR='/var/tmp'
             .venv/bin/pip install --quiet --upgrade pip
-            .venv/bin/pip install --quiet -e '$SPEC'
+            $PRE
+            .venv/bin/pip install --quiet --no-cache-dir -e '$SPEC'
           "
 
       # Le worker exécute les recherches lancées depuis la console
