@@ -87,6 +87,30 @@ CARACTERES_PAR_JETON = 3
 #: coupe soit entière dans au moins l'un des deux.
 PART_RECOUVREMENT = 0.15
 
+#: Tronçons traités en un seul passage groupé.
+#:
+#: Grouper fait gagner du temps, et **coûte de la mémoire** : les activations
+#: d'un encodeur croissent avec la taille du lot. Tant que la fenêtre était
+#: (faussement) large, une page tenait en deux tronçons et le lot était de deux.
+#: La fenêtre corrigée en produit une dizaine, et les passer d'un bloc a
+#: multiplié par cinq le pic d'un seul appel — sur une machine de quatre
+#: gigaoctets qui fait déjà tourner une base et un serveur Node, et **sans
+#: swap**, c'est la différence entre un run qui finit et un processus que le
+#: noyau tue.
+#:
+#: Quatre : assez pour que le groupage serve encore, assez peu pour que le pic
+#: ne dépende plus de la longueur de la page.
+LOT_MAX = 4
+
+#: Fils de calcul laissés à torch. `0` : ce qu'il décide lui-même.
+#:
+#: Par défaut il en prend autant qu'il y a de cœurs — quatre ici, c'est-à-dire
+#: tous, y compris ceux dont MySQL et l'API ont besoin pour répondre pendant que
+#: le banc tourne. Le worker n'est pas pressé : une passe deux fois plus lente
+#: sur un run qui dure de toute façon des minutes ne coûte rien, quand un site
+#: qui ne répond plus se voit tout de suite.
+FILS_TORCH = 2
+
 
 def fenetre_caracteres(tagger: Any = None, labels: list[str] | None = None) -> tuple[int, int]:
     """Combien de caractères par tronçon, et combien les tronçons partagent.
@@ -139,6 +163,13 @@ def charger(nom: str = MODELE_DEFAUT) -> Tagger:
             "le fournisseur « gliner » réclame la bibliothèque du même nom : "
             'pip install -e ".[gliner]" (elle tire torch, ~2 Go)'
         ) from err
+    if FILS_TORCH > 0:
+        try:
+            import torch
+
+            torch.set_num_threads(FILS_TORCH)
+        except Exception:  # noqa: BLE001 — un réglage de confort ne casse rien
+            pass
     try:
         # `GLiNER` est un aiguilleur : `from_pretrained` rend une sous-classe
         # concrète (`UniEncoderSpanGLiNER` et consorts) selon ce que la
@@ -318,9 +349,18 @@ class GlinerProvider:
         n'ait pas à l'implémenter.
         """
         groupe = getattr(tagger, "batch_predict_entities", None)
-        if callable(groupe) and len(morceaux) > 1:
-            return list(groupe(morceaux, libelles, threshold=self._seuil))
-        return [tagger.predict_entities(m, libelles, threshold=self._seuil) for m in morceaux]
+        if not callable(groupe) or len(morceaux) < 2:
+            return [tagger.predict_entities(m, libelles, threshold=self._seuil) for m in morceaux]
+        # Par paquets bornés, jamais d'un bloc : le pic mémoire d'un appel ne
+        # doit pas dépendre de la longueur de la page.
+        rendus: list[list[dict[str, Any]]] = []
+        for debut in range(0, len(morceaux), LOT_MAX):
+            lot = morceaux[debut : debut + LOT_MAX]
+            if len(lot) == 1:
+                rendus.append(tagger.predict_entities(lot[0], libelles, threshold=self._seuil))
+            else:
+                rendus.extend(groupe(lot, libelles, threshold=self._seuil))
+        return rendus
 
     # ------------------------- les quatre autres appels restent à un modèle
 

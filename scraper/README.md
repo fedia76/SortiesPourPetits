@@ -476,6 +476,39 @@ Pour rejouer la panne seule, sans passer par un run :
   "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('urchade/gliner_multi-v2.1')"
 ```
 
+#### « Repris par le site » — un worker tué, pas un worker lent
+
+Ce motif dit une seule chose : plus aucun battement pendant trente minutes. Un
+battement tombe à chaque entrée réclamée, donc soit **une entrée a duré une
+demi-heure**, soit **le processus n'était plus là**. Les deux se distinguent
+dans le journal du service, et il faut regarder ça avant toute hypothèse :
+
+```bash
+journalctl -u sortiespourpetits-scraper --since '-2h' | tail -120
+dmesg -T | grep -i -e oom -e 'killed process'
+systemctl status sortiespourpetits-scraper   # « active since » récent = il a redémarré
+```
+
+* **une pile dans le journal** (le témoin d'entrée lente) → c'était bien une
+  entrée, et la pile dit où ;
+* **rien, puis un redémarrage du service** → le noyau a tué le processus. Les
+  lignes de progression s'arrêtent net au milieu d'une page, `Restart=on-failure`
+  relance le worker, et celui-ci ne reprend pas un run déjà `RUNNING` : la ligne
+  reste en cours jusqu'à ce que le site la reprenne, une demi-heure plus tard.
+
+Sur une machine de quatre gigaoctets qui fait déjà tourner MySQL, l'API et
+Caddy, **torch et son modèle pèsent plus d'un gigaoctet** : il n'y a pas de
+marge, et `free -h` ci-dessus montrait *zéro* swap. Deux réglages de ce module
+existent pour ça — `LOT_MAX` borne le nombre de tronçons passés d'un bloc, pour
+que le pic d'un appel ne suive plus la longueur de la page, et `FILS_TORCH`
+laisse des cœurs à la base pendant qu'un run tourne. Un fichier d'échange de
+deux gigaoctets sur le VPS reste le filet le plus simple :
+
+```bash
+fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+```
+
 #### Quand un run de banc semble coincé
 
 Un run de banc est **muet par construction** : son `RunLog` n'a ni fichier ni

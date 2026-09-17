@@ -19,6 +19,7 @@ from sortiesbot.providers.base import ProviderError, get_provider
 from sortiesbot.providers.gliner_provider import (
     CARACTERES_PAR_JETON,
     FENETRE_JETONS_DEFAUT,
+    LOT_MAX,
     GlinerProvider,
     fenetre_caracteres,
 )
@@ -215,14 +216,27 @@ class TaggerGroupe(FauxTagger):
         ]
 
 
-def test_une_page_decoupee_part_en_un_seul_lot():
-    """Une passe pour tous les tronçons : un processeur de VPS n'a pas de marge."""
+def test_les_troncons_partent_par_lots_bornes():
+    """Grouper fait gagner du temps et coûte de la mémoire.
+
+    Le pic d'un appel croît avec la taille du lot : le laisser suivre la
+    longueur de la page, c'est faire dépendre la survie du worker de la page
+    qu'il lit. Sur une machine de quatre gigaoctets sans swap, ça s'est vu.
+    """
     tagger = TaggerGroupe()
     texte = "a " * (LONG // 2)
     GlinerProvider(tagger=tagger).extract("https://x.fr", texte, _config(), [], _log())
-    assert len(tagger.lots) == 1
-    assert len(tagger.lots[0]) > 1
-    assert tagger.appels == []
+    assert tagger.lots, "le chemin groupé doit être pris"
+    assert all(len(lot) <= LOT_MAX for lot in tagger.lots)
+
+
+def test_une_page_assez_longue_fait_plusieurs_lots():
+    tagger = TaggerGroupe()
+    budget, _ = fenetre_caracteres(None, list(LABELS))
+    # De quoi faire plus de LOT_MAX tronçons, quel que soit le budget.
+    texte = "a " * (budget * (LOT_MAX + 2) // 2)
+    GlinerProvider(tagger=tagger).extract("https://x.fr", texte, _config(), [], _log())
+    assert len(tagger.lots) >= 2
 
 
 def test_une_seule_page_n_emprunte_pas_le_chemin_groupe():
