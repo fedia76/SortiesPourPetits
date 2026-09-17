@@ -496,13 +496,37 @@ systemctl status sortiespourpetits-scraper   # « active since » récent = il a
   relance le worker, et celui-ci ne reprend pas un run déjà `RUNNING` : la ligne
   reste en cours jusqu'à ce que le site la reprenne, une demi-heure plus tard.
 
-Sur une machine de quatre gigaoctets qui fait déjà tourner MySQL, l'API et
-Caddy, **torch et son modèle pèsent plus d'un gigaoctet** : il n'y a pas de
-marge, et `free -h` ci-dessus montrait *zéro* swap. Deux réglages de ce module
-existent pour ça — `LOT_MAX` borne le nombre de tronçons passés d'un bloc, pour
-que le pic d'un appel ne suive plus la longueur de la page, et `FILS_TORCH`
-laisse des cœurs à la base pendant qu'un run tourne. Un fichier d'échange de
-deux gigaoctets sur le VPS reste le filet le plus simple :
+C'est arrivé, et les chiffres valent d'être gardés : tué à la **44ᵉ** entrée sur
+141, à **2,6 Go** de RSS, après en avoir tenu quarante-trois. Un pic par appel
+aurait frappé tôt, sur la première page un peu longue ; tenir quarante-trois
+entrées puis mourir, c'est une **croissance**.
+
+Rien ne s'accumule dans le code du fournisseur — spans, tronçons et réponses
+sont tous par appel. Ce qui grossit est l'allocateur de la glibc : des milliers
+d'allocations de tailles toutes différentes, réparties sur une arène par fil de
+calcul, fragmentent au point que le RSS monte en cliquet sans redescendre. La
+mémoire est bien libérée côté Python ; elle reste réservée au processus.
+
+Quatre brides, et il faut les quatre :
+
+| Où | Quoi |
+|---|---|
+| `LOT_MAX` | borne les tronçons passés d'un bloc — le pic d'un appel ne suit plus la longueur de la page |
+| `_rendre_la_memoire()` | `malloc_trim(0)` après chaque page : rend au système ce que l'allocateur garde |
+| `MALLOC_ARENA_MAX=2` | dans l'unité systemd — **avant** le démarrage, sinon sans effet |
+| `FILS_TORCH` / `OMP_NUM_THREADS` | laisse des cœurs à MySQL et à l'API pendant qu'un run tourne |
+
+L'unité porte en plus `MemoryHigh`/`MemoryMax` : au-delà, le noyau de contrôle
+freine le worker plutôt que de le tuer net, et si ça ne suffit pas c'est
+toujours lui qui tombe — jamais la base ni l'API. Une unité modifiée se
+réinstalle depuis `deploy/` :
+
+```bash
+cp /opt/sortiespourpetits/deploy/sortiespourpetits-scraper.service /etc/systemd/system/
+systemctl daemon-reload && systemctl restart sortiespourpetits-scraper
+```
+
+Un fichier d'échange de deux gigaoctets reste le filet le plus simple :
 
 ```bash
 fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile

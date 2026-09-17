@@ -410,3 +410,38 @@ def test_la_decoupe_couvre_tout_le_texte():
     # Le dernier tronçon finit avec le texte : rien ne doit rester non lu.
     dernier_decalage, dernier = morceaux[-1]
     assert dernier_decalage + len(dernier) == len(texte)
+
+
+# ─────────────────────────────── la mémoire rendue, et le cliquet qu'elle évite
+#
+# Le worker a été tué par le noyau à la 44ᵉ entrée sur 141, à 2,6 Go de RSS,
+# après en avoir tenu 43. Un pic par appel aurait frappé sur la première page un
+# peu longue ; tenir quarante-trois entrées puis mourir, c'est une croissance.
+# Rien ne s'accumule dans ce code — c'est l'allocateur de la glibc qui garde.
+
+
+def test_la_memoire_est_rendue_a_chaque_page(monkeypatch):
+    rendus: list[int] = []
+    monkeypatch.setattr(
+        "sortiesbot.providers.gliner_provider._rendre_la_memoire",
+        lambda: rendus.append(1),
+    )
+    provider = GlinerProvider(tagger=FauxTagger())
+    for _ in range(3):
+        provider.extract("https://x.fr", "texte", _config(), [], _log())
+    assert len(rendus) == 3
+
+
+def test_rendre_la_memoire_ne_leve_jamais(monkeypatch):
+    """Une hygiène qui échoue ne doit pas coûter la page qu'elle nettoie."""
+    import sortiesbot.providers.gliner_provider as module
+
+    def refuse(_):
+        raise OSError("pas de libc ici")
+
+    monkeypatch.setattr("ctypes.util.find_library", refuse)
+    module._rendre_la_memoire()  # ne lève pas
+
+    provider = GlinerProvider(tagger=FauxTagger())
+    fiches = provider.extract("https://x.fr", "texte", _config(), [], _log())
+    assert len(fiches) == 1
