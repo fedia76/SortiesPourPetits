@@ -413,6 +413,15 @@ arrêtait le run à la première entrée avec un message parlant de `fileno` —
 instrument qui met en échec ce qu'il observe. Il tente une fois, puis se tait
 pour de bon.
 
+**Un run dont la brique ne peut pas tourner s'arrête au bout de
+`ECHECS_CONSECUTIFS_MAX` entrées**, et se clôt en échec avec le motif entier.
+C'est une leçon payée : au premier run GLiNER, la bibliothèque n'était pas
+dans le venv du worker. Les cent entrées du corpus ont rendu la même
+`ProviderError` en une minute, le run s'est clos en **DONE** avec un taux
+calculé sur cent fiches vides, et le worker est revenu à sa veille — où il
+ressemble trait pour trait à un worker gelé. Une page qui échoue reste une
+mesure et n'arrête rien ; cinq d'affilée ne sont plus un accident.
+
 Si ça ne suffit pas, la pile d'un processus vivant se lit sans le toucher :
 
 ```bash

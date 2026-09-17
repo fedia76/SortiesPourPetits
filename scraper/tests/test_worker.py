@@ -726,3 +726,86 @@ def test_sans_total_le_compteur_reste_lisible(capsys):
     api = FauxBanc([_entree(1)])
     worker.play_run({"id": 3, "stage": "READ"}, api, _env_banc(), quiet=False)
     assert "  1 · " in capsys.readouterr().out
+
+
+# ─────────────────── cent fois la même panne ne font pas cent renseignements
+#
+# Le premier run GLiNER : la bibliothèque n'était pas dans le venv du worker,
+# les cent entrées ont rendu la même `ProviderError` en une minute, et le run
+# s'est **clos en DONE** avec un taux calculé sur cent fiches vides. Rien, dans
+# la console, ne le distinguait d'une mesure — et de l'extérieur, un worker
+# revenu à sa veille ressemble exactement à un worker gelé.
+
+
+class FauxBancEnPanne(FauxBanc):
+    """Un banc dont chaque entrée revient en échec, toujours pour la même raison."""
+
+    MOTIF = "ProviderError : le fournisseur « gliner » réclame la bibliothèque du même nom"
+
+    def __init__(self, entrees):
+        super().__init__(entrees)
+        self.vus = 0
+
+    def report_eval_read(self, run_id, result):
+        self.vus += 1
+        super().report_eval_read(run_id, result)
+
+
+def test_une_brique_qui_ne_tourne_pas_arrete_le_run(monkeypatch):
+    """Et le run échoue — il ne se clôt pas en DONE sur cent fiches vides."""
+    monkeypatch.setattr(
+        worker, "read_from_html", lambda *a, **kw: {"error": FauxBancEnPanne.MOTIF}
+    )
+    api = FauxBancEnPanne([_entree(i) for i in range(1, 21)])
+    worker.play_run({"id": 30, "stage": "READ", "items": 20}, api, _env_banc(), quiet=True)
+
+    assert api.cloture["status"] == "FAILED"
+    # Le motif arrive entier : il porte d'ordinaire la commande à taper.
+    assert "gliner" in api.cloture["error"]
+    # Et surtout : on s'est arrêté au seuil, pas au bout du corpus.
+    assert api.vus == worker.ECHECS_CONSECUTIFS_MAX
+    assert api.cloture["items"] == worker.ECHECS_CONSECUTIFS_MAX
+
+
+def test_un_echec_isole_ne_fait_pas_tomber_le_run(monkeypatch):
+    """Une page qui échoue est une mesure : elle se range et le run continue.
+
+    C'est tout l'intérêt de ne pas s'arrêter au premier accident, et c'est ce
+    que le seuil doit préserver en coupant la panne répétée.
+    """
+    appels = {"n": 0}
+
+    def lecture(*a, **kw):
+        appels["n"] += 1
+        # Une entrée sur trois échoue : jamais cinq d'affilée.
+        return {"error": "boum"} if appels["n"] % 3 == 0 else {"text": "bonjour"}
+
+    monkeypatch.setattr(worker, "read_from_html", lecture)
+    api = FauxBanc([_entree(i) for i in range(1, 16)])
+    worker.play_run({"id": 31, "stage": "READ", "items": 15}, api, _env_banc(), quiet=True)
+
+    assert api.cloture["status"] == "DONE"
+    assert api.cloture["items"] == 15
+
+
+def test_le_compteur_d_echecs_se_remet_a_zero(monkeypatch):
+    """Quatre échecs, une réussite, quatre échecs : ce n'est pas une panne."""
+    suite = iter([True] * 4 + [False] + [True] * 4)
+
+    monkeypatch.setattr(
+        worker,
+        "read_from_html",
+        lambda *a, **kw: {"error": "boum"} if next(suite) else {"text": "ok"},
+    )
+    api = FauxBanc([_entree(i) for i in range(1, 10)])
+    worker.play_run({"id": 32, "stage": "READ", "items": 9}, api, _env_banc(), quiet=True)
+
+    assert api.cloture["status"] == "DONE"
+    assert api.cloture["items"] == 9
+
+
+def test_l_echec_d_une_entree_se_lit_dans_le_journal(capsys, monkeypatch):
+    monkeypatch.setattr(worker, "read_from_html", lambda *a, **kw: {"error": "texte illisible"})
+    api = FauxBanc([_entree(1)])
+    worker.play_run({"id": 33, "stage": "READ", "items": 1}, api, _env_banc(), quiet=False)
+    assert "texte illisible" in capsys.readouterr().out
