@@ -1,5 +1,5 @@
 import { today } from '../lib/dateWindow';
-import { escapeHtml, truncate, type RenderedPage } from './html';
+import { escapeHtml, truncate, type InitialState, type RenderedPage } from './html';
 import { breadcrumbJsonLd, eventJsonLd, itemListJsonLd, websiteJsonLd } from './jsonld';
 import { SITE_NAME, absolute, buildHead, type PageMeta } from './meta';
 import {
@@ -12,7 +12,15 @@ import {
   priceLabel,
   shortAgeLabel,
 } from './labels';
-import { findArea, findPublicEvent, listAreas, listPublicEvents, type PublicEvent } from './query';
+import {
+  findArea,
+  findPublicEvent,
+  listAreasPayload,
+  listCategories,
+  listPublicEvents,
+  type PublicEvent,
+  type PublicEventPage,
+} from './query';
 import type { Area } from '@prisma/client';
 import { isPrivatePath } from './routes';
 
@@ -34,6 +42,33 @@ const PAGE_SIZE = 12;
 const HOME_DESCRIPTION =
   'Des idées de sorties avec des enfants partout en France : spectacles, parcs, ' +
   'musées et ateliers, proposés par des parents et vérifiés par une équipe de modération.';
+
+/**
+ * Ce qu'une page pré-rendue produit : de quoi écrire le document, et ce que
+ * l'application n'aura pas à redemander pour l'afficher.
+ */
+interface Page {
+  meta: PageMeta;
+  body: string;
+  status?: number;
+  state?: InitialState;
+}
+
+/**
+ * L'adresse d'API d'une liste de sorties, telle que l'application la demande.
+ *
+ * Elle doit coïncider avec `requeteApi` de `client/src/lib/searchQuery.ts` et
+ * avec la requête d'`AreaView` — l'ordre des paramètres près, que la lecture
+ * de l'état initial normalise. Une divergence ne casse rien : l'application ne
+ * reconnaît pas l'entrée et appelle l'API, comme avant.
+ */
+export function eventsApiPath(page: number, pageSize: number, areaSlug?: string): string {
+  const params = new URLSearchParams();
+  if (areaSlug) params.set('area', areaSlug);
+  params.set('page', String(page));
+  params.set('pageSize', String(pageSize));
+  return `/api/events?${params.toString()}`;
+}
 
 /** Le numéro de page demandé, ramené à quelque chose de sensé. */
 export function pageOf(query: unknown): number {
@@ -86,14 +121,12 @@ function pagination(page: number, totalPages: number, path = '/'): string {
       </nav>`;
 }
 
-async function homePage(
-  base: string,
-  page: number,
-): Promise<{ meta: PageMeta; body: string; status: number }> {
+async function homePage(base: string, page: number): Promise<Page> {
   const from = today();
-  const [{ events, total }, areas] = await Promise.all([
+  const [{ events, total, payload }, areas, categories] = await Promise.all([
     listPublicEvents(page, PAGE_SIZE),
-    listAreas(),
+    listAreasPayload(),
+    listCategories(),
   ]);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -130,6 +163,11 @@ async function homePage(
       jsonLd: [websiteJsonLd(base), itemListJsonLd(base, events, (page - 1) * PAGE_SIZE)],
     },
     body,
+    state: {
+      [eventsApiPath(page, PAGE_SIZE)]: payload,
+      '/api/areas': { areas },
+      '/api/categories': { categories },
+    },
   };
 }
 
@@ -167,15 +205,11 @@ function areaLinks(areas: Area[], except?: string): string {
  * « au Havre », « en Île-de-France » ne se déduisent pas d'un nom, et une
  * préposition fausse dans un titre se voit dans les résultats de recherche.
  */
-async function areaPage(
-  base: string,
-  area: Area,
-  page: number,
-): Promise<{ meta: PageMeta; body: string; status: number }> {
+async function areaPage(base: string, area: Area, page: number): Promise<Page> {
   const from = today();
-  const [{ events, total }, areas] = await Promise.all([
+  const [{ events, total, payload }, areas] = await Promise.all([
     listPublicEvents(page, PAGE_SIZE, area),
-    listAreas(),
+    listAreasPayload(),
   ]);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const path = `/sorties/${area.slug}`;
@@ -220,6 +254,12 @@ async function areaPage(
       ],
     },
     body,
+    // `AreaView` lit la zone dans la liste des zones : sans elle, sa page
+    // entière attend, puisque son gabarit est suspendu à `v-if="area"`.
+    state: {
+      '/api/areas': { areas },
+      [eventsApiPath(page, PAGE_SIZE, area.slug)]: payload,
+    },
   };
 }
 
@@ -284,7 +324,7 @@ function eventBody(event: PublicEvent, from: string): string {
   </div>`;
 }
 
-function eventPage(base: string, event: PublicEvent): { meta: PageMeta; body: string } {
+function eventPage(base: string, { event, payload }: PublicEventPage): Page {
   const from = today();
   const path = `/sorties/${event.id}`;
   const url = `${base}${path}`;
@@ -307,6 +347,7 @@ function eventPage(base: string, event: PublicEvent): { meta: PageMeta; body: st
       ],
     },
     body: eventBody(event, from),
+    state: { [`/api/events/${event.id}`]: payload },
   };
 }
 
@@ -318,7 +359,7 @@ function eventPage(base: string, event: PublicEvent): { meta: PageMeta; body: st
  * interrogé l'API avec son cookie. Le code 404, lui, s'adresse aux moteurs :
  * sans lui, toute adresse inventée serait une page valide de plus.
  */
-function notFoundPage(): { meta: PageMeta; body: string } {
+function notFoundPage(): Page {
   return {
     meta: {
       title: `Page introuvable — ${SITE_NAME}`,
@@ -335,7 +376,7 @@ function notFoundPage(): { meta: PageMeta; body: string } {
 }
 
 /** Une page de l'application qui ne s'adresse qu'à ses utilisateurs connectés. */
-function privatePage(path: string): { meta: PageMeta; body: string } {
+function privatePage(path: string): Page {
   return {
     meta: {
       title: SITE_NAME,
@@ -358,19 +399,17 @@ export async function renderPage(
   query: Record<string, unknown>,
 ): Promise<RenderedPage> {
   let status = 200;
-  let page: { meta: PageMeta; body: string };
+  let page: Page;
 
   const eventMatch = EVENT_PATH.exec(pathname);
   if (pathname === '/') {
-    const home = await homePage(base, pageOf(query.page));
-    page = home;
-    status = home.status;
+    page = await homePage(base, pageOf(query.page));
   } else if (isPrivatePath(pathname)) {
     page = privatePage(pathname);
   } else if (eventMatch) {
-    const event = await findPublicEvent(Number(eventMatch[1]));
-    if (event) {
-      page = eventPage(base, event);
+    const found = await findPublicEvent(Number(eventMatch[1]));
+    if (found) {
+      page = eventPage(base, found);
     } else {
       page = notFoundPage();
       status = 404;
@@ -378,9 +417,7 @@ export async function renderPage(
   } else if (AREA_PATH.test(pathname)) {
     const area = await findArea(AREA_PATH.exec(pathname)![1]);
     if (area) {
-      const rendered = await areaPage(base, area, pageOf(query.page));
-      page = rendered;
-      status = rendered.status;
+      page = await areaPage(base, area, pageOf(query.page));
     } else {
       page = notFoundPage();
       status = 404;
@@ -390,5 +427,12 @@ export async function renderPage(
     status = 404;
   }
 
-  return { status, head: buildHead(base, page.meta), body: page.body };
+  return {
+    status: page.status ?? status,
+    head: buildHead(base, page.meta),
+    body: page.body,
+    // Une page qu'on ne sert pas en 200 n'a rien à transmettre : ni la 404,
+    // qui ne décrit aucune sortie, ni une page de pagination vide.
+    state: (page.status ?? status) === 200 ? page.state : undefined,
+  };
 }

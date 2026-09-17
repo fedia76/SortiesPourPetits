@@ -24,19 +24,44 @@ export function escapeHtml(value: string): string {
 }
 
 /**
- * Un bloc JSON-LD, échappé pour ne pas pouvoir sortir de son `<script>`.
+ * Un objet, écrit de façon à ne pas pouvoir sortir de son `<script>`.
  *
  * `escapeHtml` est inutilisable ici — il casserait le JSON. On neutralise donc
  * les seuls caractères qui permettraient à une description de sortie de fermer
  * la balise et d'injecter du script : `<`, `>` et `&`, en échappement Unicode,
  * que `JSON.parse` relit à l'identique.
  */
-export function jsonLdScript(data: unknown): string {
-  const json = JSON.stringify(data)
+function jsonInerte(data: unknown): string {
+  return JSON.stringify(data)
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
     .replace(/&/g, '\\u0026');
-  return `<script type="application/ld+json">${json}</script>`;
+}
+
+/** Un bloc de données structurées. */
+export function jsonLdScript(data: unknown): string {
+  return `<script type="application/ld+json">${jsonInerte(data)}</script>`;
+}
+
+/**
+ * Ce que le serveur a déjà demandé à sa propre API, offert à l'application.
+ *
+ * Les clés sont des chemins d'API — « /api/events/509 » —, les valeurs ce que
+ * cet appel aurait répondu. L'application les reprend au lieu de les redemander
+ * (voir `client/src/lib/etatInitial.ts`), et c'est tout l'objet de ce bloc :
+ * une page complète dès le premier affichage, sans un aller-retour réseau dont
+ * dépendait, jusqu'ici, la moindre ligne de son contenu.
+ *
+ * Rien ne s'y trouve qu'un visiteur anonyme ne puisse déjà demander lui-même :
+ * ce sont les réponses des routes publiques, à l'identique.
+ */
+export type InitialState = Record<string, unknown>;
+
+/** L'identifiant du bloc, connu des deux côtés. */
+export const STATE_ID = 'etat-initial';
+
+export function stateScript(state: InitialState): string {
+  return `<script type="application/json" id="${STATE_ID}">${jsonInerte(state)}</script>`;
 }
 
 /** Coupe proprement une description pour une balise `<meta>`. */
@@ -88,6 +113,8 @@ export interface RenderedPage {
   head: string;
   /** Contenu de `#app`, affiché jusqu'à ce que Vue prenne la main. */
   body: string;
+  /** Les réponses d'API que l'application n'aura pas à redemander. */
+  state?: InitialState;
 }
 
 /**
@@ -105,5 +132,9 @@ export interface RenderedPage {
 export function renderDocument(page: RenderedPage): string | null {
   const html = loadTemplate();
   if (html === null) return null;
-  return html.replace(HEAD_BLOCK, () => page.head).replace(BODY_MARK, () => page.body);
+  const head =
+    page.state && Object.keys(page.state).length
+      ? `${page.head}\n    ${stateScript(page.state)}`
+      : page.head;
+  return html.replace(HEAD_BLOCK, () => head).replace(BODY_MARK, () => page.body);
 }

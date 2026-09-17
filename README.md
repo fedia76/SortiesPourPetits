@@ -295,6 +295,38 @@ Ce que cela donne, page par page :
   partagé.
 - Les sorties **passées** sortent du sitemap, mais leur page reste servie.
 
+### L'état initial, et pourquoi il existe
+
+« Vue s'y monte ensuite » cache un piège qui a coûté au site ses fiches dans
+l'index. `createApp` ne s'hydrate pas sur le HTML pré-rendu : il **vide**
+`#app` et repart de rien. La vue redemandait alors à `/api/` ce que le document
+contenait déjà, et n'affichait rien en attendant.
+
+Or la `robots.txt` interdisait `/api/`. Le moteur de rendu de Google applique
+cette interdiction à tout ce qu'une page demande, `fetch` compris : l'appel
+était refusé, et **toutes** les pages du site rendaient le même encadré
+d'erreur. Google les a traitées pour ce qu'elles étaient devenues — des
+doublons —, en a gardé une et a laissé les autres hors de l'index. C'est le
+message « Page en double : Google n'a pas choisi la même URL canonique que
+l'utilisateur » de la Search Console.
+
+Deux corrections, et la seconde vaut pour elle-même :
+
+1. `/api/` n'est plus interdit au parcours. Ce qu'on veut dire — « n'indexe pas
+   mes réponses JSON » — se dit avec l'en-tête `X-Robots-Tag: noindex`, qui
+   suppose justement que le robot ait le droit de lire la réponse.
+2. Le document porte désormais, à côté de ses `<meta>`, **les réponses d'API qui
+   correspondent à la page demandée** (`<script type="application/json"
+   id="etat-initial">`). L'application les reprend au lieu de les redemander
+   (`client/src/lib/etatInitial.ts`), une seule fois : une navigation ultérieure
+   voit des données fraîches. Une page complète s'affiche donc sans un seul
+   aller-retour réseau — pour un moteur comme pour un visiteur.
+
+Les clés de ce bloc sont des adresses d'API, et elles doivent coïncider avec
+celles que les vues demandent. `server/tests/etatInitial.test.ts` compare les
+deux : une divergence ne casse rien — l'appel part, comme avant — mais elle
+rendrait le travail inutile, et sans bruit.
+
 Deux variables décident, côté serveur : `NODE_ENV=production` (sans elle, rien
 n'est indexable) et `PUBLIC_BASE_URL` (l'adresse publique exacte, qui sert à
 écrire les liens canoniques et le sitemap). Voir

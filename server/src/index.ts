@@ -27,6 +27,20 @@ if (process.env.NODE_ENV === 'production') {
 
 app.use(cookieParser());
 
+/**
+ * L'API se lit, mais ne s'indexe pas.
+ *
+ * C'est l'en-tête qui dit cela, et pas la `robots.txt` : celle-ci interdit de
+ * **lire**, ce qui empêchait le moteur de rendu de Google de charger les
+ * données de nos propres pages (voir `routes/site.ts`). Un robot a donc le
+ * droit d'appeler l'API — il lui faut, pour afficher le site — et lit ici
+ * qu'il n'a rien à faire de la réponse dans ses résultats.
+ */
+app.use('/api', (_req, res, next) => {
+  res.set('X-Robots-Tag', 'noindex');
+  next();
+});
+
 // Limite les appels des programmes tiers, par clé d'API présentée.
 // Les sessions web (cookie) ne sont pas concernées.
 app.use(

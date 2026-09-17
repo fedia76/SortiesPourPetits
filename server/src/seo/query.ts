@@ -1,24 +1,27 @@
-import { Area, Prisma } from '@prisma/client';
+import { Area, Category } from '@prisma/client';
 import { prisma } from '../db';
 import { areaFilter } from '../lib/areas';
 import { dateFilter, today } from '../lib/dateWindow';
+import {
+  EVENT_INCLUDE,
+  rankedPage,
+  serializeEvent,
+  type EventWithRelations,
+  type SerializedEvent,
+} from '../lib/eventSearch';
+import { allCategories, areasWithCounts, type AreaWithCount } from '../lib/publicLists';
 
 /**
- * Ce que le pré-rendu lit en base.
+ * Ce que le pré-rendu lit en base : exactement ce que lit l'API publique.
  *
- * Volontairement plus étroit que `EVENT_INCLUDE` de la route de recherche :
- * une page publique n'a pas à connaître le modérateur d'une sortie, et l'auteur
- * ne lui sert qu'à écrire « proposée par ». Ce qui n'est pas lu ne peut pas
- * fuiter dans un `<meta>`.
+ * Il lisait moins, et c'était défendable tant qu'il n'écrivait qu'un `<meta>`.
+ * Il écrit désormais aussi l'état initial du document — ce que l'API aurait
+ * répondu, pour que l'application n'ait pas à le redemander —, et un état
+ * amputé de la moitié des champs n'aurait servi à rien. La borne n'a pas
+ * changé de nature, elle a changé de place : ce qui part dans le document est
+ * ce qu'un visiteur anonyme obtient déjà en appelant `/api/events/:id`.
  */
-const PUBLIC_INCLUDE = {
-  venue: true,
-  category: { select: { id: true, name: true } },
-  author: { select: { displayName: true } },
-  dates: { select: { day: true }, orderBy: { day: 'asc' } },
-} as const satisfies Prisma.EventInclude;
-
-type EventRow = Prisma.EventGetPayload<{ include: typeof PUBLIC_INCLUDE }>;
+type EventRow = EventWithRelations;
 
 /** Une sortie approuvée, prête à être écrite en HTML. */
 export interface PublicEvent {
@@ -86,6 +89,14 @@ function toPublic(row: EventRow): PublicEvent {
   };
 }
 
+/** Une sortie, sous ses deux formes : celle qu'on écrit, celle qu'on transmet. */
+export interface PublicEventPage {
+  /** Ce dont le HTML et les `<meta>` ont besoin. */
+  event: PublicEvent;
+  /** Ce que `GET /api/events/:id` aurait répondu, mot pour mot. */
+  payload: { event: SerializedEvent };
+}
+
 /**
  * La fiche d'une sortie, si et seulement si elle est publique.
  *
@@ -94,58 +105,79 @@ function toPublic(row: EventRow): PublicEvent {
  * n'importe qui. Une sortie en attente ou refusée n'y a donc pas sa place,
  * même pour son auteur ; c'est l'application qui la lui montrera, une fois
  * démarrée, par un appel authentifié à l'API.
+ *
+ * C'est aussi ce qui rend l'état initial sûr à transmettre : la réponse de
+ * l'API pour une sortie approuvée ne dépend pas de qui la demande.
  */
-export async function findPublicEvent(id: number): Promise<PublicEvent | null> {
+export async function findPublicEvent(id: number): Promise<PublicEventPage | null> {
   const row = await prisma.event.findFirst({
     where: { id, status: 'APPROVED' },
-    include: PUBLIC_INCLUDE,
+    include: EVENT_INCLUDE,
   });
-  return row && toPublic(row);
+  if (!row) return null;
+  return { event: toPublic(row), payload: { event: serializeEvent(row) } };
 }
-
-/**
- * Le même ordre que `GET /api/events` — les sorties les plus proches d'abord.
- *
- * Ce n'est pas un détail de présentation : le HTML pré-rendu et ce que Vue
- * affichera ensuite doivent montrer les mêmes sorties dans le même ordre. Deux
- * listes différentes, c'est un moteur qui indexe autre chose que ce que le
- * visiteur verra.
- */
-const PUBLIC_ORDER = { dateStart: 'asc' } as const;
 
 /** Les zones ouvertes, dans leur ordre d'affichage. */
 export function listAreas(): Promise<Area[]> {
   return prisma.area.findMany({ orderBy: [{ position: 'asc' }, { name: 'asc' }] });
 }
 
+/**
+ * Les mêmes, avec le compte que l'application affiche dans ses badges.
+ *
+ * Deux fonctions et non une : le sitemap n'a que faire des comptes, et les
+ * calculer lui coûterait une requête par zone pour rien.
+ */
+export function listAreasPayload(): Promise<AreaWithCount[]> {
+  return areasWithCounts();
+}
+
+/** Les catégories, telles que `GET /api/categories` les rend. */
+export function listCategories(): Promise<Category[]> {
+  return allCategories();
+}
+
 export function findArea(slug: string): Promise<Area | null> {
   return prisma.area.findUnique({ where: { slug } });
+}
+
+/** Une page de liste, sous ses deux formes — comme pour une fiche. */
+export interface PublicEventList {
+  events: PublicEvent[];
+  total: number;
+  /** Ce que `GET /api/events?…` aurait répondu, mot pour mot. */
+  payload: { events: SerializedEvent[]; total: number; page: number; pageSize: number };
 }
 
 /**
  * Une page de sorties, dans le même ordre que ce que l'application affiche.
  * Restreinte à une zone quand on en passe une.
+ *
+ * Le classement passe par `rankedPage`, celui-là même qu'utilise la route de
+ * recherche. Il ne l'utilisait pas : il triait par date de début, quand l'API
+ * classait par pertinence depuis `lib/relevance`. Le moteur indexait donc une
+ * liste que le visiteur ne voyait jamais — et l'état initial aurait transmis
+ * la mauvaise. Une seule façon de classer, un seul endroit où elle vit.
  */
 export async function listPublicEvents(
   page: number,
   pageSize: number,
   area?: Area | null,
-): Promise<{ events: PublicEvent[]; total: number }> {
-  const where: Prisma.EventWhereInput = {
-    status: 'APPROVED',
-    AND: [dateFilter(today()), ...(area ? [areaFilter(area.postalPrefixes)] : [])],
+): Promise<PublicEventList> {
+  const from = today();
+  const { events, total } = await rankedPage(
+    {
+      status: 'APPROVED',
+      AND: [dateFilter(from), ...(area ? [areaFilter(area.postalPrefixes)] : [])],
+    },
+    { from, page, pageSize },
+  );
+  return {
+    events: events.map(toPublic),
+    total,
+    payload: { events: events.map((e) => serializeEvent(e)), total, page, pageSize },
   };
-  const [rows, total] = await Promise.all([
-    prisma.event.findMany({
-      where,
-      include: PUBLIC_INCLUDE,
-      orderBy: PUBLIC_ORDER,
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    }),
-    prisma.event.count({ where }),
-  ]);
-  return { events: rows.map(toPublic), total };
 }
 
 /**
@@ -165,7 +197,7 @@ export function listSitemapEvents(): Promise<{ id: number; createdAt: Date }[]> 
   return prisma.event.findMany({
     where: { status: 'APPROVED', AND: [dateFilter(today())] },
     select: { id: true, createdAt: true },
-    orderBy: PUBLIC_ORDER,
+    orderBy: { dateStart: 'asc' },
     take: SITEMAP_MAX,
   });
 }
