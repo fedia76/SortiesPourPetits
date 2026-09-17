@@ -52,23 +52,33 @@ from .text import flatten
 
 #: Les libellés soumis à l'étiqueteur, et le champ de la fiche qu'ils nourrissent.
 #:
-#: Ce sont des **phrases en français**, pas des identifiants : un modèle
-#: zero-shot apparie le texte du libellé à celui de la page, si bien que
-#: « tarif d'entrée » et « prix » ne remontent pas les mêmes spans. Ce
-#: dictionnaire est donc un réglage à part entière, et le premier à toucher
-#: quand un champ se rate — bien avant de changer de modèle.
+#: Ce sont des **mots français**, pas des identifiants : un modèle zero-shot
+#: apparie le texte du libellé à celui de la page, si bien que « tarif » et
+#: « prix d'entrée » ne remontent pas les mêmes spans. Ce dictionnaire est donc
+#: un réglage à part entière, et le premier à toucher quand un champ se rate —
+#: bien avant de changer de modèle.
+#:
+#: **Courts, et c'est délibéré.** Ils l'étaient d'abord descriptifs — « adresse
+#: postale (numéro et rue) », « jour de la semaine où l'événement a lieu » —,
+#: ce qui coûtait deux fois : GLiNER a été entraîné sur des **noms de types
+#: d'entités**, pas sur des phrases, et ses libellés partagent la fenêtre du
+#: modèle avec le texte de la page. Une parenthèse dans un libellé, ce sont
+#: des jetons pris à la page.
+#:
+#: `tools/gliner_essai.py --libelles` permet d'en essayer d'autres sans
+#: toucher au code : c'est le premier réglage à mesurer, pas à deviner.
 LABELS: dict[str, str] = {
     "titre de l'événement": "title",
-    "nom du lieu ou de la salle": "venue_name",
-    "adresse postale (numéro et rue)": "venue_address",
+    "lieu": "venue_name",
+    "adresse": "venue_address",
     "ville": "venue_city",
     "code postal": "venue_postal_code",
-    "tarif ou prix d'entrée": "price",
-    "âge minimum du public": "age_min",
-    "âge maximum du public": "age_max",
-    "date de l'événement": "dates",
-    "horaire de l'événement": "times",
-    "jour de la semaine où l'événement a lieu": "weekdays",
+    "tarif": "price",
+    "âge minimum": "age_min",
+    "âge maximum": "age_max",
+    "date": "dates",
+    "heure": "times",
+    "jour de la semaine": "weekdays",
 }
 
 #: En deçà, on ne retient pas le span. GLiNER rend un score par span ; le

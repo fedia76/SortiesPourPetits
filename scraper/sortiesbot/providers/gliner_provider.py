@@ -57,14 +57,56 @@ from .base import Provider, ProviderError
 #: configuration, ou par `SPP_GLINER_MODEL` pour un run de banc.
 MODELE_DEFAUT = "urchade/gliner_multi-v2.1"
 
-#: Au-delà, l'encodeur découpe : sa fenêtre est celle d'un BERT, pas celle d'un
-#: LLM. Le texte de l'étage 5 est déjà borné par `max_page_chars` (8 000), mais
-#: un programme de festival le dépasse, et tronquer en silence ferait accuser
-#: le modèle d'un texte qu'on ne lui a pas montré.
-FENETRE_CARACTERES = 6_000
-#: Ce que deux tronçons partagent, pour qu'une valeur à cheval sur la coupe
-#: soit entière dans au moins l'un des deux.
-RECOUVREMENT = 400
+#: Jetons que l'encodeur regarde d'un coup, quand le modèle ne le dit pas.
+#:
+#: C'est **384** chez GLiNER (`gliner/config.py`, `max_len`), pas 512 ni 4 000 :
+#: la fenêtre d'un encodeur, pas celle d'un LLM. Au-delà, le modèle ne tronque
+#: pas bruyamment — il regarde le début et ignore le reste en silence.
+FENETRE_JETONS_DEFAUT = 384
+
+#: Ce que les libellés prennent sur cette fenêtre, en jetons.
+#:
+#: Le point qui n'a rien d'évident : dans un GLiNER mono-encodeur, **les
+#: libellés et le texte partagent la même séquence**. Onze libellés français
+#: pèsent quelques dizaines de jetons, et ce sont autant de jetons que la page
+#: n'aura pas. C'est aussi pourquoi des libellés courts valent mieux que des
+#: phrases : ils coûtent moins cher *et* ressemblent davantage à ce sur quoi le
+#: modèle a été entraîné.
+JETONS_RESERVES = 110
+
+#: Caractères par jeton, en français, avec un vocabulaire multilingue.
+#:
+#: Volontairement **prudent** : trois plutôt que quatre. Sous-estimer coupe un
+#: tronçon un peu tôt, ce qui ne coûte qu'une passe de plus ; surestimer laisse
+#: le modèle tronquer en silence, ce qui coûte la moitié de la page — et c'est
+#: exactement la faute que ce module a commise, avec une fenêtre de 6 000
+#: caractères là où le modèle en lisait environ 1 200.
+CARACTERES_PAR_JETON = 3
+
+#: Part d'un tronçon que le suivant reprend, pour qu'une valeur à cheval sur la
+#: coupe soit entière dans au moins l'un des deux.
+PART_RECOUVREMENT = 0.15
+
+
+def fenetre_caracteres(tagger: Any = None, labels: list[str] | None = None) -> tuple[int, int]:
+    """Combien de caractères par tronçon, et combien les tronçons partagent.
+
+    Dérivé du modèle plutôt que codé en dur : `max_len` change d'un point de
+    contrôle à l'autre, et une constante écrite ici serait fausse au premier
+    modèle essayé. Ce que le modèle ne dit pas, on le prend prudemment.
+    """
+    jetons = FENETRE_JETONS_DEFAUT
+    config = getattr(tagger, "config", None)
+    declare = getattr(config, "max_len", None)
+    if isinstance(declare, int) and declare > 0:
+        jetons = declare
+    # Les libellés mangent la fenêtre : on estime leur part sur les vrais
+    # libellés quand on les a, plutôt que sur une moyenne.
+    reserve = JETONS_RESERVES
+    if labels:
+        reserve = min(jetons // 2, sum(len(lb) // 3 + 2 for lb in labels) + 10)
+    budget = max(200, (jetons - reserve) * CARACTERES_PAR_JETON)
+    return budget, max(60, int(budget * PART_RECOUVREMENT))
 
 
 @runtime_checkable
@@ -115,20 +157,31 @@ def charger(nom: str = MODELE_DEFAUT) -> Tagger:
         ) from err
 
 
-def _decouper(text: str) -> list[tuple[int, str]]:
+def _decouper(text: str, budget: int, recouvrement: int) -> list[tuple[int, str]]:
     """Le texte en tronçons qui tiennent dans la fenêtre, avec leur décalage.
 
     Le décalage voyage avec le tronçon : sans lui, les positions rendues par
     l'étiqueteur seraient celles du tronçon et non de la page, et un span ne
     se relierait plus à ce qu'il désigne.
+
+    La coupe cherche une espace pour ne pas trancher un mot en deux — un mot
+    coupé est un jeton inconnu, et l'entité qui le contenait est perdue.
     """
-    if len(text) <= FENETRE_CARACTERES:
+    if len(text) <= budget:
         return [(0, text)]
     morceaux: list[tuple[int, str]] = []
     depart = 0
+    pas = max(1, budget - recouvrement)
     while depart < len(text):
-        morceaux.append((depart, text[depart : depart + FENETRE_CARACTERES]))
-        depart += FENETRE_CARACTERES - RECOUVREMENT
+        fin = min(depart + budget, len(text))
+        if fin < len(text):
+            espace = text.rfind(" ", depart + pas, fin)
+            if espace > depart:
+                fin = espace
+        morceaux.append((depart, text[depart:fin]))
+        if fin >= len(text):
+            break
+        depart += max(1, (fin - depart) - recouvrement)
     return morceaux
 
 
@@ -197,7 +250,8 @@ class GlinerProvider:
         tagger = self._charger()
         libelles = list(LABELS)
         depart = time.monotonic()
-        morceaux = _decouper(content)
+        budget, recouvrement = fenetre_caracteres(tagger, libelles)
+        morceaux = _decouper(content, budget, recouvrement)
         try:
             rendus = self._etiqueter(tagger, [m for _, m in morceaux], libelles)
         except ProviderError:
@@ -241,6 +295,11 @@ class GlinerProvider:
             chars=len(content),
             spans=len(spans),
             retenus=sum(1 for s in spans if s.score >= self._seuil),
+            # La fenêtre réellement appliquée, et en combien de passes. Sans
+            # elle, une page à moitié lue ressemble à un modèle qui ne trouve
+            # rien — c'est arrivé, avec une fenêtre cinq fois trop large.
+            fenetre=budget,
+            passes=len(morceaux),
             ms=int((time.monotonic() - depart) * 1000),
             non_rendus=",".join(unfilled_fields()),
         )

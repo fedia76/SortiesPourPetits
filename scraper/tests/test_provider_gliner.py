@@ -17,10 +17,14 @@ from sortiesbot.config import Config
 from sortiesbot.journal import RunLog
 from sortiesbot.providers.base import ProviderError, get_provider
 from sortiesbot.providers.gliner_provider import (
-    FENETRE_CARACTERES,
-    RECOUVREMENT,
+    CARACTERES_PAR_JETON,
+    FENETRE_JETONS_DEFAUT,
     GlinerProvider,
+    fenetre_caracteres,
 )
+
+#: De quoi fabriquer un texte qui dépasse à coup sûr la fenêtre du modèle.
+LONG = FENETRE_JETONS_DEFAUT * CARACTERES_PAR_JETON * 3
 from sortiesbot.spans import LABELS
 
 AUJOURD_HUI = date(2026, 7, 1)
@@ -84,10 +88,11 @@ def test_les_libelles_partent_en_francais():
 
 def test_une_longue_page_est_decoupee_avec_recouvrement():
     tagger = FauxTagger()
-    texte = "a" * (FENETRE_CARACTERES * 2)
+    texte = "a " * (LONG // 2)
     GlinerProvider(tagger=tagger).extract("https://x.fr", texte, _config(), [], _log())
     assert len(tagger.appels) > 1
-    assert all(len(morceau) <= FENETRE_CARACTERES for morceau, _, _ in tagger.appels)
+    budget, _ = fenetre_caracteres(None, list(LABELS))
+    assert all(len(morceau) <= budget for morceau, _, _ in tagger.appels)
 
 
 def test_le_decalage_ramene_les_positions_a_la_page():
@@ -97,7 +102,7 @@ def test_le_decalage_ramene_les_positions_a_la_page():
     plusieurs milliers, et le span ne se relierait plus à ce qu'il désigne.
     """
     aiguille = "Le Petit Chaperon rouge"
-    texte = "a" * (FENETRE_CARACTERES + 100) + aiguille
+    texte = "a " * (LONG // 2) + aiguille
     tagger = FauxTagger(
         [{"label": PAR_CHAMP["title"], "text": aiguille, "score": 0.9, "start": 10, "end": 33}]
     )
@@ -107,7 +112,10 @@ def test_le_decalage_ramene_les_positions_a_la_page():
     provider.extract("https://x.fr", texte, _config(), [], log)
     pose = [e for e in captures if e.get("kind") == "gliner"]
     assert pose and pose[0]["spans"] >= 1
-    assert FENETRE_CARACTERES - RECOUVREMENT > 0
+    # La fenêtre appliquée part au journal : une page à moitié lue ressemble
+    # sinon à un modèle qui ne trouve rien.
+    assert pose[0]["fenetre"] > 0
+    assert pose[0]["passes"] > 1
 
 
 def test_le_journal_dit_ce_que_la_brique_ne_rend_pas():
@@ -210,7 +218,7 @@ class TaggerGroupe(FauxTagger):
 def test_une_page_decoupee_part_en_un_seul_lot():
     """Une passe pour tous les tronçons : un processeur de VPS n'a pas de marge."""
     tagger = TaggerGroupe()
-    texte = "a" * (FENETRE_CARACTERES * 2)
+    texte = "a " * (LONG // 2)
     GlinerProvider(tagger=tagger).extract("https://x.fr", texte, _config(), [], _log())
     assert len(tagger.lots) == 1
     assert len(tagger.lots[0]) > 1
@@ -228,7 +236,7 @@ def test_une_seule_page_n_emprunte_pas_le_chemin_groupe():
 def test_un_etiqueteur_sans_methode_groupee_reste_servi():
     """Le `Protocol` n'exige que `predict_entities` : rien ne doit le démentir."""
     tagger = FauxTagger()
-    texte = "a" * (FENETRE_CARACTERES * 2)
+    texte = "a " * (LONG // 2)
     GlinerProvider(tagger=tagger).extract("https://x.fr", texte, _config(), [], _log())
     assert len(tagger.appels) > 1
 
@@ -327,3 +335,64 @@ def test_le_banc_ne_voit_aucune_invention_et_c_est_le_piege():
     # une limite annoncée d'un chiffre fabriqué.
     vides = {a["key"] for a in resultat["aspects"] if not a["filled"]}
     assert {"description", "cadre", "categorie"} <= vides
+
+
+# ────────────────────────── la fenêtre du modèle, et la faute qu'elle a coûtée
+#
+# Le premier run qui a vraiment tourné rendait 7 % de champs justes, et
+# l'essentiel de ces 7 % était « vide, à raison ». La cause n'était pas le
+# modèle : la découpe faisait des tronçons de 6 000 caractères là où GLiNER
+# regarde 384 **jetons**, soit environ 1 200 caractères. Le modèle lisait le
+# début de chaque tronçon et ignorait le reste en silence — donc les deux tiers
+# de chaque page, dont tout ce qui vient après le fil d'Ariane et le bandeau
+# de cookies.
+
+
+def test_la_fenetre_suit_ce_que_le_modele_declare():
+    class Config:
+        max_len = 512
+
+    class Tagger(FauxTagger):
+        config = Config()
+
+    large, _ = fenetre_caracteres(Tagger(), list(LABELS))
+    etroit, _ = fenetre_caracteres(None, list(LABELS))
+    assert large > etroit  # 512 jetons portent plus de texte que 384
+
+
+def test_la_fenetre_reste_dans_l_ordre_de_grandeur_du_modele():
+    """384 jetons, c'est de l'ordre du millier de caractères — pas six mille."""
+    budget, _ = fenetre_caracteres(None, list(LABELS))
+    assert 600 <= budget <= 1400
+
+
+def test_les_libelles_prennent_leur_part_de_la_fenetre():
+    """Libellés et texte partagent la séquence : plus ils sont longs, moins la
+    page a de place. C'est aussi pourquoi ils ont été raccourcis."""
+    court, _ = fenetre_caracteres(None, ["date", "lieu"])
+    bavard, _ = fenetre_caracteres(
+        None, ["la date exacte à laquelle cet événement pour enfants se tient"] * 11
+    )
+    assert court > bavard
+
+
+def test_la_decoupe_ne_tranche_pas_un_mot_en_deux():
+    """Un mot coupé est un jeton inconnu, et l'entité qui le contenait est perdue."""
+    from sortiesbot.providers.gliner_provider import _decouper
+
+    texte = " ".join(f"mot{i:04d}" for i in range(600))
+    morceaux = _decouper(texte, 300, 45)
+    assert len(morceaux) > 1
+    for decalage, morceau in morceaux[:-1]:
+        assert not morceau.endswith("mo") and not morceau.endswith("mot")
+        assert texte[decalage : decalage + len(morceau)] == morceau
+
+
+def test_la_decoupe_couvre_tout_le_texte():
+    from sortiesbot.providers.gliner_provider import _decouper
+
+    texte = " ".join(f"mot{i:04d}" for i in range(400))
+    morceaux = _decouper(texte, 300, 45)
+    # Le dernier tronçon finit avec le texte : rien ne doit rester non lu.
+    dernier_decalage, dernier = morceaux[-1]
+    assert dernier_decalage + len(dernier) == len(texte)
