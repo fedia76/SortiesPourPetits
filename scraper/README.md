@@ -292,6 +292,103 @@ soit la bonne. Pour la revérifier — après un changement d'API, par exemple �
 il suffit de mettre `[serper]` dans un message de commit : le job du même nom
 appelle le vrai service et affiche ce qu'il rend.
 
+### Extraire en local plutôt qu'avec le modèle
+
+`provider: gliner` remplace **l'étage 6 seul**, par un étiqueteur de spans qui
+tourne sur le processeur. C'est une expérience, pas un réglage de production —
+et ce qu'elle cherche n'est pas l'économie : l'extraction pèse 60 à 70 % du
+coût d'un run, mais d'un run à 0,20 $.
+
+Ce qui la rend intéressante tient en une phrase : **GLiNER est un encodeur, pas
+un générateur.** Il fait une passe avant sur la page et rend des morceaux de
+texte, là où un décodeur refait une passe par jeton écrit — cinq cents jetons
+de fiche, cinq cents passes. D'où deux propriétés que le modèle n'a pas :
+
+* une page se lit en une fraction de seconde sur un processeur ordinaire ;
+* **il ne peut pas inventer une valeur**, puisque ce qu'il rend est par
+  construction une sous-chaîne de la page.
+
+Il est *zero-shot* : les champs demandés sont des phrases en français passées à
+l'appel (`spans.LABELS`), pas des classes gelées dans les poids. Changer de
+champ ne demande pas de réentraîner, seulement de réécrire une phrase — et
+c'est le premier réglage à toucher quand un champ se rate, bien avant de
+changer de modèle.
+
+#### Ce qu'il ne rend pas, et pourquoi il ne comble pas
+
+Quatre champs de la fiche ne sont pas des morceaux de page : `description` (une
+rédaction), `setting` (une page dit « au parc de la Villette », c'est le
+lecteur qui conclut), `category` (un choix dans un référentiel), `several` (un
+jugement sur la page entière). Ils restent **vides**, et le banc comptera
+`MANQUE`.
+
+C'est la mesure juste, et s'en tenir là est un choix. Les combler par une
+heuristique — `setting` déduit du mot « salle », `description` recopiée du
+premier paragraphe — fabriquerait un aspect vert sans rien apprendre à
+personne : `evalMetrics.pareil` rend `true` sans condition sur le genre
+`prose`, et `ancrage._overlap` est trivialement satisfait par une recopie. Le
+journal de chaque page liste donc les champs hors portée (`non_rendus`), pour
+qu'un `MANQUE` se lise comme une limite annoncée et non comme une faute.
+
+Le **mode programme** est refusé, bruyamment : un étiqueteur relèverait les
+vingt titres d'un festival sans savoir qu'ils appartiennent à vingt sorties.
+Segmenter une page n'est pas étiqueter, et rendre une fiche unique bricolée à
+partir de vingt sorties mélangées serait un échec silencieux — le seul genre
+qu'on ne rattrape pas.
+
+#### L'essayer sur une page, puis sur le banc
+
+```bash
+pip install -e ".[gliner]"        # tire torch, ~2 Go — d'où l'extra
+
+# une page, pour voir les spans et régler les libellés
+python -m tools.gliner_essai tests/fixtures/pages/spectacle-avec-json-ld.html --spans
+```
+
+Puis le corpus entier, **depuis la console** : *Évaluation* → *Jouer une
+mesure* → brique « extraction » → *Par qui*. Rien à faire côté serveur : le run
+porte son fournisseur, le worker le lit et obéit.
+
+Le choix voyage dans `EvalRun.settings`, à côté de la recherche, et c'est le
+même sens de flèche que pour elle — **la console décide sous quoi on mesure, la
+machine se contente de mesurer**. Pas de colonne pour lui : cette clé est
+prévue pour ça (« les réglages en vigueur, en JSON »), et un run lancé avant ce
+changement ne la porte simplement pas, donc retombe sur le modèle — le bon
+défaut, puisqu'il a été lancé quand c'était le seul.
+
+C'était d'abord une variable d'environnement du worker. Mauvaise place : elle
+obligeait à modifier une unité systemd et à redémarrer le service entre deux
+runs, c'est-à-dire pour le seul usage qu'on en a — comparer.
+
+Le **point de contrôle** se saisit à côté, et se règle aussi par `glinerModel`
+en YAML pour un run en ligne de commande. La bibliothèque est un **extra** : le
+fournisseur s'importe sans elle et dit quoi installer, si bien que ni
+l'intégration continue ni le VPS ne portent torch pour rien.
+
+Le run déclare à la clôture le modèle réellement interrogé
+(`gliner:urchade/gliner_multi-v2.1` au lieu de `claude-haiku-4-5`) : sans quoi
+deux points de la courbe porteraient le même nom, ce qui est irrattrapable
+après coup.
+
+**Et il fait sa propre courbe.** Un étiqueteur laisse structurellement vides
+quatre des douze aspects : son taux de champs justes est mécaniquement plus bas
+sans que rien ait régressé. Aligner ce point sur ceux du modèle ferait lire un
+effondrement là où seul l'outil a changé — exactement la faute que la
+séparation par recherche corrige déjà pour l'étage 4.
+
+#### Ce que le banc ne pourra pas vous dire
+
+À lire avant de regarder le tableau : **onze des douze aspects de
+`ancrage.audit_fiche` sont jugés par l'instrument « la valeur se lit-elle dans
+la page ? ».** Un étiqueteur ne peut pas lever `hors_texte` — par construction,
+pas par mérite. Le taux d'ancrage montera, et il n'aura rien prouvé.
+
+Ce qui reste mesurable, et qui est la vraie comparaison : les verdicts
+`JUSTE / FAUX / INVENTE / MANQUE` contre les fiches étiquetées du corpus, aspect
+par aspect. C'est là qu'on verra si l'étiqueteur choisit le **bon** tarif parmi
+les cinq qu'affiche une page de théâtre — ce que l'ancrage, lui, ne distingue
+pas d'un mauvais.
+
 ### Le journal, et où il va
 
 Un même événement part vers trois destinations :
@@ -750,6 +847,8 @@ worker sert leurs files comme il sert une recherche :
 | [`sortiesbot/evaluation.py`](sortiesbot/evaluation.py) | Geler une page, et rejouer les étages 3, 4, 5 et 6 dessus |
 | [`sortiesbot/ancrage.py`](sortiesbot/ancrage.py) | Mesurer l'étage 6 : ce qu'une fiche affirme se lit-il dans la page ? |
 | [`sortiesbot/chasse.py`](sortiesbot/chasse.py) | Peupler le corpus de l'étage 2 depuis un prompt |
+| [`sortiesbot/spans.py`](sortiesbot/spans.py) | Des spans à une fiche : le modèle trouve, le Python normalise |
+| [`providers/gliner_provider.py`](sortiesbot/providers/gliner_provider.py) | L'étage 6 sans appel payant, par un étiqueteur local |
 
 Deux règles suffisent à comprendre le reste, et elles sont dans ce module :
 
@@ -1351,4 +1450,9 @@ seulement ce que ça coûterait et ce que ça rapporterait.
 2. un fournisseur OpenRouter — l'interface `Provider` (trois méthodes) est déjà
    en place pour ça, et seule la recherche y demande un outil ;
 3. un second script en liste blanche, alimenté par les domaines dont les
-   sorties ont été le plus souvent approuvées.
+   sorties ont été le plus souvent approuvées ;
+4. **mesurer** l'étage 6 local. Le fournisseur `gliner` existe et se branche au
+   banc ; ce qui manque est le chiffre, et les deux instruments qui le rendront
+   lisible — un détecteur de recopie sur la description, un drapeau « plusieurs
+   candidats » sur le tarif. Sans eux, un étiqueteur obtient un tableau vert
+   qu'il n'a pas mérité (voir [`docs/banc-evaluation.md`](../docs/banc-evaluation.md)).

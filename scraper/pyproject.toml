@@ -12,6 +12,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.14"]
+# L'étiqueteur de spans de l'étage 6, en option — il tire torch, soit environ
+# deux gigaoctets. L'imposer à l'intégration continue et au VPS, qui n'en ont
+# pas l'usage, pour une expérience qui ne concerne qu'un run de banc serait un
+# mauvais marché. Le fournisseur s'importe sans lui et dit quoi installer.
+gliner = ["gliner>=0.2.13"]
 
 [build-system]
 requires = ["setuptools>=68"]

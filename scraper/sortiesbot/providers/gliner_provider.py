@@ -1,0 +1,287 @@
+"""L'étage 6 sans appel payant : un étiqueteur de spans, en local.
+
+GLiNER est un **encodeur**, pas un générateur. Il fait une passe avant sur la
+page et rend des morceaux de texte ; il ne produit pas un jeton après l'autre.
+C'est ce qui décide tout le reste :
+
+* une page se lit en une fraction de seconde sur un processeur ordinaire, là
+  où un décodeur de 1,7 Md refait une passe par jeton écrit — cinq cents
+  jetons de fiche, cinq cents passes ;
+* il ne peut **pas** inventer une valeur : ce qu'il rend est, par
+  construction, une sous-chaîne de la page ;
+* il est *zero-shot* : les champs qu'on lui demande sont des phrases en
+  français passées à l'appel (`spans.LABELS`), pas des classes gelées dans
+  les poids. Changer de champ ne demande pas de réentraîner, seulement de
+  réécrire une phrase.
+
+## Ce que ce fournisseur remplace, et ce qu'il ne remplace pas
+
+**Un seul des cinq appels du `Protocol` : l'extraction.** Les quatre autres —
+formuler, chercher, reconnaître, trier — restent au modèle qu'on lui passe,
+exactement comme `SerperProvider` ne remplace que la recherche. Un étiqueteur
+ne sait pas formuler une requête web.
+
+Et même à l'extraction, il ne rend pas la fiche entière : `description`,
+`setting`, `category` restent vides, parce que ce ne sont pas des morceaux de
+page. Le détail et la raison de ne pas les combler au jugé sont dans
+`spans.py`.
+
+## Pourquoi la bibliothèque est optionnelle
+
+`gliner` tire `torch`, soit environ deux gigaoctets. L'imposer à tout le monde
+— à l'intégration continue, au VPS qui ne fait tourner que le worker — pour
+une expérience qui ne concerne qu'un banc serait un mauvais marché. La
+dépendance est donc un extra (`pip install -e ".[gliner]"`), l'import est
+paresseux, et le message d'erreur dit quoi installer.
+
+C'est aussi ce qui rend ce fournisseur testable : `tagger` s'injecte, et les
+tests passent un objet qui rend des spans écrits à la main. Aucun test
+n'installe torch, aucun ne touche au réseau.
+"""
+
+from __future__ import annotations
+
+import time
+from datetime import date
+from typing import Any, Protocol, runtime_checkable
+
+from ..config import Config
+from ..harvest import Link
+from ..journal import RunLog
+from ..models import ExtractedEvent, FoundPage, Usage
+from ..spans import LABELS, SEUIL_DEFAUT, Span, to_event, unfilled_fields
+from .base import Provider, ProviderError
+
+#: Le point de départ raisonnable : multilingue, français compris, Apache 2.0,
+#: et taillé pour tourner sur processeur. Se change par `glinerModel` dans la
+#: configuration, ou par `SPP_GLINER_MODEL` pour un run de banc.
+MODELE_DEFAUT = "urchade/gliner_multi-v2.1"
+
+#: Au-delà, l'encodeur découpe : sa fenêtre est celle d'un BERT, pas celle d'un
+#: LLM. Le texte de l'étage 5 est déjà borné par `max_page_chars` (8 000), mais
+#: un programme de festival le dépasse, et tronquer en silence ferait accuser
+#: le modèle d'un texte qu'on ne lui a pas montré.
+FENETRE_CARACTERES = 6_000
+#: Ce que deux tronçons partagent, pour qu'une valeur à cheval sur la coupe
+#: soit entière dans au moins l'un des deux.
+RECOUVREMENT = 400
+
+
+@runtime_checkable
+class Tagger(Protocol):
+    """Ce qu'on attend d'un étiqueteur : des spans, pour des libellés donnés.
+
+    C'est exactement la signature de `GLiNER.predict_entities`, réduite à ce
+    dont on se sert. La déclarer ici plutôt que d'importer GLiNER permet aux
+    tests — et à un futur second étiqueteur — de s'y conformer sans la
+    bibliothèque.
+    """
+
+    def predict_entities(
+        self, text: str, labels: list[str], threshold: float = ...
+    ) -> list[dict[str, Any]]:
+        ...
+
+
+def charger(nom: str = MODELE_DEFAUT) -> Tagger:
+    """Le modèle, téléchargé au premier appel puis mis en cache par la bibliothèque.
+
+    Import à l'intérieur de la fonction : le module doit s'importer sans
+    `gliner` installé, sinon le worker refuserait de démarrer chez tous ceux
+    qui ne font pas l'expérience.
+    """
+    try:
+        from gliner import GLiNER  # type: ignore[import-not-found]
+    except ImportError as err:  # pragma: no cover — dépend de l'installation
+        raise ProviderError(
+            "le fournisseur « gliner » réclame la bibliothèque du même nom : "
+            'pip install -e ".[gliner]" (elle tire torch, ~2 Go)'
+        ) from err
+    try:
+        # `GLiNER` est un aiguilleur : `from_pretrained` rend une sous-classe
+        # concrète (`UniEncoderSpanGLiNER` et consorts) selon ce que la
+        # configuration du dépôt annonce. C'est elle qui porte
+        # `predict_entities` — d'où le `Protocol` plutôt qu'un type importé.
+        return GLiNER.from_pretrained(nom)
+    except Exception as err:
+        # Le premier lancement télécharge les poids. Sans réseau, avec un
+        # dépôt mal orthographié ou un pare-feu devant huggingface.co, la
+        # bibliothèque remonte une exception de sa couche HTTP — et le worker
+        # se prenait une trace au lieu d'un run proprement en échec. L'étage 6
+        # sait déjà traiter un `ProviderError` : il le rapporte et continue.
+        raise ProviderError(
+            f"modèle « {nom} » indisponible ({err.__class__.__name__} : {err}). "
+            "Premier lancement : les poids se téléchargent depuis huggingface.co."
+        ) from err
+
+
+def _decouper(text: str) -> list[tuple[int, str]]:
+    """Le texte en tronçons qui tiennent dans la fenêtre, avec leur décalage.
+
+    Le décalage voyage avec le tronçon : sans lui, les positions rendues par
+    l'étiqueteur seraient celles du tronçon et non de la page, et un span ne
+    se relierait plus à ce qu'il désigne.
+    """
+    if len(text) <= FENETRE_CARACTERES:
+        return [(0, text)]
+    morceaux: list[tuple[int, str]] = []
+    depart = 0
+    while depart < len(text):
+        morceaux.append((depart, text[depart : depart + FENETRE_CARACTERES]))
+        depart += FENETRE_CARACTERES - RECOUVREMENT
+    return morceaux
+
+
+class GlinerProvider:
+    """Un étiqueteur pour l'extraction, un modèle pour les quatre autres appels."""
+
+    name = "gliner"
+
+    def __init__(
+        self,
+        model: Provider | None = None,
+        *,
+        tagger: Tagger | None = None,
+        gliner_model: str = MODELE_DEFAUT,
+        seuil: float = SEUIL_DEFAUT,
+        today: date | None = None,
+    ):
+        self._model = model
+        self._tagger = tagger
+        self._nom = gliner_model
+        self._seuil = seuil
+        self._today = today
+        # Le sien, et il reste à zéro : c'est le fait saillant de ce
+        # fournisseur. Quand un modèle est branché derrière pour les quatre
+        # autres appels, c'est *son* compteur qu'on expose, sans quoi le
+        # plafond de budget ne surveillerait plus rien.
+        self._usage = Usage()
+
+    @property
+    def usage(self) -> Usage:
+        return self._model.usage if self._model is not None else self._usage
+
+    def _charger(self) -> Tagger:
+        if self._tagger is None:
+            self._tagger = charger(self._nom)
+        return self._tagger
+
+    # ------------------------------------------------------------ l'extraction
+
+    def extract(
+        self,
+        url: str,
+        content: str,
+        config: Config,
+        categories: list[str],
+        log: RunLog,
+        *,
+        multiple: bool = False,
+    ) -> list[ExtractedEvent]:
+        """Les spans de cette page, assemblés en une fiche.
+
+        `multiple` est **refusé**, et bruyamment : un étiqueteur rendrait les
+        vingt titres d'un programme de festival sans savoir qu'ils appartiennent
+        à vingt sorties. Découper une page en entrées est une tâche de
+        segmentation que ce modèle ne fait pas, et rendre une fiche unique
+        bricolée à partir de vingt sorties mélangées serait pire qu'un échec :
+        ce serait un échec silencieux.
+        """
+        if multiple:
+            raise ProviderError(
+                "« gliner » ne sait pas relever un programme (plusieurs sorties "
+                "sur une page) : un étiqueteur ne segmente pas. Mode « site » à "
+                "laisser au fournisseur « anthropic »."
+            )
+
+        tagger = self._charger()
+        libelles = list(LABELS)
+        depart = time.monotonic()
+        morceaux = _decouper(content)
+        try:
+            rendus = self._etiqueter(tagger, [m for _, m in morceaux], libelles)
+        except ProviderError:
+            raise
+        except Exception as err:
+            raise ProviderError(f"étiquetage impossible ({err.__class__.__name__} : {err})") from err
+
+        # Les tronçons se recouvrent : une valeur posée dans la zone commune
+        # est vue deux fois. Ça ne change pas la fiche — tout se dédoublonne
+        # plus loin — mais ça gonflerait le compte porté au journal, et c'est
+        # lui qu'on lira pour diagnostiquer un étiquetage avare ou bavard.
+        vus: set[tuple[str, int, int]] = set()
+        spans: list[Span] = []
+        for (decalage, _), bruts in zip(morceaux, rendus):
+            for brut in bruts:
+                span = Span(
+                    label=str(brut.get("label", "")),
+                    text=str(brut.get("text", "")),
+                    # Le décalage ramène la position à la page : sans lui, un
+                    # span du second tronçon pointerait le début du texte, et
+                    # ne désignerait plus ce qu'il a lu.
+                    start=int(brut.get("start", 0)) + decalage,
+                    end=int(brut.get("end", 0)) + decalage,
+                    score=float(brut.get("score", 1.0)),
+                )
+                cle = (span.label, span.start, span.end)
+                if cle not in vus:
+                    vus.add(cle)
+                    spans.append(span)
+
+        event = to_event(spans, today=self._today, seuil=self._seuil)
+        # Ce que le journal doit garder : le modèle, ce qu'il a coûté (rien),
+        # combien de spans il a posés, et **les champs qu'il ne remplit pas**.
+        # Sans cette dernière ligne, un `MANQUE` sur `setting` se lirait comme
+        # une faute du modèle plutôt que comme une limite annoncée de la brique.
+        log.event(
+            "gliner",
+            op="extraction",
+            url=url,
+            model=self._nom,
+            chars=len(content),
+            spans=len(spans),
+            retenus=sum(1 for s in spans if s.score >= self._seuil),
+            ms=int((time.monotonic() - depart) * 1000),
+            non_rendus=",".join(unfilled_fields()),
+        )
+        return [event]
+
+    def _etiqueter(
+        self, tagger: Tagger, morceaux: list[str], libelles: list[str]
+    ) -> list[list[dict[str, Any]]]:
+        """Les spans de chaque tronçon, en un seul lot quand l'étiqueteur sait.
+
+        `batch_predict_entities` fait une passe pour tous les tronçons au lieu
+        d'une par tronçon : sur une page assez longue pour être découpée, c'est
+        le gros de la différence, et un processeur de VPS n'a pas de marge à
+        gaspiller. Elle reste **facultative** — le `Protocol` n'exige que
+        `predict_entities`, pour qu'un second étiqueteur, ou un objet de test,
+        n'ait pas à l'implémenter.
+        """
+        groupe = getattr(tagger, "batch_predict_entities", None)
+        if callable(groupe) and len(morceaux) > 1:
+            return list(groupe(morceaux, libelles, threshold=self._seuil))
+        return [tagger.predict_entities(m, libelles, threshold=self._seuil) for m in morceaux]
+
+    # ------------------------- les quatre autres appels restent à un modèle
+
+    def _delegue(self) -> Provider:
+        if self._model is None:
+            raise ProviderError(
+                "« gliner » ne remplace que l'extraction ; les quatre autres "
+                "appels réclament un modèle. Ce fournisseur ne convient donc "
+                "qu'à un run de banc d'extraction, pas à un run complet."
+            )
+        return self._model
+
+    def queries(self, config: Config, log: RunLog) -> list[str]:
+        return self._delegue().queries(config, log)
+
+    def search(self, queries: list[str], config: Config, log: RunLog) -> list[FoundPage]:
+        return self._delegue().search(queries, config, log)
+
+    def classify(self, digest: str, config: Config, log: RunLog) -> tuple[str, str]:
+        return self._delegue().classify(digest, config, log)
+
+    def select(self, page: str, links: list[Link], config: Config, log: RunLog) -> list[Link]:
+        return self._delegue().select(page, links, config, log)

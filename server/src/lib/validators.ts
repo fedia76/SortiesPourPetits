@@ -858,12 +858,33 @@ export const evalRechercheSchema = z.object({
   theme: z.string().trim().min(1).max(120),
 });
 
+/**
+ * Qui remplit la fiche, pour un run de l'étage 6.
+ *
+ * `anthropic` est le pipeline de production. `gliner` est un **étiqueteur de
+ * spans** local : il ne rend que des morceaux de la page, ne coûte rien, et
+ * laisse vides les quatre champs qui ne sont pas des morceaux de page —
+ * description, cadre, catégorie, « plusieurs sorties ».
+ *
+ * Il ne vaut que pour l'extraction. Le tri (étage 4) demande au modèle de
+ * choisir des numéros de ligne dans une liste, ce qu'un étiqueteur ne sait pas
+ * faire : le lui confier échouerait à mi-corpus, après avoir occupé le worker.
+ * D'où le refus au lancement plutôt qu'à l'exécution.
+ */
+export const evalExtractionSchema = z.object({
+  provider: z.enum(['anthropic', 'gliner']),
+  /** Point de contrôle de l'étiqueteur. Vide : celui par défaut du scraper. */
+  model: z.string().trim().max(120).optional().default(''),
+});
+
 export const evalRunSchema = z
   .object({
     stage: z.enum(EVAL_STAGES),
     label: z.string().trim().max(150).optional().default(''),
     /** Obligatoire pour un run de tri, sans objet pour les autres. */
     recherche: evalRechercheSchema.optional(),
+    /** Qui remplit la fiche. Sans objet hors de l'extraction. */
+    extraction: evalExtractionSchema.optional(),
   })
   .refine((v) => v.stage !== 'SELECT' || v.recherche !== undefined, {
     message: 'Un run de tri doit dire sous quelle recherche il est joué',
@@ -872,6 +893,11 @@ export const evalRunSchema = z
   .refine((v) => !v.recherche || v.recherche.dateTo >= v.recherche.dateFrom, {
     message: 'La fenêtre ne peut pas finir avant d’avoir commencé',
     path: ['recherche'],
+  })
+  .refine((v) => v.stage === 'EXTRACT' || v.extraction?.provider !== 'gliner', {
+    message:
+      'L’étiqueteur local ne sait remplir qu’une fiche : il ne convient qu’à un run d’extraction',
+    path: ['extraction'],
   });
 
 export const evalRunListSchema = z.object({

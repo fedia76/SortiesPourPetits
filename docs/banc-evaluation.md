@@ -442,6 +442,55 @@ précédentes. C'est aussi pourquoi les catégories du site partent dans le prom
 le modèle doit y choisir la sienne, et les lui refuser faisait compter faux un
 champ qu'on l'empêchait de remplir.
 
+### Rejouer l'étage 6 avec un autre fournisseur
+
+La même brique, le même corpus gelé, un autre fournisseur : c'est la
+comparaison qu'un banc existe pour rendre possible, et elle se choisit au
+lancement, dans *Jouer une mesure* → *Par qui*. Le choix voyage dans
+`EvalRun.settings`, à côté de la recherche, et pour la même raison qu'elle :
+c'est la console qui décide sous quoi on mesure, pas la machine qui mesure.
+
+Deux conséquences, et la seconde compte autant que la première :
+
+* le run déclare à la clôture le modèle réellement interrogé
+  (`gliner:urchade/gliner_multi-v2.1`), si bien que deux points restent
+  distinguables — un run joué ne dit jamais ce qu'il était, et c'est
+  irrattrapable après coup ;
+* les deux fournisseurs font **deux courbes**. Un étiqueteur laisse
+  structurellement vides quatre des douze aspects : son taux est mécaniquement
+  plus bas sans que rien ait régressé, et les aligner ferait lire un
+  effondrement là où seul l'outil a changé.
+
+Le mode d'emploi est dans le
+[README du scraper](../scraper/README.md#extraire-en-local-plutôt-quavec-le-modèle).
+
+**Ce qu'il faut savoir avant de lire le tableau qui en sortira**, et qui ne
+tient pas à la qualité du corpus mais aux instruments eux-mêmes :
+
+* les **trois instruments gratuits** — ancrage, cohérence, accord — ont été
+  taillés contre un mode d'échec que seul un modèle génératif commet :
+  l'invention. Un étiqueteur de spans ne rend que des sous-chaînes de la page.
+  Il ne peut pas lever `hors_texte`, et onze aspects sur douze deviennent verts
+  sans qu'il ait rien démontré. **L'ancrage est une condition nécessaire qu'un
+  tel modèle satisfait gratuitement** ; la condition suffisante — c'est le
+  *bon* tarif parmi les cinq qu'affiche la page — n'est mesurée par aucun
+  d'eux ;
+* la **description** n'est jugée que sur sa présence, des deux côtés :
+  `pareil()` rend `true` sans condition sur le genre `prose`, et `_overlap` est
+  satisfait par une recopie. Une description recopiée mot pour mot de la page
+  obtiendrait donc un score parfait, quoi qu'elle vaille pour un parent. Seul
+  `DESCRIPTION_INUTILISABLE`, en modération, le verra ;
+* ce qui **reste mesurable** est la comparaison aux fiches étiquetées du
+  corpus, aspect par aspect : `JUSTE / FAUX / INVENTE / MANQUE`. C'est elle, et
+  elle seule, qui arbitre l'expérience.
+
+Deux instruments manquent donc au banc pour juger un modèle qui ne peut pas
+inventer, et ils sont à ajouter avant d'en tirer une conclusion : un
+**détecteur de recopie** sur la description (part de la plus longue
+sous-chaîne commune avec la page), et un drapeau **« plusieurs candidats »**
+sur le tarif et l'âge, qui dise quand la page porte plusieurs valeurs
+plausibles — car l'ancrage, là, ne prouve rien.
+
 ## La chasse : peupler l'étage 2 depuis un prompt
 
 Étiqueter est le seul travail coûteux du banc, et le corpus de l'étage 2 le

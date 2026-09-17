@@ -24,6 +24,7 @@ import tempfile
 import time
 import traceback
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ from .api import ApiError, SppApi
 from .chasse import hunt
 from .config import (
     IDF_POSTAL_PREFIXES,
+    PROVIDERS,
     Config,
     ConfigError,
     Environment,
@@ -437,9 +439,9 @@ def _config_du_run(run: dict[str, Any], quiet: bool) -> Config:
                 "  Run sans recherche déclarée — configuration de repli du banc.",
                 flush=True,
             )
-        return _bench_config()
+        return _fournisseur_du_run(_bench_config(), run, quiet)
 
-    return Config(
+    config = Config(
         name="banc",
         theme=str(recherche.get("theme") or "sorties enfants"),
         postal_prefixes=[str(p) for p in (recherche.get("postalPrefixes") or [])]
@@ -448,6 +450,43 @@ def _config_du_run(run: dict[str, Any], quiet: bool) -> Config:
         # La fenêtre est absolue : `Config` la calcule d'ordinaire depuis
         # `horizon_days`, à partir d'aujourd'hui. On la lui impose.
         window=(str(recherche.get("dateFrom") or ""), str(recherche.get("dateTo") or "")),
+    )
+    return _fournisseur_du_run(config, run, quiet)
+
+
+def _fournisseur_du_run(config: Config, run: dict[str, Any], quiet: bool) -> Config:
+    """Par qui ce run est joué — ce que **le run déclare**, et rien d'autre.
+
+    Même sens de flèche que pour la recherche, et pour la même raison : c'est
+    la console qui décide sous quoi on mesure, pas la machine qui mesure. Deux
+    runs lancés à dix minutes d'écart peuvent ainsi employer deux fournisseurs
+    différents sans qu'on touche au service, ce qui est exactement la
+    comparaison qu'un banc existe pour rendre possible.
+
+    Un run mis en file avant ce changement ne porte pas la clé : il retombe
+    alors sur le fournisseur de production, et c'est le bon défaut — il a été
+    lancé quand c'était le seul.
+
+    Le nom est validé ici plutôt qu'au premier appel : une valeur inattendue
+    doit arrêter le run avant qu'il ne commence, pas au milieu du corpus.
+    """
+    demande = run.get("extraction") or {}
+    if not isinstance(demande, dict):
+        return config
+    fournisseur = str(demande.get("provider") or "").strip().lower()
+    if not fournisseur:
+        return config
+    if fournisseur not in PROVIDERS:
+        raise ConfigError(
+            f"fournisseur inconnu dans les réglages du run : « {fournisseur} » "
+            f"(connus : {', '.join(PROVIDERS)})"
+        )
+    if not quiet:
+        print(f"  Fournisseur déclaré par le run : {fournisseur}.", flush=True)
+    return replace(
+        config,
+        provider=fournisseur,
+        gliner_model=str(demande.get("model") or "") or config.gliner_model,
     )
 
 
@@ -470,6 +509,11 @@ def _declare(stage: str, config: Config | None) -> dict[str, str]:
         return {"model": "", "promptHash": ""}
     prompt = config.select_prompt if stage == "SELECT" else config.extraction_prompt
     model = config.select_model if stage == "SELECT" else config.extraction_model
+    if stage == "EXTRACT" and config.provider == "gliner":
+        # Sans cette ligne, un run GLiNER se déclarerait joué par Haiku : deux
+        # points de la courbe porteraient le même modèle, et la comparaison que
+        # ce run existe pour rendre serait irrattrapable après coup.
+        model = f"gliner:{config.gliner_model}"
     return {
         "model": model,
         "promptHash": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
