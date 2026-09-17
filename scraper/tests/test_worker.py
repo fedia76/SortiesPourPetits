@@ -607,3 +607,122 @@ def test_un_run_gliner_ne_se_declare_pas_joue_par_haiku():
     declare = worker._declare("EXTRACT", config)
     assert declare["model"].startswith("gliner:")
     assert "haiku" not in declare["model"]
+
+
+# ───────────────────────────────── un run de banc ne doit plus être muet
+#
+# Un run de deux cents pages écrivait un écran vide pendant une heure : « il est
+# bloqué » ne se distinguait pas de « il travaille ». Ces deux tests verrouillent
+# le minimum — une ligne par entrée, et un témoin qui crache la pile quand une
+# entrée s'éternise.
+
+
+class FauxBanc:
+    """Le strict nécessaire pour dérouler `play_run` sur un étage de Python pur.
+
+    L'étage 5 plutôt que l'étage 6 : il ne demande ni fournisseur ni clé, donc
+    ce qu'on mesure ici est bien la boucle et rien d'autre.
+    """
+
+    def __init__(self, entrees):
+        self.entrees = list(entrees)
+        self.rendus: list[dict] = []
+        self.cloture: dict | None = None
+
+    def next_eval_item(self, run_id):
+        return self.entrees.pop(0) if self.entrees else None
+
+    def report_eval_read(self, run_id, result):
+        self.rendus.append(result)
+
+    def finish_eval_run(self, run_id, status, **counters):
+        self.cloture = {"status": status, **counters}
+
+    def categories(self):
+        return []
+
+
+def _entree(sortie_id: int) -> dict:
+    return {"kind": "sortie", "sortieId": sortie_id, "url": EVENT_URL, "html": EVENT_HTML}
+
+
+def _env_banc():
+    return worker.Environment(api_url="http://x", api_key="k", anthropic_key="a")
+
+
+def test_le_temoin_est_desarme_entre_deux_entrees(monkeypatch):
+    """Un témoin qui survit à l'entrée dumperait au milieu de la suivante."""
+    armes: list[float] = []
+    desarmes: list[int] = []
+    monkeypatch.setattr(
+        worker.faulthandler,
+        "dump_traceback_later",
+        lambda s, repeat=False, **kw: armes.append(s),
+    )
+    monkeypatch.setattr(
+        worker.faulthandler, "cancel_dump_traceback_later", lambda: desarmes.append(1)
+    )
+
+    api = FauxBanc([_entree(1), _entree(2)])
+    worker.play_run({"id": 1, "stage": "READ", "items": 2}, api, _env_banc(), quiet=True)
+
+    assert api.cloture and api.cloture["status"] == "DONE"
+    # Deux entrées, deux armements — et au moins autant de désarmements : un par
+    # entrée, plus celui de la clôture.
+    assert armes == [worker.ENTREE_LENTE_S, worker.ENTREE_LENTE_S]
+    assert len(desarmes) >= 3
+
+
+def test_un_temoin_impossible_a_armer_ne_casse_pas_le_run(monkeypatch):
+    """La règle, et elle vaut plus que le témoin lui-même.
+
+    `faulthandler` écrit sur un descripteur de fichier. Quand `sys.stderr` n'en
+    a pas — un harnais de test, un superviseur qui le détourne —, l'armement
+    lève. Le run s'arrêtait alors à la **première** entrée, avec un message
+    parlant de `fileno` : l'instrument mettait en échec ce qu'il observait.
+    """
+    def refuse(*a, **kw):
+        raise OSError("pas de descripteur")
+
+    monkeypatch.setattr(worker.faulthandler, "dump_traceback_later", refuse)
+    monkeypatch.setattr(worker.faulthandler, "cancel_dump_traceback_later", refuse)
+
+    api = FauxBanc([_entree(1), _entree(2)])
+    worker.play_run({"id": 4, "stage": "READ", "items": 2}, api, _env_banc(), quiet=True)
+
+    assert api.cloture and api.cloture["status"] == "DONE"
+    assert api.cloture["items"] == 2
+    assert len(api.rendus) == 2
+
+
+def test_le_temoin_renonce_une_fois_pour_toutes(monkeypatch):
+    """Une tentative, pas une par entrée : sinon on paye l'exception à chaque tour."""
+    essais: list[int] = []
+
+    def refuse(*a, **kw):
+        essais.append(1)
+        raise OSError("pas de descripteur")
+
+    monkeypatch.setattr(worker.faulthandler, "dump_traceback_later", refuse)
+    temoin = worker._Temoin()
+    for _ in range(5):
+        temoin.armer()
+    assert essais == [1]
+    assert temoin.possible is False
+
+
+def test_chaque_entree_dit_ou_on_en_est(capsys):
+    api = FauxBanc([_entree(1)])
+    worker.play_run({"id": 2, "stage": "READ", "items": 160}, api, _env_banc(), quiet=False)
+    sortie = capsys.readouterr().out
+    # Le total vient du run : un compteur sans lui ne dit pas s'il reste dix
+    # entrées ou cent.
+    assert "1/160" in sortie
+    assert EVENT_URL in sortie
+
+
+def test_sans_total_le_compteur_reste_lisible(capsys):
+    """Un run mis en file avant que le total voyage n'a pas la clé."""
+    api = FauxBanc([_entree(1)])
+    worker.play_run({"id": 3, "stage": "READ"}, api, _env_banc(), quiet=False)
+    assert "  1 · " in capsys.readouterr().out

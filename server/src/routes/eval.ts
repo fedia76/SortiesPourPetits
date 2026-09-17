@@ -2106,6 +2106,11 @@ evalRouter.post('/runs/next', async (req, res) => {
       id: claimed.id,
       stage: claimed.stage,
       label: claimed.label,
+      // Combien d'entrées l'attendent. Le worker n'en fait rien d'autre que
+      // l'afficher — « 42/160 » plutôt que « 42 » —, mais un run de banc est
+      // muet pendant une heure, et un compteur sans total ne dit pas s'il
+      // reste dix entrées ou cent.
+      items: claimed.items,
       recherche,
       extraction: extraction ?? null,
     },
