@@ -33,6 +33,7 @@ import re
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import date as _date
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
@@ -536,6 +537,19 @@ def first_heading(html: str) -> str:
     return ""
 
 
+def _iso_jour(value: str) -> bool:
+    """`AAAA-MM-JJ`, et une date que le calendrier accepte.
+
+    Vérifié plutôt que supposé : un JSON-LD porte ce que son générateur y a
+    mis, et « 2026-02-30 » passerait n'importe quel test de forme.
+    """
+    try:
+        _date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _ld_text(node: dict, *cles: str) -> str:
     """La première valeur textuelle utilisable parmi ces clés."""
     for cle in cles:
@@ -591,6 +605,24 @@ def json_ld_facts(html: str) -> dict[str, object]:
                             valeur = _ld_text(adresse, *champs)
                             if valeur:
                                 out[cle] = valeur
+
+            # Les **bornes** de l'affiche, qui ne sont pas le calendrier.
+            #
+            # `json_ld_dates` ne garde que les objets d'un seul jour : ce sont
+            # les représentations, et c'est ce qu'il faut pour un calendrier.
+            # Ici on veut l'inverse — la plage que la fiche annonce —, donc on
+            # prend tout, y compris les `Event` qui courent sur deux mois, et
+            # on retient le plus tôt et le plus tard.
+            debut = _ld_text(node, "startDate")[:10]
+            fin = _ld_text(node, "endDate")[:10] or debut
+            if _iso_jour(debut):
+                ancien = str(out.get("date_start", ""))
+                if not ancien or debut < ancien:
+                    out["date_start"] = debut
+            if _iso_jour(fin):
+                ancien = str(out.get("date_end", ""))
+                if not ancien or fin > ancien:
+                    out["date_end"] = fin
 
             if "price" not in out and "free" not in out:
                 offres = node.get("offers")

@@ -103,12 +103,26 @@ SEUIL_DEFAUT = 0.5
 #:   tarif juste, mais un tarif absent vaut mieux qu'un tarif faux : la
 #:   modération complète un vide, elle ne repère pas une erreur plausible.
 SEUILS: dict[str, float] = {
-    "price": 0.6,
-    "times": 0.6,
-    "weekdays": 0.55,
+    # `age` manquait 73 valeurs sur 140 : trop timide. Baissé, et le run
+    # suivant l'a confirmé — 33 justes devenus 49.
     "age_min": 0.35,
     "age_max": 0.35,
+    # `weekdays` en inventait 15. Monté d'un cran, sans effet mesurable :
+    # gardé faute de mieux, mais ce n'est pas un réglage éprouvé.
+    "weekdays": 0.55,
 }
+
+#: Ce que deux seuils devinés ont coûté, et pourquoi ils ne sont plus là.
+#:
+#: `price` et `times` avaient été montés à 0,6 sur un raisonnement qui se
+#: tenait — un tarif faux part en ligne, une page affiche des heures partout.
+#: Le banc a dit non : le tarif est passé de 35 justes à 29, les horaires de
+#: 50 à 43. Monter une barre n'améliore pas un choix, ça retire des candidats,
+#: et retirer le mauvais candidat ne laisse pas le bon — ça laisse le suivant.
+#:
+#: La leçon vaut plus que le réglage : sur cette brique, **un seuil ne se
+#: raisonne pas, il se mesure**. Un aspect n'a le sien que quand un run l'a
+#: confirmé.
 
 #: En deçà de quoi on ne demande même pas au modèle de répondre. C'est le seuil
 #: passé à l'étiqueteur ; les seuils par champ se posent ensuite, dessus.
@@ -271,6 +285,35 @@ def parse_jours(value: str) -> list[str]:
     return [jour for jour in WEEKDAYS if jour in plat]
 
 
+#: Ce qui suit un code postal dans une adresse : le code, puis la ville.
+_DEPUIS_CODE_POSTAL = re.compile(r"[,\s]*\b\d{5}\b.*$")
+
+
+def _rue_seule(adresse: str) -> str:
+    """Le numéro et la rue, sans le code postal ni la ville qui suivraient.
+
+    C'est le contrat du champ — le prompt de production le dit déjà au modèle —
+    et le corpus est étiqueté ainsi. Un span qui ramène « 14 rue des Écoles,
+    94000 Créteil » n'est pas faux, il est trop long ; le comparer tel quel
+    comptait « faux » une adresse correctement lue.
+    """
+    return _DEPUIS_CODE_POSTAL.sub("", adresse).strip(" ,;-")
+
+
+def _jour_iso(value: Any) -> str:
+    """Une date `AAAA-MM-JJ` qui existe vraiment, ou rien.
+
+    Ce qui vient d'un JSON-LD vient d'un générateur tiers : on vérifie plutôt
+    que de faire confiance, sans quoi une fiche partirait avec un 30 février.
+    """
+    text = str(value or "").strip()[:10]
+    try:
+        date.fromisoformat(text)
+    except ValueError:
+        return ""
+    return text
+
+
 def _meilleur(spans: list[Span]) -> str:
     """Le texte du span le mieux noté, ou vide."""
     return max(spans, key=lambda s: s.score).text.strip() if spans else ""
@@ -342,6 +385,20 @@ def to_event(
                 dates.append(jour)
     dates.sort()
 
+    # Les bornes déclarées par la page l'emportent sur ce que la prose a
+    # donné, pour la même raison que le titre : ce sont celles de
+    # l'organisateur. Les dates relevées dans le texte restent le calendrier —
+    # `schedule.resolve` en fera ce qu'il doit.
+    borne_debut = _jour_iso(hints.get("date_start"))
+    borne_fin = _jour_iso(hints.get("date_end"))
+    if borne_debut:
+        debut_iso, fin_iso = borne_debut, borne_fin or ""
+    else:
+        debut_iso = dates[0].isoformat() if dates else ""
+        fin_iso = dates[-1].isoformat() if len(dates) > 1 else ""
+    if fin_iso and debut_iso and fin_iso <= debut_iso:
+        fin_iso = ""
+
     horaires = sorted({h for s in par_champ.get("times", []) if (h := parse_heure(s.text))})
 
     code_postal = declare("venue_postal_code")
@@ -367,8 +424,8 @@ def to_event(
         age_min=parse_age(_meilleur(par_champ.get("age_min", []))) if par_champ.get("age_min") else None,
         age_max=parse_age(_meilleur(par_champ.get("age_max", []))) if par_champ.get("age_max") else None,
         permanent=False,
-        date_start=dates[0].isoformat() if dates else "",
-        date_end=dates[-1].isoformat() if len(dates) > 1 else "",
+        date_start=debut_iso,
+        date_end=fin_iso,
         weekdays=tuple(jours),
         # Une seule date n'est pas une liste de représentations : c'est la
         # date de la sortie, déjà portée par `date_start`. La répéter ici
@@ -379,7 +436,9 @@ def to_event(
         setting="",
         category="",
         venue_name=declare("venue_name", _meilleur(par_champ.get("venue_name", []))),
-        venue_address=declare("venue_address", _meilleur(par_champ.get("venue_address", []))),
+        venue_address=_rue_seule(
+            declare("venue_address", _meilleur(par_champ.get("venue_address", [])))
+        ),
         venue_city=declare("venue_city", _meilleur(par_champ.get("venue_city", []))),
         venue_postal_code=code_postal,
         photo_url="",

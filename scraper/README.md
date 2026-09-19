@@ -329,7 +329,13 @@ L'étage 5 relève donc deux choses de plus, qui ne passent pas par le texte :
 | Signal | D'où | Ce qu'il donne |
 |---|---|---|
 | `heading` | le `h1`, ou le `<title>` à défaut | le titre |
-| `facts` | `schema.org/Event` | titre, lieu, adresse, ville, code postal, tarif |
+| `facts` | `schema.org/Event` | titre, **bornes de l'affiche**, lieu, adresse, ville, code postal, tarif |
+
+Les **bornes** ne sont pas le calendrier, et les deux se relèvent autrement.
+`json_ld_dates` ne garde que les objets d'un seul jour — ce sont les
+représentations, et c'est ce qu'il faut pour un calendrier. `json_ld_facts`
+prend l'inverse : tout, y compris un `Event` qui court sur deux mois, et
+retient le plus tôt et le plus tard. C'est la plage que la fiche annonce.
 
 Elles voyagent jusqu'à l'étage 6 dans `hints`, et **l'emportent sur les
 spans** : ce que l'organisateur a écrit n'est pas une opinion de plus à
@@ -350,16 +356,22 @@ lire la courbe — on compare désormais « étiqueteur + signaux déterministes
 « modèle seul », ce qui est le bon découpage pour la production mais pas une
 comparaison de modèles.
 
-#### Un seuil par champ, parce que se tromper ne coûte pas pareil partout
+#### Un seuil ne se raisonne pas, il se mesure
 
-Un seuil unique suppose que toutes les erreurs se valent. Le banc dit le
-contraire, aspect par aspect : `times` rendait **29** valeurs absentes du
-corpus (une page affiche des heures partout — ouverture, dernière séance,
-billetterie), `weekdays` **15**, quand `age` en **manquait 73** sur 140. Les
-deux premiers ont donc une barre plus haute, le troisième une plus basse, et
-`price` une plus haute encore : un tarif absent vaut mieux qu'un tarif faux,
-parce que la modération complète un vide mais ne repère pas une erreur
-plausible.
+Deux seuils avaient été montés sur un raisonnement qui se tenait : `price`,
+parce qu'un tarif faux part en ligne quand un tarif absent se complète en
+modération ; `times`, parce qu'une page affiche des heures partout —
+ouverture, dernière séance, billetterie.
+
+**Le banc a dit non.** Le tarif est passé de 35 justes à 29, les horaires de
+50 à 43. Monter une barre n'améliore pas un choix : elle retire des candidats,
+et retirer le mauvais ne laisse pas le bon — ça laisse le suivant. Les deux
+sont revenus au défaut, et un test veille à ce qu'ils n'y remontent pas sans
+mesure.
+
+Reste `age`, baissé parce qu'il manquait 73 valeurs sur 140, et confirmé par
+le run suivant : 33 justes devenus 49. Un aspect n'a son seuil que quand un
+run l'a validé.
 
 L'étiqueteur est interrogé au **plancher** de ces seuils, et le tri se fait
 ensuite. L'interroger au défaut jetterait, côté modèle, les spans qu'un champ
