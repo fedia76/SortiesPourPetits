@@ -314,6 +314,57 @@ champ ne demande pas de réentraîner, seulement de réécrire une phrase — et
 c'est le premier réglage à toucher quand un champ se rate, bien avant de
 changer de modèle.
 
+#### Ce que la page déclare, le modèle n'a pas à le deviner
+
+Le banc a chiffré le trou : sur 140 pages, l'étiquetage seul rendait un titre
+**15 fois**. Non parce qu'il lit mal, mais parce qu'il ne l'a jamais vu —
+`page_text` **décompose les `<header>`**, où vit presque toujours le `h1`. Un
+modèle génératif compense en devinant le titre du corps de la page ; un
+étiqueteur de spans ne rend que ce qu'il lit. Et cette seule absence en coûtait
+deux au tableau : `relevant` suit le titre, donc 125 titres manqués faisaient
+125 verdicts faux.
+
+L'étage 5 relève donc deux choses de plus, qui ne passent pas par le texte :
+
+| Signal | D'où | Ce qu'il donne |
+|---|---|---|
+| `heading` | le `h1`, ou le `<title>` à défaut | le titre |
+| `facts` | `schema.org/Event` | titre, lieu, adresse, ville, code postal, tarif |
+
+Elles voyagent jusqu'à l'étage 6 dans `hints`, et **l'emportent sur les
+spans** : ce que l'organisateur a écrit n'est pas une opinion de plus à
+arbitrer. Avec un étiqueteur qui ne trouverait strictement rien, une page à
+JSON-LD complet rend déjà six champs exacts.
+
+Deux précautions qui ne vont pas de soi :
+
+* un `offers.price` à **zéro** annonce la gratuité. L'écrire comme un tarif
+  donnerait une fiche affichant « 0 € », ce qu'un parent ne doit jamais lire ;
+* rien n'est **déduit**. Une clé absente du relevé veut dire « la page n'en dit
+  rien », jamais « c'est vide » — sans quoi on fabriquerait des `INVENTE`.
+
+Le fournisseur `anthropic` **ignore** ces indices, et c'est délibéré : les lui
+donner changerait le prompt de production, donc son empreinte, donc la
+comparabilité de tous les runs déjà joués. La conséquence est à connaître pour
+lire la courbe — on compare désormais « étiqueteur + signaux déterministes » à
+« modèle seul », ce qui est le bon découpage pour la production mais pas une
+comparaison de modèles.
+
+#### Un seuil par champ, parce que se tromper ne coûte pas pareil partout
+
+Un seuil unique suppose que toutes les erreurs se valent. Le banc dit le
+contraire, aspect par aspect : `times` rendait **29** valeurs absentes du
+corpus (une page affiche des heures partout — ouverture, dernière séance,
+billetterie), `weekdays` **15**, quand `age` en **manquait 73** sur 140. Les
+deux premiers ont donc une barre plus haute, le troisième une plus basse, et
+`price` une plus haute encore : un tarif absent vaut mieux qu'un tarif faux,
+parce que la modération complète un vide mais ne repère pas une erreur
+plausible.
+
+L'étiqueteur est interrogé au **plancher** de ces seuils, et le tri se fait
+ensuite. L'interroger au défaut jetterait, côté modèle, les spans qu'un champ
+plus tolérant aurait gardés.
+
 #### Ce qu'il ne rend pas, et pourquoi il ne comble pas
 
 Quatre champs de la fiche ne sont pas des morceaux de page : `description` (une

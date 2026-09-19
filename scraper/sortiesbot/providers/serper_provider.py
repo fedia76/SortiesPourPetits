@@ -164,5 +164,8 @@ class SerperProvider:
         log: RunLog,
         *,
         multiple: bool = False,
+        hints: dict | None = None,
     ) -> list[ExtractedEvent]:
-        return self._model.extract(url, content, config, categories, log, multiple=multiple)
+        return self._model.extract(
+            url, content, config, categories, log, multiple=multiple, hints=hints
+        )

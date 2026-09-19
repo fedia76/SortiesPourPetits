@@ -445,3 +445,50 @@ def test_rendre_la_memoire_ne_leve_jamais(monkeypatch):
     provider = GlinerProvider(tagger=FauxTagger())
     fiches = provider.extract("https://x.fr", "texte", _config(), [], _log())
     assert len(fiches) == 1
+
+
+# ───────────────────────────── ce que la page déclare traverse le fournisseur
+
+
+def test_les_faits_declares_traversent_le_fournisseur():
+    """Un étiqueteur muet doit quand même rendre ce que la page annonce."""
+
+    class Muet(FauxTagger):
+        def predict_entities(self, text, labels, threshold=0.5):
+            return []
+
+    fiches = GlinerProvider(tagger=Muet()).extract(
+        "https://x.fr",
+        "un texte sans rien de repérable",
+        _config(),
+        [],
+        _log(),
+        hints={"title": "Le Petit Prince", "venue_city": "Créteil", "price": 8.0},
+    )
+    assert fiches[0].title == "Le Petit Prince"
+    assert fiches[0].venue_city == "Créteil"
+    assert fiches[0].price == 8.0
+    # Et le verdict suit le titre : c'est la cascade que le banc a montrée.
+    assert fiches[0].relevant is True
+
+
+def test_le_journal_dit_ce_que_la_page_avait_declare():
+    """Sans ça, un titre juste se lirait comme une réussite de l'étiquetage."""
+    captures: list[dict] = []
+    log = RunLog(None, verbose=False, sink=captures.append)
+    GlinerProvider(tagger=FauxTagger()).extract(
+        "https://x.fr", "texte", _config(), [], log, hints={"title": "Atelier"}
+    )
+    pose = [e for e in captures if e.get("kind") == "gliner"]
+    assert pose and "title" in pose[0]["declares"]
+
+
+def test_l_etiqueteur_est_interroge_au_plancher_des_seuils():
+    """Interroger au seuil par défaut jetterait, côté modèle, les spans qu'un
+    champ plus tolérant aurait gardés — l'âge en manquait 73 sur 140."""
+    from sortiesbot.spans import SEUIL_PLANCHER
+
+    tagger = FauxTagger()
+    GlinerProvider(tagger=tagger, seuil=0.5).extract("https://x.fr", "t", _config(), [], _log())
+    _, _, seuil = tagger.appels[0]
+    assert seuil <= SEUIL_PLANCHER

@@ -31,6 +31,11 @@ class Extraction(Brick):
                     sorted(self.ctx.categories),
                     self.log,
                     multiple=candidate.multiple,
+                    # Ce que la page déclare d'elle-même : son `h1`, que
+                    # `page_text` a emporté avec le `<header>`, et son
+                    # `schema.org/Event`. Du travail qu'on retire au modèle,
+                    # pas une aide qu'on lui donne.
+                    hints={**page.facts, **({"title": page.heading} if page.heading and "title" not in page.facts else {})},
                 )
             except ProviderError as err:
                 self.summary.errors += 1

@@ -49,7 +49,7 @@ from ..config import Config
 from ..harvest import Link
 from ..journal import RunLog
 from ..models import ExtractedEvent, FoundPage, Usage
-from ..spans import LABELS, SEUIL_DEFAUT, Span, to_event, unfilled_fields
+from ..spans import LABELS, SEUIL_DEFAUT, SEUIL_PLANCHER, Span, to_event, unfilled_fields
 from .base import Provider, ProviderError
 
 #: Le point de départ raisonnable : multilingue, français compris, Apache 2.0,
@@ -268,6 +268,10 @@ class GlinerProvider:
         self._tagger = tagger
         self._nom = gliner_model
         self._seuil = seuil
+        # On interroge l'étiqueteur au **plancher** des seuils par champ, et on
+        # trie ensuite : demander au seuil par défaut jetterait, côté modèle,
+        # les spans qu'un champ plus tolérant aurait gardés.
+        self._plancher = min(seuil, SEUIL_PLANCHER)
         self._today = today
         # Le sien, et il reste à zéro : c'est le fait saillant de ce
         # fournisseur. Quand un modèle est branché derrière pour les quatre
@@ -295,8 +299,14 @@ class GlinerProvider:
         log: RunLog,
         *,
         multiple: bool = False,
+        hints: dict | None = None,
     ) -> list[ExtractedEvent]:
         """Les spans de cette page, assemblés en une fiche.
+
+        `hints` porte ce que la page déclare d'elle-même — son `h1`, son
+        `schema.org/Event`. Ces valeurs **l'emportent** sur les spans : elles
+        sont exactes, écrites par l'organisateur, et le modèle n'a alors plus
+        à deviner ce qu'on sait déjà.
 
         `multiple` est **refusé**, et bruyamment : un étiqueteur rendrait les
         vingt titres d'un programme de festival sans savoir qu'ils appartiennent
@@ -347,7 +357,7 @@ class GlinerProvider:
                     vus.add(cle)
                     spans.append(span)
 
-        event = to_event(spans, today=self._today, seuil=self._seuil)
+        event = to_event(spans, today=self._today, seuil=self._seuil, hints=hints)
         # Une fois la page finie, et pas au milieu : à ce point tout ce que
         # l'encodeur a alloué est libéré côté Python, et il n'y a plus qu'à le
         # rendre au système.
@@ -371,6 +381,10 @@ class GlinerProvider:
             passes=len(morceaux),
             ms=int((time.monotonic() - depart) * 1000),
             non_rendus=",".join(unfilled_fields()),
+            # Ce que la page déclarait d'elle-même, et que le modèle n'a donc
+            # pas eu à deviner. Sans cette ligne, un titre juste se lirait
+            # comme une réussite de l'étiquetage.
+            declares=",".join(sorted(hints or {})) or "aucun",
         )
         return [event]
 
@@ -388,16 +402,20 @@ class GlinerProvider:
         """
         groupe = getattr(tagger, "batch_predict_entities", None)
         if not callable(groupe) or len(morceaux) < 2:
-            return [tagger.predict_entities(m, libelles, threshold=self._seuil) for m in morceaux]
+            return [
+                tagger.predict_entities(m, libelles, threshold=self._plancher) for m in morceaux
+            ]
         # Par paquets bornés, jamais d'un bloc : le pic mémoire d'un appel ne
         # doit pas dépendre de la longueur de la page.
         rendus: list[list[dict[str, Any]]] = []
         for debut in range(0, len(morceaux), LOT_MAX):
             lot = morceaux[debut : debut + LOT_MAX]
             if len(lot) == 1:
-                rendus.append(tagger.predict_entities(lot[0], libelles, threshold=self._seuil))
+                rendus.append(
+                    tagger.predict_entities(lot[0], libelles, threshold=self._plancher)
+                )
             else:
-                rendus.extend(groupe(lot, libelles, threshold=self._seuil))
+                rendus.extend(groupe(lot, libelles, threshold=self._plancher))
         return rendus
 
     # ------------------------- les quatre autres appels restent à un modèle

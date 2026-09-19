@@ -514,6 +514,105 @@ def json_ld_dates(html: str) -> list[str]:
     return dates
 
 
+def first_heading(html: str) -> str:
+    """Le premier `h1` de la page, ou son `<title>` à défaut.
+
+    Publique, et c'est tout l'objet : `page_text` **décompose les `<header>`**,
+    où vit presque toujours le `h1`. Le titre d'une page est donc, très
+    souvent, absent du texte qu'on soumet au modèle — ce qu'un modèle
+    génératif compense en le devinant du corps de la page, et qu'un étiqueteur
+    de spans ne peut pas faire : il ne rend que ce qu'il lit.
+
+    Mesuré : sur 140 pages du corpus, l'étiquetage seul a rendu un titre 15
+    fois. Le `h1` était là, calculé à côté, et personne ne le lui donnait.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in ("h1", "title"):
+        node = soup.find(tag)
+        if node:
+            text = " ".join(node.get_text(" ", strip=True).split())
+            if text:
+                return text[:200]
+    return ""
+
+
+def _ld_text(node: dict, *cles: str) -> str:
+    """La première valeur textuelle utilisable parmi ces clés."""
+    for cle in cles:
+        value = node.get(cle)
+        if isinstance(value, str) and value.strip():
+            return " ".join(value.split())[:200]
+    return ""
+
+
+def json_ld_facts(html: str) -> dict[str, object]:
+    """Ce qu'un `schema.org/Event` déclare en clair : titre, lieu, adresse, tarif.
+
+    Le pendant de `json_ld_dates`, et la même raison d'y croire : un site qui
+    publie ces balises le fait pour apparaître dans Google Événements, donc il
+    a intérêt à les tenir à jour. Quand elles sont là, ce sont les valeurs
+    exactes, gratuitement, sans modèle et sans risque d'invention.
+
+    Ce qui est rendu ne l'est que si la page le **déclare** : aucune valeur
+    n'est déduite, aucune n'est complétée. Une clé absente du retour veut dire
+    « la page n'en dit rien », jamais « c'est vide ».
+
+    `offers.price` mérite sa précaution : un prix à zéro annonce la gratuité,
+    et l'écrire comme un tarif de 0 € donnerait une fiche qui dit « 0 € » là
+    où un parent lit « gratuit ».
+    """
+    out: dict[str, object] = {}
+    for block in _ld_blocks(html):
+        for node in _walk(block):
+            if not _is_event(node):
+                continue
+
+            if "title" not in out:
+                nom = _ld_text(node, "name", "headline")
+                if nom:
+                    out["title"] = nom
+
+            lieu = node.get("location")
+            lieu = lieu[0] if isinstance(lieu, list) and lieu else lieu
+            if isinstance(lieu, dict):
+                if "venue_name" not in out:
+                    nom = _ld_text(lieu, "name")
+                    if nom:
+                        out["venue_name"] = nom
+                adresse = lieu.get("address")
+                adresse = adresse[0] if isinstance(adresse, list) and adresse else adresse
+                if isinstance(adresse, dict):
+                    for cle, champs in (
+                        ("venue_address", ("streetAddress",)),
+                        ("venue_city", ("addressLocality",)),
+                        ("venue_postal_code", ("postalCode",)),
+                    ):
+                        if cle not in out:
+                            valeur = _ld_text(adresse, *champs)
+                            if valeur:
+                                out[cle] = valeur
+
+            if "price" not in out and "free" not in out:
+                offres = node.get("offers")
+                for offre in offres if isinstance(offres, list) else [offres]:
+                    if not isinstance(offre, dict):
+                        continue
+                    brut = offre.get("price", offre.get("lowPrice"))
+                    if brut is None or brut == "":
+                        continue
+                    try:
+                        montant = float(str(brut).replace(",", "."))
+                    except ValueError:
+                        continue
+                    # Zéro annonce la gratuité, pas un tarif de zéro euro.
+                    if montant <= 0:
+                        out["free"] = True
+                    else:
+                        out["price"] = montant
+                    break
+    return out
+
+
 #: Fragments d'URL ou d'attribut qui trahissent une image d'habillage plutôt
 #: qu'une illustration : logo du site, icône, pixel de suivi, bouton de partage.
 _DECORATIVE = re.compile(

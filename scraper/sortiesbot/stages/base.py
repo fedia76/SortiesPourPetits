@@ -64,6 +64,14 @@ class PageContent:
     json_ld_dates: list[str]
     #: L'illustration relevée dans le HTML — le modèle ne peut pas la connaître.
     image: str
+    #: Le `h1` de la page. Il n'est **pas** dans `text` : `page_text` décompose
+    #: les `<header>`, où il vit presque toujours. Un modèle génératif le
+    #: devine du corps de la page ; un étiqueteur de spans ne rend que ce
+    #: qu'il lit, et rendait donc un titre une fois sur neuf.
+    heading: str = ""
+    #: Ce qu'un `schema.org/Event` déclare en clair — titre, lieu, adresse,
+    #: tarif. Exact et gratuit quand il est là, absent sinon. Jamais déduit.
+    facts: dict = field(default_factory=dict)
 
 
 @dataclass

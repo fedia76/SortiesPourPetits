@@ -99,7 +99,9 @@ from .harvest import (
     FetchError,
     _context_of,
     _soup,
+    first_heading,
     json_ld_dates,
+    json_ld_facts,
     links_of,
     main_image,
     page_text,
@@ -421,7 +423,11 @@ def read_from_html(html: str, url: str, fetcher: Fetcher | None = None) -> dict[
     text = page_text(html)
     dates = json_ld_dates(html)
     image = main_image(html, read_url)
-    heading = _first_heading(_soup(html))
+    heading = first_heading(html)
+    # Ce que la page déclare d'elle-même. Rendu avec la lecture pour que
+    # l'étage 6 le reçoive : c'est ici qu'on a le HTML, et lui n'aura que du
+    # texte.
+    facts = json_ld_facts(html)
 
     out.update(
         {
@@ -439,6 +445,10 @@ def read_from_html(html: str, url: str, fetcher: Fetcher | None = None) -> dict[
             "tooShort": len(text) < MIN_PAGE_CHARS,
             "h1InText": bool(heading) and _normalise(heading) in _normalise(text),
             "imageLooksLogo": bool(image) and bool(_LOGO_HINT.search(image)),
+            # Ce que la page déclare d'elle-même, pour l'étage 6. Le `h1` n'y
+            # entre que si le JSON-LD ne donne pas de titre : entre les deux,
+            # le second fait autorité.
+            "facts": {**facts, **({"title": heading} if heading and "title" not in facts else {})},
         }
     )
     return out
@@ -460,6 +470,7 @@ def extract_page(
     log: Any,
     categories: list[str] | tuple[str, ...] = (),
     declared_dates: list[str] | tuple[str, ...] = (),
+    hints: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rejoue l'étage 6 sur un texte déjà gelé, et rapporte la fiche et ses défauts.
 
@@ -502,7 +513,9 @@ def extract_page(
     spent_usd = getattr(before, "cost_usd", 0.0)
 
     try:
-        fiches = provider.extract(url, text, config, sorted(categories), log, multiple=False)
+        fiches = provider.extract(
+            url, text, config, sorted(categories), log, multiple=False, hints=hints
+        )
     except Exception as err:  # noqa: BLE001 — remonté tel quel à la console
         return {"error": f"{err.__class__.__name__} : {err}"}
 
@@ -518,6 +531,10 @@ def extract_page(
 
     return {
         "model": getattr(config, "extraction_model", ""),
+        # Ce que la page déclarait, et que le modèle n'a donc pas eu à
+        # deviner : sans cette liste, un titre juste se lirait comme une
+        # réussite de l'étiquetage.
+        "declares": sorted(hints or {}),
         "fiche": fiche,
         "aspects": aspects,
         "inputTokens": getattr(after, "input_tokens", 0) - spent_in,

@@ -19,7 +19,14 @@ oublier en chemin.
 
 from __future__ import annotations
 
-from ..harvest import FetchError, json_ld_dates, main_image, page_text
+from ..harvest import (
+    FetchError,
+    first_heading,
+    json_ld_dates,
+    json_ld_facts,
+    main_image,
+    page_text,
+)
 from ..language import french_version
 from ..models import Candidate
 from . import Stage
@@ -84,6 +91,12 @@ class Reading(Brick):
             text = page_text(html, limit=self.config.max_page_chars)
             declared = json_ld_dates(html)
             image = main_image(html, url)
+            # Deux signaux que le texte n'emporte pas : le `h1`, que
+            # `page_text` décompose avec son `<header>`, et ce que la page
+            # déclare elle-même en JSON-LD. Relevés ici parce que c'est ici
+            # qu'on a le HTML — l'étage 6 ne reçoit que du texte.
+            heading = first_heading(html)
+            facts = json_ld_facts(html)
 
             if len(text) < MIN_PAGE_CHARS:
                 self.summary.skipped_invalid += 1
@@ -101,13 +114,22 @@ class Reading(Brick):
                 json_ld=len(declared),
                 image=bool(image),
                 image_url=image,
+                heading=heading,
+                facts=",".join(sorted(facts)) or "aucun",
             )
             st.produced(
                 f"{len(text)} caractères, {len(declared)} date(s) JSON-LD",
                 chars=len(text),
                 json_ld=len(declared),
             )
-            return PageContent(url=url, text=text, json_ld_dates=declared, image=image)
+            return PageContent(
+                url=url,
+                text=text,
+                json_ld_dates=declared,
+                image=image,
+                heading=heading,
+                facts=facts,
+            )
 
     def _again(self, url: str, candidate: Candidate, st) -> bool:
         """Les deux filtres, rejoués sur la version française retenue.

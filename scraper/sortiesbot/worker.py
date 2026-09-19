@@ -704,6 +704,7 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
                     log=log,
                     categories=categories,
                     declared_dates=lecture.get("dates", []),
+                    hints=lecture.get("facts") or {},
                 )
                 result["sortieId"] = sortie_id
                 api.report_eval_extract(run_id, result)
