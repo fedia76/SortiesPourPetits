@@ -120,3 +120,52 @@ test('le cumul ignore une clé qui n’est pas un aspect', () => {
   cumulerAspects(tallies, { pasUnAspect: 'FAUX' });
   assert.ok(tallies.every((t) => t.FAUX === 0));
 });
+
+test('un tarif jamais trouvé est MANQUÉ, plus FAUX', () => {
+  // Le banc lisait « 111 tarifs faux » sur une brique qui, la plupart du
+  // temps, n'avait rien trouvé : `free: false` affirmait « ce n'est pas
+  // gratuit » là où il n'y avait qu'un silence. Les deux ne se corrigent pas
+  // au même endroit — l'un demande de mieux détecter, l'autre de mieux
+  // choisir — et le tableau ne les distinguait pas.
+  const tallies = emptyAspectTallies();
+  cumulerAspects(
+    tallies,
+    extractScore({ free: false, price: 8 }, { free: null, price: null }).byField,
+  );
+  const tarif = ligne(tallies, 'tarif');
+  assert.equal(tarif.MANQUE, 1);
+  assert.equal(tarif.FAUX, 0);
+});
+
+test('un tarif trouvé mais faux reste FAUX', () => {
+  const tallies = emptyAspectTallies();
+  cumulerAspects(tallies, extractScore({ free: false, price: 8 }, { free: false, price: 12 }).byField);
+  assert.equal(ligne(tallies, 'tarif').FAUX, 1);
+  assert.equal(ligne(tallies, 'tarif').MANQUE, 0);
+});
+
+test('un tarif trouvé et juste reste JUSTE', () => {
+  const tallies = emptyAspectTallies();
+  cumulerAspects(tallies, extractScore({ free: false, price: 8 }, { free: false, price: 8 }).byField);
+  assert.equal(ligne(tallies, 'tarif').JUSTE, 1);
+});
+
+test('des dates jamais trouvées sont MANQUÉES, plus FAUSSES', () => {
+  const tallies = emptyAspectTallies();
+  cumulerAspects(
+    tallies,
+    extractScore(
+      { permanent: false, dateStart: '2026-08-03', dateEnd: '2026-08-12' },
+      { permanent: null, dateStart: '', dateEnd: '' },
+    ).byField,
+  );
+  assert.equal(ligne(tallies, 'dates').MANQUE, 1);
+  assert.equal(ligne(tallies, 'dates').FAUX, 0);
+});
+
+test('une sortie permanente reconnue reste JUSTE', () => {
+  // `null` ne doit pas casser le cas où la brique se prononce vraiment.
+  const tallies = emptyAspectTallies();
+  cumulerAspects(tallies, extractScore({ permanent: true }, { permanent: true }).byField);
+  assert.equal(ligne(tallies, 'dates').JUSTE, 1);
+});

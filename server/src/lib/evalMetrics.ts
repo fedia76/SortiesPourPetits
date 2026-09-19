@@ -873,11 +873,22 @@ export interface FicheRendue {
   skipReason?: string;
   title?: string;
   description?: string;
-  free?: boolean;
+  /**
+   * Gratuit, payant, ou **`null` quand la brique ne s'est pas prononcée**.
+   *
+   * `false` affirme « ce n'est pas gratuit », et c'est ce qu'un modèle rend :
+   * son schéma exige le champ, il tranche donc à chaque fiche. Une brique qui
+   * ne sait pas lire un tarif n'affirme rien, et l'écrire `false` faisait
+   * compter une **erreur** là où il n'y avait qu'un silence — 111 « tarifs
+   * faux » qui étaient surtout des tarifs jamais trouvés. Détecter mieux et
+   * choisir mieux ne se corrigent pas au même endroit.
+   */
+  free?: boolean | null;
   price?: number | null;
   ageMin?: number | null;
   ageMax?: number | null;
-  permanent?: boolean;
+  /** Permanent, daté, ou `null` si la brique ne s'est pas prononcée. */
+  permanent?: boolean | null;
   dateStart?: string;
   dateEnd?: string;
   weekdays?: string[];

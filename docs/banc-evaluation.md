@@ -451,6 +451,30 @@ Les verdicts ne sont pas recalculés pour l'occasion : ce sont ceux de
 `verdictAspect`, cumulés par `cumulerAspects`. Une règle écrite à deux endroits
 finit par diverger sans que rien ne le dise.
 
+#### Un booléen qui ne sait pas se taire fabrique des fautes
+
+Trois aspects — `verdict`, `tarif`, `dates` — affichaient **zéro manqué et zéro
+inventé**, quelle que soit la brique. Pas par vertu : chacun porte un booléen
+(`relevant`, `free`, `permanent`), et `muet()` tient `false` pour une valeur —
+à raison, puisque `false` *dit* quelque chose : gratuit, permanent. Ces aspects
+ne pouvaient donc jamais être vides.
+
+Conséquence, mesurée : une brique qui n'avait pas su lire un tarif écrivait
+`free: false`, c'est-à-dire **affirmait « ce n'est pas gratuit »**, et le banc
+comptait une erreur là où il n'y avait qu'un silence. Le tableau annonçait
+« 111 tarifs faux » sur une brique qui, la plupart du temps, n'avait rien
+trouvé. Détecter mieux et choisir mieux ne se corrigent pas au même endroit,
+et le chiffre ne les distinguait pas.
+
+`free` et `permanent` acceptent donc **`null`** — « la brique ne s'est pas
+prononcée » — à côté de `true` et `false`, qui restent des jugements. Rien ne
+change pour un fournisseur dont le schéma exige le champ : il tranche à chaque
+fiche, comme avant. Rien ne change non plus en production, où tout ce qui
+consomme ces champs teste leur vérité au sens booléen.
+
+Ce n'est **pas** un gain de taux : un faux devenu manqué reste un non-juste.
+C'est un gain de lecture, et c'est ce qu'on demande à un banc.
+
 **Non jugé n'est pas raté**, et c'est la lecture qui compte le plus ici. Un
 aspect que le corpus n'étiquette nulle part ne pèse dans aucun taux — ni le
 sien, ni celui du run. Le compter comme une faute accuserait la brique d'un

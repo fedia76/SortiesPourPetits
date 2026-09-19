@@ -151,17 +151,176 @@ def test_des_faits_vides_ne_masquent_pas_les_spans():
 # ────────────────────────────────────────────── les seuils, champ par champ
 
 
-def test_chaque_champ_a_son_seuil():
-    # Une heure fausse part en ligne ; un lieu faux se corrige en modération.
-    assert seuil_de("times") > seuil_de("venue_name")
-    assert seuil_de("price") > seuil_de("venue_name")
-    # L'âge manquait 73 fois sur 140 : il était trop timide.
+def test_un_seuil_n_existe_que_mesure():
+    """La leçon vaut plus que les valeurs.
+
+    `price` et `times` avaient été montés à 0,6 sur un raisonnement qui se
+    tenait : un tarif faux part en ligne, une page affiche des heures partout.
+    Le banc a dit non — le tarif est passé de 35 justes à 29, les horaires de
+    50 à 43. Monter une barre n'améliore pas un choix : elle retire des
+    candidats, et retirer le mauvais ne laisse pas le bon, ça laisse le
+    suivant. Ces deux-là sont revenus au défaut, et ce test existe pour qu'on
+    ne les remette pas sans mesure.
+    """
+    assert "price" not in SEUILS
+    assert "times" not in SEUILS
+    assert seuil_de("price") == seuil_de("venue_name")
+
+
+def test_l_age_garde_le_sien_parce_qu_un_run_l_a_confirme():
+    # 73 valeurs manquées sur 140 avant, 35 après l'avoir baissé.
     assert seuil_de("age_min") < seuil_de("venue_name")
 
 
 def test_un_span_sous_le_seuil_de_son_champ_est_ecarte():
-    sous = SEUILS["times"] - 0.05
-    event = to_event([span("title", "Atelier"), span("times", "14h30", score=sous)])
-    assert event.open_time == ""
-    # Le même score passerait sur un champ plus tolérant.
+    sous = seuil_de("venue_name") - 0.05
+    event = to_event([span("title", "Atelier"), span("venue_name", "Théâtre", score=sous)])
+    assert event.venue_name == ""
+    # Le même score passe sur un champ plus tolérant.
     assert to_event([span("age_min", "3 ans", score=sous)]).age_min == 3
+
+
+# ───────────────────────────────── les bornes que la page déclare elle-même
+
+
+def test_les_bornes_declarees_battent_la_prose():
+    """L'aspect « dates » n'avait pas bougé d'un point : 20 justes sur 140.
+
+    Même cause que le titre, même remède — la page annonce ses dates dans son
+    JSON-LD, on les calculait déjà, et personne ne les donnait à l'extraction.
+    """
+    event = to_event(
+        [span("dates", "du 3 au 12 septembre 2026")],
+        hints={"date_start": "2026-08-03", "date_end": "2026-08-12"},
+    )
+    assert (event.date_start, event.date_end) == ("2026-08-03", "2026-08-12")
+
+
+def test_sans_borne_declaree_la_prose_reste_la_source():
+    from datetime import date
+
+    event = to_event([span("dates", "du 3 au 12 août 2026")], today=date(2026, 7, 1))
+    assert (event.date_start, event.date_end) == ("2026-08-03", "2026-08-12")
+
+
+def test_une_borne_impossible_est_refusee():
+    """Un JSON-LD vient d'un générateur tiers : « 30 février » passe sa forme."""
+    event = to_event([span("title", "Atelier")], hints={"date_start": "2026-02-30"})
+    assert event.date_start == ""
+
+
+def test_une_fin_avant_le_debut_disparait():
+    event = to_event(
+        [], hints={"date_start": "2026-08-12", "date_end": "2026-08-03"}
+    )
+    assert event.date_start == "2026-08-12"
+    assert event.date_end == ""
+
+
+def test_un_jour_unique_ne_fabrique_pas_de_plage():
+    event = to_event([], hints={"date_start": "2026-08-12", "date_end": "2026-08-12"})
+    assert (event.date_start, event.date_end) == ("2026-08-12", "")
+
+
+# ──────────────────────────────────────── l'adresse, réduite à son contrat
+
+
+def test_l_adresse_perd_le_code_postal_et_la_ville():
+    """Le champ vaut « numéro et rue » — le corpus est étiqueté ainsi.
+
+    Un span qui ramène l'adresse entière n'est pas faux, il est trop long. Le
+    comparer tel quel comptait « faux » une adresse correctement lue.
+    """
+    event = to_event([], hints={"venue_address": "14 rue des Écoles, 94000 Créteil"})
+    assert event.venue_address == "14 rue des Écoles"
+
+
+def test_une_adresse_deja_courte_ne_bouge_pas():
+    event = to_event([], hints={"venue_address": "14 rue des Écoles"})
+    assert event.venue_address == "14 rue des Écoles"
+
+
+def test_le_code_postal_reste_dans_son_champ():
+    event = to_event(
+        [],
+        hints={"venue_address": "14 rue des Écoles 94000 Créteil", "venue_postal_code": "94000"},
+    )
+    assert event.venue_address == "14 rue des Écoles"
+    assert event.venue_postal_code == "94000"
+
+
+# ──────────────────────────── ne rien affirmer quand on n'a rien lu
+
+
+def test_un_tarif_jamais_lu_reste_inconnu():
+    """`False` affirme « ce n'est pas gratuit ». C'est un jugement, pas un défaut.
+
+    Le banc lisait 111 « tarifs faux » sur une brique qui, la plupart du
+    temps, n'avait rien trouvé. Détecter mieux et choisir mieux ne se
+    corrigent pas au même endroit, et le tableau ne les distinguait pas.
+    """
+    event = to_event([span("title", "Atelier")])
+    assert event.free is None
+    assert event.price is None
+
+
+def test_un_tarif_lu_se_prononce():
+    assert to_event([span("price", "8 €")]).free is False
+    assert to_event([span("price", "8 €")]).price == 8.0
+    assert to_event([span("price", "entrée libre")]).free is True
+
+
+def test_un_span_de_tarif_illisible_ne_fait_pas_affirmer():
+    """« salle 8 » n'est pas un tarif : on n'en conclut pas « payant »."""
+    event = to_event([span("price", "salle 8")])
+    assert event.free is None
+
+
+def test_la_permanence_n_est_jamais_affirmee_par_l_etiqueteur():
+    """Un étiqueteur ne rend que des morceaux de page ; la permanence n'en est pas un."""
+    assert to_event([span("title", "Atelier")]).permanent is None
+
+
+def test_le_modele_qui_tranche_garde_son_verdict():
+    """Rien ne change pour le fournisseur dont le schéma exige le champ."""
+    from sortiesbot.models import ExtractedEvent
+
+    rendu = ExtractedEvent.from_json({"relevant": True, "free": False, "permanent": False})
+    assert rendu.free is False
+    assert rendu.permanent is False
+
+
+def test_une_cle_absente_vaut_inconnu():
+    from sortiesbot.models import ExtractedEvent
+
+    rendu = ExtractedEvent.from_json({"relevant": True})
+    assert rendu.free is None
+    assert rendu.permanent is None
+
+
+def test_la_production_ne_voit_aucune_difference():
+    """Tout ce qui consomme ces champs teste leur vérité : `None` y vaut `False`."""
+    from datetime import date
+
+    from sortiesbot.models import ExtractedEvent, Location
+    from sortiesbot.payload import build_payload
+
+    event = ExtractedEvent(
+        relevant=True,
+        title="Atelier poterie",
+        description="Un atelier pour les enfants, à partir de six ans.",
+        date_start="2026-08-03",
+        venue_name="Maison des arts",
+        venue_address="2 rue des Lilas",
+        venue_city="Nancy",
+        venue_postal_code="54000",
+    )
+    payload = build_payload(
+        event,
+        Location(lat=48.7, lng=6.2, city="Nancy", postal_code="54000"),
+        category_id=1,
+        source_url="https://exemple.fr/atelier",
+        today=date(2026, 7, 1),
+    )
+    assert payload["isFree"] is False
+    assert payload["isPermanent"] is False
