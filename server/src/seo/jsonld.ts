@@ -10,6 +10,12 @@ import type { PublicEvent } from './query';
  * sont nommés au lieu d'être noyés dans du texte. Sans elles, un annuaire de
  * sorties reste une suite de pages ordinaires.
  *
+ * Ce qui n'y figure pas est aussi une décision. `performer` — l'artiste ou la
+ * compagnie qui joue — est recommandé par Google et restera signalé absent :
+ * nous ne le stockons pas, et y écrire le nom de la salle ferait passer un
+ * gymnase pour un comédien. Un champ faux abîme la fiche plus sûrement qu'un
+ * champ manquant, que Google classe lui-même en « non critique ».
+ *
  * Deux formes, parce qu'il y a deux natures de sorties. Un spectacle a une
  * date : c'est un `Event`, et `startDate` y est obligatoire. Un parc ou un
  * musée n'en a pas : ce serait un `Event` sans date, donc invalide, alors
@@ -51,6 +57,11 @@ function place(event: PublicEvent) {
 /**
  * L'offre tarifaire — omise quand le tarif reste à compléter (prix négatif,
  * même convention) : annoncer « -1 € » vaudrait un signalement.
+ *
+ * `validFrom` dit depuis quand ce tarif vaut. Nous ne connaissons pas la date
+ * d'ouverture de la billetterie, et l'inventer serait mentir ; ce que nous
+ * savons, c'est le jour où la fiche a été publiée avec ce prix. C'est la seule
+ * date honnête, et c'est celle que Google réclamait.
  */
 function offers(event: PublicEvent, url: string) {
   if (!hasPrice(event)) return undefined;
@@ -60,7 +71,38 @@ function offers(event: PublicEvent, url: string) {
     price: event.isFree ? 0 : event.price,
     priceCurrency: 'EUR',
     availability: 'https://schema.org/InStock',
+    validFrom: event.createdAt.toISOString(),
   };
+}
+
+/**
+ * Les signaux d'attribution qui désignent la page de l'organisateur lui-même —
+ * ses données structurées, ou son propre domaine. Les autres (`page_link`,
+ * `search`) peuvent tomber sur un agrégateur qui republiait l'information :
+ * ce lien-là décrit la sortie, pas l'organisateur, et le donner comme site de
+ * l'organisation serait faux.
+ */
+const ORGANIZER_SIGNALS = new Set(['json_ld', 'venue_domain']);
+
+/**
+ * Qui organise ? Le lieu.
+ *
+ * C'est une approximation, et il faut la nommer : un musée, une médiathèque ou
+ * une ferme pédagogique organise bien ce qu'elle accueille, mais une compagnie
+ * en tournée dans une salle des fêtes, non — l'organisateur est alors la
+ * compagnie, dont nous n'avons pas le nom. Le lieu reste la meilleure réponse
+ * vraie dont nous disposons : il est nommé, il est joignable, et c'est lui
+ * qu'un parent appellera. Le champ n'invente donc rien, il dit moins.
+ */
+function organizer(event: PublicEvent) {
+  return compact({
+    '@type': 'Organization',
+    name: event.venue.name,
+    url:
+      event.sourceUrl && event.sourceUrlSignal && ORGANIZER_SIGNALS.has(event.sourceUrlSignal)
+        ? event.sourceUrl
+        : undefined,
+  });
 }
 
 /** « 3-6 », « 3- », « 0-10 » — la façon dont schema.org écrit une tranche. */
@@ -148,6 +190,7 @@ export function eventJsonLd(
     eventStatus: 'https://schema.org/EventScheduled',
     eventAttendanceMode: 'https://schema.org/OfflineEventAttendanceMode',
     location: place(event),
+    organizer: organizer(event),
     offers: offers(event, url),
   });
 }

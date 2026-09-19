@@ -28,6 +28,10 @@ export interface PublicEvent {
   id: number;
   title: string;
   description: string;
+  /** Le meilleur lien connu vers la sortie — la page de l'organisateur, au mieux. */
+  sourceUrl: string | null;
+  /** Ce qui a désigné ce lien : `json_ld`, `venue_domain`, `page_link`, `search`, `manuel`. */
+  sourceUrlSignal: string | null;
   isFree: boolean;
   price: number | null;
   photoUrl: string | null;
@@ -63,6 +67,8 @@ function toPublic(row: EventRow): PublicEvent {
     id: row.id,
     title: row.title,
     description: row.description,
+    sourceUrl: row.sourceUrl,
+    sourceUrlSignal: row.sourceUrlSignal,
     isFree: row.isFree,
     price: row.price === null ? null : Number(row.price),
     photoUrl: row.photoUrl,
