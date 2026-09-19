@@ -402,8 +402,16 @@ def to_event(
     else:
         debut_iso = dates[0].isoformat() if dates else ""
         fin_iso = dates[-1].isoformat() if len(dates) > 1 else ""
-    if fin_iso and debut_iso and fin_iso <= debut_iso:
+    if fin_iso and debut_iso and fin_iso < debut_iso:
         fin_iso = ""
+    # Une sortie d'un seul jour **a** une date de fin, et c'est le même jour.
+    #
+    # Le site la stocke ainsi (`payload._clean_dates` : `end = end or start`),
+    # donc le corpus la porte ainsi, et rendre une fin vide comptait faux
+    # toute sortie d'un jour. C'est `ancrage._date_range` qui avait raison
+    # depuis le début : `(start, end or start)`.
+    if debut_iso and not fin_iso:
+        fin_iso = debut_iso
 
     horaires = sorted({h for s in par_champ.get("times", []) if (h := parse_heure(s.text))})
 
@@ -429,10 +437,16 @@ def to_event(
         price=prix,
         age_min=parse_age(_meilleur(par_champ.get("age_min", []))) if par_champ.get("age_min") else None,
         age_max=parse_age(_meilleur(par_champ.get("age_max", []))) if par_champ.get("age_max") else None,
-        # Un étiqueteur ne juge pas la permanence : il ne rend que des
-        # morceaux de page, et « toute l'année » n'en est pas un fiable. Le
-        # dire inconnu plutôt que faux, pour la même raison que le tarif.
-        permanent=None,
+        # Inconnu tant qu'on n'a **rien** — mais connaître une plage, c'est
+        # savoir que la sortie n'est pas permanente.
+        #
+        # Le dire inconnu dans tous les cas a coûté cher, et la leçon vaut
+        # d'être gardée : le corpus porte toujours un booléen (`isPermanent`
+        # est une colonne du site), et la comparaison d'un aspect exige que
+        # **tous** ses champs concordent. Un `null` en face d'un `false`
+        # suffisait donc à faire échouer l'aspect entier, dates justes
+        # comprises — vingt fiches justes devenues zéro, d'un run à l'autre.
+        permanent=False if debut_iso else None,
         date_start=debut_iso,
         date_end=fin_iso,
         weekdays=tuple(jours),

@@ -475,6 +475,28 @@ consomme ces champs teste leur vérité au sens booléen.
 Ce n'est **pas** un gain de taux : un faux devenu manqué reste un non-juste.
 C'est un gain de lecture, et c'est ce qu'on demande à un banc.
 
+##### Et le piège qui va avec, payé comptant
+
+`null` est honnête quand on ne sait **rien**. Il ne l'est plus quand on sait.
+
+Un aspect ne vaut JUSTE que si **tous** ses champs concordent
+(`verdictAspect`). Le corpus, lui, porte toujours `permanent` — `isPermanent`
+est une colonne du site, jamais nulle. Une brique qui répondait « je ne me
+prononce pas » sur ce champ faisait donc échouer l'aspect **entier**, dates
+parfaites comprises : vingt fiches justes devenues zéro d'un run à l'autre.
+
+Connaître une plage, c'est savoir que la sortie n'est pas permanente. Le
+silence ne se rend que sur ce qu'on ignore vraiment.
+
+Même famille, même run : une sortie d'**un seul jour** a une date de fin, et
+c'est le même jour — le site stocke `end = end or start`, donc le corpus la
+porte ainsi. Rendre une fin vide comptait faux toute sortie d'un jour.
+`ancrage._date_range` avait raison depuis le début avec son `(start, end or
+start)` ; la fiche, elle, ne suivait pas.
+
+Deux tests montent la garde sur ces deux pièges, côté serveur, là où le
+contrat se joue vraiment.
+
 **Non jugé n'est pas raté**, et c'est la lecture qui compte le plus ici. Un
 aspect que le corpus n'étiquette nulle part ne pèse dans aucun taux — ni le
 sien, ni celui du run. Le compter comme une faute accuserait la brique d'un
