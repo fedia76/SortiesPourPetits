@@ -76,6 +76,7 @@ class Provider(Protocol):
         log: RunLog,
         *,
         multiple: bool = False,
+        hints: dict | None = None,
     ) -> list[ExtractedEvent]:
         """Remplit les fiches que porte le texte d'une page.
 
@@ -83,6 +84,13 @@ class Provider(Protocol):
         programme d'un festival en porte plusieurs (`multiple`). Le retour est
         une liste dans les deux cas, pour que la suite du pipeline ne connaisse
         qu'un seul chemin.
+
+        `hints` porte ce que la page **déclare d'elle-même** et que le texte
+        n'emporte pas : son `h1`, et les champs d'un `schema.org/Event`. Ce
+        n'est pas une aide au modèle, c'est du travail qu'on lui retire —
+        libre à chaque fournisseur de s'en servir ou non. Celui d'Anthropic
+        l'ignore : lui donner ces valeurs changerait le prompt de production,
+        donc son empreinte, donc la comparabilité de tous les runs passés.
         """
         ...
 

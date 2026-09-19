@@ -239,7 +239,7 @@ class Requalifiant(FakeProvider):
     reconnaissance juge sur un condensé, l'extraction a lu tout le texte.
     """
 
-    def extract(self, url, content, config, categories, log, *, multiple=False):
+    def extract(self, url, content, config, categories, log, *, multiple=False, hints=None):
         self.extracted.append((url, multiple))
         if not multiple:
             return [sortie(relevant=False, skip_reason="c'est un programme", several=True)]
@@ -268,7 +268,7 @@ def test_la_page_nest_relue_quune_fois(journal):
     log, _ = journal
 
     class Insistant(Requalifiant):
-        def extract(self, url, content, config, categories, log, *, multiple=False):
+        def extract(self, url, content, config, categories, log, *, multiple=False, hints=None):
             self.extracted.append((url, multiple))
             # Même en programme, elle réclame encore une relecture.
             return [sortie(relevant=False, skip_reason="encore", several=True)]

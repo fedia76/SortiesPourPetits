@@ -79,7 +79,7 @@ class ModeleSimule:
         self.appels.append("select")
         return list(links)
 
-    def extract(self, url, content, config, categories, log, *, multiple=False):
+    def extract(self, url, content, config, categories, log, *, multiple=False, hints=None):
         self.appels.append("extract")
         return [ExtractedEvent(relevant=True, title="Une sortie")]
 

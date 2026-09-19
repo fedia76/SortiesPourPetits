@@ -242,7 +242,7 @@ class ProviderScripte:
     def select(self, page, links, config, log):
         return list(links)
 
-    def extract(self, url, content, config, categories, log, *, multiple=False):
+    def extract(self, url, content, config, categories, log, *, multiple=False, hints=None):
         self.extracted.append(url)
         assert len(content) > 200, "l'extraction doit recevoir du texte, pas un squelette"
         return [self.fiches[url]]

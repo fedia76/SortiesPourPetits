@@ -776,7 +776,7 @@ class FakeProvider:
         self.seen: dict[str, object] = {}
         self.usage = type("U", (), {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0})()
 
-    def extract(self, url, content, config, categories, log, *, multiple=False):
+    def extract(self, url, content, config, categories, log, *, multiple=False, hints=None):
         self.seen = {
             "url": url,
             "content": content,

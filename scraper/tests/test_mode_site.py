@@ -124,7 +124,7 @@ class SiteProvider:
     def select(self, page, links, config, log):
         return list(links) if self.select_all else []
 
-    def extract(self, url, content, config, categories, log, *, multiple=False):
+    def extract(self, url, content, config, categories, log, *, multiple=False, hints=None):
         self.extracted.append((url, multiple))
         found = self.extractions[url]
         return list(found) if isinstance(found, list) else [found]

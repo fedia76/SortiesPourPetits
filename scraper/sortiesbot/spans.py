@@ -45,6 +45,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import Any
 
 from .models import ExtractedEvent
 from .schedule import WEEKDAYS
@@ -85,6 +86,38 @@ LABELS: dict[str, str] = {
 #: laisser passer sans seuil remplit la fiche de bruit, et un champ faux coûte
 #: plus cher qu'un champ vide — c'est toute la logique de la modération.
 SEUIL_DEFAUT = 0.5
+
+#: Les seuils qui s'écartent du défaut, et pourquoi. Mesuré sur 140 pages.
+#:
+#: Un seuil unique suppose que se tromper coûte pareil partout. C'est faux :
+#: un lieu faux se voit et se corrige en modération, un **tarif** faux part en
+#: ligne et trompe un parent. Et les aspects ne ratent pas de la même façon —
+#: le banc l'a montré aspect par aspect :
+#:
+#: * `times` rendait 29 valeurs que le corpus ne porte pas (des heures, une
+#:   page en affiche partout : horaires d'ouverture, dernière séance, horaires
+#:   de la billetterie). On monte la barre ;
+#: * `weekdays` en inventait 15, pour la même raison ;
+#: * `age` en manquait 73 sur 140 — il est trop timide, on la baisse ;
+#: * `price` se trompait 105 fois sur 140. Monter le seuil ne rend pas un
+#:   tarif juste, mais un tarif absent vaut mieux qu'un tarif faux : la
+#:   modération complète un vide, elle ne repère pas une erreur plausible.
+SEUILS: dict[str, float] = {
+    "price": 0.6,
+    "times": 0.6,
+    "weekdays": 0.55,
+    "age_min": 0.35,
+    "age_max": 0.35,
+}
+
+#: En deçà de quoi on ne demande même pas au modèle de répondre. C'est le seuil
+#: passé à l'étiqueteur ; les seuils par champ se posent ensuite, dessus.
+SEUIL_PLANCHER = min([SEUIL_DEFAUT, *SEUILS.values()])
+
+
+def seuil_de(champ: str, defaut: float = SEUIL_DEFAUT) -> float:
+    """Le seuil de ce champ. Le défaut vaut pour tous ceux qui n'en ont pas."""
+    return SEUILS.get(champ, defaut)
 
 #: Au-delà de cette ancienneté, une date sans année est tenue pour l'an prochain.
 _PASSE_TOLERE = 45
@@ -248,6 +281,7 @@ def to_event(
     *,
     today: date | None = None,
     seuil: float = SEUIL_DEFAUT,
+    hints: dict[str, Any] | None = None,
 ) -> ExtractedEvent:
     """La fiche que ces spans permettent de remplir. Rien de plus.
 
@@ -255,22 +289,41 @@ def to_event(
     module. `relevant` suit la seule chose qu'on sache honnêtement en dire :
     a-t-on trouvé un titre. Ce n'est pas un jugement de pertinence, et
     `skip_reason` le dit en clair plutôt que de laisser croire à un verdict.
+
+    ## `hints` l'emporte, et ce n'est pas un réglage de confort
+
+    Ce que la page **déclare d'elle-même** — son `h1`, son `schema.org/Event` —
+    n'est pas une opinion de plus à arbitrer : c'est la valeur exacte, écrite
+    par celui qui organise la sortie. Un span bien noté ne vaut pas contre
+    elle. Le modèle ne sert donc qu'à ce que la page ne déclare pas, ce qui est
+    le cas le plus fréquent — mais plus le seul.
     """
     today = today or date.today()
-    retenus = [s for s in spans if s.score >= seuil and s.text.strip()]
+    hints = dict(hints or {})
     par_champ: dict[str, list[Span]] = {}
-    for span in retenus:
+    for span in spans:
         champ = LABELS.get(span.label)
-        if champ:
+        # Le seuil est celui du champ : la même note ne vaut pas la même
+        # confiance sur un lieu et sur un tarif.
+        if champ and span.text.strip() and span.score >= seuil_de(champ, seuil):
             par_champ.setdefault(champ, []).append(span)
 
-    title = _meilleur(par_champ.get("title", []))
+    def declare(champ: str, sinon: str = "") -> str:
+        valeur = hints.get(champ)
+        return str(valeur).strip() if isinstance(valeur, str) and valeur.strip() else sinon
+
+    title = declare("title", _meilleur(par_champ.get("title", [])))
 
     gratuit, prix = False, None
-    for span in sorted(par_champ.get("price", []), key=lambda s: -s.score):
-        gratuit, prix = parse_tarif(span.text)
-        if gratuit or prix is not None:
-            break
+    if "free" in hints or "price" in hints:
+        gratuit = bool(hints.get("free", False))
+        brut = hints.get("price")
+        prix = float(brut) if isinstance(brut, (int, float)) else None
+    else:
+        for span in sorted(par_champ.get("price", []), key=lambda s: -s.score):
+            gratuit, prix = parse_tarif(span.text)
+            if gratuit or prix is not None:
+                break
 
     jours: list[str] = []
     for span in par_champ.get("weekdays", []):
@@ -291,12 +344,15 @@ def to_event(
 
     horaires = sorted({h for s in par_champ.get("times", []) if (h := parse_heure(s.text))})
 
-    code_postal = ""
-    for span in sorted(par_champ.get("venue_postal_code", []), key=lambda s: -s.score):
-        m = re.search(r"\b(\d{5})\b", span.text)
-        if m:
-            code_postal = m.group(1)
-            break
+    code_postal = declare("venue_postal_code")
+    if not code_postal:
+        for span in sorted(par_champ.get("venue_postal_code", []), key=lambda s: -s.score):
+            m = re.search(r"\b(\d{5})\b", span.text)
+            if m:
+                code_postal = m.group(1)
+                break
+    m = re.search(r"\b(\d{5})\b", code_postal)
+    code_postal = m.group(1) if m else ""
 
     return ExtractedEvent(
         relevant=bool(title),
@@ -322,9 +378,9 @@ def to_event(
         close_time=horaires[-1] if len(horaires) > 1 else "",
         setting="",
         category="",
-        venue_name=_meilleur(par_champ.get("venue_name", [])),
-        venue_address=_meilleur(par_champ.get("venue_address", [])),
-        venue_city=_meilleur(par_champ.get("venue_city", [])),
+        venue_name=declare("venue_name", _meilleur(par_champ.get("venue_name", []))),
+        venue_address=declare("venue_address", _meilleur(par_champ.get("venue_address", []))),
+        venue_city=declare("venue_city", _meilleur(par_champ.get("venue_city", []))),
         venue_postal_code=code_postal,
         photo_url="",
     )

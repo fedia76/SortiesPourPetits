@@ -384,8 +384,14 @@ class AnthropicProvider:
         log: RunLog,
         *,
         multiple: bool = False,
+        hints: dict | None = None,
     ) -> list[ExtractedEvent]:
         """Lit une page. Une fiche, ou plusieurs si c'est un programme.
+
+        `hints` est **ignoré ici**, et c'est un choix : donner au modèle ce que
+        la page déclare changerait le prompt de production, donc son empreinte,
+        donc la comparabilité de tous les runs déjà joués. Ce raccourci-là
+        appartient pour l'instant au fournisseur local, qui en a besoin.
 
         Le retour est une liste dans les deux cas : c'est ce qui permet à la
         suite du pipeline — géocodage, dates, photo, soumission — d'être
