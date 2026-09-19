@@ -169,3 +169,56 @@ test('une sortie permanente reconnue reste JUSTE', () => {
   cumulerAspects(tallies, extractScore({ permanent: true }, { permanent: true }).byField);
   assert.equal(ligne(tallies, 'dates').JUSTE, 1);
 });
+
+test('un `null` en face d’un booléen du corpus fait échouer l’aspect ENTIER', () => {
+  // Le piège, gardé ici parce qu'il a coûté vingt fiches justes d'un coup.
+  //
+  // `verdictAspect` exige que **tous** les champs d'un aspect concordent. Le
+  // corpus porte toujours `permanent` — `isPermanent` est une colonne du site,
+  // jamais nulle. Une brique qui répond « je ne me prononce pas » sur ce
+  // champ-là fait donc échouer l'aspect même quand ses dates sont parfaites.
+  //
+  // Dire « inconnu » est honnête quand on ne sait rien. Ça ne l'est plus quand
+  // on sait : connaître une plage, c'est savoir que la sortie n'est pas
+  // permanente.
+  const dates = { dateStart: '2026-08-03', dateEnd: '2026-08-12' };
+
+  const muet = emptyAspectTallies();
+  cumulerAspects(
+    muet,
+    extractScore({ permanent: false, ...dates }, { permanent: null, ...dates }).byField,
+  );
+  assert.equal(ligne(muet, 'dates').FAUX, 1, 'des dates justes, et pourtant faux');
+
+  const franc = emptyAspectTallies();
+  cumulerAspects(
+    franc,
+    extractScore({ permanent: false, ...dates }, { permanent: false, ...dates }).byField,
+  );
+  assert.equal(ligne(franc, 'dates').JUSTE, 1);
+});
+
+test('une sortie d’un seul jour porte une date de fin des deux côtés', () => {
+  // Le site stocke `end = end or start` (`payload._clean_dates`), donc le
+  // corpus porte toujours une fin. Rendre une fin vide comptait faux toute
+  // sortie d'un jour, quelles que soient ses dates par ailleurs.
+  const tallies = emptyAspectTallies();
+  cumulerAspects(
+    tallies,
+    extractScore(
+      { permanent: false, dateStart: '2026-08-12', dateEnd: '2026-08-12' },
+      { permanent: false, dateStart: '2026-08-12', dateEnd: '' },
+    ).byField,
+  );
+  assert.equal(ligne(tallies, 'dates').FAUX, 1, 'la fin vide ne concorde pas');
+
+  const entier = emptyAspectTallies();
+  cumulerAspects(
+    entier,
+    extractScore(
+      { permanent: false, dateStart: '2026-08-12', dateEnd: '2026-08-12' },
+      { permanent: false, dateStart: '2026-08-12', dateEnd: '2026-08-12' },
+    ).byField,
+  );
+  assert.equal(ligne(entier, 'dates').JUSTE, 1);
+});

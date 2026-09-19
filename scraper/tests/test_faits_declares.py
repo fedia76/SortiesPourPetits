@@ -209,17 +209,34 @@ def test_une_borne_impossible_est_refusee():
     assert event.date_start == ""
 
 
-def test_une_fin_avant_le_debut_disparait():
-    event = to_event(
-        [], hints={"date_start": "2026-08-12", "date_end": "2026-08-03"}
-    )
-    assert event.date_start == "2026-08-12"
-    assert event.date_end == ""
+def test_une_fin_avant_le_debut_est_ecartee():
+    """Puis la sortie tient sur son seul jour connu, comme partout ailleurs."""
+    event = to_event([], hints={"date_start": "2026-08-12", "date_end": "2026-08-03"})
+    assert (event.date_start, event.date_end) == ("2026-08-12", "2026-08-12")
 
 
-def test_un_jour_unique_ne_fabrique_pas_de_plage():
-    event = to_event([], hints={"date_start": "2026-08-12", "date_end": "2026-08-12"})
-    assert (event.date_start, event.date_end) == ("2026-08-12", "")
+def test_une_sortie_d_un_jour_a_une_date_de_fin():
+    """Et c'est le même jour — c'est ainsi que le site la stocke.
+
+    `payload._clean_dates` fait `end = end or start`, donc le corpus porte
+    toujours une date de fin. Rendre une fin vide comptait faux **toute**
+    sortie d'un jour, quelles que soient ses dates par ailleurs.
+    """
+    event = to_event([], hints={"date_start": "2026-08-12"})
+    assert (event.date_start, event.date_end) == ("2026-08-12", "2026-08-12")
+
+
+def test_connaitre_une_plage_c_est_savoir_qu_elle_n_est_pas_permanente():
+    """Le `null` de trop, et ce qu'il a coûté.
+
+    Le corpus porte toujours un booléen — `isPermanent` est une colonne du
+    site — et la comparaison d'un aspect exige que **tous** ses champs
+    concordent. Un `null` en face d'un `false` faisait donc échouer l'aspect
+    entier, dates justes comprises : vingt fiches justes devenues zéro.
+    """
+    assert to_event([], hints={"date_start": "2026-08-12"}).permanent is False
+    # Sans la moindre date, en revanche, on ne se prononce toujours pas.
+    assert to_event([span("title", "Atelier")]).permanent is None
 
 
 # ──────────────────────────────────────── l'adresse, réduite à son contrat

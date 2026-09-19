@@ -182,13 +182,19 @@ def test_le_mieux_note_gagne():
 
 
 def test_une_seule_date_ne_fabrique_pas_de_calendrier():
-    """Une date unique est la date de la sortie, pas une liste de représentations."""
+    """Une date unique est la date de la sortie, pas une liste de représentations.
+
+    La **plage**, elle, existe bien : elle tient sur ce jour-là, début et fin
+    confondus. C'est ainsi que le site la stocke, et donc ainsi que le corpus
+    la porte — voir `payload._clean_dates`.
+    """
     par_champ = {v: k for k, v in LABELS.items()}
     event = to_event(
         [span(par_champ["title"], "Atelier"), span(par_champ["dates"], "12 août 2026")],
         today=AUJOURD_HUI,
     )
-    assert (event.date_start, event.date_end) == ("2026-08-12", "")
+    assert (event.date_start, event.date_end) == ("2026-08-12", "2026-08-12")
+    # Le calendrier, lui, reste vide : une date n'est pas une récurrence.
     assert event.dates == ()
 
 
