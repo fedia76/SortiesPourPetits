@@ -357,15 +357,21 @@ def to_event(
 
     title = declare("title", _meilleur(par_champ.get("title", [])))
 
-    gratuit, prix = False, None
+    # `None` tant qu'on n'a rien lu : ne pas affirmer « ce n'est pas gratuit »
+    # sur une page dont on n'a pas su lire le tarif. Le banc comptait ce
+    # silence comme une erreur, et 111 « tarifs faux » cachaient surtout des
+    # tarifs jamais trouvés.
+    gratuit: bool | None = None
+    prix: float | None = None
     if "free" in hints or "price" in hints:
         gratuit = bool(hints.get("free", False))
         brut = hints.get("price")
         prix = float(brut) if isinstance(brut, (int, float)) else None
     else:
         for span in sorted(par_champ.get("price", []), key=lambda s: -s.score):
-            gratuit, prix = parse_tarif(span.text)
-            if gratuit or prix is not None:
+            lu_gratuit, lu_prix = parse_tarif(span.text)
+            if lu_gratuit or lu_prix is not None:
+                gratuit, prix = lu_gratuit, lu_prix
                 break
 
     jours: list[str] = []
@@ -423,7 +429,10 @@ def to_event(
         price=prix,
         age_min=parse_age(_meilleur(par_champ.get("age_min", []))) if par_champ.get("age_min") else None,
         age_max=parse_age(_meilleur(par_champ.get("age_max", []))) if par_champ.get("age_max") else None,
-        permanent=False,
+        # Un étiqueteur ne juge pas la permanence : il ne rend que des
+        # morceaux de page, et « toute l'année » n'en est pas un fiable. Le
+        # dire inconnu plutôt que faux, pour la même raison que le tarif.
+        permanent=None,
         date_start=debut_iso,
         date_end=fin_iso,
         weekdays=tuple(jours),

@@ -247,3 +247,80 @@ def test_le_code_postal_reste_dans_son_champ():
     )
     assert event.venue_address == "14 rue des Écoles"
     assert event.venue_postal_code == "94000"
+
+
+# ──────────────────────────── ne rien affirmer quand on n'a rien lu
+
+
+def test_un_tarif_jamais_lu_reste_inconnu():
+    """`False` affirme « ce n'est pas gratuit ». C'est un jugement, pas un défaut.
+
+    Le banc lisait 111 « tarifs faux » sur une brique qui, la plupart du
+    temps, n'avait rien trouvé. Détecter mieux et choisir mieux ne se
+    corrigent pas au même endroit, et le tableau ne les distinguait pas.
+    """
+    event = to_event([span("title", "Atelier")])
+    assert event.free is None
+    assert event.price is None
+
+
+def test_un_tarif_lu_se_prononce():
+    assert to_event([span("price", "8 €")]).free is False
+    assert to_event([span("price", "8 €")]).price == 8.0
+    assert to_event([span("price", "entrée libre")]).free is True
+
+
+def test_un_span_de_tarif_illisible_ne_fait_pas_affirmer():
+    """« salle 8 » n'est pas un tarif : on n'en conclut pas « payant »."""
+    event = to_event([span("price", "salle 8")])
+    assert event.free is None
+
+
+def test_la_permanence_n_est_jamais_affirmee_par_l_etiqueteur():
+    """Un étiqueteur ne rend que des morceaux de page ; la permanence n'en est pas un."""
+    assert to_event([span("title", "Atelier")]).permanent is None
+
+
+def test_le_modele_qui_tranche_garde_son_verdict():
+    """Rien ne change pour le fournisseur dont le schéma exige le champ."""
+    from sortiesbot.models import ExtractedEvent
+
+    rendu = ExtractedEvent.from_json({"relevant": True, "free": False, "permanent": False})
+    assert rendu.free is False
+    assert rendu.permanent is False
+
+
+def test_une_cle_absente_vaut_inconnu():
+    from sortiesbot.models import ExtractedEvent
+
+    rendu = ExtractedEvent.from_json({"relevant": True})
+    assert rendu.free is None
+    assert rendu.permanent is None
+
+
+def test_la_production_ne_voit_aucune_difference():
+    """Tout ce qui consomme ces champs teste leur vérité : `None` y vaut `False`."""
+    from datetime import date
+
+    from sortiesbot.models import ExtractedEvent, Location
+    from sortiesbot.payload import build_payload
+
+    event = ExtractedEvent(
+        relevant=True,
+        title="Atelier poterie",
+        description="Un atelier pour les enfants, à partir de six ans.",
+        date_start="2026-08-03",
+        venue_name="Maison des arts",
+        venue_address="2 rue des Lilas",
+        venue_city="Nancy",
+        venue_postal_code="54000",
+    )
+    payload = build_payload(
+        event,
+        Location(lat=48.7, lng=6.2, city="Nancy", postal_code="54000"),
+        category_id=1,
+        source_url="https://exemple.fr/atelier",
+        today=date(2026, 7, 1),
+    )
+    assert payload["isFree"] is False
+    assert payload["isPermanent"] is False

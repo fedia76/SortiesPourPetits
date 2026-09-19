@@ -109,11 +109,25 @@ class ExtractedEvent:
     several: bool = False
     title: str = ""
     description: str = ""
-    free: bool = False
+    #: Gratuit, payant, ou **on ne sait pas** — et les trois se distinguent.
+    #:
+    #: `False` affirme « ce n'est pas gratuit ». C'est ce qu'un modèle rend :
+    #: son schéma exige le champ, il tranche donc à chaque fiche. Une brique
+    #: qui ne sait pas lire un tarif, elle, n'affirme rien — et l'écrire
+    #: `False` faisait compter une **erreur** là où il n'y avait qu'un silence.
+    #: Le banc lisait « 111 tarifs faux » sur un étiqueteur qui, la plupart du
+    #: temps, n'avait simplement rien trouvé ; les deux ne se corrigent pas au
+    #: même endroit.
+    #:
+    #: La production n'en voit rien : tout ce qui consomme ce champ teste sa
+    #: vérité au sens booléen, où `None` vaut `False` — le tarif inconnu part
+    #: déjà à `UNKNOWN_PRICE` et c'est le modérateur qui tranche.
+    free: bool | None = None
     price: float | None = None
     age_min: int | None = None
     age_max: int | None = None
-    permanent: bool = False
+    #: Permanent, daté, ou inconnu. Même raison que `free`, mot pour mot.
+    permanent: bool | None = None
     date_start: str = ""
     date_end: str = ""
     #: Jours de représentation lus dans la prose (« tous les dimanches »).
@@ -150,6 +164,18 @@ class ExtractedEvent:
             value = number(key)
             return None if value is None else int(value)
 
+        def tri_booleen(key: str) -> bool | None:
+            """`True`, `False`, ou `None` quand la brique ne s'est pas prononcée.
+
+            La distinction tient à la **présence de la clé**, pas à sa valeur :
+            un schéma qui exige le champ — celui du modèle — rend toujours un
+            booléen, et rien ne change pour lui. Une brique qui omet la clé
+            dit qu'elle n'en sait rien, et c'est ce qu'on garde.
+            """
+            if key not in data or data[key] is None:
+                return None
+            return bool(data[key])
+
         def strings(key: str) -> tuple[str, ...]:
             value = data.get(key)
             if not isinstance(value, (list, tuple)):
@@ -162,11 +188,11 @@ class ExtractedEvent:
             several=bool(data.get("several")),
             title=text("title"),
             description=text("description"),
-            free=bool(data.get("free", False)),
+            free=tri_booleen("free"),
             price=number("price"),
             age_min=integer("age_min"),
             age_max=integer("age_max"),
-            permanent=bool(data.get("permanent", False)),
+            permanent=tri_booleen("permanent"),
             date_start=text("date_start"),
             date_end=text("date_end"),
             weekdays=strings("weekdays"),
