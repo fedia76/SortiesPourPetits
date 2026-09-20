@@ -211,3 +211,97 @@ def test_fiche_vide_sur_aucun_span():
     event = to_event([], today=AUJOURD_HUI)
     assert event.relevant is False
     assert event.title == ""
+
+
+# ─────────────────── quatre défauts que la comparaison avec le modèle a révélés
+#
+# Haiku ratait 11 âges sur 81, l'étiqueteur 52 sur 140. Un tel écart sur un
+# champ aussi simple ne se règle pas au seuil : c'était du code fautif.
+
+
+def test_un_nombre_nu_n_est_pas_un_age():
+    """« tarif 8 € » rendait « 8 ans », « salle 3 » rendait « 3 ans »."""
+    assert parse_age("tarif 8 €") is None
+    assert parse_age("salle 3") is None
+    assert parse_age("réservation au 06") is None
+
+
+def test_un_age_annonce_reste_lu():
+    assert parse_age("à partir de 3 ans") == 3
+    assert parse_age("dès 18 mois") == 1
+    # Sans unité, mais avec la tournure qui l'annonce — celle que le prompt
+    # de production décrit, et qu'`ancrage._age_in` cherche déjà dans la page.
+    assert parse_age("à partir de 6") == 6
+    # Deux âges dans un morceau : on prend le premier. Une sortie annoncée
+    # trop jeune se corrige en modération, une annoncée trop vieille se cache
+    # aux parents à qui elle convenait.
+    assert parse_age("pour les 3 à 6 ans") == 3
+    assert parse_age("jusqu'à 12 ans") == 12
+
+
+def test_une_exclusion_n_est_pas_une_representation():
+    """La pire faute de l'étage : elle n'est pas approximative, elle est inversée.
+
+    « relâche le lundi » enregistrait le lundi comme jour de représentation,
+    c'est-à-dire exactement le jour où la sortie ne se joue pas.
+    """
+    assert parse_jours("relâche le lundi") == []
+    assert parse_jours("fermé le mardi") == []
+    assert parse_jours("tous les jours sauf le mercredi") == []
+    assert parse_jours("pas de séance le jeudi") == []
+
+
+def test_une_ferme_pedagogique_n_est_pas_une_fermeture():
+    """`flatten` retire les accents : « fermé » et « ferme » se confondent.
+
+    Un lieu de sortie très fréquent ne doit pas faire taire un jour réel.
+    """
+    assert parse_jours("la ferme pédagogique ouvre le samedi") == ["samedi"]
+
+
+def test_une_plage_de_jours_se_deroule():
+    """« du mardi au jeudi » perdait le mercredi."""
+    assert parse_jours("du mardi au jeudi") == ["mardi", "mercredi", "jeudi"]
+
+
+def test_une_plage_peut_enjamber_la_semaine():
+    assert parse_jours("du vendredi au lundi") == ["vendredi", "samedi", "dimanche", "lundi"]
+
+
+def test_l_horaire_retenu_est_le_mieux_note():
+    """Et non le minimum et le maximum de toute la page.
+
+    Sur « ouvert de 9h à 18h, spectacle à 14h30 », l'ancienne règle rendait
+    09:00–18:00 quand le modèle avait désigné 14h30 avec le meilleur score.
+    Une page affiche des heures partout, et les agréger mélange des faits qui
+    n'ont rien à voir.
+    """
+    par_champ = {v: k for k, v in LABELS.items()}
+    event = to_event(
+        [
+            span(par_champ["title"], "Spectacle"),
+            span(par_champ["times"], "9h", score=0.55),
+            span(par_champ["times"], "14h30", score=0.95),
+            span(par_champ["times"], "18h", score=0.60),
+        ],
+        today=AUJOURD_HUI,
+    )
+    assert event.open_time == "14:30"
+    # Deux spans distincts sont deux faits distincts : pas de fermeture ici.
+    assert event.close_time == ""
+
+
+def test_une_fermeture_se_lit_dans_le_meme_morceau():
+    par_champ = {v: k for k, v in LABELS.items()}
+    event = to_event(
+        [span(par_champ["times"], "de 14h30 à 16h")],
+        today=AUJOURD_HUI,
+    )
+    assert (event.open_time, event.close_time) == ("14:30", "16:00")
+
+
+def test_les_heures_gardent_l_ordre_du_texte():
+    """Trier échangerait ouverture et fermeture sur une séance qui passe minuit."""
+    from sortiesbot.spans import parse_heures
+
+    assert parse_heures("de 22h30 à 01h") == ["22:30", "01:00"]
