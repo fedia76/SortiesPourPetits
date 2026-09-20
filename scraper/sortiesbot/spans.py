@@ -423,6 +423,93 @@ _JOUR_EXCLU_CONTEXTE = re.compile(
 _JOUR_PLAGE_CONTEXTE = re.compile(r"\bdu\s+(\w+)\s+au\s+(\w+)")
 
 
+# ══════════════════════════════════════════════════ classer, et non extraire
+#
+# Deux champs de la fiche ne sont pas des morceaux de page : la **catégorie**
+# est un choix dans un référentiel, le **cadre** une déduction. Ils restaient
+# vides, et coûtaient à eux deux un sixième du score.
+#
+# GLiNER sait pourtant les rendre, par un détournement que sa propre
+# bibliothèque emploie (`gliner.multitask.classification`) : on **écrit les
+# réponses possibles en tête du texte**, et on demande au modèle de surligner
+# la bonne. Le même étiqueteur, retourné comme un gant — au lieu de chercher
+# une valeur dans la page, il choisit parmi celles qu'on lui donne.
+#
+# Rien de neuf n'est entraîné : c'est du zero-shot, comme le reste.
+
+#: Le gabarit qui précède le texte à classer. En français : le modèle est
+#: multilingue, et la page l'est.
+GABARIT_CLASSES = "Classe ce texte parmi : {}."
+
+#: Ce que le modèle lit pour le cadre, et l'énuméré que le site attend.
+#:
+#: Les libellés sont des **tournures de page**, pas des identifiants : une
+#: page écrit « en plein air », jamais « OUTDOOR ». C'est la leçon des spans,
+#: appliquée d'emblée ici.
+#: Aucun libellé n'en contient un autre, et ce n'est pas un détail de style :
+#: « en intérieur et en plein air » englobait les deux premiers, si bien qu'un
+#: modèle surlignant « plein air » désignait deux réponses à la fois et se
+#: faisait refuser. Un référentiel dont les entrées s'emboîtent ne peut pas
+#: être tranché.
+CADRES: dict[str, str] = {
+    "en intérieur": "INDOOR",
+    "en plein air": "OUTDOOR",
+    "les deux": "BOTH",
+}
+
+#: Le libellé sous lequel on demande la classe. Un seul, court : il partage la
+#: fenêtre du modèle avec le gabarit **et** le texte à classer.
+LABEL_CLASSE = "classe"
+
+
+def prompt_de_classes(
+    text: str,
+    classes: list[str],
+    *,
+    entete: str = "",
+    gabarit: str = GABARIT_CLASSES,
+    limite: int = 900,
+) -> str:
+    """Le texte à classer, précédé des réponses possibles.
+
+    `entete` — le titre de la page — passe **avant** le corps : c'est le
+    signal le plus dense pour une catégorie, et les premiers caractères d'une
+    page scrapée sont souvent un fil d'Ariane et un bandeau de cookies.
+
+    `limite` borne le corps parce que la fenêtre de l'encodeur ne se négocie
+    pas : ce qui dépasse n'est pas tronqué bruyamment, il est ignoré.
+    """
+    tete = gabarit.format(", ".join(classes))
+    corps = " ".join(part for part in (entete, text) if part).strip()
+    return f"{tete}\n{corps[:limite]}"
+
+
+def classe_retenue(spans: list[Span], classes: list[str]) -> str:
+    """La classe que le modèle a surlignée, telle que le référentiel l'écrit.
+
+    Rendue **canonique** plutôt que telle quelle : le modèle surligne souvent
+    un morceau du libellé — « plein air » pour « en plein air » —, et une
+    fiche qui porterait ce morceau ne s'apparierait à rien côté site.
+
+    Vide si rien ne correspond, et c'est le bon défaut : classer au hasard
+    dans un référentiel de six entrées, c'est se tromper cinq fois sur six.
+    """
+    if not classes:
+        return ""
+    plats = {flatten(c): c for c in classes}
+    for span in sorted(spans, key=lambda sp: -sp.score):
+        plat = flatten(span.text)
+        if not plat:
+            continue
+        if plat in plats:
+            return plats[plat]
+        # Un morceau du libellé, et un seul candidat possible : on accepte.
+        proches = [c for aplati, c in plats.items() if plat in aplati]
+        if len(proches) == 1:
+            return proches[0]
+    return ""
+
+
 def contexte(text: str, span: Span, avant: int = CONTEXTE_AVANT, apres: int = CONTEXTE_APRES) -> str:
     """Le texte autour d'un span, aplati, span compris.
 
@@ -694,10 +781,16 @@ def unfilled_fields() -> tuple[str, ...]:
     """Les champs qu'aucun étiquetage ne remplit, pour que la console le dise.
 
     Rendu à l'appelant plutôt que commenté quelque part : un banc qui compte
-    `MANQUE` sur `setting` doit pouvoir distinguer « le modèle a raté » de
-    « cette brique ne prétend pas le rendre ».
+    `MANQUE` dessus doit pouvoir distinguer « le modèle a raté » de « cette
+    brique ne prétend pas le rendre ».
+
+    La liste a **raccourci** : `setting` et `category` n'en sont plus, depuis
+    qu'ils se demandent par classification plutôt que par étiquetage. Je les y
+    avais rangés comme structurellement hors de portée, ce qui était faux —
+    ce ne sont pas des rédactions, ce sont des choix, et un encodeur sait
+    choisir. `permanent` en sort aussi : il se déduit des dates.
     """
-    return ("description", "setting", "category", "several", "permanent", "photo_url")
+    return ("description", "several", "photo_url")
 
 
 __all__ = [

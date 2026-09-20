@@ -42,6 +42,7 @@ n'installe torch, aucun ne touche au réseau.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from datetime import date
 from typing import Any, Protocol, runtime_checkable
 
@@ -49,7 +50,18 @@ from ..config import Config
 from ..harvest import Link
 from ..journal import RunLog
 from ..models import ExtractedEvent, FoundPage, Usage
-from ..spans import LABELS, SEUIL_DEFAUT, SEUIL_PLANCHER, Span, to_event, unfilled_fields
+from ..spans import (
+    CADRES,
+    LABEL_CLASSE,
+    LABELS,
+    SEUIL_DEFAUT,
+    SEUIL_PLANCHER,
+    Span,
+    classe_retenue,
+    prompt_de_classes,
+    to_event,
+    unfilled_fields,
+)
 from .base import Provider, ProviderError
 
 #: Le point de départ raisonnable : multilingue, français compris, Apache 2.0,
@@ -364,6 +376,19 @@ class GlinerProvider:
         event = to_event(
             spans, today=self._today, seuil=self._seuil, hints=hints, text=content
         )
+
+        # Puis les deux champs qui ne sont pas des morceaux de page. Deux
+        # passes de plus, sur un texte court : le gabarit et le titre suffisent
+        # le plus souvent à trancher, et la fenêtre du modèle ne permettrait
+        # pas davantage.
+        entete = str((hints or {}).get("title") or "")
+        categorie = self._classer(tagger, content, sorted(categories), entete)
+        cadre_lu = self._classer(tagger, content, list(CADRES), entete)
+        event = replace(
+            event,
+            category=categorie,
+            setting=CADRES.get(cadre_lu, ""),
+        )
         # Une fois la page finie, et pas au milieu : à ce point tout ce que
         # l'encodeur a alloué est libéré côté Python, et il n'y a plus qu'à le
         # rendre au système.
@@ -393,6 +418,40 @@ class GlinerProvider:
             declares=",".join(sorted(hints or {})) or "aucun",
         )
         return [event]
+
+    def _classer(
+        self, tagger: Tagger, content: str, classes: list[str], entete: str
+    ) -> str:
+        """La classe que le modèle retient, ou rien.
+
+        Le détournement est celui de `gliner.multitask.classification`, réécrit
+        ici en quelques lignes : ce module-là importe `datasets`, `sklearn` et
+        de quoi évaluer sur des jeux Hugging Face, dont rien ne sert au
+        pipeline. On lui prend son idée, pas ses dépendances.
+
+        Un échec ne coûte que ce champ : classer est un bonus sur une fiche
+        que les spans ont déjà remplie, et le manquer vaut mieux que perdre la
+        page entière.
+        """
+        if not classes:
+            return ""
+        budget, _ = fenetre_caracteres(tagger, [LABEL_CLASSE])
+        prompt = prompt_de_classes(content, classes, entete=entete, limite=budget)
+        try:
+            bruts = tagger.predict_entities(prompt, [LABEL_CLASSE], threshold=self._plancher)
+        except Exception:  # noqa: BLE001 — un champ en moins, pas une page perdue
+            return ""
+        return classe_retenue(
+            [
+                Span(
+                    label=str(b.get("label", "")),
+                    text=str(b.get("text", "")),
+                    score=float(b.get("score", 0.0)),
+                )
+                for b in bruts
+            ],
+            classes,
+        )
 
     def _etiqueter(
         self, tagger: Tagger, morceaux: list[str], libelles: list[str]

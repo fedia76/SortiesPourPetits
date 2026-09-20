@@ -47,11 +47,25 @@ from sortiesbot.providers.gliner_provider import (  # noqa: E402
     _decouper,
     fenetre_caracteres,
 )
-from sortiesbot.spans import LABELS, SEUIL_DEFAUT, Span, to_event, unfilled_fields  # noqa: E402
+from sortiesbot.spans import (  # noqa: E402
+    CADRES,
+    LABEL_CLASSE,
+    LABELS,
+    SEUIL_DEFAUT,
+    Span,
+    classe_retenue,
+    prompt_de_classes,
+    to_event,
+    unfilled_fields,
+)
 
 #: Jusqu'où descendre pour montrer ce que le modèle a *failli* rendre. Bien
 #: sous le seuil de production : c'est tout l'intérêt.
 PLANCHER = 0.05
+
+#: Le référentiel du site n'est pas joignable hors ligne : celui-ci sert à
+#: l'essai, et se remplace par `--categories`.
+CATEGORIES_ESSAI = ["Parc", "Musée", "Spectacle", "Sport", "Atelier", "Non classé"]
 
 
 def _page(source: str) -> tuple[str, str]:
@@ -103,6 +117,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seuil", type=float, default=SEUIL_DEFAUT)
     parser.add_argument("--plancher", type=float, default=PLANCHER)
     parser.add_argument("--libelles", help="« libellé=champ,libellé=champ » à la place des nôtres")
+    parser.add_argument(
+        "--categories",
+        help=f"le référentiel à classer, séparé par des virgules (défaut : {', '.join(CATEGORIES_ESSAI)})",
+    )
     parser.add_argument("--texte", action="store_true", help="afficher le texte de chaque passe")
     args = parser.parse_args(argv)
 
@@ -124,6 +142,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     libelles = _libelles(args.libelles)
+    categories = (
+        [c.strip() for c in args.categories.split(",") if c.strip()]
+        if args.categories
+        else list(CATEGORIES_ESSAI)
+    )
     budget, recouvrement = fenetre_caracteres(tagger, list(libelles))
     morceaux = _decouper(texte, budget, recouvrement)
 
@@ -183,6 +206,26 @@ def main(argv: list[str] | None = None) -> int:
             sous = "  ← SOUS LE SEUIL" if rang == 0 and span.score < args.seuil else ""
             nom = champ if rang == 0 else ""
             print(f"  {nom:<20} {span.score:.2f}  « {span.text[:60]} »{retenu}{sous}")
+    print()
+
+    # ── 2 bis. les deux champs qui se **classent** au lieu de s'extraire
+    print("── Ce qu'il classe (catégorie, cadre) ──")
+    entete = ""
+    for intitule, classes in (("catégorie", categories), ("cadre", list(CADRES))):
+        invite = prompt_de_classes(texte, classes, entete=entete, limite=budget)
+        bruts = tagger.predict_entities(invite, [LABEL_CLASSE], threshold=args.plancher)
+        propositions = sorted(bruts, key=lambda b: -float(b.get("score", 0)))[:4]
+        retenue = classe_retenue(
+            [
+                Span(label=LABEL_CLASSE, text=str(b.get("text", "")), score=float(b.get("score", 0)))
+                for b in bruts
+            ],
+            classes,
+        )
+        print(f"  {intitule:<10} retenu : {retenue or '∅'}")
+        for b in propositions:
+            marque = "  ← retenu" if str(b.get("text", "")) == retenue else ""
+            print(f"  {'':<10} {float(b.get('score', 0)):.2f}  « {b.get('text', '')} »{marque}")
     print()
 
     # ── 3. la fiche que la production en tirerait, et l'audit du banc
