@@ -377,6 +377,32 @@ L'étiqueteur est interrogé au **plancher** de ces seuils, et le tri se fait
 ensuite. L'interroger au défaut jetterait, côté modèle, les spans qu'un champ
 plus tolérant aurait gardés.
 
+#### Ce que la comparaison avec le modèle a révélé
+
+Jouer les deux fournisseurs sur le même corpus ne sert pas qu'à désigner un
+gagnant. Un écart **trop grand sur un champ trop simple** ne se règle pas au
+seuil : c'est du code fautif, et il faut le lire comme tel. Quatre défauts ont
+été trouvés ainsi, aucun n'aurait été visible sur le taux global :
+
+| Ce qu'on voyait | Ce que c'était |
+|---|---|
+| 52 âges faux (le modèle : 11) | `parse_age` prenait **le premier entier venu** — « tarif 8 € » rendait 8 ans, « salle 3 » rendait 3 ans |
+| 16 jours inventés | « relâche le lundi » enregistrait le lundi comme jour de représentation |
+| des jours manquants | « du mardi au jeudi » rendait deux jours et perdait le mercredi |
+| 59 horaires faux, 29 inventés | l'ouverture et la fermeture prenaient **le minimum et le maximum de toute la page** |
+
+Le deuxième est le plus grave de tout cet étage, et il n'est pas approximatif :
+il est **inversé**. La sortie était proposée exactement le jour où elle ne se
+joue pas.
+
+Le quatrième est une erreur de raisonnement plus qu'une coquille : sur
+« ouvert de 9h à 18h, spectacle à 14h30 », agréger rendait 09:00–18:00 alors
+que le modèle avait désigné 14h30 avec le meilleur score. Une page affiche des
+heures partout — ouverture, dernière entrée, billetterie — et les mélanger
+fabrique un fait que personne n'a écrit. L'horaire retenu est désormais celui
+du **mieux noté**, et la fermeture ne se lit que dans le **même morceau**
+(« de 14h30 à 16h ») : deux spans distincts sont deux faits distincts.
+
 #### Ce qu'il ne rend pas, et pourquoi il ne comble pas
 
 Quatre champs de la fiche ne sont pas des morceaux de page : `description` (une

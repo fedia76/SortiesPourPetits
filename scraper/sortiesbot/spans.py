@@ -235,16 +235,27 @@ def parse_dates(value: str, today: date | None = None) -> list[date]:
     return sorted(trouvees)
 
 
+def parse_heures(value: str) -> list[str]:
+    """Toutes les heures d'un morceau, dans l'ordre où elles y sont écrites.
+
+    L'ordre du texte, et non l'ordre chronologique : « de 14h30 à 16h » dit
+    l'ouverture puis la fermeture, et les trier les échangerait sur une séance
+    qui passe minuit.
+    """
+    out: list[str] = []
+    for m in _HEURE.finditer(flatten(value)):
+        heure, minute = int(m.group(1)), int(m.group(2) or 0)
+        if 0 <= heure <= 23 and 0 <= minute <= 59:
+            hhmm = f"{heure:02d}:{minute:02d}"
+            if hhmm not in out:
+                out.append(hhmm)
+    return out
+
+
 def parse_heure(value: str) -> str:
     """« 14h30 », « 14 h », « 14:30 » → `14:30`. Vide si rien de lisible."""
-    m = _HEURE.search(flatten(value))
-    if not m:
-        return ""
-    heure = int(m.group(1))
-    minute = int(m.group(2) or 0)
-    if not (0 <= heure <= 23 and 0 <= minute <= 59):
-        return ""
-    return f"{heure:02d}:{minute:02d}"
+    heures = parse_heures(value)
+    return heures[0] if heures else ""
 
 
 def parse_tarif(value: str) -> tuple[bool, float | None]:
@@ -265,24 +276,88 @@ def parse_tarif(value: str) -> tuple[bool, float | None]:
     return False, montant
 
 
-def parse_age(value: str) -> int | None:
-    """L'âge lu dans un morceau, en années. Les mois sont ramenés à 0 an.
+#: Ce qui fait d'un nombre un âge : une unité, ou une tournure qui l'annonce.
+_AGE_UNITE = re.compile(r"\b(\d{1,2})\s*ans?\b")
+_AGE_MOIS = re.compile(r"\b(\d{1,2})\s*mois\b")
+_AGE_TOURNURE = re.compile(
+    r"(?:des|a partir de|partir de|plus de|moins de|jusqu a|pour les)\s*"
+    r"(?:l age de\s*)?(\d{1,2})\b"
+)
 
-    « dès 18 mois » vaut 1 an et demi : le site ne stocke que des années, et
-    arrondir vers le bas est le seul sens qui ne ferme la sortie à personne.
+
+def parse_age(value: str) -> int | None:
+    """L'âge lu dans un morceau, en années. Vide si ce n'en est pas un.
+
+    « dès 18 mois » vaut un an : le site ne stocke que des années, et arrondir
+    vers le bas est le seul sens qui ne ferme la sortie à personne.
+
+    **Un nombre nu n'est pas un âge**, et c'est le point. La version d'avant
+    prenait le premier entier venu : un span de tarif mal étiqueté rendait
+    « 8 ans » pour « tarif 8 € », une salle rendait « 3 ans » pour « salle 3 ».
+    Mesuré au banc : 52 âges faux sur 140, là où le modèle en ratait 11 sur 81.
+    On exige donc une **unité** — ans, mois — ou une tournure qui annonce un
+    âge, celles-là mêmes que `ancrage._age_in` cherche déjà dans la page.
     """
     plat = flatten(value)
-    m = re.search(r"\b(\d{1,2})\s*mois\b", plat)
+    m = _AGE_MOIS.search(plat)
     if m:
         return int(m.group(1)) // 12
-    m = re.search(r"\b(\d{1,2})\b", plat)
-    return int(m.group(1)) if m else None
+
+    # Le **premier** âge du morceau, pas celui de la première expression qui
+    # correspond. « pour les 3 à 6 ans » porte deux âges ; l'unité colle au
+    # second (« 6 ans ») et la tournure au premier, si bien que l'ordre des
+    # motifs décidait à notre place. C'est la borne basse qu'on veut : ces
+    # spans nourrissent `age_min` dans l'écrasante majorité des cas, et une
+    # sortie annoncée trop jeune se corrige, quand une sortie annoncée trop
+    # vieille se cache aux parents à qui elle convenait.
+    trouves = [m for motif in (_AGE_UNITE, _AGE_TOURNURE) for m in motif.finditer(plat)]
+    if not trouves:
+        return None
+    return int(min(trouves, key=lambda m: m.start()).group(1))
+
+
+#: Les tournures qui **excluent** un jour au lieu de l'annoncer.
+#:
+#: Choisies pour ne pas pouvoir désigner autre chose : « ferme » seul est
+#: écarté, parce qu'une ferme pédagogique est un lieu de sortie fréquent et
+#: que `flatten` lui retire son accent.
+_JOUR_EXCLU = re.compile(
+    r"\brelache|\bsauf\b|\bexcepte|\bhormis\b|\bfermeture\b|\bferme(?:e|es|s)? le\b|"
+    r"\bpas de (?:seance|representation|spectacle)"
+)
+
+#: « du mardi au jeudi » : une plage, pas deux jours.
+_JOUR_PLAGE = re.compile(r"\bdu\s+(\w+)\s+au\s+(\w+)")
 
 
 def parse_jours(value: str) -> list[str]:
-    """Les jours de la semaine nommés dans un morceau, dans l'ordre de la semaine."""
+    """Les jours de représentation nommés dans un morceau, dans l'ordre de la semaine.
+
+    Deux pièges, tous deux mesurés au banc — 16 jours inventés et 51 faux sur
+    140 :
+
+    * **une exclusion n'est pas une représentation.** « relâche le lundi »
+      disait au site de proposer la sortie un lundi, c'est-à-dire exactement
+      le jour où elle ne se joue pas. C'est la pire faute de tout cet étage :
+      elle n'est pas approximative, elle est inversée ;
+    * **une plage n'est pas deux jours.** « du mardi au jeudi » rendait mardi
+      et jeudi, perdant le mercredi au passage. Le prompt de production le dit
+      déjà au modèle ; le Python ne le faisait pas.
+    """
     plat = flatten(value)
-    return [jour for jour in WEEKDAYS if jour in plat]
+    if _JOUR_EXCLU.search(plat):
+        return []
+
+    noms = list(WEEKDAYS)
+    m = _JOUR_PLAGE.search(plat)
+    if m and m.group(1) in WEEKDAYS and m.group(2) in WEEKDAYS:
+        debut, fin = noms.index(m.group(1)), noms.index(m.group(2))
+        # « du vendredi au lundi » enjambe la semaine.
+        if fin < debut:
+            return noms[debut:] + noms[: fin + 1]
+        return noms[debut : fin + 1]
+
+    return [jour for jour in noms if jour in plat]
 
 
 #: Ce qui suit un code postal dans une adresse : le code, puis la ville.
@@ -413,7 +488,23 @@ def to_event(
     if debut_iso and not fin_iso:
         fin_iso = debut_iso
 
-    horaires = sorted({h for s in par_champ.get("times", []) if (h := parse_heure(s.text))})
+    # Le **mieux noté**, et non le minimum et le maximum de la page.
+    #
+    # L'ancienne règle prenait la plus petite et la plus grande heure trouvées
+    # n'importe où : sur « ouvert de 9h à 18h, spectacle à 14h30 », elle rendait
+    # 09:00–18:00 quand le modèle avait désigné 14h30 avec le meilleur score.
+    # Une page affiche des heures partout — ouverture, dernière entrée,
+    # billetterie —, et les agréger mélange des faits qui n'ont rien à voir.
+    # Mesuré : 59 horaires faux et 29 inventés sur 140.
+    #
+    # La fermeture ne se lit que dans **le même morceau** que l'ouverture —
+    # « de 14h30 à 16h ». Deux spans distincts sont deux faits distincts.
+    horaires: list[str] = []
+    for span in sorted(par_champ.get("times", []), key=lambda s: -s.score):
+        lues = parse_heures(span.text)
+        if lues:
+            horaires = lues[:2]
+            break
 
     code_postal = declare("venue_postal_code")
     if not code_postal:
