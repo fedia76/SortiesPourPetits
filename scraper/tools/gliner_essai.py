@@ -49,15 +49,22 @@ from sortiesbot.providers.gliner_provider import (  # noqa: E402
 )
 from sortiesbot.spans import (  # noqa: E402
     CADRES,
-    LABEL_CLASSE,
     LABELS,
     SEUIL_DEFAUT,
     Span,
-    classe_retenue,
-    prompt_de_classes,
+    cadre_lu,
     to_event,
     unfilled_fields,
 )
+
+#: Le détournement de `gliner.multitask.classification`, gardé **ici** et non
+#: en production : on écrit les réponses possibles en tête du texte, et on
+#: demande au modèle de surligner la bonne. Mesuré sur le banc, ça rend 0 juste
+#: sur 16 pour la catégorie. `--classement` permet de le revoir en direct — le
+#: modèle surligne un des libellés que le gabarit vient de lui énumérer,
+#: à peu près au hasard, parce qu'il n'a jamais été entraîné à ce format.
+GABARIT_CLASSES = "Classe ce texte parmi : {}."
+LABEL_CLASSE = "classe"
 
 #: Jusqu'où descendre pour montrer ce que le modèle a *failli* rendre. Bien
 #: sous le seuil de production : c'est tout l'intérêt.
@@ -122,6 +129,11 @@ def main(argv: list[str] | None = None) -> int:
         help=f"le référentiel à classer, séparé par des virgules (défaut : {', '.join(CATEGORIES_ESSAI)})",
     )
     parser.add_argument("--texte", action="store_true", help="afficher le texte de chaque passe")
+    parser.add_argument(
+        "--classement",
+        action="store_true",
+        help="rejouer la classification zero-shot retirée de la production",
+    )
     args = parser.parse_args(argv)
 
     html, url = _page(args.source)
@@ -208,24 +220,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {nom:<20} {span.score:.2f}  « {span.text[:60]} »{retenu}{sous}")
     print()
 
-    # ── 2 bis. les deux champs qui se **classent** au lieu de s'extraire
-    print("── Ce qu'il classe (catégorie, cadre) ──")
-    entete = ""
-    for intitule, classes in (("catégorie", categories), ("cadre", list(CADRES))):
-        invite = prompt_de_classes(texte, classes, entete=entete, limite=budget)
-        bruts = tagger.predict_entities(invite, [LABEL_CLASSE], threshold=args.plancher)
-        propositions = sorted(bruts, key=lambda b: -float(b.get("score", 0)))[:4]
-        retenue = classe_retenue(
-            [
-                Span(label=LABEL_CLASSE, text=str(b.get("text", "")), score=float(b.get("score", 0)))
-                for b in bruts
-            ],
-            classes,
+    # ── 2 bis. la classification zero-shot, sur demande et hors production
+    if args.classement:
+        print("── Ce qu'il « classe » (détournement zero-shot) ──")
+        for intitule, classes in (("catégorie", categories), ("cadre", list(CADRES))):
+            tete = GABARIT_CLASSES.format(", ".join(classes))
+            invite = f"{tete}\n{texte[:budget]}"
+            bruts = tagger.predict_entities(invite, [LABEL_CLASSE], threshold=args.plancher)
+            propositions = sorted(bruts, key=lambda b: -float(b.get("score", 0)))[:4]
+            print(f"  {intitule:<10} {len(bruts)} proposition(s)")
+            for b in propositions:
+                print(f"  {'':<10} {float(b.get('score', 0)):.2f}  « {b.get('text', '')} »")
+        print(
+            "  Ce que ça montre : le modèle surligne un libellé que le gabarit\n"
+            "  vient de lui énumérer. Il ne classe pas — il recopie."
         )
-        print(f"  {intitule:<10} retenu : {retenue or '∅'}")
-        for b in propositions:
-            marque = "  ← retenu" if str(b.get("text", "")) == retenue else ""
-            print(f"  {'':<10} {float(b.get('score', 0)):.2f}  « {b.get('text', '')} »{marque}")
+        print()
+
+    # ── 2 ter. le cadre, tel que la production le lit désormais : sans modèle
+    print(f"── Le cadre, lu sans modèle : {cadre_lu(texte) or '∅'} ──")
     print()
 
     # ── 3. la fiche que la production en tirerait, et l'audit du banc
@@ -237,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     for aspect in audit_fiche(event, texte, list(lecture.get("dates", []))):
         drapeaux = ", ".join(aspect["flags"]) or "—"
         note = ""
-        if not aspect["filled"] and aspect["key"] in {"description", "cadre", "categorie"}:
+        if not aspect["filled"] and aspect["key"] in {"description", "categorie"}:
             note = "  (hors portée d'un étiqueteur)"
         print(f"  {aspect['label']:<22} {aspect['value'] or '∅':<40} {drapeaux}{note}")
 

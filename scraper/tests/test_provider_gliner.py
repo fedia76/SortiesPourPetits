@@ -26,7 +26,7 @@ from sortiesbot.providers.gliner_provider import (
 
 #: De quoi fabriquer un texte qui dépasse à coup sûr la fenêtre du modèle.
 LONG = FENETRE_JETONS_DEFAUT * CARACTERES_PAR_JETON * 3
-from sortiesbot.spans import LABEL_CLASSE, LABELS
+from sortiesbot.spans import LABELS
 
 AUJOURD_HUI = date(2026, 7, 1)
 PAR_CHAMP = {champ: libelle for libelle, champ in LABELS.items()}
@@ -45,13 +45,13 @@ class FauxTagger:
 
 
 def _extractions(tagger) -> list:
-    """Les appels d'**étiquetage**, sans ceux de classement.
+    """Les appels d'étiquetage : tous, désormais.
 
-    Depuis que la brique classe aussi la catégorie et le cadre, chaque page
-    vaut deux passes de plus. Elles se reconnaissent à leur libellé unique, et
-    les mêler aux tronçons ferait dire n'importe quoi aux comptes.
+    Il y a eu ici deux passes de classement par page, qu'il fallait écarter
+    des comptes. Elles ont été retirées — 0 juste sur 16 pour la catégorie —
+    et le cadre se lit maintenant sans modèle.
     """
-    return [appel for appel in tagger.appels if appel[1] != [LABEL_CLASSE]]
+    return list(tagger.appels)
 
 
 def _log() -> RunLog:
@@ -138,11 +138,13 @@ def test_le_journal_dit_ce_que_la_brique_ne_rend_pas():
     pose = [e for e in captures if e.get("kind") == "gliner"]
     assert pose
     assert "description" in pose[0]["non_rendus"]
-    # `setting` et `category` n'y sont plus : ils se demandent désormais par
-    # classement, et les y laisser ferait passer un champ rendu pour un champ
-    # hors de portée.
+    # `category` y est revenue après mesure : aucun site n'écrit « Catégorie :
+    # Spectacles », et un surligneur de spans n'a alors pas de span à
+    # surligner. Le banc doit le lire comme une limite annoncée.
+    assert "category" in pose[0]["non_rendus"]
+    # `setting` n'y est pas : la page l'écrit parfois en toutes lettres, et une
+    # règle lexicale le lit alors sans modèle.
     assert "setting" not in pose[0]["non_rendus"]
-    assert "category" not in pose[0]["non_rendus"]
 
 
 def test_le_mode_programme_est_refuse_bruyamment():
@@ -363,7 +365,7 @@ def test_le_banc_ne_voit_aucune_invention_et_c_est_le_piege():
     # Et les aspects hors portée sont vides, pas verts : c'est ce qui distingue
     # une limite annoncée d'un chiffre fabriqué.
     vides = {a["key"] for a in resultat["aspects"] if not a["filled"]}
-    assert {"description", "cadre", "categorie"} <= vides
+    assert {"description", "categorie"} <= vides
 
 
 # ────────────────────────── la fenêtre du modèle, et la faute qu'elle a coûtée
