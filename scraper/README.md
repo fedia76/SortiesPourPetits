@@ -442,6 +442,53 @@ fabriquerait une plage à partir de rien. Et la fenêtre du tarif est
 que sur une ligne énumérant quatre prix, *chacun* voisinait le mot « enfant ».
 Un qualificatif qui qualifie tout ne qualifie rien.
 
+#### Classer, et non extraire : la catégorie et le cadre
+
+Deux champs ne sont pas des morceaux de page. La **catégorie** est un choix
+dans un référentiel de six entrées, le **cadre** une déduction qu'une page
+n'écrit presque jamais. Je les avais rangés parmi les impossibles, avec la
+description : c'était faux. Une description est une **rédaction** ; ceux-là
+sont des **choix**, et un encodeur sait choisir.
+
+Le mécanisme est celui que la bibliothèque de GLiNER emploie elle-même
+(`gliner.multitask.classification`), réécrit ici en quelques lignes — ce
+module importe `datasets`, `sklearn` et de quoi évaluer sur des jeux Hugging
+Face, dont rien ne sert au pipeline. On lui prend son idée, pas ses
+dépendances.
+
+**On écrit les réponses possibles en tête du texte, et le modèle surligne la
+bonne** :
+
+```
+Classe ce texte parmi : Parc, Musée, Spectacle, Sport, Atelier, Non classé.
+Le Petit Prince Marionnettes à fils, dès 3 ans, salle Jean-Vilar.
+                                ↑
+                   le modèle surligne « Spectacle »
+```
+
+Le même étiqueteur, retourné comme un gant : au lieu de chercher une valeur
+dans la page, il choisit parmi celles qu'on lui donne. Rien de neuf n'est
+entraîné — c'est du zero-shot, comme le reste.
+
+Quatre choses qui se sont avérées compter davantage que le modèle :
+
+* **le titre passe avant le corps.** C'est le signal le plus dense pour une
+  catégorie, et les premiers caractères d'une page scrapée sont un fil
+  d'Ariane et un bandeau de cookies ;
+* **aucun libellé n'en contient un autre.** « en intérieur et en plein air »
+  englobait les deux autres cadres : un modèle surlignant « plein air »
+  désignait alors deux réponses et se faisait refuser, rendant `BOTH`
+  inatteignable. C'est « les deux » ;
+* **un morceau de libellé est rendu canonique** — « plein air » devient « en
+  plein air » — mais seulement s'il ne désigne qu'un candidat. Une fiche qui
+  porterait le morceau ne s'apparierait à rien côté site ;
+* **rien de reconnaissable ne rend rien.** Classer au hasard dans six entrées,
+  c'est se tromper cinq fois sur six.
+
+Le coût est de deux passes de plus par page, sur un texte court. Un échec de
+classement ne coûte que ce champ : c'est un bonus sur une fiche que les spans
+ont déjà remplie.
+
 #### Ce qu'il ne rend pas, et pourquoi il ne comble pas
 
 Quatre champs de la fiche ne sont pas des morceaux de page : `description` (une

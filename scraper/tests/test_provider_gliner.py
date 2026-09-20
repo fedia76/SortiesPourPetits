@@ -26,7 +26,7 @@ from sortiesbot.providers.gliner_provider import (
 
 #: De quoi fabriquer un texte qui dépasse à coup sûr la fenêtre du modèle.
 LONG = FENETRE_JETONS_DEFAUT * CARACTERES_PAR_JETON * 3
-from sortiesbot.spans import LABELS
+from sortiesbot.spans import LABEL_CLASSE, LABELS
 
 AUJOURD_HUI = date(2026, 7, 1)
 PAR_CHAMP = {champ: libelle for libelle, champ in LABELS.items()}
@@ -42,6 +42,16 @@ class FauxTagger:
     def predict_entities(self, text, labels, threshold=0.5):
         self.appels.append((text, list(labels), threshold))
         return [dict(r) for r in self.reponses if r.get("text", "") in text]
+
+
+def _extractions(tagger) -> list:
+    """Les appels d'**étiquetage**, sans ceux de classement.
+
+    Depuis que la brique classe aussi la catégorie et le cadre, chaque page
+    vaut deux passes de plus. Elles se reconnaissent à leur libellé unique, et
+    les mêler aux tronçons ferait dire n'importe quoi aux comptes.
+    """
+    return [appel for appel in tagger.appels if appel[1] != [LABEL_CLASSE]]
 
 
 def _log() -> RunLog:
@@ -91,9 +101,10 @@ def test_une_longue_page_est_decoupee_avec_recouvrement():
     tagger = FauxTagger()
     texte = "a " * (LONG // 2)
     GlinerProvider(tagger=tagger).extract("https://x.fr", texte, _config(), [], _log())
-    assert len(tagger.appels) > 1
+    appels = _extractions(tagger)
+    assert len(appels) > 1
     budget, _ = fenetre_caracteres(None, list(LABELS))
-    assert all(len(morceau) <= budget for morceau, _, _ in tagger.appels)
+    assert all(len(morceau) <= budget for morceau, _, _ in appels)
 
 
 def test_le_decalage_ramene_les_positions_a_la_page():
@@ -126,8 +137,12 @@ def test_le_journal_dit_ce_que_la_brique_ne_rend_pas():
     GlinerProvider(tagger=FauxTagger()).extract("https://x.fr", "texte", _config(), [], log)
     pose = [e for e in captures if e.get("kind") == "gliner"]
     assert pose
-    assert "setting" in pose[0]["non_rendus"]
     assert "description" in pose[0]["non_rendus"]
+    # `setting` et `category` n'y sont plus : ils se demandent désormais par
+    # classement, et les y laisser ferait passer un champ rendu pour un champ
+    # hors de portée.
+    assert "setting" not in pose[0]["non_rendus"]
+    assert "category" not in pose[0]["non_rendus"]
 
 
 def test_le_mode_programme_est_refuse_bruyamment():
@@ -244,7 +259,7 @@ def test_une_seule_page_n_emprunte_pas_le_chemin_groupe():
     tagger = TaggerGroupe()
     GlinerProvider(tagger=tagger).extract("https://x.fr", "texte court", _config(), [], _log())
     assert tagger.lots == []
-    assert len(tagger.appels) == 1
+    assert len(_extractions(tagger)) == 1
 
 
 def test_un_etiqueteur_sans_methode_groupee_reste_servi():
