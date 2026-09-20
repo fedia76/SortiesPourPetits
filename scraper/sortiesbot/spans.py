@@ -389,6 +389,110 @@ def _jour_iso(value: Any) -> str:
     return text
 
 
+#: Caractères lus **avant** un span pour le qualifier, et après.
+#:
+#: Asymétrique, et c'est le français qui le veut : ce qui qualifie une valeur
+#: la précède presque toujours — « relâche le », « à partir de », « tarif
+#: enfant ». Ce qui suit n'apporte guère que l'unité.
+CONTEXTE_AVANT = 70
+CONTEXTE_APRES = 25
+
+#: Deux horaires séparés par moins de ça forment **une plage**, pas deux faits.
+#: « de 14h30 à 16h » fait onze caractères entre les deux.
+PROXIMITE_HORAIRE = 18
+
+#: Ce qui, **juste avant** un tarif, désigne celui d'un enfant — le seul que la
+#: fiche retienne (le prompt de production le demande déjà au modèle).
+_TARIF_ENFANT = re.compile(r"\benfant|\bjeune public|\bmoins de \d|\b- ?\d{1,2} ans")
+
+#: Ce qu'on lit avant un tarif pour savoir à qui il s'adresse.
+#:
+#: **Étroit**, et c'est tout le point : « tarif enfant 8 € » tient en treize
+#: caractères. Une fenêtre large avalait la phrase entière, et sur une ligne
+#: qui énumère quatre prix, *chacun* se retrouvait voisin du mot « enfant ».
+#: Un qualificatif qui qualifie tout ne qualifie rien.
+TARIF_AVANT = 22
+
+#: Ce qui, avant un jour, l'**exclut** au lieu de l'annoncer.
+_JOUR_EXCLU_CONTEXTE = re.compile(
+    r"\brelache|\bsauf\b|\bexcepte|\bhormis\b|\bfermeture\b|\bferme(?:e|es|s)?\s+le\b|"
+    r"\bpas de (?:seance|representation|spectacle)"
+)
+
+#: « du mardi au jeudi » : la plage est dans le contexte, jamais dans le span.
+_JOUR_PLAGE_CONTEXTE = re.compile(r"\bdu\s+(\w+)\s+au\s+(\w+)")
+
+
+def contexte(text: str, span: Span, avant: int = CONTEXTE_AVANT, apres: int = CONTEXTE_APRES) -> str:
+    """Le texte autour d'un span, aplati, span compris.
+
+    C'est la pièce qui manquait, et son absence a coûté trois corrections pour
+    rien. GLiNER rend des spans **courts** — l'entité, pas la phrase : le span
+    d'un jour de représentation est `lundi`, jamais « relâche le lundi ». Toute
+    règle qui cherchait une négation ou une plage *dans* le span cherchait donc
+    un texte que le modèle ne donne jamais.
+
+    Il le donne autrement, et mieux : par la **position**. C'est tout l'intérêt
+    d'un étiqueteur — il dit où —, et c'était la seule chose qu'on jetait.
+    """
+    if not text or span.end <= span.start:
+        return flatten(span.text)
+    debut = max(0, span.start - avant)
+    return flatten(text[debut : span.end + apres])
+
+
+def _horaires(spans: list[Span]) -> list[str]:
+    """L'ouverture, et la fermeture **seulement si elle est à côté**.
+
+    Deux règles ont échoué avant celle-ci, et chacune sur la moitié du corpus.
+    Le minimum et le maximum de la page donnaient les heures d'ouverture d'un
+    lieu — juste pour un musée, faux pour un spectacle, dont ils noyaient la
+    séance entre l'accueil et la billetterie. Le seul mieux noté donnait la
+    séance — juste pour le spectacle, et il perdait la fermeture du musée,
+    ce qui a coûté cinq fiches justes.
+
+    La position tranche les deux cas d'un coup : « de 14h30 à 16h » porte ses
+    deux heures **côte à côte**, une heure d'ouverture isolée reste seule.
+    Ce n'est plus une règle qui parie sur la nature de la sortie.
+    """
+    if not spans:
+        return []
+    tete = max(spans, key=lambda sp: sp.score)
+    lues = parse_heures(tete.text)
+    if len(lues) >= 2:
+        return lues[:2]
+    if not lues:
+        return []
+
+    voisin: Span | None = None
+    for autre in spans:
+        # Sans position, pas de voisinage : deux spans à zéro ne sont pas
+        # « côte à côte », ils sont seulement dépourvus de coordonnées. Les
+        # traiter comme adjacents fabriquerait une plage à partir de rien.
+        if autre is tete or autre.end <= autre.start or tete.end <= tete.start:
+            continue
+        if not parse_heures(autre.text):
+            continue
+        ecart = min(abs(autre.start - tete.end), abs(tete.start - autre.end))
+        if ecart <= PROXIMITE_HORAIRE and (voisin is None or autre.score > voisin.score):
+            voisin = autre
+    if voisin is None:
+        return lues[:1]
+    paire = sorted((tete, voisin), key=lambda sp: sp.start)
+    return [parse_heures(sp.text)[0] for sp in paire]
+
+
+def _age(spans: list[Span], text: str) -> int | None:
+    """Le premier âge lisible parmi ces spans, contexte compris."""
+    for span in sorted(spans, key=lambda sp: -sp.score):
+        lu = parse_age(span.text)
+        if lu is None:
+            lu = parse_age(contexte(text, span, avant=30, apres=10))
+        if lu is not None:
+            return lu
+    return None
+
+
 def _meilleur(spans: list[Span]) -> str:
     """Le texte du span le mieux noté, ou vide."""
     return max(spans, key=lambda s: s.score).text.strip() if spans else ""
@@ -400,6 +504,7 @@ def to_event(
     today: date | None = None,
     seuil: float = SEUIL_DEFAUT,
     hints: dict[str, Any] | None = None,
+    text: str = "",
 ) -> ExtractedEvent:
     """La fiche que ces spans permettent de remplir. Rien de plus.
 
@@ -443,15 +548,44 @@ def to_event(
         brut = hints.get("price")
         prix = float(brut) if isinstance(brut, (int, float)) else None
     else:
-        for span in sorted(par_champ.get("price", []), key=lambda s: -s.score):
+        # Le tarif **enfant** d'abord : c'est celui que la fiche retient, et le
+        # prompt de production le demande déjà au modèle. Une page de théâtre
+        # affiche quatre prix ; le score seul n'a aucune raison de désigner le
+        # bon, son voisinage si.
+        candidats = par_champ.get("price", [])
+        ordre = sorted(
+            candidats,
+            key=lambda sp: (
+                0 if _TARIF_ENFANT.search(contexte(text, sp, avant=TARIF_AVANT, apres=0)) else 1,
+                -sp.score,
+            ),
+        )
+        for span in ordre:
+            # Le span d'abord : c'est lui que le modèle a désigné. Le contexte
+            # n'est qu'un repli, pour un span réduit au nombre — sans quoi on
+            # lirait le premier prix de la phrase plutôt que celui qu'on visait.
             lu_gratuit, lu_prix = parse_tarif(span.text)
+            if not lu_gratuit and lu_prix is None:
+                lu_gratuit, lu_prix = parse_tarif(contexte(text, span, avant=12, apres=8))
             if lu_gratuit or lu_prix is not None:
                 gratuit, prix = lu_gratuit, lu_prix
                 break
 
+    # Les jours se qualifient par ce qui les **précède**, jamais par eux-mêmes :
+    # le span est « lundi », la négation est dans « relâche le ».
     jours: list[str] = []
+    noms = list(WEEKDAYS)
     for span in par_champ.get("weekdays", []):
-        for jour in parse_jours(span.text):
+        autour = contexte(text, span)
+        if _JOUR_EXCLU_CONTEXTE.search(autour):
+            continue
+        plage = _JOUR_PLAGE_CONTEXTE.search(autour)
+        if plage and plage.group(1) in WEEKDAYS and plage.group(2) in WEEKDAYS:
+            debut, fin = noms.index(plage.group(1)), noms.index(plage.group(2))
+            lus = noms[debut:] + noms[: fin + 1] if fin < debut else noms[debut : fin + 1]
+        else:
+            lus = parse_jours(span.text)
+        for jour in lus:
             if jour not in jours:
                 jours.append(jour)
 
@@ -499,12 +633,7 @@ def to_event(
     #
     # La fermeture ne se lit que dans **le même morceau** que l'ouverture —
     # « de 14h30 à 16h ». Deux spans distincts sont deux faits distincts.
-    horaires: list[str] = []
-    for span in sorted(par_champ.get("times", []), key=lambda s: -s.score):
-        lues = parse_heures(span.text)
-        if lues:
-            horaires = lues[:2]
-            break
+    horaires = _horaires(par_champ.get("times", []))
 
     code_postal = declare("venue_postal_code")
     if not code_postal:
@@ -526,8 +655,10 @@ def to_event(
         description="",
         free=gratuit,
         price=prix,
-        age_min=parse_age(_meilleur(par_champ.get("age_min", []))) if par_champ.get("age_min") else None,
-        age_max=parse_age(_meilleur(par_champ.get("age_max", []))) if par_champ.get("age_max") else None,
+        # Lu dans le contexte, pas dans le span : « à partir de » précède le
+        # nombre, et le span rendu est souvent le nombre seul.
+        age_min=_age(par_champ.get("age_min", []), text),
+        age_max=_age(par_champ.get("age_max", []), text),
         # Inconnu tant qu'on n'a **rien** — mais connaître une plage, c'est
         # savoir que la sortie n'est pas permanente.
         #

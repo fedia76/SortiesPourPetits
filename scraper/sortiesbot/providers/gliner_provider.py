@@ -357,7 +357,13 @@ class GlinerProvider:
                     vus.add(cle)
                     spans.append(span)
 
-        event = to_event(spans, today=self._today, seuil=self._seuil, hints=hints)
+        # Le texte part avec les spans : sans lui, les positions ne désignent
+        # rien. C'est ce qui permet de lire « relâche le » devant un lundi, ou
+        # « tarif enfant » devant un prix — le span, lui, ne porte que la
+        # valeur.
+        event = to_event(
+            spans, today=self._today, seuil=self._seuil, hints=hints, text=content
+        )
         # Une fois la page finie, et pas au milieu : à ce point tout ce que
         # l'encodeur a alloué est libéré côté Python, et il n'y a plus qu'à le
         # rendre au système.

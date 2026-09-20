@@ -403,6 +403,45 @@ fabrique un fait que personne n'a écrit. L'horaire retenu est désormais celui
 du **mieux noté**, et la fermeture ne se lit que dans le **même morceau**
 (« de 14h30 à 16h ») : deux spans distincts sont deux faits distincts.
 
+#### La position est l'information, pas le texte du span
+
+Trois corrections avaient échoué avant de comprendre ça, et le banc l'a dit
+sans ambiguïté : après les avoir livrées, **dix aspects sur douze étaient
+identiques au chiffre près**. Elles n'avaient rien fait.
+
+La raison tient en une phrase : **GLiNER rend des spans courts** — l'entité,
+pas la phrase. Le span d'un jour de représentation est `lundi`, jamais
+« relâche le lundi ». Toute règle qui cherchait une négation, une plage ou une
+tournure *dans* le span cherchait un texte que le modèle ne donne jamais.
+
+Il le donne autrement, et mieux : par la **position**, au caractère près.
+C'était la seule chose qu'on jetait — `span.start` et `span.end` ne servaient
+qu'à dédoublonner. `contexte()` lit désormais autour du span, et quatre règles
+en découlent :
+
+| Champ | Ce que la position permet |
+|---|---|
+| jours | « relâche le » **devant** un jour l'écarte ; « du mardi au jeudi » se déroule |
+| horaires | deux heures **côte à côte** font une plage, une heure isolée reste seule |
+| tarif | « tarif enfant » **juste avant** un prix le fait passer devant le mieux noté |
+| âge | « à partir de » précède le nombre, et le span n'est souvent que le nombre |
+
+Les horaires méritent leur détail, parce que deux règles y avaient échoué
+chacune sur une moitié du corpus. Le minimum et le maximum de la page donnaient
+les heures d'ouverture d'un lieu — juste pour un musée, faux pour un spectacle
+dont la séance se noyait entre l'accueil et la billetterie. Le seul mieux noté
+donnait la séance — juste pour le spectacle, et il perdait la fermeture du
+musée, ce qui a coûté cinq fiches justes au run suivant. **La position tranche
+les deux cas d'un coup**, sans parier sur la nature de la sortie.
+
+Deux gardes valent d'être connus. Sans position — un span à `(0, 0)` —, aucun
+voisinage n'est calculé : deux spans sans coordonnées ne sont pas « côte à
+côte », ils sont dépourvus de coordonnées, et les traiter comme adjacents
+fabriquerait une plage à partir de rien. Et la fenêtre du tarif est
+**étroite** (22 caractères) : large, elle avalait la phrase entière, si bien
+que sur une ligne énumérant quatre prix, *chacun* voisinait le mot « enfant ».
+Un qualificatif qui qualifie tout ne qualifie rien.
+
 #### Ce qu'il ne rend pas, et pourquoi il ne comble pas
 
 Quatre champs de la fiche ne sont pas des morceaux de page : `description` (une

@@ -268,6 +268,19 @@ def test_une_plage_peut_enjamber_la_semaine():
     assert parse_jours("du vendredi au lundi") == ["vendredi", "samedi", "dimanche", "lundi"]
 
 
+def test_sans_position_aucune_plage_n_est_fabriquee():
+    """Deux spans à zéro ne sont pas « côte à côte », ils sont sans coordonnées."""
+    par_champ = {v: k for k, v in LABELS.items()}
+    event = to_event(
+        [
+            span(par_champ["times"], "9h", score=0.55),
+            span(par_champ["times"], "18h", score=0.60),
+        ],
+        today=AUJOURD_HUI,
+    )
+    assert (event.open_time, event.close_time) == ("18:00", "")
+
+
 def test_l_horaire_retenu_est_le_mieux_note():
     """Et non le minimum et le maximum de toute la page.
 
@@ -305,3 +318,127 @@ def test_les_heures_gardent_l_ordre_du_texte():
     from sortiesbot.spans import parse_heures
 
     assert parse_heures("de 22h30 à 01h") == ["22:30", "01:00"]
+
+
+# ─────────────────────── les positions, enfin utilisées pour ce qu'elles valent
+#
+# Trois corrections avaient échoué avant celles-ci, et pour la même raison :
+# elles cherchaient dans le span un texte que GLiNER ne donne jamais. Le span
+# d'un jour de représentation est `lundi` — « relâche le lundi » est le
+# **contexte**, et il ne s'atteint que par la position.
+
+
+def _place(
+    champ: str, texte_page: str, valeur: str, score: float = 0.9, depuis: int = 0
+) -> Span:
+    """Un span posé à sa vraie place dans la page.
+
+    `depuis` sert aux valeurs qui sont sous-chaînes l'une de l'autre : « 8 € »
+    se trouve d'abord dans « 18 € », et le span atterrissait au mauvais endroit
+    — une erreur du gabarit de test qui masquait celle du code.
+    """
+    par_champ = {v: k for k, v in LABELS.items()}
+    debut = texte_page.index(valeur, depuis)
+    return Span(
+        label=par_champ[champ], text=valeur, start=debut, end=debut + len(valeur), score=score
+    )
+
+
+def test_une_relache_lue_dans_le_contexte_ecarte_le_jour():
+    page = "Le Petit Prince, tous les jours à 14h30, relâche le lundi et le mardi."
+    event = to_event(
+        [_place("weekdays", page, "lundi")], text=page, today=AUJOURD_HUI
+    )
+    assert event.weekdays == ()
+
+
+def test_un_jour_annonce_reste_retenu():
+    page = "Le spectacle se joue tous les dimanches de septembre."
+    event = to_event(
+        [_place("weekdays", page, "dimanche")], text=page, today=AUJOURD_HUI
+    )
+    assert event.weekdays == ("dimanche",)
+
+
+def test_une_plage_lue_dans_le_contexte_se_deroule():
+    page = "Ouvert du mardi au jeudi, de 10h à 18h."
+    event = to_event([_place("weekdays", page, "jeudi")], text=page, today=AUJOURD_HUI)
+    assert event.weekdays == ("mardi", "mercredi", "jeudi")
+
+
+def test_deux_horaires_cote_a_cote_font_une_plage():
+    page = "Le musée est ouvert de 10h à 18h. Dernière entrée 17h30."
+    event = to_event(
+        [_place("times", page, "10h", 0.8), _place("times", page, "18h", 0.7)],
+        text=page,
+        today=AUJOURD_HUI,
+    )
+    assert (event.open_time, event.close_time) == ("10:00", "18:00")
+
+
+def test_un_horaire_isole_reste_seul():
+    page = "Accueil dès 9h. Le spectacle commence à 14h30. Billetterie jusqu'à 18h."
+    event = to_event(
+        [
+            _place("times", page, "9h", 0.55),
+            _place("times", page, "14h30", 0.95),
+            _place("times", page, "18h", 0.6),
+        ],
+        text=page,
+        today=AUJOURD_HUI,
+    )
+    assert (event.open_time, event.close_time) == ("14:30", "")
+
+
+def test_le_tarif_enfant_passe_devant_le_mieux_note():
+    """Une page de théâtre affiche quatre prix ; le score n'a aucune raison de
+    désigner le bon, son voisinage si."""
+    page = "Plein tarif 18 €, tarif réduit 12 €, tarif enfant 8 €."
+    event = to_event(
+        [
+            _place("price", page, "18 €", 0.95),
+            _place("price", page, "8 €", 0.60, depuis=page.index("enfant")),
+        ],
+        text=page,
+        today=AUJOURD_HUI,
+    )
+    assert event.price == 8.0
+
+
+def test_sans_marqueur_enfant_le_mieux_note_l_emporte():
+    """Le voisinage départage ; sans voisinage parlant, c'est le score."""
+    page = "Entrée 18 €. Visite guidée 12 €."
+    event = to_event(
+        [
+            _place("price", page, "18 €", 0.60),
+            _place("price", page, "12 €", 0.95),
+        ],
+        text=page,
+        today=AUJOURD_HUI,
+    )
+    assert event.price == 12.0
+
+
+def test_un_age_se_lit_dans_sa_tournure():
+    """Le span rendu est souvent le nombre seul : « à partir de » le précède."""
+    page = "Spectacle familial, à partir de 3 ans, durée 45 minutes."
+    par_champ = {v: k for k, v in LABELS.items()}
+    debut = page.index("3")
+    event = to_event(
+        [Span(label=par_champ["age_min"], text="3", start=debut, end=debut + 1, score=0.8)],
+        text=page,
+        today=AUJOURD_HUI,
+    )
+    assert event.age_min == 3
+
+
+def test_un_nombre_sans_tournure_reste_refuse():
+    page = "Rendez-vous salle 3, au deuxième étage."
+    par_champ = {v: k for k, v in LABELS.items()}
+    debut = page.index("3")
+    event = to_event(
+        [Span(label=par_champ["age_min"], text="3", start=debut, end=debut + 1, score=0.8)],
+        text=page,
+        today=AUJOURD_HUI,
+    )
+    assert event.age_min is None
