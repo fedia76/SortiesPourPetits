@@ -410,27 +410,40 @@ avec un facteur trois devant elle. Un appel qui déborderait quand même le dit
 en clair dans le journal, en nommant la constante à relever, plutôt que de
 faire accuser le prompt.
 
-**Ce que ce modèle coûte, mesuré.** Cette même reconnaissance :
+**Ce que ce modèle coûte, mesuré.** La même reconnaissance, avant et après le
+réglage de l'effort :
 
-    476 jetons d'entrée, 2 807 de sortie (dont 1 312 de raisonnement) → 0,001475 $
+| | Entrée | Sortie | dont raisonnement | Coût |
+|---|---|---|---|---|
+| sans réglage | 476 | 2 807 | 1 312 | 0,001475 $ |
+| effort `low` | 476 | 37 | **0** | **0,000090 $** |
 
-Le même appel chez Haiku coûterait environ 0,001 $. **Le modèle « flash »
-revient donc une fois et demie plus cher que Haiku sur le plus petit des quatre
-appels**, et ce n'est pas un paradoxe : son jeton vaut environ dix fois moins,
-mais le raisonnement obligatoire lui en fait produire vingt-cinq fois plus.
+Seize fois moins cher, pour la même page et la même question. Le raisonnement
+*était* le coût de cet appel — et « low » suffit à l'annuler tout à fait sur ce
+modèle, là où le couper franchement se faisait refuser.
 
-Le rapport s'inverse dès que l'appel grossit, le raisonnement ne grossissant
-pas avec lui : à l'extraction — huit mille caractères de page en entrée, une
-fiche entière en sortie — le même calcul donne environ 0,0013 $ contre 0,0062 $
-pour Haiku, soit cinq fois moins. C'est là que ce modèle se gagne.
+Les deux mesures donnent le tarif par soustraction — 2 770 jetons de sortie de
+plus pour 0,001385 $ — soit environ **0,15 $ le million en entrée et 0,50 $ en
+sortie**, ce qu'affiche sa page OpenRouter. Face à Haiku 4.5 (1 $ et 5 $) :
+sept fois moins cher à l'entrée, dix fois à la sortie. En ordre de grandeur sur
+les deux étages qui comptent :
 
-Trois réserves sur ces chiffres, qui comptent autant que les chiffres. Ils
-viennent d'**un seul appel** ; le tarif du modèle y est déduit plutôt que lu,
-si bien que seul le total de 0,001475 $ est une mesure ; et ils ont été relevés
-**avant** qu'on règle l'effort de raisonnement, qui vise précisément ces 1 312
-jetons. C'est un ordre de grandeur d'avant le réglage, pas un verdict — le
-verdict, c'est le banc qui le rendra, et il sait maintenant jouer ce
-fournisseur.
+| | OpenRouter (défaut) | Haiku 4.5 | |
+|---|---|---|---|
+| Reconnaissance | 0,000090 $ | ~0,00098 $ | ~11 fois moins |
+| Extraction | ~0,00076 $ | ~0,0062 $ | ~8 fois moins |
+
+**Ce que ces chiffres ne disent pas, et qui décide de tout** : si les fiches
+valent celles de Haiku. Les deux appels de la vérification ont d'ailleurs rendu
+deux natures différentes pour la même page — « programme » puis « agenda » —,
+ce qui s'explique en partie (le premier n'envoie pas la consigne système) mais
+ne rassure pas. Un modèle dix fois moins cher qui se trompe une fois sur cinq
+coûte plus cher que celui qu'il remplace, en temps de modération. C'est au banc
+de trancher, étage par étage, et il sait désormais jouer ce fournisseur.
+
+Réserve de méthode : ces chiffres viennent d'**un appel par réglage**. Les
+totaux en dollars sont des mesures ; les tarifs unitaires en sont déduits, et
+les deux lignes du second tableau en découlent.
 
 La forme des réponses **a été confrontée au service** le 21 septembre 2026 ; le
 détail de ce qui a été observé est en tête de `providers/openrouter_provider.py`.

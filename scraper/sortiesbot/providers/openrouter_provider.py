@@ -97,29 +97,40 @@ laisse la place, et un message d'erreur qui nomme ce cas s'il déborde encore.
 
 ## Ce que ça coûte, mesuré
 
-Une reconnaissance, le plus petit des quatre appels, sur le modèle par défaut,
-**avant** qu'on règle l'effort de raisonnement :
+La même reconnaissance — le plus petit des quatre appels, sur le modèle par
+défaut — avant et après avoir réglé l'effort de raisonnement :
 
-    476 jetons d'entrée, 2 807 de sortie, dont 1 312 de raisonnement
-    0,001475 $
+    sans réglage    476 jetons d'entrée, 2 807 de sortie dont 1 312 de
+                    raisonnement                              0,001475 $
+    effort « low »  476 jetons d'entrée, 37 de sortie dont
+                    **zéro** de raisonnement                  0,000090 $
 
-Le même appel chez Haiku 4.5 coûterait environ 0,001 $ — 476 jetons d'entrée à
-1 $ le million, une centaine de jetons de sortie à 5 $. **Le modèle « flash »
-revient donc une fois et demie plus cher que Haiku sur cet appel-là**, et ce
-n'est pas un paradoxe : son jeton vaut environ dix fois moins, mais le
-raisonnement obligatoire lui en fait produire vingt-cinq fois plus.
+Seize fois moins cher, pour la même page et la même question. Ce n'est pas un
+réglage fin : le raisonnement **était** le coût de cet appel, et « low » suffit
+à l'annuler tout à fait sur ce modèle-là, là où `enabled: false` se faisait
+refuser en 400.
 
-Le rapport s'inverse dès que l'appel grossit, parce que le raisonnement, lui,
-ne grossit pas avec : à l'extraction, où le prompt porte huit mille caractères
-de page et la réponse une fiche entière, le même calcul donne environ 0,0013 $
-contre 0,0062 $ pour Haiku. C'est là que ce modèle se gagne, et c'est ce que le
-banc doit trancher plutôt que ces deux règles de trois.
+Les deux mesures donnent le tarif par soustraction — 2 770 jetons de sortie de
+plus pour 0,001385 $ — soit environ **0,15 $ le million en entrée et 0,50 $ en
+sortie**. C'est ce qu'affiche sa page OpenRouter, et ça situe ce modèle face à
+Haiku 4.5 (1 $ et 5 $) : sept fois moins cher à l'entrée, dix fois à la sortie.
 
-Trois réserves sur ces chiffres. Ils viennent d'**un seul appel** ; le tarif du
-modèle y est déduit, non lu, si bien que seul le total de 0,001475 $ est une
-mesure ; et ils précèdent `EFFORT_RAISONNEMENT`, qui vise précisément ces
-1 312 jetons. C'est un ordre de grandeur d'avant le réglage — à refaire, et
-c'est à quoi sert le vérificateur.
+De quoi estimer les deux étages qui comptent, en ordre de grandeur :
+
+    reconnaissance    GLM 0,000090 $   Haiku ~0,00098 $    ~11 fois moins
+    extraction        GLM ~0,00076 $   Haiku ~0,0062 $      ~8 fois moins
+
+**Ce que ces chiffres ne disent pas, et qui décide de tout** : si les fiches
+valent les siennes. Les deux appels de la vérification ont d'ailleurs rendu
+deux natures différentes pour la même page — « programme » puis « agenda » —,
+ce qui s'explique en partie (le premier n'envoie pas la consigne système) mais
+ne rassure pas. Un modèle dix fois moins cher qui se trompe une fois sur cinq
+coûte plus cher que celui qu'il remplace, en modération. C'est au banc de le
+dire, étage par étage, et il sait désormais jouer ce fournisseur.
+
+Réserve de méthode : ces chiffres viennent d'**un appel par réglage**. Les
+totaux en dollars sont des mesures ; les tarifs unitaires en sont déduits, et
+les deux lignes du tableau ci-dessus en découlent.
 """
 
 from __future__ import annotations
@@ -196,10 +207,11 @@ TARIF_INCONNU = (5.0, 25.0)
 #: étiquette parmi quatre, ou qui recopie des numéros de ligne, n'a besoin
 #: d'aucun des trois ; à défaut de zéro, c'est « low ».
 #:
-#: Ce que ça change, mesuré sur la reconnaissance : sans réglage, 1 312 jetons
-#: de raisonnement et 0,001475 $ — plus cher que Haiku sur le même appel. Le
-#: raisonnement est la seule chose qui coûte ici, et c'est la seule qu'on ne
-#: voulait pas.
+#: Ce que ça change, mesuré sur la reconnaissance : 1 312 jetons de raisonnement
+#: et 0,001475 $ sans réglage, **zéro** jeton et 0,000090 $ avec « low ». Seize
+#: fois moins cher pour la même page et la même question — le raisonnement
+#: *était* le coût de cet appel. Et « low » l'annule tout à fait sur ce
+#: modèle-là, là où `enabled: false` se faisait refuser en 400.
 #:
 #: Le réglage est envoyé à **tous** les modèles, et ce n'est pas sans risque :
 #: il voyage à côté de `require_parameters`, qui ne route que vers un hébergeur
