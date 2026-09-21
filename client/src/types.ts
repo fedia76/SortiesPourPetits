@@ -205,8 +205,12 @@ export interface ScraperConfig {
    * seule à porter encore les liens que la modération va trancher.
    */
   freezeAgendas: boolean;
-  /** Qui lance les recherches : l'outil serveur du modèle, ou Google. */
-  provider: 'anthropic' | 'serper';
+  /**
+   * Qui cherche, et qui tient le modèle derrière — un champ pour ces deux
+   * choix, parce qu'il n'existe que ces trois croisements : l'outil serveur du
+   * modèle avec Claude, Google avec Claude, Google avec un modèle d'OpenRouter.
+   */
+  provider: 'anthropic' | 'serper' | 'openrouter';
   /** Pages suivantes d'un agenda, suivies tant que la moisson est maigre. */
   maxNextPages: number;
   /** Requêtes imposées, une par ligne. Vide : le modèle les formule. */

@@ -19,10 +19,25 @@ seul appel à qui l'on demanderait de dérouler toute une procédure :
 Les deux extractions s'excluent : une page ne porte qu'une sortie (mode
 « recherche ») ou plusieurs (mode « site », page de programme d'un festival).
 
-Le schéma de sortie de l'extraction est défini côté fournisseur
-(`providers/anthropic_provider.py`) : un champ ajouté ici doit l'être là
-aussi, sinon le modèle n'a pas le droit de le renseigner.
+Le schéma de sortie de l'extraction est défini dans
+[`providers/schemas.py`](providers/schemas.py) : un champ ajouté ici doit
+l'être là aussi, sinon le modèle n'a pas le droit de le renseigner.
 """
+
+#: Ce qu'on dit au modèle avant tout le reste, quel que soit l'appel et quel
+#: que soit le fournisseur.
+#:
+#: Il vivait chez le fournisseur Anthropic, où il était né. Un second
+#: fournisseur de modèle est arrivé, et deux consignes système divergentes
+#: auraient fait deux briques qui ne répondent pas à la même question — la
+#: différence se serait lue au banc comme une différence de modèle. Seul
+#: gabarit de ce fichier qu'une configuration ne peut pas remplacer : les
+#: autres se règlent par recherche, celui-ci tient à ce qu'est le site.
+SYSTEM = (
+    "Tu alimentes un site francophone d'idées de sorties à faire avec des enfants. "
+    "Tu ne rapportes que ce que les pages consultées disent réellement : "
+    "aucune date, aucun tarif et aucune adresse inventés."
+)
 
 QUERIES = """\
 Tu prépares une collecte de sorties à faire avec des enfants, pour un site

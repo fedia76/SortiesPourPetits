@@ -24,7 +24,7 @@ from test_pipeline import (  # fakes partagés
 
 from sortiesbot import worker
 from sortiesbot.api import ApiError
-from sortiesbot.config import Config, ConfigError, config_from_api
+from sortiesbot.config import Config, ConfigError, Environment, config_from_api
 from sortiesbot.journal import RunLog
 from sortiesbot.models import FoundPage, Summary, Usage
 from sortiesbot.store import RemoteStore, normalize_url
@@ -226,7 +226,7 @@ def standard():
 
 def run_job(api, monkeypatch, provider, fetcher, runs_dir, payload=None):
     """Joue `worker.execute` avec un fournisseur et un serveur web simulés."""
-    monkeypatch.setattr(worker, "get_provider", lambda config, api_key=None, serper_key=None: provider)
+    monkeypatch.setattr(worker, "get_provider", lambda config, **clés: provider)
     monkeypatch.setattr(
         worker,
         "run_pipeline",
@@ -240,7 +240,7 @@ def run_job(api, monkeypatch, provider, fetcher, runs_dir, payload=None):
     # Le registre du classifieur s'accumule d'un run à l'autre : un test ne
     # doit surtout pas écrire dans celui du dépôt.
     monkeypatch.setattr(worker, "LEDGER_DIR", runs_dir)
-    env = type("Env", (), {"anthropic_key": "clé", "serper_key": None})()
+    env = Environment(api_url="http://site", api_key="spp_x", anthropic_key="clé")
     worker.execute(payload or job(), api, env, runs_dir=runs_dir, quiet=True)
 
 
@@ -278,9 +278,11 @@ def test_un_plantage_imprevu_clot_quand_meme_lexecution(tmp_path, monkeypatch):
     """Sans clôture, la console resterait bloquée sur « En cours »."""
     api = ScraperApi()
     monkeypatch.setattr(
-        worker, "get_provider", lambda config, api_key=None, serper_key=None: (_ for _ in ()).throw(RuntimeError("boum"))
+        worker,
+        "get_provider",
+        lambda config, **clés: (_ for _ in ()).throw(RuntimeError("boum")),
     )
-    env = type("Env", (), {"anthropic_key": "clé", "serper_key": None})()
+    env = Environment(api_url="http://site", api_key="spp_x", anthropic_key="clé")
     worker.execute(job(), api, env, runs_dir=tmp_path, quiet=True)
 
     run_id, status, counters = api.finished[0]

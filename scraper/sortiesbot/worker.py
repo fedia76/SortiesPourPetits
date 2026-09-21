@@ -224,7 +224,12 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
     # de débogage affiche, étage par étage.
     journal = RemoteJournal(api, run_id)
     try:
-        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
+        provider = get_provider(
+            config,
+            api_key=env.anthropic_key,
+            serper_key=env.serper_key,
+            openrouter_key=env.openrouter_key,
+        )
         with open_log(runs_dir, config.name, quiet, sink=journal.add) as log:
             if log.path and not quiet:
                 print(f"  journal : {log.path}", flush=True)
@@ -354,7 +359,12 @@ def chasse(job: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> N
     requetes = list(config.queries)
     provider = None
     try:
-        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
+        provider = get_provider(
+            config,
+            api_key=env.anthropic_key,
+            serper_key=env.serper_key,
+            openrouter_key=env.openrouter_key,
+        )
         found = hunt(config, provider, log, fetcher=Fetcher())
         requetes = list(found["queries"])
         hors_plafond = int(found["overCap"])
@@ -647,7 +657,12 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
         # fenêtre contre laquelle le site le jugera — elles viennent de la même
         # ligne en base, et ne peuvent pas diverger.
         config = _config_du_run(run, quiet)
-        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
+        provider = get_provider(
+            config,
+            api_key=env.anthropic_key,
+            serper_key=env.serper_key,
+            openrouter_key=env.openrouter_key,
+        )
 
     traites = 0
     temoin = _Temoin()
@@ -802,8 +817,17 @@ def main(argv: list[str] | None = None) -> int:
     if not env.api_key:
         print("SPP_API_KEY est requis (voir .env.example)", file=sys.stderr)
         return 2
-    if not env.anthropic_key:
-        print("ANTHROPIC_API_KEY est requis (voir .env.example)", file=sys.stderr)
+    # Un modèle, au moins : lequel dépend de la recherche qu'on lui donnera,
+    # et le worker ne le sait pas en démarrant. Exiger la clé d'Anthropic
+    # aurait fermé la porte à une installation qui ne tourne qu'au routeur ;
+    # n'en exiger aucune l'ouvrirait à un service qui démarre pour échouer à
+    # chaque exécution.
+    if not env.anthropic_key and not env.openrouter_key:
+        print(
+            "Une clé de modèle est requise : ANTHROPIC_API_KEY, OPENROUTER_API_KEY, "
+            "ou les deux (voir .env.example)",
+            file=sys.stderr,
+        )
         return 2
 
     signal.signal(signal.SIGINT, _handle_signal)

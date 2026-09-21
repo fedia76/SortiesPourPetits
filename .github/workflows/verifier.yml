@@ -127,3 +127,37 @@ jobs:
         env:
           SERPER_API_KEY: ${{ secrets.SERPER }}
         run: python -m tools.serper_shape "spectacle jeune public Paris septembre"
+
+  # Même règle que le job ci-dessus, et même raison de l'avoir écrit : les
+  # tests d'`openrouter_provider.py` simulent une forme de réponse que
+  # personne n'a confrontée au service. Celui-ci le fait — il vérifie au
+  # passage que la table d'équivalences de modèles pointe encore sur des
+  # modèles existants — et coûte quelques centièmes de centime.
+  openrouter:
+    name: Forme réelle des réponses OpenRouter (sur demande)
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || contains(github.event.head_commit.message, '[openrouter]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Vérifier la clé
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER }}
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::error::Le secret OPENROUTER est vide ou absent des secrets du dépôt."
+            exit 1
+          fi
+          echo "Clé présente (${#OPENROUTER_API_KEY} caractères)."
+      - name: Installer
+        working-directory: scraper
+        run: pip install -e .
+      - name: Interroger OpenRouter
+        working-directory: scraper
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER }}
+        run: python -m tools.openrouter_shape

@@ -48,7 +48,7 @@ function blank() {
     blockAggregators: false,
     sourceSearch: true,
     freezeAgendas: true,
-    provider: 'anthropic' as 'anthropic' | 'serper',
+    provider: 'anthropic' as ScraperConfig['provider'],
     queries: '',
     classifyModel: 'claude-haiku-4-5',
     searchModel: 'claude-haiku-4-5',
@@ -457,18 +457,35 @@ onMounted(load);
             </span>
           </div>
 
-          <div v-if="!cibleUnSite" class="field">
-            <label for="s-provider">Moteur de recherche</label>
+          <div class="field">
+            <label for="s-provider">Moteur et modèle</label>
             <select id="s-provider" v-model="form.provider">
-              <option value="anthropic">Anthropic — l'outil du modèle</option>
-              <option value="serper">Serper — Google</option>
+              <option value="anthropic">Anthropic — l'outil du modèle, et Claude derrière</option>
+              <option value="serper">Serper — Google, et Claude derrière</option>
+              <option value="openrouter">Serper + OpenRouter — Google, et le modèle du routeur</option>
             </select>
-            <span class="hint">
+            <span v-if="!cibleUnSite" class="hint">
               Anthropic passe par l'outil serveur du modèle : les résultats entrent dans
               son contexte, et ces jetons se facturent. Serper interroge Google — un
               dixième du prix, pas un jeton d'entrée, et un index plus profond sur le
               local francophone. Le modèle reste derrière dans les deux cas : un moteur
               trouve des pages, il ne les juge pas.
+            </span>
+            <span v-else class="hint">
+              Cette recherche part d'adresses connues : elle ne cherche pas, et le moteur
+              ne lui sert à rien. Seul le modèle compte ici — celui qui reconnaît les
+              pages, trie les liens et remplit les fiches.
+            </span>
+            <span v-if="form.provider === 'openrouter'" class="hint">
+              OpenRouter ne change que le modèle : les quatre appels — formuler,
+              reconnaître, trier, remplir — partent chez un routeur qui donne accès à des
+              centaines de modèles avec une seule clé. Les quatre champs « Modèle »
+              ci-dessous prennent alors un nom de là-bas, en deux parties :
+              <code>anthropic/claude-haiku-4.5</code>, <code>google/gemini-2.5-flash</code>,
+              <code>mistralai/mistral-small</code>. Les noms du pipeline
+              (<code>claude-haiku-4-5</code>) sont traduits vers leur équivalent ;
+              tout autre nom sans barre oblique est refusé au lancement, avant la
+              première dépense. La recherche, elle, reste chez Serper.
             </span>
           </div>
 

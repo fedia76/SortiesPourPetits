@@ -275,15 +275,27 @@ export const SCRAPER_MODES = ['recherche', 'site'] as const;
 export type ScraperMode = (typeof SCRAPER_MODES)[number];
 
 /**
- * Qui lance les recherches web.
+ * Qui cherche, et qui tient le modèle derrière. Un seul champ pour ces deux
+ * choix, parce qu'il n'existe que ces trois croisements :
+ *
+ *   anthropic   outil serveur du modèle  +  Claude
+ *   serper      Serper (Google)          +  Claude
+ *   openrouter  Serper (Google)          +  un modèle d'OpenRouter
  *
  * « anthropic » passe par l'outil serveur du modèle : les résultats entrent
  * dans son contexte, et ces jetons se facturent. « serper » interroge Google
  * et rend du JSON — un dixième du prix, pas un jeton d'entrée, et un index
- * plus profond sur le local francophone. Le modèle reste derrière dans les
- * deux cas : un moteur trouve des pages, il ne les juge pas.
+ * plus profond sur le local francophone. Un moteur trouve des pages, il ne
+ * les juge pas : un modèle reste derrière dans les trois cas.
+ *
+ * « openrouter » ne change que ce modèle-là. Les quatre appels — formuler,
+ * reconnaître, trier, remplir — partent chez un routeur qui donne accès à des
+ * centaines de modèles avec une seule clé, et les quatre champs « modèle »
+ * portent alors un nom de là-bas : « anthropic/claude-haiku-4.5 »,
+ * « google/gemini-2.5-flash ». La recherche, elle, reste chez Serper : le
+ * scraper réclame donc les deux clés.
  */
-export const SCRAPER_PROVIDERS = ['anthropic', 'serper'] as const;
+export const SCRAPER_PROVIDERS = ['anthropic', 'serper', 'openrouter'] as const;
 export type ScraperProvider = (typeof SCRAPER_PROVIDERS)[number];
 
 /**
