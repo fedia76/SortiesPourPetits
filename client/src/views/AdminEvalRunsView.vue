@@ -51,7 +51,8 @@ const recherche = ref<EvalRecherche | null>(null);
 const prefixes = ref('');
 
 /**
- * Qui remplira la fiche, pour un run d'extraction.
+ * Qui jouera la brique : remplir la fiche (étage 6), ou trier les liens
+ * (étage 4). Les deux seuls étages qui appellent quelqu'un.
  *
  * Même raison d'être que la recherche juste au-dessus, et même sens de flèche :
  * le choix appartient à qui lance la mesure, pas au service qui la joue. Le
