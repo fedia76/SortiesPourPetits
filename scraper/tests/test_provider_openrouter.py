@@ -32,6 +32,7 @@ from sortiesbot.prompts import SYSTEM
 from sortiesbot.providers.base import ProviderError, get_provider
 from sortiesbot.providers.openrouter_provider import (
     ENDPOINT,
+    MODELE_DEFAUT,
     TARIF_INCONNU,
     OpenRouterProvider,
     modele_openrouter,
@@ -75,7 +76,7 @@ def reponse(contenu: dict, *, cout: float | None = 0.0012, fin: str = "stop") ->
         usage["cost"] = cout
     return {
         "id": "gen-1",
-        "model": "anthropic/claude-haiku-4.5",
+        "model": "z-ai/glm-5.3-flash",
         "choices": [
             {
                 "index": 0,
@@ -126,7 +127,7 @@ def test_lappel_porte_le_schema_la_consigne_et_la_facture(log):
     assert appel["headers"]["Authorization"] == "Bearer sk-or-x"
 
     corps = appel["body"]
-    assert corps["model"] == "anthropic/claude-haiku-4.5"
+    assert corps["model"] == MODELE_DEFAUT
     assert corps["messages"][0] == {"role": "system", "content": SYSTEM}
     assert "le texte de la page" in corps["messages"][1]["content"]
     # Le schéma est celui du pipeline, pas une copie : c'est ce qui garantit
@@ -150,17 +151,38 @@ def test_aucun_outil_nest_proposé(log):
 
 
 def test_un_slug_openrouter_passe_tel_quel():
+    """Qui écrit un slug a choisi : le catalogue dira s'il existe, pas nous."""
     assert modele_openrouter("google/gemini-2.5-flash") == "google/gemini-2.5-flash"
 
 
-def test_les_noms_du_pipeline_sont_traduits():
-    """Basculer une recherche existante sur OpenRouter ne doit pas la casser."""
-    assert modele_openrouter("claude-haiku-4-5") == "anthropic/claude-haiku-4.5"
+def test_un_nom_du_pipeline_vaut_le_modele_par_defaut():
+    """La console pré-remplit ses champs avec un nom qui n'existe pas là-bas.
+
+    C'est le cas normal, et il ne veut pas dire « route-moi vers le même
+    modèle » : on ne passe pas à un routeur pour payer Claude par un
+    intermédiaire.
+    """
+    assert modele_openrouter("claude-haiku-4-5") == MODELE_DEFAUT
+    assert modele_openrouter("claude-sonnet-5") == MODELE_DEFAUT
 
 
-def test_un_nom_intraduisible_est_refuse():
+def test_le_modele_par_defaut_est_celui_quon_a_choisi():
+    """Il se lit ici plutôt que dans quatre fichiers de configuration."""
+    assert MODELE_DEFAUT == "z-ai/glm-5.3-flash:floor"
+
+
+def test_le_defaut_se_remplace_sans_toucher_au_module():
+    assert modele_openrouter("claude-haiku-4-5", "openai/gpt-5-mini") == "openai/gpt-5-mini"
+
+
+def test_un_nom_qui_nest_ni_lun_ni_lautre_est_refuse():
+    """Sinon une faute de frappe passerait pour « rien choisi ».
+
+    Et le run entier tournerait sur un modèle qu'on n'a pas demandé, sans que
+    rien ne le dise.
+    """
     with pytest.raises(ProviderError) as err:
-        modele_openrouter("gpt-cinq")
+        modele_openrouter("gemini-2.5-flash")
     assert "éditeur/modèle" in str(err.value)
 
 
@@ -180,6 +202,14 @@ def test_une_configuration_openrouter_accepte_les_modeles_par_defaut():
     """La console écrit « claude-haiku-4-5 » partout : ça doit passer."""
     conf = config_from_api({"name": "essai", "theme": "x", "provider": "openrouter"})
     assert conf.provider == "openrouter"
+
+
+def test_une_configuration_laissee_par_defaut_appelle_le_modele_par_defaut(log):
+    """Le bout en bout : ce que la console écrit, et ce qui part vraiment."""
+    conf = config_from_api({"name": "essai", "theme": "x", "provider": "openrouter"})
+    provider, routeur = provider_de(Reponse(reponse(FICHE)))
+    provider.extract("https://x.fr/a", "texte", conf, [], log)
+    assert routeur.appels[0]["body"]["model"] == MODELE_DEFAUT
 
 
 # ──────────────────────────────────────────────────────────────── la facture

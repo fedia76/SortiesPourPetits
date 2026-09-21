@@ -97,7 +97,7 @@ watch(PROVIDERS, (offerts) => {
 const MODELE_PLACEHOLDER: Record<EvalProvider, string> = {
   anthropic: '',
   gliner: 'urchade/gliner_multi-v2.1',
-  openrouter: 'anthropic/claude-haiku-4.5',
+  openrouter: 'z-ai/glm-5.3-flash:floor',
 };
 
 async function load() {
@@ -529,11 +529,12 @@ function depuis(value: string | null): string {
           </div>
         </div>
         <p v-if="provider === 'openrouter'" class="muted small">
-          Le modèle s’écrit en deux parties — <code>anthropic/claude-haiku-4.5</code>,
-          <code>google/gemini-2.5-flash</code>. Laissé vide, c’est celui de la
-          production qui part chez le routeur : même modèle, autre route, ce qui
-          mesure la route plutôt que le modèle. La question intéressante est
-          l’autre — <strong>quel modèle tient cet étage, et pour combien</strong>.
+          Le modèle s’écrit en deux parties — <code>z-ai/glm-5.3-flash</code>,
+          <code>google/gemini-2.5-flash</code>, <code>anthropic/claude-haiku-4.5</code>.
+          Laissé vide, c’est le modèle par défaut du scraper qui joue le run, suffixe
+          <code>:floor</code> compris. Ce suffixe demande <strong>l’hébergeur le moins
+          cher</strong>, et il n’est pas le même d’un appel à l’autre : pour une mesure
+          qu’on veut reproductible, nommez le modèle sans lui.
         </p>
         <p v-if="provider === 'openrouter'" class="muted small">
           Le coût n’est pas estimé mais <strong>annoncé par le service</strong>,

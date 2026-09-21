@@ -24,6 +24,15 @@ voudra « outil serveur Anthropic + modèle OpenRouter », il faudra deux champs
 au lieu d'un, en base, dans la console et ici. Rien de ce fichier ne s'y
 opposera.
 
+## Quel modèle
+
+Celui que la configuration nomme, quand elle en nomme un qu'OpenRouter
+comprend — c'est-à-dire un slug `éditeur/modèle`. Sinon `MODELE_DEFAUT`, et
+c'est le cas normal : la console pré-remplit ses quatre champs avec un nom du
+vocabulaire d'Anthropic, qui ne veut rien dire là-bas. Les noms du pipeline ne
+sont donc pas traduits, ils valent « au choix du scraper » — on ne passe pas à
+un routeur pour continuer à payer le même modèle par un intermédiaire.
+
 ## Ce qu'on demande au service, et pourquoi
 
 * **Du JSON structuré** (`response_format: json_schema`, `strict`). Les
@@ -67,6 +76,7 @@ from ..harvest import Link
 from ..journal import RunLog
 from ..models import ExtractedEvent, FoundPage, Usage
 from ..prompts import SYSTEM
+from .anthropic_provider import PRICES
 from .base import ProviderError
 from .schemas import (
     CLASSIFY_MAX_TOKENS,
@@ -119,46 +129,67 @@ CODES_PASSAGERS = (408, 429, 502, 503, 504)
 #: `UNKNOWN_MODEL_PRICE` chez Anthropic.
 TARIF_INCONNU = (5.0, 25.0)
 
-#: Ce que la console écrit par défaut dans les quatre champs « modèle », et
-#: qui ne veut rien dire pour OpenRouter : là-bas un modèle se nomme
-#: « éditeur/modèle ».
+#: Le modèle employé quand la configuration n'en nomme aucun qu'OpenRouter
+#: comprenne — c'est-à-dire le cas normal : la console pré-remplit ses quatre
+#: champs avec un nom du vocabulaire d'Anthropic, qui ne veut rien dire là-bas.
 #:
-#: Traduire plutôt que refuser, parce que le cas normal est de basculer une
-#: recherche existante sur OpenRouter pour voir : elle nomme alors les modèles
-#: Claude du pipeline, et les router vers les mêmes modèles est la seule
-#: lecture raisonnable de cette intention. C'est même la comparaison la plus
-#: intéressante — même modèle, autre route.
+#: Le suffixe `:floor` n'est pas un modèle, c'est une **consigne de routage** :
+#: parmi les hébergeurs qui servent ce modèle, prendre le moins cher. Deux
+#: choses à en savoir, et la seconde n'est pas anodine :
 #:
-#: Table écrite d'après la convention de nommage d'OpenRouter, **non
-#: confrontée au service** : `tools/openrouter_shape.py` la vérifie, une
-#: entrée après l'autre, contre la liste publique des modèles.
-EQUIVALENCES = {
-    "claude-opus-5": "anthropic/claude-opus-5",
-    "claude-opus-4-8": "anthropic/claude-opus-4.8",
-    "claude-sonnet-5": "anthropic/claude-sonnet-5",
-    "claude-sonnet-4-6": "anthropic/claude-sonnet-4.6",
-    "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
-}
+#: * elle peut entrer en tension avec `require_parameters` ci-dessous. Si
+#:   aucun hébergeur bon marché ne sait contraindre une sortie au schéma, il ne
+#:   reste personne à qui router, et l'appel rend un 404 lisible plutôt qu'une
+#:   fiche approximative — ce qui est le bon sens de l'erreur, mais c'est un
+#:   404 qu'on n'aurait pas sans `:floor` ;
+#: * **l'hébergeur n'est plus le même d'un appel à l'autre.** Quantisations,
+#:   fenêtres et réglages diffèrent de l'un à l'autre. Pour la production c'est
+#:   sans conséquence ; pour un run du banc, c'est une variable de plus dans
+#:   une mesure qui existe pour n'en faire varier qu'une. Un run qui veut être
+#:   reproductible nomme le modèle **sans** le suffixe.
+MODELE_DEFAUT = "z-ai/glm-5.3-flash:floor"
+
+#: Les noms de modèles que ce dépôt écrit — ceux d'Anthropic, tels que la
+#: console et les YAML les portent. Ils n'existent pas chez OpenRouter.
+#:
+#: Ils **ne sont pas traduits**. Il y avait ici une table d'équivalences, qui
+#: envoyait `claude-haiku-4-5` sur `anthropic/claude-haiku-4.5` ; elle est
+#: partie avec ce qu'elle promettait sans pouvoir le tenir. D'abord parce que
+#: ces slugs étaient écrits d'après une convention de nommage et non d'après le
+#: catalogue, donc invérifiables d'ici. Ensuite et surtout parce qu'on ne passe
+#: pas à OpenRouter pour continuer à payer Claude par un intermédiaire : on y
+#: passe pour changer de modèle. Un de ces noms vaut donc « je n'ai rien
+#: choisi » et retombe sur `MODELE_DEFAUT`.
+#:
+#: Pour employer un modèle précis — Claude compris —, il s'écrit à la façon
+#: d'OpenRouter : `anthropic/claude-haiku-4.5`.
+NOMS_DU_PIPELINE = frozenset(PRICES)
 
 
-def modele_openrouter(nom: str) -> str:
-    """Le nom tel qu'OpenRouter l'attend. Lève si on ne sait pas le dire.
+def modele_openrouter(nom: str, defaut: str = MODELE_DEFAUT) -> str:
+    """Le nom tel qu'OpenRouter l'attend. Lève si celui-ci n'en est pas un.
 
-    Un nom qui porte déjà un `/` est pris tel quel : c'est un slug OpenRouter,
-    et c'est à leur catalogue de dire s'il existe, pas à nous. Un nom sans `/`
-    n'est un modèle que dans le vocabulaire d'Anthropic ; on le traduit s'il
-    est connu, et on refuse sinon — au chargement de la configuration, donc
-    avant la moindre dépense.
+    Trois cas, et le troisième est celui qui compte :
+
+    * un nom qui porte un `/` est pris tel quel — c'est un slug, et c'est au
+      catalogue d'OpenRouter de dire s'il existe, pas à nous ;
+    * un nom de modèle du pipeline vaut « je n'ai rien choisi » : c'est ce que
+      la console écrit par défaut, et on retombe sur `defaut` ;
+    * tout le reste est refusé, au chargement de la configuration, donc avant
+      la moindre dépense. Sans ce refus, une faute de frappe — `gemini-2.5` au
+      lieu de `google/gemini-2.5-flash` — passerait pour « rien choisi » et le
+      run tournerait tout entier sur un modèle qu'on n'a pas demandé.
     """
     nom = (nom or "").strip()
     if "/" in nom:
         return nom
-    if nom in EQUIVALENCES:
-        return EQUIVALENCES[nom]
+    if nom in NOMS_DU_PIPELINE:
+        return defaut
     raise ProviderError(
         f"modèle « {nom or '(vide)'} » inconnu d'OpenRouter : un modèle s'y nomme "
-        "« éditeur/modèle » (par exemple « anthropic/claude-haiku-4.5 », "
-        "« google/gemini-2.5-flash », « mistralai/mistral-small »)"
+        "« éditeur/modèle » (par exemple « z-ai/glm-5.3-flash », "
+        "« google/gemini-2.5-flash », « anthropic/claude-haiku-4.5 »). "
+        f"Un modèle du pipeline y vaut « au choix du scraper » : {defaut}"
     )
 
 

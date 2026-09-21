@@ -656,15 +656,18 @@ def test_un_modele_openrouter_intraduisible_arrete_le_run_avant_le_corpus():
 
 
 def test_un_run_openrouter_declare_le_modele_reellement_appele():
-    """« claude-haiku-4-5 » et « anthropic/claude-haiku-4.5 » sont deux routes.
+    """Un run laissé au défaut n'a pas été joué par « claude-haiku-4-5 ».
 
-    Les deux points porteraient sinon le même nom de modèle, et la courbe
-    mélangerait l'appel direct et le passage par le routeur.
+    Il a été joué par le modèle par défaut du routeur, et c'est ce nom-là qui
+    doit aller en base : les deux points de la courbe porteraient sinon le même
+    nom pour deux modèles différents, ce qui est irrattrapable après coup.
     """
+    from sortiesbot.providers.openrouter_provider import MODELE_DEFAUT
+
     config = worker._config_du_run(
         {"id": 33, "stage": "EXTRACT", "extraction": {"provider": "openrouter"}}, quiet=True
     )
-    assert worker._declare("EXTRACT", config)["model"] == "anthropic/claude-haiku-4.5"
+    assert worker._declare("EXTRACT", config)["model"] == MODELE_DEFAUT
 
 
 def test_un_run_openrouter_de_tri_declare_son_modele_aussi():

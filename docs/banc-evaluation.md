@@ -537,10 +537,16 @@ Deux conséquences, et la seconde compte autant que la première :
 
 * le run déclare à la clôture le modèle **réellement interrogé** :
   `gliner:urchade/gliner_multi-v2.1` pour l'étiqueteur,
-  `anthropic/claude-haiku-4.5` pour un run OpenRouter laissé au défaut — et
-  non `claude-haiku-4-5`, qui est l'appel direct. Le nom dit la route autant
-  que le modèle, sans quoi deux points de la courbe se confondraient — un run
-  joué ne dit jamais ce qu'il était, et c'est irrattrapable après coup ;
+  `z-ai/glm-5.3-flash:floor` pour un run OpenRouter laissé au défaut — et non
+  `claude-haiku-4-5`, qui n'a pas joué ce run. Sans quoi deux points de la
+  courbe porteraient le même nom pour deux modèles différents, et un run joué
+  ne dit jamais ce qu'il était : c'est irrattrapable après coup ;
+
+* un run qu'on veut **reproductible** nomme son modèle sans suffixe de
+  routage. Le défaut porte `:floor`, qui demande l'hébergeur le moins cher —
+  et il n'est pas le même d'un appel à l'autre, quantisations et réglages
+  compris. C'est une variable de plus dans une mesure qui existe pour n'en
+  faire varier qu'une ;
 * chaque fournisseur, et pour OpenRouter chaque **modèle**, fait sa propre
   courbe. Un étiqueteur laisse structurellement vides quatre des douze
   aspects : son taux est mécaniquement plus bas sans que rien ait régressé, et

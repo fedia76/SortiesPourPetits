@@ -311,18 +311,40 @@ n'y est pas monté du tout, et `SERPER_API_KEY` n'y est pas réclamée.
 |---|---|---|
 | Étage 1, la recherche | Serper (Google) | Serper (Google) |
 | Étages 1, 2, 4 et 6, le modèle | Claude, par l'API d'Anthropic | n'importe quel modèle du routeur |
-| Nom d'un modèle | `claude-haiku-4-5` | `anthropic/claude-haiku-4.5`, `google/gemini-2.5-flash`, `mistralai/mistral-small`… |
+| Nom d'un modèle | `claude-haiku-4-5` | `z-ai/glm-5.3-flash`, `google/gemini-2.5-flash`, `anthropic/claude-haiku-4.5`… |
 | Coût d'un appel | calculé d'après une table de tarifs (`PRICES`) | **annoncé par la réponse** (`usage.cost`) |
 
 Trois points méritent d'être connus avant de l'essayer.
 
 **Les quatre champs « Modèle » changent de vocabulaire.** Là-bas un modèle
-s'appelle `éditeur/modèle`. Les noms du pipeline sont traduits vers leur
-équivalent — `claude-haiku-4-5` devient `anthropic/claude-haiku-4.5` —, ce qui
-permet de basculer une recherche existante sans rien retoucher, et donne au
-passage la comparaison la plus propre : même modèle, autre route. Tout autre
-nom sans barre oblique est **refusé au chargement de la configuration**, donc
-avant la première dépense, et non à mi-run.
+s'appelle `éditeur/modèle`. Un champ laissé au nom du pipeline
+(`claude-haiku-4-5`, ce que la console pré-remplit) ne veut rien dire pour le
+routeur : il vaut « au choix du scraper », et c'est
+**`z-ai/glm-5.3-flash:floor`** qui répond — le modèle par défaut, défini une
+fois dans `providers/openrouter_provider.py`. Basculer une recherche existante
+ne demande donc rien d'autre que de choisir le fournisseur.
+
+Il y avait ici une table d'équivalences qui envoyait `claude-haiku-4-5` sur
+`anthropic/claude-haiku-4.5`. Elle est partie : ces slugs étaient écrits
+d'après une convention de nommage et non d'après le catalogue, donc
+invérifiables ; et surtout, on ne passe pas à un routeur pour continuer à payer
+le même modèle par un intermédiaire. Pour employer un modèle précis — Claude
+compris —, on écrit son slug.
+
+Tout autre nom sans barre oblique est **refusé au chargement de la
+configuration**, donc avant la première dépense et non à mi-run. Sans ce refus,
+`gemini-2.5-flash` au lieu de `google/gemini-2.5-flash` passerait pour « rien
+choisi » et le run entier tournerait sur un modèle qu'on n'a pas demandé.
+
+**`:floor` n'est pas un modèle, c'est une consigne de routage** : parmi les
+hébergeurs qui servent ce modèle, prendre le moins cher. Deux choses à en
+savoir. Elle peut entrer en tension avec le JSON structuré ci-dessous — si
+aucun hébergeur bon marché ne sait contraindre une sortie, il ne reste personne
+à qui router et l'appel rend un 404. Et **l'hébergeur n'est plus le même d'un
+appel à l'autre** : quantisations et réglages diffèrent de l'un à l'autre. Sans
+conséquence en production ; pour un run du banc, c'est une variable de plus
+dans une mesure qui existe pour n'en faire varier qu'une, et un run qui veut
+être reproductible nomme le modèle **sans** le suffixe.
 
 **Le coût est lu, pas calculé.** Tenir une table de tarifs pour trois cents
 modèles qui bougent chaque semaine serait un travail sans fin ; le service dit
@@ -351,8 +373,9 @@ ou sans hébergeur capable rend un 404 lisible, plutôt qu'une fiche plausible.
 
 À la différence de Serper, la forme des réponses **n'a pas encore été
 confrontée au service** : elle vient de la documentation, et les tests
-simulent cette forme-là. Pour la vérifier — et vérifier du même coup que la
-table d'équivalences de modèles pointe encore sur des modèles existants —,
+simulent cette forme-là. Pour la vérifier — et vérifier du même coup que le
+modèle par défaut existe encore au catalogue, ce qui est la seule chose que ce
+dépôt affirme d'OpenRouter sans pouvoir la prouver —,
 commencez un message de commit par `[openrouter]` : le job du même nom appelle
 le vrai service et affiche ce qu'il rend. Il réclame un secret de dépôt
 `OPENROUTER`, qui n'existe pas encore : à créer dans *Settings → Secrets and

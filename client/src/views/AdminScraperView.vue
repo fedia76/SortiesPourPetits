@@ -481,11 +481,14 @@ onMounted(load);
               reconnaître, trier, remplir — partent chez un routeur qui donne accès à des
               centaines de modèles avec une seule clé. Les quatre champs « Modèle »
               ci-dessous prennent alors un nom de là-bas, en deux parties :
-              <code>anthropic/claude-haiku-4.5</code>, <code>google/gemini-2.5-flash</code>,
-              <code>mistralai/mistral-small</code>. Les noms du pipeline
-              (<code>claude-haiku-4-5</code>) sont traduits vers leur équivalent ;
-              tout autre nom sans barre oblique est refusé au lancement, avant la
-              première dépense. La recherche, elle, reste chez Serper.
+              <code>z-ai/glm-5.3-flash</code>, <code>google/gemini-2.5-flash</code>,
+              <code>anthropic/claude-haiku-4.5</code>. Laissés tels quels — ils portent un
+              nom du pipeline, qui n'existe pas là-bas —, c'est
+              <code>z-ai/glm-5.3-flash:floor</code> qui répondra : le modèle par défaut du
+              scraper, chez l'hébergeur le moins cher qui le serve. Tout autre nom sans
+              barre oblique est refusé au lancement, avant la première dépense : une faute
+              de frappe ne doit pas passer pour « au choix du scraper ». La recherche, elle,
+              reste chez Serper.
             </span>
           </div>
 

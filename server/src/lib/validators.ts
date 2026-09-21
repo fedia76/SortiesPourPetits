@@ -291,9 +291,11 @@ export type ScraperMode = (typeof SCRAPER_MODES)[number];
  * « openrouter » ne change que ce modèle-là. Les quatre appels — formuler,
  * reconnaître, trier, remplir — partent chez un routeur qui donne accès à des
  * centaines de modèles avec une seule clé, et les quatre champs « modèle »
- * portent alors un nom de là-bas : « anthropic/claude-haiku-4.5 »,
- * « google/gemini-2.5-flash ». La recherche, elle, reste chez Serper : le
- * scraper réclame donc les deux clés.
+ * portent alors un nom de là-bas : « z-ai/glm-5.3-flash »,
+ * « google/gemini-2.5-flash ». Laissés au nom du pipeline — ce que la console
+ * pré-remplit —, ils valent « au choix du scraper », qui a son modèle par
+ * défaut. La recherche, elle, reste chez Serper : le scraper réclame donc les
+ * deux clés.
  */
 export const SCRAPER_PROVIDERS = ['anthropic', 'serper', 'openrouter'] as const;
 export type ScraperProvider = (typeof SCRAPER_PROVIDERS)[number];

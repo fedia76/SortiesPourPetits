@@ -548,9 +548,10 @@ def _declare(stage: str, config: Config | None) -> dict[str, str]:
         model = f"gliner:{config.gliner_model}"
     elif config.provider == "openrouter":
         # Le nom **résolu**, celui qu'on a réellement appelé : un run laissé au
-        # défaut se déclarerait sinon joué par « claude-haiku-4-5 », comme un
-        # run direct chez Anthropic, alors que c'est l'autre route. Deux points
-        # de la courbe, deux routes, un seul nom : la comparaison serait perdue.
+        # défaut se déclarerait sinon joué par « claude-haiku-4-5 », qui n'a pas
+        # joué ce run — c'est le modèle par défaut du routeur qui l'a fait. Deux
+        # points de la courbe porteraient le même nom pour deux modèles
+        # différents, et la comparaison serait perdue.
         model = modele_openrouter(model)
     return {
         "model": model,

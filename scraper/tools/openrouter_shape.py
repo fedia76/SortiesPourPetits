@@ -15,10 +15,10 @@ la clé.
 
 Il fait trois choses, dans cet ordre :
 
-1. il lit le catalogue public et **vérifie la table d'équivalences** — les
-   noms du pipeline (« claude-haiku-4-5 ») traduits en slugs OpenRouter. Cette
-   table a été écrite d'après leur convention de nommage, pas d'après leur
-   catalogue : c'est ici qu'on l'apprend si elle a vieilli ;
+1. il lit le catalogue public et **vérifie le modèle par défaut** — le slug
+   sur lequel retombe toute configuration qui n'en nomme pas d'autre. C'est la
+   seule chose que ce dépôt affirme d'OpenRouter sans pouvoir la prouver : si
+   ce slug a été renommé ou retiré, tous ces runs-là échoueront sur un 404 ;
 2. il lance un vrai appel de reconnaissance — le plus petit des quatre — et
    affiche la forme brute reçue : clés de premier niveau, champs d'un choix,
    champs de `usage` ;
@@ -41,7 +41,7 @@ from sortiesbot.config import Config
 from sortiesbot.journal import RunLog
 from sortiesbot.providers.openrouter_provider import (
     ENDPOINT,
-    EQUIVALENCES,
+    MODELE_DEFAUT,
     OpenRouterProvider,
 )
 
@@ -55,23 +55,38 @@ CONDENSE = (
 )
 
 
-def verifier_la_table(session) -> int:
-    """Chaque équivalence existe-t-elle encore au catalogue ?"""
-    print(f"— la table d'équivalences, contre {CATALOGUE} —")
+def verifier_le_defaut(session, modele: str) -> int:
+    """Le modèle par défaut existe-t-il au catalogue ?
+
+    C'est la seule chose que ce dépôt affirme d'OpenRouter sans pouvoir la
+    prouver : un slug écrit à la main. S'il a été renommé ou retiré, tous les
+    runs qui ne nomment pas de modèle échoueront sur un 404, et c'est ici qu'on
+    l'apprend plutôt qu'en production.
+
+    Le suffixe de routage (`:floor`, `:nitro`…) est retiré avant de comparer :
+    ce n'est pas un modèle, et le catalogue ne le liste pas.
+    """
+    base = modele.split(":", 1)[0]
+    variante = modele[len(base) + 1 :]
+    print(f"— le modèle par défaut, contre {CATALOGUE} —")
     try:
         reponse = session.get(CATALOGUE, timeout=30)
         connus = {m.get("id") for m in (reponse.json().get("data") or [])}
     except Exception as err:  # noqa: BLE001 — un outil de vérification, pas du pipeline
-        print(f"  catalogue injoignable ({err.__class__.__name__}) : table non vérifiée")
+        print(f"  catalogue injoignable ({err.__class__.__name__}) : défaut non vérifié")
         return 0
 
-    manquants = [slug for slug in EQUIVALENCES.values() if slug not in connus]
-    for nom, slug in EQUIVALENCES.items():
-        etat = "absent du catalogue" if slug in manquants else "ok"
-        print(f"  {nom:<20} → {slug:<34} {etat}")
-    if manquants:
-        print(f"\n  {len(manquants)} équivalence(s) à corriger dans EQUIVALENCES.", file=sys.stderr)
-    return 1 if manquants else 0
+    present = base in connus
+    print(f"  {base:<34} {'ok' if present else 'ABSENT DU CATALOGUE'}")
+    if variante:
+        print(f"  suffixe « :{variante} » — consigne de routage, pas un modèle : non listé")
+    if not present:
+        print(
+            f"\n  MODELE_DEFAUT introuvable. À corriger dans "
+            f"providers/openrouter_provider.py — {len(connus)} modèles au catalogue.",
+            file=sys.stderr,
+        )
+    return 0 if present else 1
 
 
 def main(argv: list[str]) -> int:
@@ -83,9 +98,8 @@ def main(argv: list[str]) -> int:
     import requests
 
     session = requests.Session()
-    faute = verifier_la_table(session)
-
-    modele = argv[1] if len(argv) > 1 else EQUIVALENCES["claude-haiku-4-5"]
+    modele = argv[1] if len(argv) > 1 else MODELE_DEFAUT
+    faute = verifier_le_defaut(session, modele)
     print(f"\n— un appel de reconnaissance à {modele}, sur {ENDPOINT} —")
 
     config = Config(name="verif", theme="spectacles enfants", provider="openrouter",
