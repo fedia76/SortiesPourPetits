@@ -371,15 +371,31 @@ une sortie : l'appel demande donc explicitement à n'être routé que vers ceux
 qui le savent (`provider: {require_parameters: true}`). Un modèle introuvable
 ou sans hébergeur capable rend un 404 lisible, plutôt qu'une fiche plausible.
 
-**On ne demande aucun raisonnement** (`reasoning: {enabled: false}`), et c'est
-le service qui l'a imposé. Le tout premier appel réel est revenu avec
-`content: null`, `finish_reason: length` et 0,0002 $ facturés : le modèle avait
-dépensé les 300 jetons de la reconnaissance à raisonner, sans écrire un
-caractère de réponse. Ces quatre appels sont bornés, sans outil, et rendent un
-JSON contraint par un schéma ; relever les plafonds aurait payé deux fois —
-le raisonnement, puis la réponse — pour choisir une étiquette parmi quatre. Un
-modèle qui raisonne malgré la consigne le dit désormais en clair dans le
-journal, plutôt que de faire accuser le prompt.
+**Le plafond de chaque appel laisse la place à un raisonnement**, et c'est le
+service qui l'a dicté, en deux appels.
+
+Le premier est revenu en HTTP 200 avec `content: null`, `finish_reason: length`
+et 0,0002 $ facturés : le modèle par défaut avait dépensé les 300 jetons de la
+reconnaissance à raisonner, sans écrire un caractère de réponse. En production,
+chaque page aurait coûté sans rien produire.
+
+Le second a demandé `reasoning: {enabled: false}` — ce qui semblait la bonne
+réponse pour quatre appels bornés qui rendent un JSON contraint — et s'est fait
+répondre :
+
+    HTTP 400 — Reasoning is mandatory for this endpoint and cannot be disabled.
+
+Ce modèle raisonne, il n'y a pas à discuter. `MARGE_RAISONNEMENT` (4 000
+jetons) s'ajoute donc au plafond de chaque appel. Elle s'**ajoute** et ne
+multiplie pas : le raisonnement d'une tâche bornée ne croît pas avec la
+longueur de la réponse attendue — reconnaître une page en demande autant que
+remplir une fiche. Un plafond n'est pas une dépense, seul ce qui est produit se
+facture ; le garde-fou reste `max_cost_usd`.
+
+Cette marge a été posée **sans mesure**, aucun appel n'étant encore allé au
+bout. Le vérificateur affiche les jetons de raisonnement réellement consommés :
+c'est ce chiffre qui la réglera. Et un appel qui déborderait quand même le dit
+en clair dans le journal, plutôt que de faire accuser le prompt.
 
 La forme des réponses **a été confrontée au service** le 21 septembre 2026 ; le
 détail de ce qui a été observé est en tête de `providers/openrouter_provider.py`.

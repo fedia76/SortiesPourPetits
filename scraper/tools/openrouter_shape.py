@@ -25,11 +25,11 @@ Il fait trois choses, dans cet ordre :
 3. il refait le même appel **par le fournisseur**, et affiche ce qu'il en
    tire et ce qu'il a facturé.
 
-Il affiche aussi **quel hébergeur a répondu**. Ce n'est pas un détail avec le
-modèle par défaut : son suffixe `:floor` demande le moins cher d'entre eux, et
-ce n'est pas le même d'un appel à l'autre. C'est la seule façon de voir qui
-sert réellement les requêtes — et, en le lançant deux fois, de voir si ça
-change.
+Il affiche aussi **quel hébergeur a répondu** — son suffixe `:floor` demande
+le moins cher d'entre eux, et ce n'est pas le même d'un appel à l'autre — et
+**combien de jetons de raisonnement** l'appel a consommés. Ce dernier chiffre
+est celui qui règle `MARGE_RAISONNEMENT` : elle a été posée sans mesure, parce
+qu'aucun appel n'était encore allé au bout.
 
 Si les deux ne concordent pas, c'est ici que ça se voit, et le code des tests
 est à corriger d'après ce que la sortie montre.
@@ -47,6 +47,7 @@ from sortiesbot.config import Config
 from sortiesbot.journal import RunLog
 from sortiesbot.providers.openrouter_provider import (
     ENDPOINT,
+    MARGE_RAISONNEMENT,
     MODELE_DEFAUT,
     OpenRouterProvider,
 )
@@ -116,7 +117,11 @@ def main(argv: list[str]) -> int:
         json={
             "model": modele,
             "messages": [{"role": "user", "content": config.render_classify(CONDENSE)}],
-            "max_tokens": 300,
+            # Comme le fournisseur : le plafond de l'appel, plus la marge de
+            # raisonnement. C'est cette marge que le chiffre affiché plus bas
+            # permet de régler — elle a été posée sans mesure, faute d'un
+            # appel réel qui aille au bout.
+            "max_tokens": 300 + MARGE_RAISONNEMENT,
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
@@ -135,11 +140,6 @@ def main(argv: list[str]) -> int:
             },
             "provider": {"require_parameters": True},
             "usage": {"include": True},
-            # Comme le fournisseur, et pour la même raison qu'on a apprise ici :
-            # un modèle qui raisonne dépense son budget de sortie avant d'écrire
-            # un caractère. Ce qu'on veut savoir, c'est si la consigne est
-            # honorée — d'où l'affichage des jetons de raisonnement plus bas.
-            "reasoning": {"enabled": False},
         },
         timeout=120,
     )
@@ -170,7 +170,10 @@ def main(argv: list[str]) -> int:
     # veut dire que ce modèle raisonne quoi qu'on lui dise, et qu'il faudra
     # soit en changer, soit payer ce raisonnement à chaque page.
     raisonnement = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
-    print(f"Jetons de raisonnement : {raisonnement!r} (0 attendu : on l'a désactivé)")
+    print(
+        f"Jetons de raisonnement : {raisonnement!r} "
+        f"(marge prévue : {MARGE_RAISONNEMENT})"
+    )
     if "cost" not in usage:
         print(
             "\n  `usage.cost` absent : le fournisseur facturerait à l'estime, et le "

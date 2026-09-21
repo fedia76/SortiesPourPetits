@@ -32,12 +32,18 @@ from sortiesbot.prompts import SYSTEM
 from sortiesbot.providers.base import ProviderError, get_provider
 from sortiesbot.providers.openrouter_provider import (
     ENDPOINT,
+    MARGE_RAISONNEMENT,
     MODELE_DEFAUT,
     TARIF_INCONNU,
     OpenRouterProvider,
     modele_openrouter,
 )
-from sortiesbot.providers.schemas import EXTRACTION_SCHEMA, SELECT_SCHEMA
+from sortiesbot.providers.schemas import (
+    CLASSIFY_MAX_TOKENS,
+    EXTRACTION_MAX_TOKENS,
+    EXTRACTION_SCHEMA,
+    SELECT_SCHEMA,
+)
 
 
 class Reponse:
@@ -140,16 +146,38 @@ def test_lappel_porte_le_schema_la_consigne_et_la_facture(log):
     assert corps["usage"] == {"include": True}
 
 
-def test_aucun_raisonnement_nest_demande(log):
-    """Le premier appel réel a payé 0,0002 $ pour un `content: null`.
+def test_le_plafond_laisse_sa_place_au_raisonnement(log):
+    """Deux appels réels ont écrit ce test, et la documentation n'y suffisait pas.
 
-    Le modèle avait dépensé les 300 jetons de la reconnaissance à raisonner.
-    Ces quatre appels sont bornés et rendent un JSON contraint : le
-    raisonnement s'y paie deux fois sans rien rendre de plus.
+    Le premier est revenu en 200 avec `content: null` : le modèle avait dépensé
+    les 300 jetons de la reconnaissance à raisonner. Le second a demandé de
+    désactiver le raisonnement, et s'est fait répondre 400 — « mandatory for
+    this endpoint ». Il ne restait qu'à lui laisser la place.
     """
     provider, routeur = provider_de(Reponse(reponse({"nature": "sortie", "pourquoi": "x"})))
     provider.classify("un condensé", config(), log)
-    assert routeur.appels[0]["body"]["reasoning"] == {"enabled": False}
+    corps = routeur.appels[0]["body"]
+    assert corps["max_tokens"] == CLASSIFY_MAX_TOKENS + MARGE_RAISONNEMENT
+    # Et surtout : on ne le désactive pas. Le service refuse, en 400.
+    assert "reasoning" not in corps
+
+
+def test_la_marge_sajoute_et_ne_multiplie_pas(log):
+    """Reconnaître une page demande autant de raisonnement que remplir une fiche.
+
+    Un facteur aurait donné seize mille jetons de marge à l'extraction d'un
+    programme, pour un monologue qui ne croît pas avec la réponse attendue.
+    """
+    provider, routeur = provider_de(
+        Reponse(reponse({"nature": "sortie", "pourquoi": "x"})),
+        Reponse(reponse(FICHE)),
+    )
+    provider.classify("un condensé", config(), log)
+    provider.extract("https://x.fr/a", "texte", config(), [], log)
+    marges = [a["body"]["max_tokens"] - p for a, p in zip(
+        routeur.appels, (CLASSIFY_MAX_TOKENS, EXTRACTION_MAX_TOKENS)
+    )]
+    assert marges == [MARGE_RAISONNEMENT, MARGE_RAISONNEMENT]
 
 
 def test_un_modele_qui_raisonne_quand_meme_le_dit(log):
@@ -169,6 +197,8 @@ def test_un_modele_qui_raisonne_quand_meme_le_dit(log):
     with pytest.raises(ProviderError) as err:
         provider.classify("un condensé", config(), log)
     assert "raisonnement" in str(err.value)
+    # Il dit quoi faire : la marge est un réglage, et il est nommé.
+    assert "MARGE_RAISONNEMENT" in str(err.value)
 
 
 def test_une_troncature_sans_raisonnement_reste_une_troncature(log):

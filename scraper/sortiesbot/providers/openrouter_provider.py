@@ -48,6 +48,12 @@ un routeur pour continuer à payer le même modèle par un intermédiaire.
   une table de tarifs pour trois cents modèles qui bougent chaque semaine.
   C'est la même règle que chez Serper, et pour la même raison.
 
+On ne demande en revanche **pas** de désactiver le raisonnement, et ce n'est
+pas faute d'avoir essayé : le modèle par défaut répond
+`Reasoning is mandatory for this endpoint and cannot be disabled` (HTTP 400).
+Il raisonne, donc, et le plafond de chaque appel lui en laisse la place — voir
+`MARGE_RAISONNEMENT`.
+
 Aucun outil, aucune itération : un aller-retour par appel, comme le reste du
 pipeline. La mécanique HTTP n'est pas sortie dans un fichier à part — ce
 qu'on a fait pour Serper le jour où l'attribution en a eu besoin : ici il n'y
@@ -82,8 +88,9 @@ suffixe `:floor` — il change d'un appel à l'autre.
 Et un message porte `reasoning` à côté de `content`. Le tout premier appel réel
 est revenu avec `content: null`, `finish_reason: length` et 0,0002 $ facturés :
 le modèle avait dépensé les 300 jetons de la reconnaissance à raisonner, sans
-rien écrire. D'où le `reasoning: {enabled: false}` de chaque appel, et le
-message d'erreur qui nomme ce cas quand un modèle passe outre.
+rien écrire. Le suivant a tenté de le désactiver, et s'est fait répondre que
+c'était impossible sur cet endpoint. D'où `MARGE_RAISONNEMENT`, qui lui en
+laisse la place, et un message d'erreur qui nomme ce cas s'il déborde encore.
 """
 
 from __future__ import annotations
@@ -150,6 +157,32 @@ CODES_PASSAGERS = (408, 429, 502, 503, 504)
 #: pourquoi son coût est faux — même règle et même raison que
 #: `UNKNOWN_MODEL_PRICE` chez Anthropic.
 TARIF_INCONNU = (5.0, 25.0)
+
+#: Jetons ajoutés au plafond de chaque appel, pour que le raisonnement ne
+#: mange pas la réponse.
+#:
+#: Deux appels réels ont écrit cette constante, et aucune lecture de
+#: documentation ne l'aurait donnée. Le premier est revenu en HTTP 200 avec
+#: `content: null` et `finish_reason: length` : le modèle par défaut avait
+#: dépensé les 300 jetons de la reconnaissance à raisonner, sans écrire un
+#: caractère, et facturé 0,0002 $ pour rien. Le second a demandé
+#: `reasoning: {enabled: false}` et s'est fait renvoyer un 400 sans appel :
+#:
+#:     Reasoning is mandatory for this endpoint and cannot be disabled.
+#:
+#: Ce modèle-là raisonne, donc, et il n'y a pas à discuter. Restait à lui en
+#: laisser la place : les plafonds de `schemas.py` disent la taille d'une
+#: **réponse**, et c'est la bonne unité — un JSON de fiche fait ce qu'il fait,
+#: quel que soit le modèle. Le monologue, lui, s'ajoute.
+#:
+#: Quatre mille, et non un facteur : le raisonnement d'une tâche bornée ne
+#: croît pas avec la longueur de la réponse attendue. Reconnaître une page en
+#: demande autant que remplir une fiche, et multiplier les plafonds aurait
+#: donné seize mille jetons de marge à l'extraction d'un programme pour rien.
+#:
+#: Un plafond n'est pas une dépense : ce qui n'est pas produit n'est pas
+#: facturé. Le vrai garde-fou reste `max_cost_usd`, qui compte ce qui l'a été.
+MARGE_RAISONNEMENT = 4_000
 
 #: Le modèle employé quand la configuration n'en nomme aucun qu'OpenRouter
 #: comprenne — c'est-à-dire le cas normal : la console pré-remplit ses quatre
@@ -392,7 +425,10 @@ class OpenRouterProvider:
                 {"role": "system", "content": SYSTEM},
                 {"role": "user", "content": prompt},
             ],
-            "max_tokens": max_tokens,
+            # Le plafond de l'appel, **plus** de quoi raisonner : voir
+            # `MARGE_RAISONNEMENT`. Les plafonds de `schemas.py` disent la
+            # taille d'une réponse, pas celle d'un monologue intérieur.
+            "max_tokens": max_tokens + MARGE_RAISONNEMENT,
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {"name": nom_schema, "strict": True, "schema": schema},
@@ -401,20 +437,6 @@ class OpenRouterProvider:
             "provider": {"require_parameters": True},
             # Et qu'il dise ce que ça a coûté.
             "usage": {"include": True},
-            # Pas de raisonnement. Ce n'est pas une opinion sur le raisonnement,
-            # c'est la conséquence de ce que sont ces quatre appels : bornés,
-            # sans outil, et qui rendent un JSON contraint par un schéma.
-            #
-            # Le premier appel réel au service l'a montré sans appel : le modèle
-            # par défaut a dépensé ses 300 jetons de reconnaissance en
-            # raisonnement, rendu `content: null` et `finish_reason: length`,
-            # et facturé 0,0002 $ pour rien. Relever les plafonds aurait payé
-            # deux fois — le raisonnement, puis la réponse — sur un appel qui
-            # demande une étiquette parmi quatre.
-            #
-            # Les modèles qui raisonnent quoi qu'on dise ignorent ce champ ;
-            # `_texte` sait alors le dire, plutôt que d'accuser le prompt.
-            "reasoning": {"enabled": False},
         }
         data = self._post(payload, op=op, modele=modele, log=log)
         self._facturer(data, op=op, modele=modele, log=log)
@@ -546,10 +568,11 @@ def _texte(data: dict[str, Any]) -> str:
         # appris, et il a coûté un job d'intégration continue à comprendre.
         if str(message.get("reasoning") or "").strip():
             raise ProviderError(
-                "le modèle a dépensé son budget de sortie en raisonnement, sans "
-                "rien écrire : il ignore « reasoning: enabled=false ». Employez "
-                "un modèle qui sait s'en passer, ou relevez le plafond de jetons "
-                "de cet appel en sachant qu'il paiera le raisonnement à chaque page"
+                "le modèle a dépensé son budget de sortie en raisonnement sans "
+                f"écrire de réponse, malgré les {MARGE_RAISONNEMENT} jetons de "
+                "marge prévus pour ça. Relevez MARGE_RAISONNEMENT, ou employez "
+                "un modèle qui raisonne moins — celui-ci se paie deux fois par "
+                "page, et ces jetons-là sont les plus chers"
             )
         raise ProviderError(
             "réponse tronquée par le plafond de jetons — la fiche est incomplète"
