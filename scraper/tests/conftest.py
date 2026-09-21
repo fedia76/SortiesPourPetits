@@ -22,3 +22,15 @@ def sans_delai_de_politesse(monkeypatch):
     geocoding.reset()
     yield
     geocoding.reset()
+
+
+@pytest.fixture(autouse=True)
+def sans_classifieur_du_disque(monkeypatch, tmp_path):
+    """Aucun modèle entraîné, sauf celui qu'un test branche lui-même.
+
+    Sans ça, la suite lirait `~/.local/share/sortiesbot/` : elle passerait sur
+    une machine sans modèle et échouerait sur celle de quelqu'un qui vient
+    d'en entraîner un. Un test dont le résultat dépend du disque de celui qui
+    le lance ne mesure rien.
+    """
+    monkeypatch.setenv("SPP_CLASSIFIEUR", str(tmp_path / "aucun-modele.joblib"))

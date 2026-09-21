@@ -900,6 +900,21 @@ export const evalRunSchema = z
     path: ['extraction'],
   });
 
+/**
+ * Ce que le worker demande pour **entraîner** un classifieur : une tranche du
+ * corpus étiqueté, HTML compris.
+ *
+ * Paginé, et pas par confort : cent soixante pages gelées font plusieurs
+ * dizaines de mégaoctets, et les servir d'un bloc ferait tomber la requête
+ * sur un VPS à quatre gigaoctets. `after` est l'identifiant de la dernière
+ * entrée reçue — un curseur, pas un décalage : le corpus grossit pendant
+ * qu'on le parcourt, et un décalage sauterait alors des entrées.
+ */
+export const evalCorpusSchema = z.object({
+  after: z.coerce.number().int().min(0).optional().default(0),
+  limit: z.coerce.number().int().min(1).max(25).optional().default(10),
+});
+
 export const evalRunListSchema = z.object({
   stage: z.enum(EVAL_STAGES).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(30),

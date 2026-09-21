@@ -248,6 +248,8 @@ déploiement lit :
 |---|---|
 | *(absente)* | `pip install -e .` — le cas normal |
 | `gliner` | `pip install -e ".[gliner]"` — l'étiqueteur de l'étage 6, **et torch, ~2 Go** |
+| `classifieur` | `pip install -e ".[classifieur]"` — scikit-learn, ~35 Mo, **sans torch** |
+| `gliner,classifieur` | les deux |
 
 Pour un essai ponctuel sans toucher au dépôt, c'est le pip **du venv** qu'il
 faut appeler, et sous le compte qui le possède — sans quoi les fichiers
@@ -257,6 +259,36 @@ appartiennent à root et le déploiement suivant échoue :
 sudo -u deploy /opt/sortiespourpetits/scraper/.venv/bin/pip install -e \
   '/opt/sortiespourpetits/scraper[gliner]'
 ```
+
+#### Entraîner le classifieur de catégories
+
+La catégorie d'une sortie n'est écrite nulle part sur la page : aucun site
+n'annonce « Catégorie : Spectacles ». Elle ne s'extrait donc pas, elle
+s'apprend — sur le corpus étiqueté du banc, par un modèle linéaire qui tient
+dans un mégaoctet et ne charge aucun réseau de neurones.
+
+L'entraînement se lance à la main, sur le VPS, et **ne fait pas partie du
+déploiement** : il lit le corpus par l'API du site, ce qui suppose une base
+peuplée et une clé valide.
+
+```bash
+sudo -u deploy /opt/sortiespourpetits/scraper/.venv/bin/python \
+  -m tools.classifieur_entrainer --a-blanc   # mesurer sans rien écrire
+sudo -u deploy /opt/sortiespourpetits/scraper/.venv/bin/python \
+  -m tools.classifieur_entrainer             # puis enregistrer
+```
+
+Le modèle est écrit dans `~deploy/.local/share/sortiesbot/categorie.joblib`,
+**hors du dépôt** : `/opt/sortiespourpetits` est récrit à chaque mise en ligne,
+et un modèle rangé là disparaîtrait sans erreur — juste un champ qui
+redeviendrait vide. `SPP_CLASSIFIEUR` dans le `.env` permet de le mettre
+ailleurs.
+
+Sans modèle entraîné, la brique tourne et laisse la catégorie vide ; le
+journal du run porte alors `non_rendus=…,category` et la raison en clair. Il
+faut le réentraîner quand le corpus a sensiblement grossi : le script imprime
+le nombre d'exemples et les scores hors échantillon, ce qui suffit à voir s'il
+progresse.
 
 #### Torch, et les deux pièges de l'extra `gliner`
 

@@ -104,6 +104,7 @@ import {
   evalSortieLabelSchema,
   evalSortieSchema,
   CHAMPS_ETIQUETTE,
+  evalCorpusSchema,
   evalRunClaimSchema,
   evalRunFinishSchema,
   evalRunListSchema,
@@ -2201,6 +2202,58 @@ evalRouter.post('/runs/:id(\\d+)/next-item', async (req, res) => {
   res.json({
     item: { kind: 'sortie', sortieId: sortie.id, url: sortie.url, html: html ?? '' },
   });
+});
+
+/**
+ * Le corpus étiqueté, tel quel : ce dont un classifieur local s'entraîne.
+ *
+ * C'est la première route qui rend une **étiquette** au worker, et ça mérite
+ * d'être dit : partout ailleurs il travaille en aveugle, parce qu'une brique
+ * qui verrait la réponse ne mesurerait plus rien. Ici il ne mesure pas, il
+ * apprend — et un jeu d'entraînement sans étiquettes n'apprend rien.
+ *
+ * Le HTML part avec, parce que le texte qu'un classifieur doit lire est celui
+ * que l'étage 5 produira en production, et l'étage 5 est en Python. Le
+ * recalculer ici comparerait deux implémentations au lieu d'entraîner sur la
+ * bonne.
+ *
+ * Seules les entrées **étiquetées** sortent : une page capturée que personne
+ * n'a relue n'a pas de vérité à enseigner.
+ */
+evalRouter.post('/corpus/etiquettes', async (req, res) => {
+  const parsed = evalCorpusSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0].message });
+    return;
+  }
+  const { after, limit } = parsed.data;
+  const sorties = await prisma.evalSortie.findMany({
+    where: {
+      capture: 'CAPTURED',
+      htmlPath: { not: null },
+      labelledAt: { not: null },
+      id: { gt: after },
+    },
+    orderBy: { id: 'asc' },
+    take: limit,
+    select: { id: true, url: true, expected: true, htmlPath: true },
+  });
+  const items = [];
+  for (const sortie of sorties) {
+    const html = sortie.htmlPath ? await readEvalPage(sortie.htmlPath) : null;
+    items.push({
+      sortieId: sortie.id,
+      url: sortie.url,
+      expected: sortie.expected,
+      html: html ?? '',
+    });
+  }
+  // `next` est le curseur à redemander, et il vaut le dernier identifiant
+  // **servi** — pas le dernier lu en base. Une page dont le HTML a disparu
+  // sort quand même, avec un HTML vide : la sauter silencieusement ferait
+  // compter un corpus plus petit qu'il n'est, sans dire pourquoi.
+  const next = sorties.length === limit ? sorties[sorties.length - 1].id : null;
+  res.json({ items, next });
 });
 
 evalRouter.post('/runs/:id(\\d+)/links', async (req, res) => {

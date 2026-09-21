@@ -34,6 +34,17 @@ gliner = [
   "protobuf",
 ]
 
+# Le classifieur de catégories de l'étage 6. Séparé de `gliner` **et sans
+# torch** : c'est un sac de mots et une régression logistique, trente-cinq
+# mégaoctets, et il doit pouvoir tourner là où le réseau de neurones ne tient
+# pas. L'intégration continue l'installe, elle, parce que sans scikit-learn
+# les tests du classifieur ne feraient que sauter en silence — et un test qui
+# saute ressemble à un test qui passe.
+classifieur = [
+  "scikit-learn>=1.3",
+  "joblib>=1.3",
+]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

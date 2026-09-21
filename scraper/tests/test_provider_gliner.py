@@ -134,7 +134,11 @@ def test_le_journal_dit_ce_que_la_brique_ne_rend_pas():
     """Un `MANQUE` sur `setting` doit se lire comme une limite, pas comme une faute."""
     captures: list[dict] = []
     log = RunLog(None, verbose=False, sink=captures.append)
-    GlinerProvider(tagger=FauxTagger()).extract("https://x.fr", "texte", _config(), [], log)
+    # `classifieur=False` : explicitement aucun, plutôt que « ce qui traîne sur
+    # le disque de celui qui lance les tests ».
+    GlinerProvider(tagger=FauxTagger(), classifieur=False).extract(
+        "https://x.fr", "texte", _config(), [], log
+    )
     pose = [e for e in captures if e.get("kind") == "gliner"]
     assert pose
     assert "description" in pose[0]["non_rendus"]
@@ -509,3 +513,66 @@ def test_l_etiqueteur_est_interroge_au_plancher_des_seuils():
     GlinerProvider(tagger=tagger, seuil=0.5).extract("https://x.fr", "t", _config(), [], _log())
     _, _, seuil = tagger.appels[0]
     assert seuil <= SEUIL_PLANCHER
+
+
+# ──────────────────────────────── la catégorie, par un classifieur ou personne
+
+
+class FauxClassifieur:
+    """Rend toujours la même classe, et note ce qu'on lui a soumis."""
+
+    def __init__(self, classe="Spectacle", score=0.8):
+        self.classe, self.score = classe, score
+        self.vus: list[tuple[str, str]] = []
+
+    def predire(self, titre, texte):
+        self.vus.append((titre, texte))
+        return (self.classe, self.score)
+
+
+def test_la_categorie_vient_du_classifieur_quand_il_y_en_a_un():
+    classifieur = FauxClassifieur()
+    fiches = GlinerProvider(tagger=FauxTagger(), classifieur=classifieur).extract(
+        "https://x.fr",
+        "Un spectacle de marionnettes.",
+        _config(),
+        ["Spectacle", "Atelier"],
+        _log(),
+        hints={"title": "Le Petit Prince"},
+    )
+    assert fiches[0].category == "Spectacle"
+    # Le titre déclaré par la page lui parvient : c'est le signal le plus dense
+    # dont il dispose, et l'entraînement l'a pesé comme tel.
+    assert classifieur.vus[0][0] == "Le Petit Prince"
+
+
+def test_sans_classifieur_la_categorie_reste_vide_et_le_journal_le_dit():
+    """Vide, pas deviné : c'est la limite annoncée, pas une faute du modèle."""
+    captures: list[dict] = []
+    log = RunLog(None, verbose=False, sink=captures.append)
+    fiches = GlinerProvider(tagger=FauxTagger(), classifieur=False).extract(
+        "https://x.fr", "texte", _config(), ["Spectacle"], log
+    )
+    assert fiches[0].category == ""
+    pose = [e for e in captures if e.get("kind") == "gliner"]
+    assert "category" in pose[0]["non_rendus"]
+
+
+def test_avec_un_classifieur_la_categorie_sort_des_champs_non_rendus():
+    """La même brique n'annonce pas les mêmes limites selon ce qui est branché."""
+    captures: list[dict] = []
+    log = RunLog(None, verbose=False, sink=captures.append)
+    GlinerProvider(tagger=FauxTagger(), classifieur=FauxClassifieur()).extract(
+        "https://x.fr", "texte", _config(), ["Spectacle"], log
+    )
+    pose = [e for e in captures if e.get("kind") == "gliner"]
+    assert "category" not in pose[0]["non_rendus"]
+    assert pose[0]["confiance"] == 0.8
+
+
+def test_un_classifieur_muet_laisse_la_categorie_vide():
+    """Sous son seuil, il rend une chaîne vide — et on ne la remplace par rien."""
+    fiches = GlinerProvider(
+        tagger=FauxTagger(), classifieur=FauxClassifieur(classe="", score=0.31)
+    ).extract("https://x.fr", "texte", _config(), ["Spectacle"], _log())
+    assert fiches[0].category == ""
