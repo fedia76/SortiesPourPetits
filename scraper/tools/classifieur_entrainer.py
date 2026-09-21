@@ -126,7 +126,8 @@ def _exemples(
         # Le lieu vient du JSON-LD de la page, comme à l'inférence. Le prendre
         # dans l'étiquette ferait un modèle superbe à l'entraînement et sans
         # valeur en production : ce lieu-là fait partie de la réponse.
-        lieu = "" if sans_lieu else str(faits.get("venue_name") or "")
+        declare = str(faits.get("venue_name") or "")
+        lieu = "" if sans_lieu else declare
         if lieu:
             avec_lieu[0] += 1
         exemples.append(
@@ -134,6 +135,8 @@ def _exemples(
                 texte=traits(titre, str(lecture.get("text") or ""), lieu),
                 etiquette=classe,
                 groupe=domaine(url),
+                url=url,
+                lieu=bool(declare),
             )
         )
     return exemples, ecartes
@@ -172,6 +175,31 @@ def _confusions(predites: list[str], verites: list[str], combien: int = 6) -> No
         print(f"  {n:>3} ×  {vrai[:24]:<24} pris pour  {predit[:24]}")
 
 
+def _erreurs(
+    exemples: list[Exemple], predites: list[str], verites: list[str], combien: int
+) -> None:
+    """Les pages sur lesquelles il se trompe, adresse comprise.
+
+    Le tableau des confusions dit qu'on prend onze musées pour des ateliers. Il
+    ne dit pas laquelle des deux hypothèses est vraie : le modèle a tort, ou la
+    frontière entre ces deux catégories n'est pas tenable depuis le texte —
+    un atelier organisé dans un musée est-il « Atelier » ou « Musée » ? La
+    seconde ne se règle pas en ajoutant des traits, elle se règle en relisant
+    l'étiquetage. Seules les pages elles-mêmes tranchent, et il faut donc
+    pouvoir les ouvrir.
+    """
+    rates = [
+        (exemples[i].etiquette, predites[i], exemples[i].url)
+        for i in range(len(exemples))
+        if predites[i] != verites[i]
+    ]
+    print(f"\n── Les pages ratées ({len(rates)}), à ouvrir ──")
+    for vrai, predit, url in sorted(rates)[:combien]:
+        print(f"  {vrai[:14]:<14} → {predit[:14]:<14} {url[:70]}")
+    if len(rates) > combien:
+        print(f"  … et {len(rates) - combien} autres (« --erreurs {len(rates)} »)")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--limite", type=int, default=10000, help="plafonner le corpus lu")
@@ -187,6 +215,12 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=5,
         help="découpages différents du même corpus, pour mesurer le bruit (défaut : 5)",
+    )
+    parser.add_argument(
+        "--erreurs",
+        type=int,
+        default=0,
+        help="lister N pages mal classées, avec leur adresse, pour aller les relire",
     )
     parser.add_argument(
         "--sans-lieu",
@@ -230,8 +264,14 @@ def main(argv: list[str] | None = None) -> int:
         part = avec_lieu[0] / len(exemples) if exemples else 0.0
         print(f"  Lieu connu (JSON-LD) sur {avec_lieu[0]} page(s) — {part:.0%}")
     print(f"  {len(comptes)} classe(s), {len(sites)} site(s)")
+    # La couverture du lieu **par classe**, et non pas seulement au total :
+    # un trait absent précisément des pages qu'il devait sauver ne peut rien
+    # sauver, et une moyenne globale le cache.
+    lieux = Counter(e.etiquette for e in exemples if e.lieu)
+    print(f"    {'classe':<30} {'pages':>6} {'avec lieu':>10}")
     for classe, n in comptes.most_common():
-        print(f"    {classe[:34]:<34} {n:>4}")
+        couvert = lieux.get(classe, 0)
+        print(f"    {classe[:30]:<30} {n:>6} {couvert:>6} ({couvert / n:>3.0%})")
     # ── les classes trop rares, mises de côté et non pas subies
     #
     # Une classe vue une ou deux fois ne s'apprend pas : le modèle retient la
@@ -312,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
     print()
     _par_classe(p_groupe, verites)
     _confusions(p_groupe, verites)
+    if args.erreurs:
+        _erreurs(exemples, p_groupe, verites, args.erreurs)
 
     # ── le seuil, mesuré et non choisi
     mesure, courbe = seuil_mesure(p_groupe, s_groupe, verites)

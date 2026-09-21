@@ -131,3 +131,32 @@ def test_l_entrainement_ne_va_pas_sur_le_reseau():
     # Aucune exception : le lecteur hors ligne refuse la requête, et l'étage 5
     # se rabat sur la page qu'on lui a donnée.
     assert len(_recolter(site, limite=10)) == 1
+
+
+def test_l_exemple_porte_son_adresse_et_la_presence_d_un_lieu():
+    """Deux renseignements qui ne servent pas au modèle, seulement au diagnostic.
+
+    L'adresse, pour pouvoir **ouvrir** les pages qu'il rate : un tableau de
+    confusions dit qu'on prend onze musées pour des ateliers, il ne dit pas si
+    le modèle a tort ou si la frontière n'est pas tenable depuis le texte.
+
+    La présence d'un lieu, pour savoir **quelles classes** le trait couvre :
+    une couverture globale de 37 % ne dit rien s'il manque précisément aux
+    pages qu'il devait sauver.
+    """
+    site = FauxSite([_item(1, "spectacle-avec-json-ld.html", "https://a.fr/1", "Spectacle")])
+    exemples, _ = _exemples(_recolter(site, limite=10))
+    assert exemples[0].url == "https://a.fr/1"
+    assert isinstance(exemples[0].lieu, bool)
+
+
+def test_sans_lieu_le_trait_disparait_des_traits_mais_pas_du_diagnostic():
+    """On doit pouvoir dire « ce corpus déclare des lieux » tout en mesurant
+    sans eux : sinon la comparaison des deux runs perd son repère."""
+    site = FauxSite([_item(1, "spectacle-avec-json-ld.html", "https://a.fr/1", "Spectacle")])
+    recolte = _recolter(site, limite=10)
+    avec, _ = _exemples(recolte)
+    sans, _ = _exemples(recolte, sans_lieu=True)
+    assert avec[0].lieu == sans[0].lieu
+    if avec[0].lieu:
+        assert avec[0].texte != sans[0].texte
