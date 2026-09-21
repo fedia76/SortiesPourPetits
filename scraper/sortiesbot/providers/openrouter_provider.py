@@ -91,6 +91,29 @@ le modèle avait dépensé les 300 jetons de la reconnaissance à raisonner, san
 rien écrire. Le suivant a tenté de le désactiver, et s'est fait répondre que
 c'était impossible sur cet endpoint. D'où `MARGE_RAISONNEMENT`, qui lui en
 laisse la place, et un message d'erreur qui nomme ce cas s'il déborde encore.
+
+## Ce que ça coûte, mesuré
+
+Une reconnaissance, le plus petit des quatre appels, sur le modèle par défaut :
+
+    476 jetons d'entrée, 2 807 de sortie, dont 1 312 de raisonnement
+    0,001475 $
+
+Le même appel chez Haiku 4.5 coûterait environ 0,001 $ — 476 jetons d'entrée à
+1 $ le million, une centaine de jetons de sortie à 5 $. **Le modèle « flash »
+revient donc une fois et demie plus cher que Haiku sur cet appel-là**, et ce
+n'est pas un paradoxe : son jeton vaut environ dix fois moins, mais le
+raisonnement obligatoire lui en fait produire vingt-cinq fois plus.
+
+Le rapport s'inverse dès que l'appel grossit, parce que le raisonnement, lui,
+ne grossit pas avec : à l'extraction, où le prompt porte huit mille caractères
+de page et la réponse une fiche entière, le même calcul donne environ 0,0013 $
+contre 0,0062 $ pour Haiku. C'est là que ce modèle se gagne, et c'est ce que le
+banc doit trancher plutôt que ces deux règles de trois.
+
+Deux réserves sur ces chiffres : ils viennent d'**un seul appel**, et le tarif
+du modèle en est déduit, non lu. Seul le total de 0,001475 $ est une mesure ;
+le reste est une estimation qui dit un ordre de grandeur.
 """
 
 from __future__ import annotations
@@ -179,6 +202,11 @@ TARIF_INCONNU = (5.0, 25.0)
 #: croît pas avec la longueur de la réponse attendue. Reconnaître une page en
 #: demande autant que remplir une fiche, et multiplier les plafonds aurait
 #: donné seize mille jetons de marge à l'extraction d'un programme pour rien.
+#:
+#: **Mesuré depuis** : une reconnaissance réelle en a consommé 1 312. La marge
+#: tient, avec un facteur trois devant elle — assez pour une page que le modèle
+#: trouverait plus embarrassante, et c'est bien la marge qu'on veut ici : une
+#: reconnaissance qui échoue rend la page « inconnue », donc traitée en agenda.
 #:
 #: Un plafond n'est pas une dépense : ce qui n'est pas produit n'est pas
 #: facturé. Le vrai garde-fou reste `max_cost_usd`, qui compte ce qui l'a été.

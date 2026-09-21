@@ -392,10 +392,31 @@ longueur de la réponse attendue — reconnaître une page en demande autant que
 remplir une fiche. Un plafond n'est pas une dépense, seul ce qui est produit se
 facture ; le garde-fou reste `max_cost_usd`.
 
-Cette marge a été posée **sans mesure**, aucun appel n'étant encore allé au
-bout. Le vérificateur affiche les jetons de raisonnement réellement consommés :
-c'est ce chiffre qui la réglera. Et un appel qui déborderait quand même le dit
-en clair dans le journal, plutôt que de faire accuser le prompt.
+Elle a d'abord été posée sans mesure ; l'appel suivant l'a confirmée. Une
+reconnaissance réelle consomme **1 312 jetons de raisonnement** — la marge tient,
+avec un facteur trois devant elle. Un appel qui déborderait quand même le dit
+en clair dans le journal, en nommant la constante à relever, plutôt que de
+faire accuser le prompt.
+
+**Ce que ce modèle coûte, mesuré.** Cette même reconnaissance :
+
+    476 jetons d'entrée, 2 807 de sortie (dont 1 312 de raisonnement) → 0,001475 $
+
+Le même appel chez Haiku coûterait environ 0,001 $. **Le modèle « flash »
+revient donc une fois et demie plus cher que Haiku sur le plus petit des quatre
+appels**, et ce n'est pas un paradoxe : son jeton vaut environ dix fois moins,
+mais le raisonnement obligatoire lui en fait produire vingt-cinq fois plus.
+
+Le rapport s'inverse dès que l'appel grossit, le raisonnement ne grossissant
+pas avec lui : à l'extraction — huit mille caractères de page en entrée, une
+fiche entière en sortie — le même calcul donne environ 0,0013 $ contre 0,0062 $
+pour Haiku, soit cinq fois moins. C'est là que ce modèle se gagne.
+
+Deux réserves sur ces chiffres, qui comptent autant que les chiffres : ils
+viennent d'**un seul appel**, et le tarif du modèle y est déduit plutôt que lu.
+Seul le total de 0,001475 $ est une mesure. C'est un ordre de grandeur, pas un
+verdict — le verdict, c'est le banc qui le rendra, et il sait maintenant jouer
+ce fournisseur.
 
 La forme des réponses **a été confrontée au service** le 21 septembre 2026 ; le
 détail de ce qui a été observé est en tête de `providers/openrouter_provider.py`.
