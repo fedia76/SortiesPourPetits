@@ -44,13 +44,19 @@ MODE_SEARCH = "recherche"
 MODE_SITE = "site"
 MODES = (MODE_SEARCH, MODE_SITE)
 
-#: Qui lance les recherches. Le modèle reste derrière dans les deux cas.
+#: Qui lance les recherches, et qui tient le modèle derrière. Un seul champ
+#: pour ces deux choix, parce qu'il n'existe que ces quatre croisements —
+#: le tableau est dans `providers/base.py`, `get_provider`.
+#:
+#: « openrouter » ne change que le modèle : la recherche reste au moteur, comme
+#: pour « serper », et les quatre appels du modèle partent chez le routeur. Il
+#: réclame donc les **deux** clés.
 #:
 #: « gliner » est à part : ce n'est pas un moteur mais un **étiqueteur de
 #: spans**, et il ne remplace que l'extraction. Un run complet nommé ainsi
 #: échouera aux quatre autres appels sans clé de modèle — c'est voulu, ce
 #: fournisseur est celui d'un run de banc d'extraction.
-PROVIDERS = ("anthropic", "serper", "gliner")
+PROVIDERS = ("anthropic", "serper", "openrouter", "gliner")
 
 #: Sites qui **republient** l'information sans en être la source. On les lit
 #: volontiers — ce sont d'excellents agendas, c'est même pour ça qu'ils
@@ -330,6 +336,8 @@ def validated(config: Config) -> Config:
             f"fournisseur inconnu : « {config.provider} » "
             f"(connus : {', '.join(PROVIDERS)})"
         )
+    if config.provider == "openrouter":
+        _openrouter_models(config)
     urls = [u.strip() for u in config.seed_urls if u.strip()]
     for url in urls:
         if not url.startswith(("http://", "https://")):
@@ -337,6 +345,40 @@ def validated(config: Config) -> Config:
     if config.mode == MODE_SITE and not urls:
         raise ConfigError("le mode « site » réclame au moins une URL de départ (seed_urls)")
     return replace(config, seed_urls=urls, blocked_domains=_blocked(config))
+
+
+def _openrouter_models(config: Config) -> None:
+    """Refuse au chargement un modèle qu'OpenRouter ne saurait pas nommer.
+
+    Là-bas un modèle s'appelle « éditeur/modèle ». Les quatre champs de la
+    console portent, eux, les noms du vocabulaire d'Anthropic : basculer une
+    recherche sur OpenRouter sans les retoucher est le geste normal, et le
+    fournisseur traduit ceux qu'il connaît. Ce qu'il ne sait pas traduire doit
+    se voir **ici** — une faute de frappe découverte au premier appel aurait
+    déjà coûté une exécution, et se lirait dans la console comme une panne du
+    service plutôt que comme un réglage à corriger.
+
+    L'import est tardif exprès : `providers` importe ce module, et le faire en
+    tête ferait une boucle.
+    """
+    from .providers.base import ProviderError
+    from .providers.openrouter_provider import modele_openrouter
+
+    champs = {
+        "searchModel": config.search_model,
+        "classifyModel": config.classify_model,
+        "selectModel": config.select_model,
+        "extractionModel": config.extraction_model,
+    }
+    for champ, nom in champs.items():
+        # La reconnaissance a le droit de n'appeler personne : un champ vide
+        # veut dire « on s'en tient aux signaux gratuits », pas « traduis-le ».
+        if not str(nom).strip():
+            continue
+        try:
+            modele_openrouter(str(nom))
+        except ProviderError as err:
+            raise ConfigError(f"{champ} : {err}") from err
 
 
 def _blocked(config: Config) -> list[str]:
@@ -502,6 +544,9 @@ class Environment:
     anthropic_key: str | None
     #: Clé du moteur de recherche, quand la configuration en nomme un.
     serper_key: str | None = None
+    #: Clé du routeur de modèles, pour les configurations en `provider:
+    #: openrouter`. Le moteur, lui, reste Serper : les deux clés vont ensemble.
+    openrouter_key: str | None = None
 
     @classmethod
     def from_env(cls) -> Environment:
@@ -510,6 +555,7 @@ class Environment:
             api_key=os.environ.get("SPP_API_KEY") or None,
             anthropic_key=os.environ.get("ANTHROPIC_API_KEY") or None,
             serper_key=os.environ.get("SERPER_API_KEY") or None,
+            openrouter_key=os.environ.get("OPENROUTER_API_KEY") or None,
         )
 
 

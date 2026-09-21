@@ -10,20 +10,39 @@ recherche fait un aller-retour serveur par salve de requêtes ; la sélection et
 l'extraction n'ont aucun outil, donc aucune itération. C'est ce qui rend le
 coût prévisible, là où un seul appel agentique refacturait tout son contexte à
 chacune de ses trente itérations.
+
+Ce qui reste ici est ce qui appartient vraiment à Claude : l'outil serveur de
+recherche, le streaming, la reprise d'un tour en pause, et la table des tarifs.
+Ce que tout fournisseur de modèle demande — les schémas de sortie, les plafonds
+de jetons, la consigne système — est dans `schemas.py` et `prompts.py`, pour
+qu'un second fournisseur pose exactement la même question.
 """
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
 
 from ..config import Config
 from ..harvest import Link
 from ..journal import RunLog
 from ..models import SEARCH_PRICE_USD, ExtractedEvent, FoundPage, Usage
+from ..prompts import SYSTEM
 from ..store import normalize_url
 from .base import ProviderError
+from .schemas import (
+    CLASSIFY_MAX_TOKENS,
+    CLASSIFY_SCHEMA,
+    EXTRACTION_MAX_TOKENS,
+    EXTRACTION_MULTI_MAX_TOKENS,
+    EXTRACTION_MULTI_SCHEMA,
+    EXTRACTION_SCHEMA,
+    QUERIES_MAX_TOKENS,
+    QUERIES_SCHEMA,
+    SELECT_MAX_TOKENS,
+    SELECT_SCHEMA,
+    events_from_multi,
+    loads_json,
+)
 
 #: Version de base de la recherche web : la variante à filtrage dynamique
 #: (2026-02-09) réclame un modèle Claude 4.6+, et son intérêt disparaît ici
@@ -39,28 +58,15 @@ USER_LOCATION = {
     "timezone": "Europe/Paris",
 }
 
-SYSTEM = (
-    "Tu alimentes un site francophone d'idées de sorties à faire avec des enfants. "
-    "Tu ne rapportes que ce que les pages consultées disent réellement : "
-    "aucune date, aucun tarif et aucune adresse inventés."
-)
-
 #: Reprises acceptées après un `pause_turn`. Seule la recherche peut être mise
 #: en pause ; deux reprises suffisent largement pour une salve de requêtes.
 MAX_CONTINUATIONS = 2
 
 TIMEOUT_SECONDS = 300.0
 
-CLASSIFY_MAX_TOKENS = 300
-QUERIES_MAX_TOKENS = 600
 #: La réponse ne porte plus que les requêtes lancées : quelques dizaines de
 #: jetons là où le classement des pages en demandait des milliers.
 SEARCH_MAX_TOKENS = 600
-SELECT_MAX_TOKENS = 2_000
-EXTRACTION_MAX_TOKENS = 4_000
-#: Une page de programme rend jusqu'à `max_events` fiches d'un coup ; le
-#: plafond d'une page unique la tronquerait au milieu de la troisième.
-EXTRACTION_MULTI_MAX_TOKENS = 16_000
 
 #: Tarifs jetons en dollars par million. La facturation des recherches web
 #: (0,01 $ pièce) s'y ajoute et est comptée à part dans `Usage`.
@@ -91,30 +97,6 @@ UNKNOWN_MODEL_PRICE = (
     max(rate_out for _, rate_out in PRICES.values()),
 )
 
-#: Une étiquette et une phrase. Le modèle n'écrit jamais d'URL ici : il ne
-#: peut donc pas en inventer, comme à la sélection.
-CLASSIFY_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "nature": {
-            "type": "string",
-            "enum": ["agenda", "sortie", "programme", "inconnu"],
-        },
-        "pourquoi": {"type": "string"},
-    },
-    "required": ["nature", "pourquoi"],
-    "additionalProperties": False,
-}
-
-#: Une liste de requêtes, et rien d'autre : c'est tout ce qu'on demande à ce
-#: premier appel. Le modèle n'écrit aucune URL, donc il ne peut pas en inventer.
-QUERIES_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {"queries": {"type": "array", "items": {"type": "string"}}},
-    "required": ["queries"],
-    "additionalProperties": False,
-}
-
 #: La recherche ne rend plus de jugement : ce qu'elle a remonté est relevé sur
 #: le flux, bloc par bloc, et la réponse du modèle ne sert qu'à clore le tour.
 #: D'où un schéma minuscule et un plafond de jetons de sortie très bas.
@@ -122,114 +104,6 @@ SEARCH_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {"lancees": {"type": "array", "items": {"type": "string"}}},
     "required": ["lancees"],
-    "additionalProperties": False,
-}
-
-#: Le modèle rend des **numéros de ligne**, jamais des URL : c'est ce qui rend
-#: matériellement impossible d'en inventer une, et ça ne change pas. Ce qui
-#: change, c'est qu'il dit maintenant *pourquoi* — un motif par lien retenu,
-#: et une phrase pour ce qu'il a écarté.
-#:
-#: Un motif par lien écarté coûterait bien trop cher : deux cents liens à
-#: quinze jetons font tripler la sortie de cet étage. Une phrase globale suffit
-#: à comprendre un tri raté, ce qui est le besoin réel.
-SELECT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "kept": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "index": {"type": "integer"},
-                    "why": {"type": "string"},
-                },
-                "required": ["index", "why"],
-                "additionalProperties": False,
-            },
-        },
-        "dropped_reason": {"type": "string"},
-    },
-    "required": ["kept", "dropped_reason"],
-    "additionalProperties": False,
-}
-
-EXTRACTION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "relevant": {"type": "boolean"},
-        "skip_reason": {"type": "string"},
-        # Le seul champ qui puisse renvoyer la page en arrière : elle n'est
-        # pas une sortie, mais elle en porte plusieurs.
-        "several": {"type": "boolean"},
-        "title": {"type": "string"},
-        "description": {"type": "string"},
-        "free": {"type": "boolean"},
-        "price": {"type": ["number", "null"]},
-        "age_min": {"type": ["integer", "null"]},
-        "age_max": {"type": ["integer", "null"]},
-        "permanent": {"type": "boolean"},
-        "date_start": {"type": "string"},
-        "date_end": {"type": "string"},
-        # Les jours de représentation : sans eux, un spectacle du dimanche
-        # devient une plage continue, donc proposé un jeudi.
-        "weekdays": {
-            "type": "array",
-            "items": {
-                "type": "string",
-                "enum": [
-                    "lundi", "mardi", "mercredi", "jeudi",
-                    "vendredi", "samedi", "dimanche",
-                ],
-            },
-        },
-        "dates": {"type": "array", "items": {"type": "string"}},
-        "open_time": {"type": "string"},
-        "close_time": {"type": "string"},
-        "setting": {"type": "string", "enum": ["INDOOR", "OUTDOOR", "BOTH", ""]},
-        "category": {"type": "string"},
-        "venue_name": {"type": "string"},
-        "venue_address": {"type": "string"},
-        "venue_city": {"type": "string"},
-        "venue_postal_code": {"type": "string"},
-        "photo_url": {"type": "string"},
-    },
-    "required": [
-        "relevant", "skip_reason", "several", "title", "description", "free", "price",
-        "age_min", "age_max", "permanent", "date_start", "date_end",
-        "weekdays", "dates",
-        "open_time", "close_time", "setting", "category", "venue_name",
-        "venue_address", "venue_city", "venue_postal_code", "photo_url",
-    ],
-    "additionalProperties": False,
-}
-
-
-#: La fiche d'une sortie relevée dans un programme est celle d'une page
-#: unique, moins le verdict : une entrée qui ne convient pas n'est simplement
-#: pas dans la liste. Dériver le schéma plutôt que le recopier garantit qu'un
-#: champ ajouté à l'un existe dans l'autre.
-_MULTI_ITEM_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        k: v for k, v in EXTRACTION_SCHEMA["properties"].items()
-        if k not in ("relevant", "skip_reason", "several")
-    },
-    "required": [
-        k for k in EXTRACTION_SCHEMA["required"]
-        if k not in ("relevant", "skip_reason", "several")
-    ],
-    "additionalProperties": False,
-}
-
-EXTRACTION_MULTI_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "events": {"type": "array", "items": _MULTI_ITEM_SCHEMA},
-        #: Renseigné quand la liste est vide : la console dira pourquoi.
-        "skip_reason": {"type": "string"},
-    },
-    "required": ["events", "skip_reason"],
     "additionalProperties": False,
 }
 
@@ -416,23 +290,11 @@ class AnthropicProvider:
             op="extraction",
             log=log,
         )
-        raw = data.get("events")
-        events = [
-            ExtractedEvent.from_json({**item, "relevant": True})
-            for item in (raw if isinstance(raw, list) else [])
-            if isinstance(item, dict)
-        ]
-        if not events:
-            # Une page de programme sans programme : le pipeline la traite
-            # comme une page hors sujet, avec la raison donnée par le modèle.
-            reason = str(data.get("skip_reason") or "").strip()
-            return [
-                ExtractedEvent(
-                    relevant=False,
-                    skip_reason=reason or "aucune sortie relevée sur cette page",
-                )
-            ]
-        return events[: config.max_events]
+        # Une page de programme sans programme est traitée comme une page hors
+        # sujet, avec la raison donnée par le modèle : `events_from_multi` le
+        # fait pour tous les fournisseurs, sans quoi deux briques d'extraction
+        # rendraient deux choses différentes de la même réponse.
+        return events_from_multi(data, config.max_events)
 
     # ---------------------------------------------------------------- l'appel
 
@@ -589,22 +451,9 @@ def _token_cost(model: str, usage: Usage) -> float:
 
 
 def _parse_json(response: Any) -> dict[str, Any]:
+    """Le JSON du bloc texte. La lecture elle-même est commune aux modèles."""
     text = next(
         (b.text for b in getattr(response, "content", []) if getattr(b, "type", "") == "text"),
-        None,
+        "",
     )
-    if not text:
-        raise ProviderError("réponse sans contenu texte exploitable")
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            raise ProviderError(f"réponse illisible : {text[:200]}") from None
-        try:
-            data = json.loads(match.group(0))
-        except json.JSONDecodeError as err:
-            raise ProviderError(f"réponse illisible : {text[:200]}") from err
-    if not isinstance(data, dict):
-        raise ProviderError("réponse JSON inattendue (objet attendu)")
-    return data
+    return loads_json(text, ProviderError)

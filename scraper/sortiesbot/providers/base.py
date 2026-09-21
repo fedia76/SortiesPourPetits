@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from ..config import Config
+from ..config import PROVIDERS, Config
 from ..harvest import Link
 from ..journal import RunLog
 from ..models import ExtractedEvent, FoundPage, Usage
@@ -96,21 +96,59 @@ class Provider(Protocol):
 
 
 def get_provider(
-    config: Config, api_key: str | None = None, serper_key: str | None = None
+    config: Config,
+    api_key: str | None = None,
+    serper_key: str | None = None,
+    openrouter_key: str | None = None,
+    *,
+    search: bool = True,
 ) -> Provider:
     """Instancie le fournisseur nommé dans la configuration.
 
-    « serper » ne remplace que la recherche : le modèle reste derrière pour les
-    quatre autres appels, qu'un moteur ne sait pas rendre.
+    Le champ `provider` nomme en réalité **deux** choix, le moteur et le
+    modèle, et les quatre valeurs se lisent comme deux colonnes :
+
+        anthropic   outil serveur Claude   +  Claude
+        serper      Serper (Google)        +  Claude
+        openrouter  Serper (Google)        +  OpenRouter
+        gliner      (aucun moteur)         +  GLiNER à l'extraction, Claude ailleurs
+
+    Un seul champ pour deux choix tient tant que le tableau est celui-là. Une
+    cinquième ligne qui croiserait autrement — l'outil serveur avec un modèle
+    d'OpenRouter, par exemple — réclamerait deux champs, en base, dans la
+    console et ici. Personne n'en a eu besoin jusqu'ici.
+
+    Le moteur n'est monté que si quelqu'un doit chercher. Deux cas où personne
+    ne cherche, et où réclamer la clé du moteur ferait échouer au démarrage un
+    run qui ne s'en serait jamais servi :
+
+    * le mode « site » — les adresses sont données, voir `stages/discovery.py` ;
+    * un run du **banc** (`search=False`) — il rejoue une brique sur un corpus
+      gelé, et l'étage 1 n'en fait pas partie.
+
+    Seul le modèle compte alors, et le champ garde son sens : il dit lequel.
     """
     from .anthropic_provider import AnthropicProvider
+
+    cherche = search and not config.targets_site
 
     if config.provider == "anthropic":
         return AnthropicProvider(api_key=api_key)
     if config.provider == "serper":
         from .serper_provider import SerperProvider
 
-        return SerperProvider(AnthropicProvider(api_key=api_key), api_key=serper_key)
+        modele = AnthropicProvider(api_key=api_key)
+        return SerperProvider(modele, api_key=serper_key) if cherche else modele
+    if config.provider == "openrouter":
+        from .openrouter_provider import OpenRouterProvider
+        from .serper_provider import SerperProvider
+
+        # Même composition que « serper », l'autre modèle derrière : la
+        # découverte revient au moteur, les quatre appels du modèle au routeur.
+        # Les deux clés sont donc requises — celle d'OpenRouter toujours, celle
+        # du moteur dès qu'il y a une recherche à lancer.
+        routeur = OpenRouterProvider(api_key=openrouter_key)
+        return SerperProvider(routeur, api_key=serper_key) if cherche else routeur
     if config.provider == "gliner":
         from .gliner_provider import GlinerProvider
 
@@ -126,5 +164,5 @@ def get_provider(
         )
     raise ProviderError(
         f"Fournisseur inconnu : « {config.provider} » "
-        f"(connus : anthropic, serper, gliner)"
+        f"(connus : {', '.join(PROVIDERS)})"
     )

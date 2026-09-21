@@ -24,7 +24,7 @@ from test_pipeline import (  # fakes partagés
 
 from sortiesbot import worker
 from sortiesbot.api import ApiError
-from sortiesbot.config import Config, ConfigError, config_from_api
+from sortiesbot.config import Config, ConfigError, Environment, config_from_api
 from sortiesbot.journal import RunLog
 from sortiesbot.models import FoundPage, Summary, Usage
 from sortiesbot.store import RemoteStore, normalize_url
@@ -226,7 +226,7 @@ def standard():
 
 def run_job(api, monkeypatch, provider, fetcher, runs_dir, payload=None):
     """Joue `worker.execute` avec un fournisseur et un serveur web simulés."""
-    monkeypatch.setattr(worker, "get_provider", lambda config, api_key=None, serper_key=None: provider)
+    monkeypatch.setattr(worker, "get_provider", lambda config, **clés: provider)
     monkeypatch.setattr(
         worker,
         "run_pipeline",
@@ -240,7 +240,7 @@ def run_job(api, monkeypatch, provider, fetcher, runs_dir, payload=None):
     # Le registre du classifieur s'accumule d'un run à l'autre : un test ne
     # doit surtout pas écrire dans celui du dépôt.
     monkeypatch.setattr(worker, "LEDGER_DIR", runs_dir)
-    env = type("Env", (), {"anthropic_key": "clé", "serper_key": None})()
+    env = Environment(api_url="http://site", api_key="spp_x", anthropic_key="clé")
     worker.execute(payload or job(), api, env, runs_dir=runs_dir, quiet=True)
 
 
@@ -278,9 +278,11 @@ def test_un_plantage_imprevu_clot_quand_meme_lexecution(tmp_path, monkeypatch):
     """Sans clôture, la console resterait bloquée sur « En cours »."""
     api = ScraperApi()
     monkeypatch.setattr(
-        worker, "get_provider", lambda config, api_key=None, serper_key=None: (_ for _ in ()).throw(RuntimeError("boum"))
+        worker,
+        "get_provider",
+        lambda config, **clés: (_ for _ in ()).throw(RuntimeError("boum")),
     )
-    env = type("Env", (), {"anthropic_key": "clé", "serper_key": None})()
+    env = Environment(api_url="http://site", api_key="spp_x", anthropic_key="clé")
     worker.execute(job(), api, env, runs_dir=tmp_path, quiet=True)
 
     run_id, status, counters = api.finished[0]
@@ -607,6 +609,96 @@ def test_un_run_gliner_ne_se_declare_pas_joue_par_haiku():
     declare = worker._declare("EXTRACT", config)
     assert declare["model"].startswith("gliner:")
     assert "haiku" not in declare["model"]
+
+
+# ───────────────────────────── le même banc, un modèle d'OpenRouter
+#
+# L'étiqueteur ne sait remplir qu'une fiche ; le routeur, lui, sait jouer les
+# **deux** étages qui appellent quelqu'un — le tri et l'extraction. C'est ce
+# qui fait l'intérêt de la mesure : quel modèle tient l'étage 6 pour combien,
+# et lequel s'effondre sur le tri.
+
+
+def test_un_run_openrouter_impose_son_modele_aux_deux_etages():
+    """Un run ne joue qu'un étage, et on ne sait pas encore lequel ici."""
+    config = worker._config_du_run(
+        {
+            "id": 30,
+            "stage": "EXTRACT",
+            "extraction": {"provider": "openrouter", "model": "google/gemini-2.5-flash"},
+        },
+        quiet=True,
+    )
+    assert config.provider == "openrouter"
+    assert config.extraction_model == "google/gemini-2.5-flash"
+    assert config.select_model == "google/gemini-2.5-flash"
+
+
+def test_un_run_openrouter_sans_modele_garde_celui_de_la_production():
+    """Même modèle, autre route : la comparaison la plus propre qui soit."""
+    config = worker._config_du_run(
+        {"id": 31, "stage": "EXTRACT", "extraction": {"provider": "openrouter"}}, quiet=True
+    )
+    assert config.extraction_model == Config(name="x", theme="x").extraction_model
+
+
+def test_un_modele_openrouter_intraduisible_arrete_le_run_avant_le_corpus():
+    """Pas à la première entrée : le worker aurait déjà été occupé pour rien."""
+    with pytest.raises(ConfigError, match="modèle du run"):
+        worker._config_du_run(
+            {
+                "id": 32,
+                "stage": "EXTRACT",
+                "extraction": {"provider": "openrouter", "model": "gemini-tout-court"},
+            },
+            quiet=True,
+        )
+
+
+def test_un_run_openrouter_declare_le_modele_reellement_appele():
+    """Un run laissé au défaut n'a pas été joué par « claude-haiku-4-5 ».
+
+    Il a été joué par le modèle par défaut du routeur, et c'est ce nom-là qui
+    doit aller en base : les deux points de la courbe porteraient sinon le même
+    nom pour deux modèles différents, ce qui est irrattrapable après coup.
+    """
+    from sortiesbot.providers.openrouter_provider import MODELE_DEFAUT
+
+    config = worker._config_du_run(
+        {"id": 33, "stage": "EXTRACT", "extraction": {"provider": "openrouter"}}, quiet=True
+    )
+    assert worker._declare("EXTRACT", config)["model"] == MODELE_DEFAUT
+
+
+def test_un_run_openrouter_de_tri_declare_son_modele_aussi():
+    config = worker._config_du_run(
+        {
+            "id": 34,
+            "stage": "SELECT",
+            "recherche": {"theme": "spectacles", "dateFrom": "2026-07-01", "dateTo": "2026-07-31"},
+            "extraction": {"provider": "openrouter", "model": "mistralai/mistral-small"},
+        },
+        quiet=True,
+    )
+    assert worker._declare("SELECT", config)["model"] == "mistralai/mistral-small"
+
+
+def test_un_run_de_banc_ne_monte_pas_le_moteur():
+    """Il rejoue une brique sur un corpus gelé : l'étage 1 n'en fait pas partie.
+
+    Sans ça, un run joué par OpenRouter réclamerait une clé Serper pour une
+    recherche qu'il ne lancera jamais.
+    """
+    from sortiesbot.providers.base import get_provider
+    from sortiesbot.providers.openrouter_provider import OpenRouterProvider
+
+    config = worker._config_du_run(
+        {"id": 35, "stage": "EXTRACT", "extraction": {"provider": "openrouter"}}, quiet=True
+    )
+    provider = get_provider(
+        config, api_key=None, serper_key=None, openrouter_key="sk-or-x", search=False
+    )
+    assert isinstance(provider, OpenRouterProvider)
 
 
 # ───────────────────────────────── un run de banc ne doit plus être muet

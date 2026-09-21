@@ -205,8 +205,12 @@ export interface ScraperConfig {
    * seule à porter encore les liens que la modération va trancher.
    */
   freezeAgendas: boolean;
-  /** Qui lance les recherches : l'outil serveur du modèle, ou Google. */
-  provider: 'anthropic' | 'serper';
+  /**
+   * Qui cherche, et qui tient le modèle derrière — un champ pour ces deux
+   * choix, parce qu'il n'existe que ces trois croisements : l'outil serveur du
+   * modèle avec Claude, Google avec Claude, Google avec un modèle d'OpenRouter.
+   */
+  provider: 'anthropic' | 'serper' | 'openrouter';
   /** Pages suivantes d'un agenda, suivies tant que la moisson est maigre. */
   maxNextPages: number;
   /** Requêtes imposées, une par ligne. Vide : le modèle les formule. */
@@ -1344,17 +1348,27 @@ export interface EvalRecherche {
   theme: string;
 }
 
-/** Qui remplit la fiche, pour un run de l'étage 6. */
-export type EvalProvider = 'anthropic' | 'gliner';
+/**
+ * Qui joue la brique mesurée — l'étage 6, et l'étage 4 pour les deux premiers.
+ *
+ * La clé s'appelle toujours `extraction` en base, parce que c'est là qu'elle
+ * est née ; ce qu'elle porte vaut pour les deux étages qui appellent quelqu'un.
+ */
+export type EvalProvider = 'anthropic' | 'gliner' | 'openrouter';
 
 export interface EvalExtraction {
   provider: EvalProvider;
-  /** Point de contrôle de l'étiqueteur. Vide : celui par défaut du scraper. */
+  /**
+   * Le modèle, selon le fournisseur : un point de contrôle Hugging Face pour
+   * l'étiqueteur, un slug « éditeur/modèle » pour le routeur. Vide : celui par
+   * défaut du scraper.
+   */
   model?: string;
 }
 
 export const EVAL_PROVIDER_LABELS: Record<EvalProvider, string> = {
   anthropic: 'Le modèle (Haiku) — celui de la production',
+  openrouter: 'Un modèle d’OpenRouter — au choix, au tarif qu’il annonce',
   gliner: 'Un étiqueteur local (GLiNER) — gratuit, sans rédaction',
 };
 

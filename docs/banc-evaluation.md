@@ -511,7 +511,7 @@ précédentes. C'est aussi pourquoi les catégories du site partent dans le prom
 le modèle doit y choisir la sienne, et les lui refuser faisait compter faux un
 champ qu'on l'empêchait de remplir.
 
-### Rejouer l'étage 6 avec un autre fournisseur
+### Rejouer une brique avec un autre fournisseur
 
 La même brique, le même corpus gelé, un autre fournisseur : c'est la
 comparaison qu'un banc existe pour rendre possible, et elle se choisit au
@@ -519,19 +519,44 @@ lancement, dans *Jouer une mesure* → *Par qui*. Le choix voyage dans
 `EvalRun.settings`, à côté de la recherche, et pour la même raison qu'elle :
 c'est la console qui décide sous quoi on mesure, pas la machine qui mesure.
 
+Trois fournisseurs, et ils ne couvrent pas les mêmes étages :
+
+| Fournisseur | Étage 4, le tri | Étage 6, l'extraction | Ce qu'il coûte |
+|---|---|---|---|
+| `anthropic` | oui | oui | le tarif de la table `PRICES` |
+| `openrouter` | oui | oui | celui que le routeur annonce, appel par appel |
+| `gliner` | **non** | oui | rien — il tourne sur le processeur |
+
+L'étiqueteur est refusé au tri **au lancement**, pas à l'exécution : il ne sait
+pas choisir des numéros de ligne dans une liste, et le laisser partir
+occuperait le worker pour échouer à la première page. Les deux autres savent
+jouer les deux étages, et c'est là tout l'intérêt de la mesure — quel modèle
+tient l'étage 6 pour combien, et lequel s'effondre sur le tri.
+
 Deux conséquences, et la seconde compte autant que la première :
 
-* le run déclare à la clôture le modèle réellement interrogé
-  (`gliner:urchade/gliner_multi-v2.1`), si bien que deux points restent
-  distinguables — un run joué ne dit jamais ce qu'il était, et c'est
-  irrattrapable après coup ;
-* les deux fournisseurs font **deux courbes**. Un étiqueteur laisse
-  structurellement vides quatre des douze aspects : son taux est mécaniquement
-  plus bas sans que rien ait régressé, et les aligner ferait lire un
-  effondrement là où seul l'outil a changé.
+* le run déclare à la clôture le modèle **réellement interrogé** :
+  `gliner:urchade/gliner_multi-v2.1` pour l'étiqueteur,
+  `z-ai/glm-5.3-flash:floor` pour un run OpenRouter laissé au défaut — et non
+  `claude-haiku-4-5`, qui n'a pas joué ce run. Sans quoi deux points de la
+  courbe porteraient le même nom pour deux modèles différents, et un run joué
+  ne dit jamais ce qu'il était : c'est irrattrapable après coup ;
 
-Le mode d'emploi est dans le
-[README du scraper](../scraper/README.md#extraire-en-local-plutôt-quavec-le-modèle).
+* un run qu'on veut **reproductible** nomme son modèle sans suffixe de
+  routage. Le défaut porte `:floor`, qui demande l'hébergeur le moins cher —
+  et il n'est pas le même d'un appel à l'autre, quantisations et réglages
+  compris. C'est une variable de plus dans une mesure qui existe pour n'en
+  faire varier qu'une ;
+* chaque fournisseur, et pour OpenRouter chaque **modèle**, fait sa propre
+  courbe. Un étiqueteur laisse structurellement vides quatre des douze
+  aspects : son taux est mécaniquement plus bas sans que rien ait régressé, et
+  les aligner ferait lire un effondrement là où seul l'outil a changé. Deux
+  modèles d'OpenRouter sur la même fenêtre, c'est la même règle pour une
+  raison plus simple encore : ce ne sont pas deux états d'une même chose.
+
+Le mode d'emploi est dans le README du scraper —
+[l'étiqueteur local](../scraper/README.md#extraire-en-local-plutôt-quavec-le-modèle),
+[le routeur](../scraper/README.md#changer-de-modèle--openrouter).
 
 **Ce qu'il faut savoir avant de lire le tableau qui en sortira**, et qui ne
 tient pas à la qualité du corpus mais aux instruments eux-mêmes :

@@ -365,8 +365,10 @@ model ScraperConfig {
   /// tard.
   freezeAgendas    Boolean @default(true)
 
-  /// Qui lance les recherches : « anthropic » (outil serveur) ou « serper »
-  /// (Google). Le modèle reste derrière dans les deux cas pour le reste.
+  /// Qui cherche, et qui tient le modèle derrière. Trois valeurs, deux
+  /// colonnes : « anthropic » (outil serveur du modèle + Claude), « serper »
+  /// (Google + Claude), « openrouter » (Google + un modèle du routeur, nommé
+  /// « éditeur/modèle » dans les quatre champs ci-dessous).
   provider        String @default("anthropic")
   /// Tranche la nature d'une page quand aucun signal certain ne la donne.
   /// Vide : on ne demande à personne, et la page part en agenda.

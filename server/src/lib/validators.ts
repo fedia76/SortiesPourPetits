@@ -275,15 +275,29 @@ export const SCRAPER_MODES = ['recherche', 'site'] as const;
 export type ScraperMode = (typeof SCRAPER_MODES)[number];
 
 /**
- * Qui lance les recherches web.
+ * Qui cherche, et qui tient le modèle derrière. Un seul champ pour ces deux
+ * choix, parce qu'il n'existe que ces trois croisements :
+ *
+ *   anthropic   outil serveur du modèle  +  Claude
+ *   serper      Serper (Google)          +  Claude
+ *   openrouter  Serper (Google)          +  un modèle d'OpenRouter
  *
  * « anthropic » passe par l'outil serveur du modèle : les résultats entrent
  * dans son contexte, et ces jetons se facturent. « serper » interroge Google
  * et rend du JSON — un dixième du prix, pas un jeton d'entrée, et un index
- * plus profond sur le local francophone. Le modèle reste derrière dans les
- * deux cas : un moteur trouve des pages, il ne les juge pas.
+ * plus profond sur le local francophone. Un moteur trouve des pages, il ne
+ * les juge pas : un modèle reste derrière dans les trois cas.
+ *
+ * « openrouter » ne change que ce modèle-là. Les quatre appels — formuler,
+ * reconnaître, trier, remplir — partent chez un routeur qui donne accès à des
+ * centaines de modèles avec une seule clé, et les quatre champs « modèle »
+ * portent alors un nom de là-bas : « z-ai/glm-5.3-flash »,
+ * « google/gemini-2.5-flash ». Laissés au nom du pipeline — ce que la console
+ * pré-remplit —, ils valent « au choix du scraper », qui a son modèle par
+ * défaut. La recherche, elle, reste chez Serper : le scraper réclame donc les
+ * deux clés.
  */
-export const SCRAPER_PROVIDERS = ['anthropic', 'serper'] as const;
+export const SCRAPER_PROVIDERS = ['anthropic', 'serper', 'openrouter'] as const;
 export type ScraperProvider = (typeof SCRAPER_PROVIDERS)[number];
 
 /**
@@ -859,21 +873,36 @@ export const evalRechercheSchema = z.object({
 });
 
 /**
- * Qui remplit la fiche, pour un run de l'étage 6.
+ * Qui joue la brique mesurée — l'étage 6, et depuis peu l'étage 4.
  *
- * `anthropic` est le pipeline de production. `gliner` est un **étiqueteur de
- * spans** local : il ne rend que des morceaux de la page, ne coûte rien, et
- * laisse vides les quatre champs qui ne sont pas des morceaux de page —
- * description, cadre, catégorie, « plusieurs sorties ».
+ * `anthropic` est le pipeline de production. `openrouter` est le même travail
+ * par un autre modèle : une clé, des centaines de modèles, et un nom qui
+ * s'écrit « éditeur/modèle ». C'est ce que le banc existe pour trancher —
+ * quel modèle tient l'étage 6 pour combien, et lequel s'effondre sur le tri.
  *
- * Il ne vaut que pour l'extraction. Le tri (étage 4) demande au modèle de
+ * `gliner` est à part : un **étiqueteur de spans** local, qui ne rend que des
+ * morceaux de la page, ne coûte rien, et laisse vides les quatre champs qui ne
+ * sont pas des morceaux de page — description, cadre, catégorie, « plusieurs
+ * sorties ». Il ne vaut que pour l'extraction : le tri (étage 4) demande de
  * choisir des numéros de ligne dans une liste, ce qu'un étiqueteur ne sait pas
- * faire : le lui confier échouerait à mi-corpus, après avoir occupé le worker.
- * D'où le refus au lancement plutôt qu'à l'exécution.
+ * faire, et le lui confier échouerait à mi-corpus après avoir occupé le
+ * worker. D'où le refus au lancement plutôt qu'à l'exécution. Les deux autres,
+ * eux, savent jouer les deux étages.
  */
 export const evalExtractionSchema = z.object({
-  provider: z.enum(['anthropic', 'gliner']),
-  /** Point de contrôle de l'étiqueteur. Vide : celui par défaut du scraper. */
+  provider: z.enum(['anthropic', 'gliner', 'openrouter']),
+  /**
+   * Le modèle, selon le fournisseur : un point de contrôle Hugging Face pour
+   * l'étiqueteur, un slug « éditeur/modèle » pour le routeur. Vide : celui par
+   * défaut du scraper.
+   *
+   * Sa forme n'est **pas** vérifiée ici pour OpenRouter : les noms du pipeline
+   * y sont traduits par une table qui vit en Python
+   * (`providers/openrouter_provider.py`), et en tenir une copie ici
+   * garantirait qu'elles divergent. C'est le worker qui refuse un nom
+   * intraduisible, en réclamant le run et avant d'en traiter la moindre
+   * entrée.
+   */
   model: z.string().trim().max(120).optional().default(''),
 });
 
@@ -897,6 +926,15 @@ export const evalRunSchema = z
   .refine((v) => v.stage === 'EXTRACT' || v.extraction?.provider !== 'gliner', {
     message:
       'L’étiqueteur local ne sait remplir qu’une fiche : il ne convient qu’à un run d’extraction',
+    path: ['extraction'],
+  })
+  // Le dépouillement et la lecture sont du Python pur : ils n'interrogent
+  // personne. Un run qui y nomme un fournisseur se déclarerait joué par
+  // quelqu'un qui n'a rien fait — une ligne fausse en base, que rien ne
+  // viendrait corriger ensuite.
+  .refine((v) => v.extraction === undefined || v.stage === 'EXTRACT' || v.stage === 'SELECT', {
+    message:
+      'Cet étage ne fait appel à personne : il n’y a pas de fournisseur à lui choisir',
     path: ['extraction'],
   });
 

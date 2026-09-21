@@ -39,7 +39,8 @@ cp .env.example .env        # puis renseignez les clés
 | `ANTHROPIC_API_KEY` | clé de l'API Claude |
 | `SPP_API_URL` | URL du site (défaut `http://localhost:3000`) |
 | `SPP_API_KEY` | clé `spp_…` créée depuis la page « Clés d'API » du site |
-| `SERPER_API_KEY` | facultative — le moteur de recherche, pour les configurations en `provider: serper` **et** pour le repli de l'attribution, quel que soit le fournisseur |
+| `SERPER_API_KEY` | facultative — le moteur de recherche, pour les configurations en `provider: serper` ou `provider: openrouter` **et** pour le repli de l'attribution, quel que soit le fournisseur |
+| `OPENROUTER_API_KEY` | facultative — le routeur de modèles, pour les configurations en `provider: openrouter` (voir « [Changer de modèle](#changer-de-modèle--openrouter) ») |
 
 La clé du site hérite du rôle de son compte : rattachez-la à un compte dont les
 propositions doivent passer par la modération.
@@ -267,8 +268,8 @@ pas est une dépense qu'on ne règle pas :
 
 ### Chercher avec Google plutôt qu'avec le modèle
 
-Depuis la console : **Recherche auto** → une configuration → *Moteur de
-recherche*. En YAML : `provider: serper`. Dans les deux cas, cela remplace
+Depuis la console : **Recherche auto** → une configuration → *Moteur et
+modèle*. En YAML : `provider: serper`. Dans les deux cas, cela remplace
 **un seul des cinq appels**,
 la recherche. Serper interroge Google et rend du JSON ; il ne reconnaît pas une
 page et ne remplit pas une fiche, donc le modèle reste derrière pour les quatre
@@ -289,8 +290,170 @@ La forme des réponses a été **confrontée au service** ; le détail de ce qui
 été observé est en tête de `providers/serper_provider.py`. Les tests, eux,
 simulent : ils verrouillent ce que le code fait de cette forme, pas qu'elle
 soit la bonne. Pour la revérifier — après un changement d'API, par exemple —
-il suffit de mettre `[serper]` dans un message de commit : le job du même nom
-appelle le vrai service et affiche ce qu'il rend.
+il suffit de commencer un message de commit par `[serper]` : le job du même nom
+appelle le vrai service et affiche ce qu'il rend. **En tête du message**, pas
+n'importe où : un job qui dépense ne doit pas partir parce qu'un commit a parlé
+de lui.
+
+### Changer de modèle : OpenRouter
+
+Depuis la console : **Recherche auto** → une configuration → *Moteur et
+modèle* → « Serper + OpenRouter ». En YAML : `provider: openrouter`.
+
+Ce fournisseur ne touche pas à la recherche — elle reste chez Serper, comme
+ci-dessus. Il remplace **les quatre autres appels**, c'est-à-dire tout ce qu'un
+modèle fait dans ce pipeline : formuler les requêtes (étage 1), reconnaître une
+page (2), trier des liens (4), remplir une fiche (6). Les deux clés vont donc
+ensemble — sauf en mode « site », où aucune recherche n'est lancée : le moteur
+n'y est pas monté du tout, et `SERPER_API_KEY` n'y est pas réclamée.
+
+| | `serper` | `openrouter` |
+|---|---|---|
+| Étage 1, la recherche | Serper (Google) | Serper (Google) |
+| Étages 1, 2, 4 et 6, le modèle | Claude, par l'API d'Anthropic | n'importe quel modèle du routeur |
+| Nom d'un modèle | `claude-haiku-4-5` | `z-ai/glm-5.3-flash`, `google/gemini-2.5-flash`, `anthropic/claude-haiku-4.5`… |
+| Coût d'un appel | calculé d'après une table de tarifs (`PRICES`) | **annoncé par la réponse** (`usage.cost`) |
+
+Trois points méritent d'être connus avant de l'essayer.
+
+**Les quatre champs « Modèle » changent de vocabulaire.** Là-bas un modèle
+s'appelle `éditeur/modèle`. Un champ laissé au nom du pipeline
+(`claude-haiku-4-5`, ce que la console pré-remplit) ne veut rien dire pour le
+routeur : il vaut « au choix du scraper », et c'est
+**`z-ai/glm-5.3-flash:floor`** qui répond — le modèle par défaut, défini une
+fois dans `providers/openrouter_provider.py`. Basculer une recherche existante
+ne demande donc rien d'autre que de choisir le fournisseur.
+
+Il y avait ici une table d'équivalences qui envoyait `claude-haiku-4-5` sur
+`anthropic/claude-haiku-4.5`. Elle est partie : ces slugs étaient écrits
+d'après une convention de nommage et non d'après le catalogue, donc
+invérifiables ; et surtout, on ne passe pas à un routeur pour continuer à payer
+le même modèle par un intermédiaire. Pour employer un modèle précis — Claude
+compris —, on écrit son slug.
+
+Tout autre nom sans barre oblique est **refusé au chargement de la
+configuration**, donc avant la première dépense et non à mi-run. Sans ce refus,
+`gemini-2.5-flash` au lieu de `google/gemini-2.5-flash` passerait pour « rien
+choisi » et le run entier tournerait sur un modèle qu'on n'a pas demandé.
+
+**`:floor` n'est pas un modèle, c'est une consigne de routage** : parmi les
+hébergeurs qui servent ce modèle, prendre le moins cher. Deux choses à en
+savoir. Elle peut entrer en tension avec le JSON structuré ci-dessous — si
+aucun hébergeur bon marché ne sait contraindre une sortie, il ne reste personne
+à qui router et l'appel rend un 404. Et **l'hébergeur n'est plus le même d'un
+appel à l'autre** : quantisations et réglages diffèrent de l'un à l'autre. Sans
+conséquence en production ; pour un run du banc, c'est une variable de plus
+dans une mesure qui existe pour n'en faire varier qu'une, et un run qui veut
+être reproductible nomme le modèle **sans** le suffixe.
+
+**Le coût est lu, pas calculé.** Tenir une table de tarifs pour trois cents
+modèles qui bougent chaque semaine serait un travail sans fin ; le service dit
+ce que l'appel a coûté, en dollars, et c'est ce chiffre qui alimente le
+compteur du run et son plafond. S'il venait à manquer, l'appel est facturé à
+l'estime, au tarif d'un grand modèle, et le journal le dit — même règle que
+pour un modèle absent de `PRICES` : mieux vaut un run qui s'arrête trop tôt
+qu'un plafond qui ne se déclenche jamais.
+
+**Le banc sait le mesurer.** Un run d'évaluation peut nommer `openrouter` pour
+le tri (étage 4) comme pour l'extraction (étage 6), et le modèle avec — c'est
+*Jouer une mesure* → *Par qui*, dans la console du banc. Le run déclare à la
+clôture le modèle réellement appelé, et fait sa propre courbe : deux modèles ne
+sont pas deux états d'une même chose. Le détail est dans
+[`docs/banc-evaluation.md`](../docs/banc-evaluation.md).
+
+**On exige du JSON structuré, et un hébergeur qui sache le rendre.** Les
+schémas envoyés sont ceux de
+[`providers/schemas.py`](sortiesbot/providers/schemas.py) — exactement les
+mêmes que ceux envoyés à Claude, faute de quoi deux fournisseurs rendraient
+deux fiches différentes et le banc mesurerait notre code en croyant mesurer
+des modèles. Tous les hébergeurs d'un même modèle ne savent pas contraindre
+une sortie : l'appel demande donc explicitement à n'être routé que vers ceux
+qui le savent (`provider: {require_parameters: true}`). Un modèle introuvable
+ou sans hébergeur capable rend un 404 lisible, plutôt qu'une fiche plausible.
+
+**Le plafond de chaque appel laisse la place à un raisonnement**, et c'est le
+service qui l'a dicté, en deux appels.
+
+Le premier est revenu en HTTP 200 avec `content: null`, `finish_reason: length`
+et 0,0002 $ facturés : le modèle par défaut avait dépensé les 300 jetons de la
+reconnaissance à raisonner, sans écrire un caractère de réponse. En production,
+chaque page aurait coûté sans rien produire.
+
+Le second a demandé `reasoning: {enabled: false}` — ce qui semblait la bonne
+réponse pour quatre appels bornés qui rendent un JSON contraint — et s'est fait
+répondre :
+
+    HTTP 400 — Reasoning is mandatory for this endpoint and cannot be disabled.
+
+Ce modèle raisonne, il n'y a pas à discuter. Mais s'il refuse qu'on le coupe,
+il accepte qu'on le **règle** : `EFFORT_RAISONNEMENT` vaut `low`, le moins que
+sa page OpenRouter propose. Un appel qui choisit une étiquette parmi quatre, ou
+qui recopie des numéros de ligne, n'a besoin de rien de plus — et c'est la
+seule prise qu'on ait sur la seule chose qui coûte cher ici.
+
+Attention tout de même : ce réglage voyage à côté de `require_parameters`, qui
+ne route que vers un hébergeur honorant **tout** ce qu'on demande. Un modèle
+sans raisonnement du tout peut donc n'avoir plus personne à qui être routé, et
+rendre un 404 — dont le message nomme cette piste. Videz la constante dans ce
+cas : c'est un réglage, pas une fatalité.
+
+Et parce qu'un modèle peut raisonner plus que prévu, `MARGE_RAISONNEMENT`
+(4 000 jetons) s'ajoute au plafond de chaque appel. Elle s'**ajoute** et ne
+multiplie pas : le raisonnement d'une tâche bornée ne croît pas avec la
+longueur de la réponse attendue — reconnaître une page en demande autant que
+remplir une fiche. Un plafond n'est pas une dépense, seul ce qui est produit se
+facture ; le garde-fou reste `max_cost_usd`.
+
+Elle a d'abord été posée sans mesure ; l'appel suivant l'a confirmée. Une
+reconnaissance réelle consomme **1 312 jetons de raisonnement** — la marge tient,
+avec un facteur trois devant elle. Un appel qui déborderait quand même le dit
+en clair dans le journal, en nommant la constante à relever, plutôt que de
+faire accuser le prompt.
+
+**Ce que ce modèle coûte, mesuré.** La même reconnaissance, avant et après le
+réglage de l'effort :
+
+| | Entrée | Sortie | dont raisonnement | Coût |
+|---|---|---|---|---|
+| sans réglage | 476 | 2 807 | 1 312 | 0,001475 $ |
+| effort `low` | 476 | 37 | **0** | **0,000090 $** |
+
+Seize fois moins cher, pour la même page et la même question. Le raisonnement
+*était* le coût de cet appel — et « low » suffit à l'annuler tout à fait sur ce
+modèle, là où le couper franchement se faisait refuser.
+
+Les deux mesures donnent le tarif par soustraction — 2 770 jetons de sortie de
+plus pour 0,001385 $ — soit environ **0,15 $ le million en entrée et 0,50 $ en
+sortie**, ce qu'affiche sa page OpenRouter. Face à Haiku 4.5 (1 $ et 5 $) :
+sept fois moins cher à l'entrée, dix fois à la sortie. En ordre de grandeur sur
+les deux étages qui comptent :
+
+| | OpenRouter (défaut) | Haiku 4.5 | |
+|---|---|---|---|
+| Reconnaissance | 0,000090 $ | ~0,00098 $ | ~11 fois moins |
+| Extraction | ~0,00076 $ | ~0,0062 $ | ~8 fois moins |
+
+**Ce que ces chiffres ne disent pas, et qui décide de tout** : si les fiches
+valent celles de Haiku. Les deux appels de la vérification ont d'ailleurs rendu
+deux natures différentes pour la même page — « programme » puis « agenda » —,
+ce qui s'explique en partie (le premier n'envoie pas la consigne système) mais
+ne rassure pas. Un modèle dix fois moins cher qui se trompe une fois sur cinq
+coûte plus cher que celui qu'il remplace, en temps de modération. C'est au banc
+de trancher, étage par étage, et il sait désormais jouer ce fournisseur.
+
+Réserve de méthode : ces chiffres viennent d'**un appel par réglage**. Les
+totaux en dollars sont des mesures ; les tarifs unitaires en sont déduits, et
+les deux lignes du second tableau en découlent.
+
+La forme des réponses **a été confrontée au service** le 21 septembre 2026 ; le
+détail de ce qui a été observé est en tête de `providers/openrouter_provider.py`.
+Les tests, eux, simulent : ils verrouillent ce que le code fait de cette forme,
+pas qu'elle soit la bonne. Pour la revérifier — et vérifier du même coup que le
+modèle par défaut existe encore au catalogue —, commencez un message de commit
+par `[openrouter]` : le job du même nom appelle le vrai service et affiche ce
+qu'il rend, hébergeur compris. Il réclame un secret de dépôt `OPENROUTER`
+(*Settings → Secrets and variables → Actions*), de même valeur que
+l'`OPENROUTER_API_KEY` du déploiement.
 
 ### Extraire en local plutôt qu'avec le modèle
 
@@ -1733,7 +1896,10 @@ branche. Et les tests du scraper ne tournaient nulle part.
 Aucun test n'appelle le réseau : le fournisseur Claude est branché sur un
 serveur HTTP local qui enregistre les requêtes, ce qui verrouille la forme de
 ce qui est envoyé (outils serveur, format structuré, reprise après
-`pause_turn`) sans dépenser de jetons.
+`pause_turn`) sans dépenser de jetons. Ceux de Serper et d'OpenRouter, qui
+postent en HTTP ordinaire, reçoivent une session simulée et sont lus de la
+même façon — avec cette nuance que la forme des réponses de Serper a été
+confrontée au service, et que celle d'OpenRouter ne l'a pas encore été.
 
 ### Le jeu de vraies pages
 
@@ -1788,8 +1954,11 @@ de contexte refacturé — c'est un changement de mécanisme, pas un réglage.
 dépassé ; ce qui a déjà été trouvé est conservé dans le JSON. Le journal
 totalise jetons, recherches et coût, par étape.
 
-Ce plafond se compare à un total, et ce total dépend de la table `PRICES` de
+Ce plafond se compare à un total, et ce total dépend — pour le fournisseur
+Anthropic — de la table `PRICES` de
 [`providers/anthropic_provider.py`](sortiesbot/providers/anthropic_provider.py).
+(Le fournisseur OpenRouter n'a pas de table : le service annonce le coût de
+chaque appel, et c'est ce chiffre qui compte.)
 Un modèle qui n'y figure pas — le nom vient de la console, où seule sa longueur
 est vérifiée, et `claude-haiku-4-5-20251001` n'est pas `claude-haiku-4-5` — s'y
 facturait **zéro**, ce qui affichait un run à 0 $ et désarmait le plafond. Il se
@@ -1813,8 +1982,11 @@ seulement ce que ça coûterait et ce que ça rapporterait.
 
 1. un déclenchement périodique des configurations (le worker sait déjà exécuter
    ce qu'on lui met en file ; il manque qui l'y met, et quand) ;
-2. un fournisseur OpenRouter — l'interface `Provider` (trois méthodes) est déjà
-   en place pour ça, et seule la recherche y demande un outil ;
+2. **mesurer** OpenRouter, c'est-à-dire s'en servir. Le banc l'accepte
+   désormais aux deux étages qui appellent quelqu'un — le tri et l'extraction,
+   voir [`docs/banc-evaluation.md`](../docs/banc-evaluation.md) — mais
+   personne n'a encore lancé le run qui dira quel modèle tient l'étage 6 pour
+   combien. L'outil est là ; le chiffre n'y est pas ;
 3. un second script en liste blanche, alimenté par les domaines dont les
    sorties ont été le plus souvent approuvées ;
 4. **mesurer** l'étage 6 local. Le fournisseur `gliner` existe et se branche au

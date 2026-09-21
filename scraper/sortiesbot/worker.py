@@ -54,6 +54,7 @@ from .models import Summary
 from .orchestrator import run as run_pipeline
 from .orchestrator import run_source
 from .providers.base import ProviderError, get_provider
+from .providers.openrouter_provider import modele_openrouter
 from .providers.serper_client import client_or_none
 from .store import RemoteStore
 
@@ -224,7 +225,12 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
     # de débogage affiche, étage par étage.
     journal = RemoteJournal(api, run_id)
     try:
-        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
+        provider = get_provider(
+            config,
+            api_key=env.anthropic_key,
+            serper_key=env.serper_key,
+            openrouter_key=env.openrouter_key,
+        )
         with open_log(runs_dir, config.name, quiet, sink=journal.add) as log:
             if log.path and not quiet:
                 print(f"  journal : {log.path}", flush=True)
@@ -354,7 +360,12 @@ def chasse(job: dict[str, Any], api: SppApi, env: Environment, quiet: bool) -> N
     requetes = list(config.queries)
     provider = None
     try:
-        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
+        provider = get_provider(
+            config,
+            api_key=env.anthropic_key,
+            serper_key=env.serper_key,
+            openrouter_key=env.openrouter_key,
+        )
         found = hunt(config, provider, log, fetcher=Fetcher())
         requetes = list(found["queries"])
         hors_plafond = int(found["overCap"])
@@ -484,10 +495,30 @@ def _fournisseur_du_run(config: Config, run: dict[str, Any], quiet: bool) -> Con
         )
     if not quiet:
         print(f"  Fournisseur déclaré par le run : {fournisseur}.", flush=True)
+    modele = str(demande.get("model") or "").strip()
+
+    if fournisseur == "openrouter":
+        # Le modèle d'un run OpenRouter est celui de l'étage joué, pas un point
+        # de contrôle à part : il part dans `select_model` **et**
+        # `extraction_model`, puisqu'un run ne joue qu'un étage à la fois et
+        # qu'on ne sait pas encore lequel ici.
+        #
+        # Vérifié tout de suite : `replace` ne repasse pas par `validated`, et
+        # un slug fautif n'échouerait qu'à la première entrée du corpus — après
+        # avoir occupé le worker et fait attendre les recherches derrière.
+        resolu = modele or config.extraction_model
+        try:
+            modele_openrouter(resolu)
+        except ProviderError as err:
+            raise ConfigError(f"modèle du run : {err}") from err
+        return replace(
+            config, provider=fournisseur, select_model=resolu, extraction_model=resolu
+        )
+
     return replace(
         config,
         provider=fournisseur,
-        gliner_model=str(demande.get("model") or "") or config.gliner_model,
+        gliner_model=modele or config.gliner_model,
     )
 
 
@@ -515,6 +546,13 @@ def _declare(stage: str, config: Config | None) -> dict[str, str]:
         # points de la courbe porteraient le même modèle, et la comparaison que
         # ce run existe pour rendre serait irrattrapable après coup.
         model = f"gliner:{config.gliner_model}"
+    elif config.provider == "openrouter":
+        # Le nom **résolu**, celui qu'on a réellement appelé : un run laissé au
+        # défaut se déclarerait sinon joué par « claude-haiku-4-5 », qui n'a pas
+        # joué ce run — c'est le modèle par défaut du routeur qui l'a fait. Deux
+        # points de la courbe porteraient le même nom pour deux modèles
+        # différents, et la comparaison serait perdue.
+        model = modele_openrouter(model)
     return {
         "model": model,
         "promptHash": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
@@ -647,7 +685,16 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
         # fenêtre contre laquelle le site le jugera — elles viennent de la même
         # ligne en base, et ne peuvent pas diverger.
         config = _config_du_run(run, quiet)
-        provider = get_provider(config, api_key=env.anthropic_key, serper_key=env.serper_key)
+        # `search=False` : un run de banc rejoue une brique sur un corpus gelé,
+        # jamais l'étage 1. Sans ça, un run joué par OpenRouter réclamerait une
+        # clé de moteur pour une recherche qu'il ne lancera pas.
+        provider = get_provider(
+            config,
+            api_key=env.anthropic_key,
+            serper_key=env.serper_key,
+            openrouter_key=env.openrouter_key,
+            search=False,
+        )
 
     traites = 0
     temoin = _Temoin()
@@ -802,8 +849,17 @@ def main(argv: list[str] | None = None) -> int:
     if not env.api_key:
         print("SPP_API_KEY est requis (voir .env.example)", file=sys.stderr)
         return 2
-    if not env.anthropic_key:
-        print("ANTHROPIC_API_KEY est requis (voir .env.example)", file=sys.stderr)
+    # Un modèle, au moins : lequel dépend de la recherche qu'on lui donnera,
+    # et le worker ne le sait pas en démarrant. Exiger la clé d'Anthropic
+    # aurait fermé la porte à une installation qui ne tourne qu'au routeur ;
+    # n'en exiger aucune l'ouvrirait à un service qui démarre pour échouer à
+    # chaque exécution.
+    if not env.anthropic_key and not env.openrouter_key:
+        print(
+            "Une clé de modèle est requise : ANTHROPIC_API_KEY, OPENROUTER_API_KEY, "
+            "ou les deux (voir .env.example)",
+            file=sys.stderr,
+        )
         return 2
 
     signal.signal(signal.SIGINT, _handle_signal)
