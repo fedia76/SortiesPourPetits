@@ -46,6 +46,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from sortiesbot.config import Config
 from sortiesbot.journal import RunLog
 from sortiesbot.providers.openrouter_provider import (
+    EFFORT_RAISONNEMENT,
     ENDPOINT,
     MARGE_RAISONNEMENT,
     MODELE_DEFAUT,
@@ -140,6 +141,10 @@ def main(argv: list[str]) -> int:
             },
             "provider": {"require_parameters": True},
             "usage": {"include": True},
+            # Comme le fournisseur : le couper est refusé, le régler ne l'est
+            # pas. C'est ce chiffre-là — les jetons de raisonnement affichés
+            # plus bas — que le réglage vise.
+            "reasoning": {"effort": EFFORT_RAISONNEMENT},
         },
         timeout=120,
     )
@@ -172,7 +177,8 @@ def main(argv: list[str]) -> int:
     raisonnement = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
     print(
         f"Jetons de raisonnement : {raisonnement!r} "
-        f"(marge prévue : {MARGE_RAISONNEMENT})"
+        f"(effort « {EFFORT_RAISONNEMENT or 'non réglé'} », "
+        f"marge prévue : {MARGE_RAISONNEMENT})"
     )
     if "cost" not in usage:
         print(

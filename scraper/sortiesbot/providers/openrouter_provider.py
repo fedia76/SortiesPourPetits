@@ -47,12 +47,15 @@ un routeur pour continuer à payer le même modèle par un intermédiaire.
   coûté, en dollars, tous modèles confondus ; on le lit plutôt que de tenir
   une table de tarifs pour trois cents modèles qui bougent chaque semaine.
   C'est la même règle que chez Serper, et pour la même raison.
-
-On ne demande en revanche **pas** de désactiver le raisonnement, et ce n'est
-pas faute d'avoir essayé : le modèle par défaut répond
-`Reasoning is mandatory for this endpoint and cannot be disabled` (HTTP 400).
-Il raisonne, donc, et le plafond de chaque appel lui en laisse la place — voir
-`MARGE_RAISONNEMENT`.
+* **Le moins de raisonnement possible** (`reasoning: {effort: "low"}`). Le
+  couper franchement est refusé par le modèle par défaut —
+  `Reasoning is mandatory for this endpoint and cannot be disabled`, HTTP 400 —
+  mais le régler ne l'est pas. Et c'est la seule prise qu'on ait sur la seule
+  chose qui coûte cher ici : sans ce réglage, une reconnaissance dépensait
+  1 312 jetons de sortie à réfléchir pour choisir une étiquette parmi quatre.
+  Le plafond de l'appel lui laisse tout de même la place de le faire, voir
+  `MARGE_RAISONNEMENT` : un modèle qui déborde doit échouer sur un message
+  clair, pas sur une fiche tronquée.
 
 Aucun outil, aucune itération : un aller-retour par appel, comme le reste du
 pipeline. La mécanique HTTP n'est pas sortie dans un fichier à part — ce
@@ -94,7 +97,8 @@ laisse la place, et un message d'erreur qui nomme ce cas s'il déborde encore.
 
 ## Ce que ça coûte, mesuré
 
-Une reconnaissance, le plus petit des quatre appels, sur le modèle par défaut :
+Une reconnaissance, le plus petit des quatre appels, sur le modèle par défaut,
+**avant** qu'on règle l'effort de raisonnement :
 
     476 jetons d'entrée, 2 807 de sortie, dont 1 312 de raisonnement
     0,001475 $
@@ -111,9 +115,11 @@ de page et la réponse une fiche entière, le même calcul donne environ 0,0013 
 contre 0,0062 $ pour Haiku. C'est là que ce modèle se gagne, et c'est ce que le
 banc doit trancher plutôt que ces deux règles de trois.
 
-Deux réserves sur ces chiffres : ils viennent d'**un seul appel**, et le tarif
-du modèle en est déduit, non lu. Seul le total de 0,001475 $ est une mesure ;
-le reste est une estimation qui dit un ordre de grandeur.
+Trois réserves sur ces chiffres. Ils viennent d'**un seul appel** ; le tarif du
+modèle y est déduit, non lu, si bien que seul le total de 0,001475 $ est une
+mesure ; et ils précèdent `EFFORT_RAISONNEMENT`, qui vise précisément ces
+1 312 jetons. C'est un ordre de grandeur d'avant le réglage — à refaire, et
+c'est à quoi sert le vérificateur.
 """
 
 from __future__ import annotations
@@ -180,6 +186,28 @@ CODES_PASSAGERS = (408, 429, 502, 503, 504)
 #: pourquoi son coût est faux — même règle et même raison que
 #: `UNKNOWN_MODEL_PRICE` chez Anthropic.
 TARIF_INCONNU = (5.0, 25.0)
+
+#: Combien le modèle a le droit de réfléchir, quand il ne sait pas faire
+#: autrement. `""` : on ne demande rien, et c'est l'hébergeur qui décide.
+#:
+#: Le modèle par défaut refuse qu'on lui coupe le raisonnement — voir
+#: `MARGE_RAISONNEMENT` —, mais il accepte qu'on le **règle** : sa page
+#: OpenRouter expose « low », « high » et « max ». Un appel qui choisit une
+#: étiquette parmi quatre, ou qui recopie des numéros de ligne, n'a besoin
+#: d'aucun des trois ; à défaut de zéro, c'est « low ».
+#:
+#: Ce que ça change, mesuré sur la reconnaissance : sans réglage, 1 312 jetons
+#: de raisonnement et 0,001475 $ — plus cher que Haiku sur le même appel. Le
+#: raisonnement est la seule chose qui coûte ici, et c'est la seule qu'on ne
+#: voulait pas.
+#:
+#: Le réglage est envoyé à **tous** les modèles, et ce n'est pas sans risque :
+#: il voyage à côté de `require_parameters`, qui ne route que vers un hébergeur
+#: honorant tout ce qu'on demande. Un modèle sans raisonnement du tout peut
+#: donc n'avoir plus personne à qui être routé, et rendre un 404 — dont le
+#: message nomme cette piste. Le videz-le alors : c'est un réglage, pas une
+#: fatalité.
+EFFORT_RAISONNEMENT = "low"
 
 #: Jetons ajoutés au plafond de chaque appel, pour que le raisonnement ne
 #: mange pas la réponse.
@@ -466,6 +494,11 @@ class OpenRouterProvider:
             # Et qu'il dise ce que ça a coûté.
             "usage": {"include": True},
         }
+        if EFFORT_RAISONNEMENT:
+            # Le couper est refusé par le modèle par défaut ; le régler ne
+            # l'est pas. C'est la seule prise qu'on ait sur la seule chose qui
+            # coûte cher dans ces quatre appels.
+            payload["reasoning"] = {"effort": EFFORT_RAISONNEMENT}
         data = self._post(payload, op=op, modele=modele, log=log)
         self._facturer(data, op=op, modele=modele, log=log)
         return loads_json(_texte(data), ProviderError)
@@ -636,8 +669,10 @@ def _message_erreur(code: int, response: Any) -> str:
         return f"appel refusé par OpenRouter (403){detail}"
     if code == 404:
         return (
-            f"modèle inconnu, ou aucun hébergeur ne sait contraindre sa sortie "
-            f"(404){detail}"
+            "modèle inconnu, ou aucun hébergeur ne sait honorer ce qu'on demande "
+            f"(404){detail}. Deux exigences peuvent ne trouver personne : la "
+            "sortie contrainte par un schéma, et l'effort de raisonnement — "
+            "videz EFFORT_RAISONNEMENT si ce modèle ne raisonne pas"
         )
     if code == 429:
         return f"quota OpenRouter dépassé (429){detail}"

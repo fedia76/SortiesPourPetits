@@ -385,8 +385,20 @@ répondre :
 
     HTTP 400 — Reasoning is mandatory for this endpoint and cannot be disabled.
 
-Ce modèle raisonne, il n'y a pas à discuter. `MARGE_RAISONNEMENT` (4 000
-jetons) s'ajoute donc au plafond de chaque appel. Elle s'**ajoute** et ne
+Ce modèle raisonne, il n'y a pas à discuter. Mais s'il refuse qu'on le coupe,
+il accepte qu'on le **règle** : `EFFORT_RAISONNEMENT` vaut `low`, le moins que
+sa page OpenRouter propose. Un appel qui choisit une étiquette parmi quatre, ou
+qui recopie des numéros de ligne, n'a besoin de rien de plus — et c'est la
+seule prise qu'on ait sur la seule chose qui coûte cher ici.
+
+Attention tout de même : ce réglage voyage à côté de `require_parameters`, qui
+ne route que vers un hébergeur honorant **tout** ce qu'on demande. Un modèle
+sans raisonnement du tout peut donc n'avoir plus personne à qui être routé, et
+rendre un 404 — dont le message nomme cette piste. Videz la constante dans ce
+cas : c'est un réglage, pas une fatalité.
+
+Et parce qu'un modèle peut raisonner plus que prévu, `MARGE_RAISONNEMENT`
+(4 000 jetons) s'ajoute au plafond de chaque appel. Elle s'**ajoute** et ne
 multiplie pas : le raisonnement d'une tâche bornée ne croît pas avec la
 longueur de la réponse attendue — reconnaître une page en demande autant que
 remplir une fiche. Un plafond n'est pas une dépense, seul ce qui est produit se
@@ -412,11 +424,13 @@ pas avec lui : à l'extraction — huit mille caractères de page en entrée, un
 fiche entière en sortie — le même calcul donne environ 0,0013 $ contre 0,0062 $
 pour Haiku, soit cinq fois moins. C'est là que ce modèle se gagne.
 
-Deux réserves sur ces chiffres, qui comptent autant que les chiffres : ils
-viennent d'**un seul appel**, et le tarif du modèle y est déduit plutôt que lu.
-Seul le total de 0,001475 $ est une mesure. C'est un ordre de grandeur, pas un
-verdict — le verdict, c'est le banc qui le rendra, et il sait maintenant jouer
-ce fournisseur.
+Trois réserves sur ces chiffres, qui comptent autant que les chiffres. Ils
+viennent d'**un seul appel** ; le tarif du modèle y est déduit plutôt que lu,
+si bien que seul le total de 0,001475 $ est une mesure ; et ils ont été relevés
+**avant** qu'on règle l'effort de raisonnement, qui vise précisément ces 1 312
+jetons. C'est un ordre de grandeur d'avant le réglage, pas un verdict — le
+verdict, c'est le banc qui le rendra, et il sait maintenant jouer ce
+fournisseur.
 
 La forme des réponses **a été confrontée au service** le 21 septembre 2026 ; le
 détail de ce qui a été observé est en tête de `providers/openrouter_provider.py`.

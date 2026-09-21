@@ -31,6 +31,7 @@ from sortiesbot.models import Usage
 from sortiesbot.prompts import SYSTEM
 from sortiesbot.providers.base import ProviderError, get_provider
 from sortiesbot.providers.openrouter_provider import (
+    EFFORT_RAISONNEMENT,
     ENDPOINT,
     MARGE_RAISONNEMENT,
     MODELE_DEFAUT,
@@ -158,8 +159,25 @@ def test_le_plafond_laisse_sa_place_au_raisonnement(log):
     provider.classify("un condensé", config(), log)
     corps = routeur.appels[0]["body"]
     assert corps["max_tokens"] == CLASSIFY_MAX_TOKENS + MARGE_RAISONNEMENT
-    # Et surtout : on ne le désactive pas. Le service refuse, en 400.
-    assert "reasoning" not in corps
+    # On ne le désactive pas — le service refuse, en 400 — mais on le règle au
+    # plus bas : c'est la seule prise qu'on ait sur la seule chose qui coûte.
+    assert corps["reasoning"] == {"effort": EFFORT_RAISONNEMENT}
+    assert "enabled" not in corps["reasoning"]
+
+
+def test_un_effort_vide_ne_demande_rien(monkeypatch, log):
+    """C'est un réglage, pas une fatalité : un modèle sans raisonnement le vide.
+
+    Il voyage à côté de `require_parameters`, qui ne route que vers un
+    hébergeur honorant tout ce qu'on demande — demander un effort à un modèle
+    qui n'en a pas peut ne trouver personne.
+    """
+    from sortiesbot.providers import openrouter_provider
+
+    monkeypatch.setattr(openrouter_provider, "EFFORT_RAISONNEMENT", "")
+    provider, routeur = provider_de(Reponse(reponse({"nature": "sortie", "pourquoi": "x"})))
+    provider.classify("un condensé", config(), log)
+    assert "reasoning" not in routeur.appels[0]["body"]
 
 
 def test_la_marge_sajoute_et_ne_multiplie_pas(log):
