@@ -1,129 +1,89 @@
-"""Classer, et non extraire : la catégorie et le cadre.
+"""Le cadre, et la leçon d'une classification qui n'a rien rendu.
 
-Deux champs de la fiche ne sont pas des morceaux de page. La **catégorie** est
-un choix dans un référentiel de six entrées, le **cadre** une déduction qu'une
-page n'écrit presque jamais. Ils restaient vides, et coûtaient à eux deux un
-sixième du score — 280 verdicts « manqué » sur 1 680.
+Deux champs de la fiche ne sont pas des morceaux de page : la **catégorie**
+est un choix dans un référentiel, le **cadre** une déduction. On a essayé de
+les faire rendre par le modèle, en écrivant les réponses possibles en tête du
+texte — le détournement que la bibliothèque de GLiNER emploie elle-même.
 
-Je les avais rangés parmi les impossibles, ce qui était faux : ce ne sont pas
-des rédactions, ce sont des **choix**, et un encodeur sait choisir. Le
-détournement est celui que la bibliothèque de GLiNER emploie elle-même — on
-écrit les réponses possibles en tête du texte, et le modèle surligne la
-bonne.
+Mesuré sur le banc : **0 juste sur 16** pour la catégorie, 10 sur 140 pour le
+cadre. Le détournement ne tient qu'avec un point de contrôle entraîné à ce
+format ; `urchade/gliner_multi-v2.1` est un modèle d'entités pur, et il
+surlignait une réponse au hasard parmi celles que le gabarit lui énumérait.
+
+Ce qui reste, c'est ce que les dix justes du cadre étaient réellement : de
+l'appariement de chaîne sur des pages qui écrivent « en plein air » en toutes
+lettres. Fait ici sans modèle.
 """
 
 from __future__ import annotations
 
-from sortiesbot.spans import (
-    CADRES,
-    GABARIT_CLASSES,
-    Span,
-    classe_retenue,
-    prompt_de_classes,
-)
+from sortiesbot.spans import CADRES, cadre_lu, unfilled_fields
 
-CATEGORIES = ["Parc", "Musée", "Spectacle", "Sport", "Atelier", "Non classé"]
+# ────────────────────────────────────────────── ce que la page écrit vraiment
 
 
-def span(text: str, score: float = 0.9) -> Span:
-    return Span(label="classe", text=text, score=score)
+def test_le_plein_air_est_lu():
+    assert cadre_lu("Une chasse au trésor en plein air dans le parc.") == "OUTDOOR"
 
 
-# ─────────────────────────────────────────────── le prompt qu'on soumet
+def test_l_interieur_est_lu():
+    assert cadre_lu("Atelier en intérieur, salle chauffée.") == "INDOOR"
 
 
-def test_les_reponses_possibles_precedent_le_texte():
-    prompt = prompt_de_classes("Un spectacle de marionnettes.", CATEGORIES)
-    assert prompt.startswith(GABARIT_CLASSES.format(", ".join(CATEGORIES)))
-    assert "marionnettes" in prompt
+def test_les_deux_tournures_ensemble_valent_both():
+    """« Spectacle en salle puis goûter en plein air » : pas la première venue."""
+    lu = cadre_lu("Le spectacle se tient en salle, le goûter en plein air.")
+    assert lu == "BOTH"
 
 
-def test_le_titre_passe_avant_le_corps():
-    """C'est le signal le plus dense, et les premiers caractères d'une page
-    scrapée sont souvent un fil d'Ariane et un bandeau de cookies."""
-    prompt = prompt_de_classes(
-        "Nous utilisons des cookies. Accueil > Agenda > Fiche.",
-        CATEGORIES,
-        entete="Le Petit Prince, spectacle jeune public",
-    )
-    corps = prompt.split("\n", 1)[1]
-    assert corps.index("Petit Prince") < corps.index("cookies")
-
-
-def test_le_corps_est_borne():
-    """La fenêtre de l'encodeur ne se négocie pas : ce qui dépasse est ignoré
-    en silence, et un texte trop long noierait le gabarit."""
-    prompt = prompt_de_classes("a " * 5000, CATEGORIES, limite=300)
-    corps = prompt.split("\n", 1)[1]
-    assert len(corps) <= 300
-
-
-# ───────────────────────────────────────── la classe qu'on en retire
-
-
-def test_la_classe_surlignee_est_rendue():
-    assert classe_retenue([span("Spectacle")], CATEGORIES) == "Spectacle"
-
-
-def test_la_mieux_notee_l_emporte():
-    retenue = classe_retenue([span("Parc", 0.4), span("Musée", 0.9)], CATEGORIES)
-    assert retenue == "Musée"
+def test_les_variantes_courantes_sont_lues():
+    assert cadre_lu("La visite se déroule en extérieur.") == "OUTDOOR"
+    assert cadre_lu("Le musée est à l'intérieur.") == "INDOOR"
 
 
 def test_la_casse_et_les_accents_ne_comptent_pas():
-    assert classe_retenue([span("musee")], CATEGORIES) == "Musée"
+    """Un titre crie parfois : « SPECTACLE EN PLEIN AIR »."""
+    assert cadre_lu("SPECTACLE EN PLEIN AIR") == "OUTDOOR"
+    assert cadre_lu("Atelier en interieur") == "INDOOR"
 
 
-def test_un_morceau_de_libelle_est_rendu_canonique():
-    """Le modèle surligne souvent un bout : « plein air » pour « en plein air ».
+# ────────────────────────────────────────────── et ce qu'on refuse de deviner
 
-    Une fiche qui porterait ce morceau ne s'apparierait à rien côté site.
+
+def test_une_page_muette_ne_rend_rien():
+    """Un `MANQUE` se corrige, un `FAUX` se propage jusqu'à la fiche publiée.
+
+    Trancher au hasard entre trois valeurs, c'est se tromper deux fois sur
+    trois : le silence vaut mieux.
     """
-    assert classe_retenue([span("plein air")], list(CADRES)) == "en plein air"
+    assert cadre_lu("Venez nombreux à la fête du village, entrée libre.") == ""
+    assert cadre_lu("") == ""
 
 
-def test_un_morceau_ambigu_est_refuse():
-    """Deux candidats possibles, aucune raison de trancher : on ne devine pas."""
-    assert classe_retenue([span("e")], ["Musée", "Spectacle"]) == ""
+def test_un_mot_isole_ne_suffit_pas():
+    """« air », « salle des fêtes », « intérieur du château » : pas une tournure
+    de cadre, et chacune coûterait un faux."""
+    assert cadre_lu("Rendez-vous salle des fêtes.") == ""
+    assert cadre_lu("Visite de l'intérieur du château.") == ""
 
 
-def test_aucun_libelle_du_cadre_n_en_contient_un_autre():
-    """Un référentiel dont les entrées s'emboîtent ne peut pas être tranché.
+# ──────────────────────────────────── la catégorie, annoncée comme hors portée
 
-    « en intérieur et en plein air » englobait les deux autres : un modèle
-    surlignant « plein air » désignait alors deux réponses et se faisait
-    refuser, rendant BOTH inatteignable.
+
+def test_la_categorie_est_annoncee_non_remplie():
+    """0 juste sur 16 en zero-shot : ce n'est pas un réglage à reprendre.
+
+    La catégorie n'est écrite nulle part sur la page — aucun site n'annonce
+    « Catégorie : Spectacles ». C'est une inférence sur la page entière, et un
+    surligneur de spans n'a pas de span à surligner. Le banc doit lire
+    `MANQUE` comme une limite annoncée, pas comme une faute du modèle.
     """
-    libelles = list(CADRES)
-    for cle in libelles:
-        autres = [c for c in libelles if c != cle]
-        assert not any(cle in autre for autre in autres), cle
+    assert "category" in unfilled_fields()
 
 
-def test_rien_de_reconnaissable_ne_rend_rien():
-    """Classer au hasard dans six entrées, c'est se tromper cinq fois sur six."""
-    assert classe_retenue([span("billetterie")], CATEGORIES) == ""
-    assert classe_retenue([], CATEGORIES) == ""
-
-
-def test_sans_referentiel_rien_n_est_rendu():
-    assert classe_retenue([span("Spectacle")], []) == ""
-
-
-# ──────────────────────────────────────────── le cadre, jusqu'à l'énuméré
+# ────────────────────────────────────────────── jusqu'à l'énuméré que le site attend
 
 
 def test_le_cadre_se_traduit_pour_le_site():
-    """Le modèle lit du français, le site stocke un énuméré."""
-    assert CADRES["en plein air"] == "OUTDOOR"
-    assert CADRES["en intérieur"] == "INDOOR"
-    assert CADRES["les deux"] == "BOTH"
-
-
-def test_les_libelles_du_cadre_sont_des_tournures_de_page():
-    """Une page écrit « en plein air », jamais « OUTDOOR ».
-
-    C'est la leçon des spans — les libellés sont un réglage, et ils doivent
-    ressembler à ce que le modèle a vu — appliquée d'emblée ici.
-    """
-    assert all(cle.islower() and " " in cle for cle in CADRES)
+    assert set(CADRES.values()) == {"INDOOR", "OUTDOOR"}
+    assert cadre_lu("en plein air") in set(CADRES.values()) | {"BOTH"}

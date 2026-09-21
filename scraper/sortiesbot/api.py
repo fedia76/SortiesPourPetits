@@ -245,6 +245,24 @@ class SppApi:
         """Le relevé de l'étage 6 sur le texte d'une page du corpus."""
         self._post_json(f"/api/eval/runs/{run_id}/extract", result)
 
+    def labelled_sorties(self, after: int = 0, limit: int = 10) -> tuple[list[dict[str, Any]], int]:
+        """Une tranche du corpus **étiqueté**, HTML compris — et le curseur suivant.
+
+        La seule route qui rende une étiquette au worker, et c'est assumé :
+        partout ailleurs il travaille en aveugle, parce qu'une brique qui
+        verrait la réponse ne mesurerait plus rien. Ici il n'est pas question
+        de mesurer mais d'entraîner, et un jeu d'entraînement sans étiquettes
+        n'apprend rien.
+
+        Le curseur rendu est `0` quand il n'y a plus rien : un corpus se
+        parcourt pendant qu'il grossit, et un décalage sauterait des entrées
+        que les insertions ont décalées.
+        """
+        body = self._post_json(
+            "/api/eval/corpus/etiquettes", {"after": int(after), "limit": int(limit)}
+        )
+        return list(body.get("items") or []), int(body.get("next") or 0)
+
     def finish_eval_run(self, run_id: int, status: str, **counters: Any) -> None:
         """Clôt un run. C'est ce qu'on ne peut pas perdre : sans clôture, il
         resterait « en cours » et le worker n'en prendrait plus d'autre.

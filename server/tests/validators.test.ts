@@ -9,7 +9,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { eventInputSchema, searchSchema, parseSeedUrls, checkScraperMode } from '../src/lib/validators';
+import {
+  eventInputSchema,
+  searchSchema,
+  parseSeedUrls,
+  checkScraperMode,
+  evalCorpusSchema,
+} from '../src/lib/validators';
 
 /** Une sortie valide, à laquelle chaque test ne change que ce qui l'intéresse. */
 function sortie(champs: Record<string, unknown> = {}) {
@@ -166,4 +172,24 @@ test('le mode « site » réclame au moins une adresse', () => {
   assert.equal(checkScraperMode({ mode: 'recherche', seedUrls: '' }), null);
   // …mais celles qui sont là doivent tenir debout.
   assert.match(checkScraperMode({ mode: 'recherche', seedUrls: 'n’importe quoi' }) ?? '', /invalide/);
+});
+
+// ───────────────────────────── le corpus servi au worker pour l'entraînement
+
+test('le corpus étiqueté se pagine par curseur, avec des bornes', () => {
+  const vide = evalCorpusSchema.parse({});
+  assert.equal(vide.after, 0);
+  assert.equal(vide.limit, 10);
+
+  // Cent soixante pages gelées font des dizaines de mégaoctets : une tranche
+  // trop large ferait tomber la requête sur un VPS à quatre gigaoctets.
+  assert.equal(evalCorpusSchema.safeParse({ limit: 500 }).success, false);
+  assert.equal(evalCorpusSchema.safeParse({ limit: 0 }).success, false);
+  assert.equal(evalCorpusSchema.safeParse({ after: -1 }).success, false);
+});
+
+test('le curseur accepte une chaîne, comme tout ce qui vient du réseau', () => {
+  const parsed = evalCorpusSchema.parse({ after: '42', limit: '5' });
+  assert.equal(parsed.after, 42);
+  assert.equal(parsed.limit, 5);
 });

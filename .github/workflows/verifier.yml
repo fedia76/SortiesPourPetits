@@ -25,7 +25,7 @@ jobs:
           python-version: '3.11'
       - name: Installer
         working-directory: scraper
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,classifieur]"
       # Avant les tests : une variable morte ou un import fantôme se voit en
       # deux secondes, là où la suite en met vingt. Le dépôt portait une
       # dizaine de « # noqa: BLE001 » — des suppressions écrites pour un

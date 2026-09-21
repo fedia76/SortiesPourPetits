@@ -423,90 +423,64 @@ _JOUR_EXCLU_CONTEXTE = re.compile(
 _JOUR_PLAGE_CONTEXTE = re.compile(r"\bdu\s+(\w+)\s+au\s+(\w+)")
 
 
-# ══════════════════════════════════════════════════ classer, et non extraire
+# ══════════════════════════════════════════════ le cadre, et pourquoi pas plus
 #
 # Deux champs de la fiche ne sont pas des morceaux de page : la **catégorie**
-# est un choix dans un référentiel, le **cadre** une déduction. Ils restaient
-# vides, et coûtaient à eux deux un sixième du score.
+# est un choix dans un référentiel, le **cadre** une déduction.
 #
-# GLiNER sait pourtant les rendre, par un détournement que sa propre
-# bibliothèque emploie (`gliner.multitask.classification`) : on **écrit les
-# réponses possibles en tête du texte**, et on demande au modèle de surligner
-# la bonne. Le même étiqueteur, retourné comme un gant — au lieu de chercher
-# une valeur dans la page, il choisit parmi celles qu'on lui donne.
+# On a essayé de les faire rendre par le modèle, par le détournement que la
+# bibliothèque de GLiNER emploie elle-même (`gliner.multitask.classification`)
+# : écrire les réponses possibles en tête du texte, et demander au modèle de
+# surligner la bonne. Mesuré sur le banc, ça donne **0 juste sur 16** pour la
+# catégorie et 10 justes sur 140 pour le cadre. Le détournement est bien réel,
+# mais il ne tient qu'avec un modèle *entraîné à ce format* — les points de
+# contrôle `knowledgator/gliner-multitask-*`, qui ont appris que l'étiquette
+# `match` désigne « la bonne classe ». `urchade/gliner_multi-v2.1` est un
+# modèle de reconnaissance d'entités pur : on lui demandait des entités d'un
+# type qu'il n'a jamais vu, dans un texte dont la première ligne énumère
+# justement toutes les réponses. Il en surlignait une, à peu près au hasard.
 #
-# Rien de neuf n'est entraîné : c'est du zero-shot, comme le reste.
+# Reste l'observation qui vaut d'être gardée : sur les onze pages où le modèle
+# a répondu pour le cadre, dix étaient justes. Pas de la classification — de
+# l'appariement de chaîne, ces pages écrivant « en plein air » en toutes
+# lettres. Autant le faire sans modèle : c'est exact, gratuit, et ça n'a plus
+# l'air d'un raisonnement.
+#
+# La catégorie, elle, n'est pas écrite sur la page : aucun site n'annonce
+# « Catégorie : Spectacles ». C'est une inférence sur la page entière, et
+# **aucun surligneur de spans ne peut la rendre**, quel que soit son point de
+# contrôle — il n'y a pas de span à surligner. C'est un classifieur entraîné
+# qu'il faut, pas un étiqueteur détourné.
 
-#: Le gabarit qui précède le texte à classer. En français : le modèle est
-#: multilingue, et la page l'est.
-GABARIT_CLASSES = "Classe ce texte parmi : {}."
+#: Les tournures qui disent le cadre, et l'énuméré que le site attend.
+CADRES: dict[str, str] = {"en intérieur": "INDOOR", "en plein air": "OUTDOOR"}
 
-#: Ce que le modèle lit pour le cadre, et l'énuméré que le site attend.
-#:
-#: Les libellés sont des **tournures de page**, pas des identifiants : une
-#: page écrit « en plein air », jamais « OUTDOOR ». C'est la leçon des spans,
-#: appliquée d'emblée ici.
-#: Aucun libellé n'en contient un autre, et ce n'est pas un détail de style :
-#: « en intérieur et en plein air » englobait les deux premiers, si bien qu'un
-#: modèle surlignant « plein air » désignait deux réponses à la fois et se
-#: faisait refuser. Un référentiel dont les entrées s'emboîtent ne peut pas
-#: être tranché.
-CADRES: dict[str, str] = {
-    "en intérieur": "INDOOR",
-    "en plein air": "OUTDOOR",
-    "les deux": "BOTH",
-}
-
-#: Le libellé sous lequel on demande la classe. Un seul, court : il partage la
-#: fenêtre du modèle avec le gabarit **et** le texte à classer.
-LABEL_CLASSE = "classe"
+#: Écrit à plat (sans accent, minuscules) : c'est sous cette forme que la page
+#: est comparée, pour qu'« En Plein Air » d'un titre compte comme le reste.
+_DEDANS = re.compile(r"\ben (?:interieur|salle)\b|\ba l'interieur\b")
+_DEHORS = re.compile(r"\b(?:en|de) plein air\b|\ben exterieur\b")
 
 
-def prompt_de_classes(
-    text: str,
-    classes: list[str],
-    *,
-    entete: str = "",
-    gabarit: str = GABARIT_CLASSES,
-    limite: int = 900,
-) -> str:
-    """Le texte à classer, précédé des réponses possibles.
+def cadre_lu(text: str) -> str:
+    """L'énuméré du cadre que la page écrit, ou rien.
 
-    `entete` — le titre de la page — passe **avant** le corps : c'est le
-    signal le plus dense pour une catégorie, et les premiers caractères d'une
-    page scrapée sont souvent un fil d'Ariane et un bandeau de cookies.
+    Rien est le bon défaut : une page qui ne dit pas si c'est couvert ne
+    permet pas de le deviner, et trancher au hasard entre trois valeurs, c'est
+    se tromper deux fois sur trois. Un `MANQUE` se corrige, un `FAUX` se
+    propage jusqu'à la fiche publiée.
 
-    `limite` borne le corps parce que la fenêtre de l'encodeur ne se négocie
-    pas : ce qui dépasse n'est pas tronqué bruyamment, il est ignoré.
+    Les deux tournures ensemble valent `BOTH` — « spectacle en salle puis
+    goûter en plein air » — et non la première venue.
     """
-    tete = gabarit.format(", ".join(classes))
-    corps = " ".join(part for part in (entete, text) if part).strip()
-    return f"{tete}\n{corps[:limite]}"
-
-
-def classe_retenue(spans: list[Span], classes: list[str]) -> str:
-    """La classe que le modèle a surlignée, telle que le référentiel l'écrit.
-
-    Rendue **canonique** plutôt que telle quelle : le modèle surligne souvent
-    un morceau du libellé — « plein air » pour « en plein air » —, et une
-    fiche qui porterait ce morceau ne s'apparierait à rien côté site.
-
-    Vide si rien ne correspond, et c'est le bon défaut : classer au hasard
-    dans un référentiel de six entrées, c'est se tromper cinq fois sur six.
-    """
-    if not classes:
-        return ""
-    plats = {flatten(c): c for c in classes}
-    for span in sorted(spans, key=lambda sp: -sp.score):
-        plat = flatten(span.text)
-        if not plat:
-            continue
-        if plat in plats:
-            return plats[plat]
-        # Un morceau du libellé, et un seul candidat possible : on accepte.
-        proches = [c for aplati, c in plats.items() if plat in aplati]
-        if len(proches) == 1:
-            return proches[0]
+    plat = flatten(text)
+    dedans = bool(_DEDANS.search(plat))
+    dehors = bool(_DEHORS.search(plat))
+    if dedans and dehors:
+        return "BOTH"
+    if dedans:
+        return "INDOOR"
+    if dehors:
+        return "OUTDOOR"
     return ""
 
 
@@ -784,19 +758,24 @@ def unfilled_fields() -> tuple[str, ...]:
     `MANQUE` dessus doit pouvoir distinguer « le modèle a raté » de « cette
     brique ne prétend pas le rendre ».
 
-    La liste a **raccourci** : `setting` et `category` n'en sont plus, depuis
-    qu'ils se demandent par classification plutôt que par étiquetage. Je les y
-    avais rangés comme structurellement hors de portée, ce qui était faux —
-    ce ne sont pas des rédactions, ce sont des choix, et un encodeur sait
-    choisir. `permanent` en sort aussi : il se déduit des dates.
+    `category` y est **revenue** après mesure : 0 juste sur 16 en classification
+    zero-shot. Ce n'est pas un réglage à reprendre, c'est une tâche qu'un
+    surligneur de spans ne fait pas — la catégorie n'est écrite nulle part sur
+    la page. Elle attend un classifieur entraîné.
+
+    `setting` n'y est pas : la page l'écrit parfois en toutes lettres, et une
+    règle lexicale le lit alors sans modèle. `permanent` non plus : il se
+    déduit des dates.
     """
-    return ("description", "several", "photo_url")
+    return ("description", "several", "photo_url", "category")
 
 
 __all__ = [
+    "CADRES",
     "LABELS",
     "SEUIL_DEFAUT",
     "Span",
+    "cadre_lu",
     "parse_age",
     "parse_dates",
     "parse_heure",

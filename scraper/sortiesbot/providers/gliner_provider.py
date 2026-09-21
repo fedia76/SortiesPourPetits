@@ -51,14 +51,11 @@ from ..harvest import Link
 from ..journal import RunLog
 from ..models import ExtractedEvent, FoundPage, Usage
 from ..spans import (
-    CADRES,
-    LABEL_CLASSE,
     LABELS,
     SEUIL_DEFAUT,
     SEUIL_PLANCHER,
     Span,
-    classe_retenue,
-    prompt_de_classes,
+    cadre_lu,
     to_event,
     unfilled_fields,
 )
@@ -262,6 +259,20 @@ def _decouper(text: str, budget: int, recouvrement: int) -> list[tuple[int, str]
     return morceaux
 
 
+def _non_rendus(avec_classifieur: bool) -> tuple[str, ...]:
+    """Les champs que ce run ne rend pas — qui dépend de ce qui est branché.
+
+    `unfilled_fields()` annonce les limites de l'étiquetage seul. La catégorie
+    en fait partie tant qu'aucun classifieur n'est entraîné, et en sort dès
+    qu'il y en a un : c'est la même brique avec ou sans, et le banc ne doit
+    pas lire la même chose dans les deux cas.
+    """
+    champs = unfilled_fields()
+    if avec_classifieur:
+        return tuple(c for c in champs if c != "category")
+    return champs
+
+
 class GlinerProvider:
     """Un étiqueteur pour l'extraction, un modèle pour les quatre autres appels."""
 
@@ -275,6 +286,7 @@ class GlinerProvider:
         gliner_model: str = MODELE_DEFAUT,
         seuil: float = SEUIL_DEFAUT,
         today: date | None = None,
+        classifieur: Any | None = None,
     ):
         self._model = model
         self._tagger = tagger
@@ -285,6 +297,15 @@ class GlinerProvider:
         # les spans qu'un champ plus tolérant aurait gardés.
         self._plancher = min(seuil, SEUIL_PLANCHER)
         self._today = today
+        # Le classifieur de catégories, chargé au premier besoin et jamais
+        # réclamé : la brique doit tourner sans lui, et le banc doit alors dire
+        # « champ non rendu » plutôt que de compter une faute.
+        #
+        # `False` est le troisième état — cherché, et absent. Sans lui, on
+        # relirait le disque à chaque page pour redécouvrir chaque fois qu'il
+        # n'y a rien.
+        self._classifieur: Any = classifieur
+        self._classifieur_dit: str = ""
         # Le sien, et il reste à zéro : c'est le fait saillant de ce
         # fournisseur. Quand un modèle est branché derrière pour les quatre
         # autres appels, c'est *son* compteur qu'on expose, sans quoi le
@@ -299,6 +320,29 @@ class GlinerProvider:
         if self._tagger is None:
             self._tagger = charger(self._nom)
         return self._tagger
+
+    def _classifieur_du_disque(self) -> Any:
+        """Le classifieur entraîné, s'il y en a un. Sinon `None`, une fois dit.
+
+        Son absence n'est pas une panne : elle veut dire que personne n'a
+        encore lancé l'entraînement sur ce corpus, et la brique rend alors une
+        fiche sans catégorie — ce que `non_rendus` annonce au banc.
+        """
+        if self._classifieur is not None:
+            return self._classifieur or None
+        from ..classifieur import Classifieur, ClassifieurIndisponible
+
+        try:
+            self._classifieur = Classifieur.charger()
+        except ClassifieurIndisponible as err:
+            self._classifieur = False
+            self._classifieur_dit = str(err)
+            return None
+        except Exception as err:  # noqa: BLE001 — un fichier illisible, pas une page perdue
+            self._classifieur = False
+            self._classifieur_dit = f"modèle illisible ({err.__class__.__name__} : {err})"
+            return None
+        return self._classifieur
 
     # ------------------------------------------------------------ l'extraction
 
@@ -377,18 +421,25 @@ class GlinerProvider:
             spans, today=self._today, seuil=self._seuil, hints=hints, text=content
         )
 
-        # Puis les deux champs qui ne sont pas des morceaux de page. Deux
-        # passes de plus, sur un texte court : le gabarit et le titre suffisent
-        # le plus souvent à trancher, et la fenêtre du modèle ne permettrait
-        # pas davantage.
-        entete = str((hints or {}).get("title") or "")
-        categorie = self._classer(tagger, content, sorted(categories), entete)
-        cadre_lu = self._classer(tagger, content, list(CADRES), entete)
-        event = replace(
-            event,
-            category=categorie,
-            setting=CADRES.get(cadre_lu, ""),
-        )
+        # Puis le cadre, quand la page l'écrit — sans modèle, et c'est mesuré :
+        # les deux passes de classification zero-shot qui étaient ici rendaient
+        # 0 juste sur 16 pour la catégorie, et pour le cadre dix justes que ce
+        # simple appariement retrouve. Le détail est dans `spans.py`.
+        #
+        # Puis la catégorie, qui ne s'extrait pas non plus — mais elle, aucune
+        # règle ne la lit : rien sur la page ne l'écrit. C'est un classifieur
+        # **entraîné** sur le corpus étiqueté qui la rend, ou personne.
+        #
+        # `categories` reste au contrat sans être lu ici : le référentiel du
+        # classifieur est celui sur lequel il a appris, et le lui imposer
+        # d'ailleurs à l'inférence lui ferait proposer des classes qu'il n'a
+        # jamais vues.
+        modele = self._classifieur_du_disque()
+        categorie, confiance = ("", 0.0)
+        if modele is not None:
+            titre = str((hints or {}).get("title") or "")
+            categorie, confiance = modele.predire(titre, content)
+        event = replace(event, setting=cadre_lu(content), category=categorie)
         # Une fois la page finie, et pas au milieu : à ce point tout ce que
         # l'encodeur a alloué est libéré côté Python, et il n'y a plus qu'à le
         # rendre au système.
@@ -411,47 +462,19 @@ class GlinerProvider:
             fenetre=budget,
             passes=len(morceaux),
             ms=int((time.monotonic() - depart) * 1000),
-            non_rendus=",".join(unfilled_fields()),
+            non_rendus=",".join(_non_rendus(modele is not None)),
+            # Ce que le classifieur a répondu, et à quel point il y croyait. Un
+            # champ vide à 0,68 de confiance et un champ vide faute de modèle
+            # demandent deux corrections opposées ; sans ce couple, ils se
+            # lisent pareil.
+            categorie=categorie or (self._classifieur_dit or "—"),
+            confiance=round(confiance, 2),
             # Ce que la page déclarait d'elle-même, et que le modèle n'a donc
             # pas eu à deviner. Sans cette ligne, un titre juste se lirait
             # comme une réussite de l'étiquetage.
             declares=",".join(sorted(hints or {})) or "aucun",
         )
         return [event]
-
-    def _classer(
-        self, tagger: Tagger, content: str, classes: list[str], entete: str
-    ) -> str:
-        """La classe que le modèle retient, ou rien.
-
-        Le détournement est celui de `gliner.multitask.classification`, réécrit
-        ici en quelques lignes : ce module-là importe `datasets`, `sklearn` et
-        de quoi évaluer sur des jeux Hugging Face, dont rien ne sert au
-        pipeline. On lui prend son idée, pas ses dépendances.
-
-        Un échec ne coûte que ce champ : classer est un bonus sur une fiche
-        que les spans ont déjà remplie, et le manquer vaut mieux que perdre la
-        page entière.
-        """
-        if not classes:
-            return ""
-        budget, _ = fenetre_caracteres(tagger, [LABEL_CLASSE])
-        prompt = prompt_de_classes(content, classes, entete=entete, limite=budget)
-        try:
-            bruts = tagger.predict_entities(prompt, [LABEL_CLASSE], threshold=self._plancher)
-        except Exception:  # noqa: BLE001 — un champ en moins, pas une page perdue
-            return ""
-        return classe_retenue(
-            [
-                Span(
-                    label=str(b.get("label", "")),
-                    text=str(b.get("text", "")),
-                    score=float(b.get("score", 0.0)),
-                )
-                for b in bruts
-            ],
-            classes,
-        )
 
     def _etiqueter(
         self, tagger: Tagger, morceaux: list[str], libelles: list[str]

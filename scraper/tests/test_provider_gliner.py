@@ -26,7 +26,7 @@ from sortiesbot.providers.gliner_provider import (
 
 #: De quoi fabriquer un texte qui dépasse à coup sûr la fenêtre du modèle.
 LONG = FENETRE_JETONS_DEFAUT * CARACTERES_PAR_JETON * 3
-from sortiesbot.spans import LABEL_CLASSE, LABELS
+from sortiesbot.spans import LABELS
 
 AUJOURD_HUI = date(2026, 7, 1)
 PAR_CHAMP = {champ: libelle for libelle, champ in LABELS.items()}
@@ -45,13 +45,13 @@ class FauxTagger:
 
 
 def _extractions(tagger) -> list:
-    """Les appels d'**étiquetage**, sans ceux de classement.
+    """Les appels d'étiquetage : tous, désormais.
 
-    Depuis que la brique classe aussi la catégorie et le cadre, chaque page
-    vaut deux passes de plus. Elles se reconnaissent à leur libellé unique, et
-    les mêler aux tronçons ferait dire n'importe quoi aux comptes.
+    Il y a eu ici deux passes de classement par page, qu'il fallait écarter
+    des comptes. Elles ont été retirées — 0 juste sur 16 pour la catégorie —
+    et le cadre se lit maintenant sans modèle.
     """
-    return [appel for appel in tagger.appels if appel[1] != [LABEL_CLASSE]]
+    return list(tagger.appels)
 
 
 def _log() -> RunLog:
@@ -134,15 +134,21 @@ def test_le_journal_dit_ce_que_la_brique_ne_rend_pas():
     """Un `MANQUE` sur `setting` doit se lire comme une limite, pas comme une faute."""
     captures: list[dict] = []
     log = RunLog(None, verbose=False, sink=captures.append)
-    GlinerProvider(tagger=FauxTagger()).extract("https://x.fr", "texte", _config(), [], log)
+    # `classifieur=False` : explicitement aucun, plutôt que « ce qui traîne sur
+    # le disque de celui qui lance les tests ».
+    GlinerProvider(tagger=FauxTagger(), classifieur=False).extract(
+        "https://x.fr", "texte", _config(), [], log
+    )
     pose = [e for e in captures if e.get("kind") == "gliner"]
     assert pose
     assert "description" in pose[0]["non_rendus"]
-    # `setting` et `category` n'y sont plus : ils se demandent désormais par
-    # classement, et les y laisser ferait passer un champ rendu pour un champ
-    # hors de portée.
+    # `category` y est revenue après mesure : aucun site n'écrit « Catégorie :
+    # Spectacles », et un surligneur de spans n'a alors pas de span à
+    # surligner. Le banc doit le lire comme une limite annoncée.
+    assert "category" in pose[0]["non_rendus"]
+    # `setting` n'y est pas : la page l'écrit parfois en toutes lettres, et une
+    # règle lexicale le lit alors sans modèle.
     assert "setting" not in pose[0]["non_rendus"]
-    assert "category" not in pose[0]["non_rendus"]
 
 
 def test_le_mode_programme_est_refuse_bruyamment():
@@ -363,7 +369,7 @@ def test_le_banc_ne_voit_aucune_invention_et_c_est_le_piege():
     # Et les aspects hors portée sont vides, pas verts : c'est ce qui distingue
     # une limite annoncée d'un chiffre fabriqué.
     vides = {a["key"] for a in resultat["aspects"] if not a["filled"]}
-    assert {"description", "cadre", "categorie"} <= vides
+    assert {"description", "categorie"} <= vides
 
 
 # ────────────────────────── la fenêtre du modèle, et la faute qu'elle a coûtée
@@ -507,3 +513,66 @@ def test_l_etiqueteur_est_interroge_au_plancher_des_seuils():
     GlinerProvider(tagger=tagger, seuil=0.5).extract("https://x.fr", "t", _config(), [], _log())
     _, _, seuil = tagger.appels[0]
     assert seuil <= SEUIL_PLANCHER
+
+
+# ──────────────────────────────── la catégorie, par un classifieur ou personne
+
+
+class FauxClassifieur:
+    """Rend toujours la même classe, et note ce qu'on lui a soumis."""
+
+    def __init__(self, classe="Spectacle", score=0.8):
+        self.classe, self.score = classe, score
+        self.vus: list[tuple[str, str]] = []
+
+    def predire(self, titre, texte):
+        self.vus.append((titre, texte))
+        return (self.classe, self.score)
+
+
+def test_la_categorie_vient_du_classifieur_quand_il_y_en_a_un():
+    classifieur = FauxClassifieur()
+    fiches = GlinerProvider(tagger=FauxTagger(), classifieur=classifieur).extract(
+        "https://x.fr",
+        "Un spectacle de marionnettes.",
+        _config(),
+        ["Spectacle", "Atelier"],
+        _log(),
+        hints={"title": "Le Petit Prince"},
+    )
+    assert fiches[0].category == "Spectacle"
+    # Le titre déclaré par la page lui parvient : c'est le signal le plus dense
+    # dont il dispose, et l'entraînement l'a pesé comme tel.
+    assert classifieur.vus[0][0] == "Le Petit Prince"
+
+
+def test_sans_classifieur_la_categorie_reste_vide_et_le_journal_le_dit():
+    """Vide, pas deviné : c'est la limite annoncée, pas une faute du modèle."""
+    captures: list[dict] = []
+    log = RunLog(None, verbose=False, sink=captures.append)
+    fiches = GlinerProvider(tagger=FauxTagger(), classifieur=False).extract(
+        "https://x.fr", "texte", _config(), ["Spectacle"], log
+    )
+    assert fiches[0].category == ""
+    pose = [e for e in captures if e.get("kind") == "gliner"]
+    assert "category" in pose[0]["non_rendus"]
+
+
+def test_avec_un_classifieur_la_categorie_sort_des_champs_non_rendus():
+    """La même brique n'annonce pas les mêmes limites selon ce qui est branché."""
+    captures: list[dict] = []
+    log = RunLog(None, verbose=False, sink=captures.append)
+    GlinerProvider(tagger=FauxTagger(), classifieur=FauxClassifieur()).extract(
+        "https://x.fr", "texte", _config(), ["Spectacle"], log
+    )
+    pose = [e for e in captures if e.get("kind") == "gliner"]
+    assert "category" not in pose[0]["non_rendus"]
+    assert pose[0]["confiance"] == 0.8
+
+
+def test_un_classifieur_muet_laisse_la_categorie_vide():
+    """Sous son seuil, il rend une chaîne vide — et on ne la remplace par rien."""
+    fiches = GlinerProvider(
+        tagger=FauxTagger(), classifieur=FauxClassifieur(classe="", score=0.31)
+    ).extract("https://x.fr", "texte", _config(), ["Spectacle"], _log())
+    assert fiches[0].category == ""
