@@ -100,6 +100,8 @@ def get_provider(
     api_key: str | None = None,
     serper_key: str | None = None,
     openrouter_key: str | None = None,
+    *,
+    search: bool = True,
 ) -> Provider:
     """Instancie le fournisseur nommé dans la configuration.
 
@@ -116,15 +118,19 @@ def get_provider(
     d'OpenRouter, par exemple — réclamerait deux champs, en base, dans la
     console et ici. Personne n'en a eu besoin jusqu'ici.
 
-    Le moteur n'est monté que si quelqu'un doit chercher. En mode « site »,
-    aucune recherche n'est lancée — les adresses sont données, voir
-    `stages/discovery.py` — et le moteur n'y sert à rien ; réclamer sa clé
-    faisait échouer au démarrage un run qui ne s'en serait jamais servi. Seul
-    le modèle compte alors, et le champ garde son sens : il dit lequel.
+    Le moteur n'est monté que si quelqu'un doit chercher. Deux cas où personne
+    ne cherche, et où réclamer la clé du moteur ferait échouer au démarrage un
+    run qui ne s'en serait jamais servi :
+
+    * le mode « site » — les adresses sont données, voir `stages/discovery.py` ;
+    * un run du **banc** (`search=False`) — il rejoue une brique sur un corpus
+      gelé, et l'étage 1 n'en fait pas partie.
+
+    Seul le modèle compte alors, et le champ garde son sens : il dit lequel.
     """
     from .anthropic_provider import AnthropicProvider
 
-    cherche = not config.targets_site
+    cherche = search and not config.targets_site
 
     if config.provider == "anthropic":
         return AnthropicProvider(api_key=api_key)

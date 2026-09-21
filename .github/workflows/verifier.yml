@@ -94,14 +94,19 @@ jobs:
   # pour les workflows présents sur la branche par défaut. Tant que ce fichier
   # vit sur une branche de travail, `workflow_dispatch` est hors d'atteinte.
   #
-  #   · « [serper] » dans le message d'un commit : marche depuis n'importe
-  #     quelle branche, aujourd'hui ;
+  #   · « [serper] » **en tête** du message d'un commit : marche depuis
+  #     n'importe quelle branche, aujourd'hui ;
   #   · le bouton « Run workflow » : une fois ce fichier fusionné dans `main`.
+  #
+  # En tête, et non n'importe où : c'était `contains`, et un commit qui se
+  # contentait d'expliquer le marqueur dans son propre corps de message le
+  # déclenchait. Un job qui dépense de l'argent ne doit pas partir parce qu'on
+  # a parlé de lui.
   serper:
     name: Forme réelle des réponses Serper (sur demande)
     if: >-
       github.event_name == 'workflow_dispatch'
-      || contains(github.event.head_commit.message, '[serper]')
+      || startsWith(github.event.head_commit.message, '[serper]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -128,16 +133,20 @@ jobs:
           SERPER_API_KEY: ${{ secrets.SERPER }}
         run: python -m tools.serper_shape "spectacle jeune public Paris septembre"
 
-  # Même règle que le job ci-dessus, et même raison de l'avoir écrit : les
-  # tests d'`openrouter_provider.py` simulent une forme de réponse que
-  # personne n'a confrontée au service. Celui-ci le fait — il vérifie au
-  # passage que la table d'équivalences de modèles pointe encore sur des
-  # modèles existants — et coûte quelques centièmes de centime.
+  # Même règle que le job ci-dessus, marqueur en tête compris, et même raison
+  # de l'avoir écrit : les tests d'`openrouter_provider.py` simulent une forme
+  # de réponse que personne n'a confrontée au service. Celui-ci le fait — il
+  # vérifie au passage que la table d'équivalences de modèles pointe encore sur
+  # des modèles existants — et coûte quelques centièmes de centime.
+  #
+  # Il réclame un secret `OPENROUTER` qui n'existe pas encore dans le dépôt :
+  # tant qu'il n'est pas créé, demander ce job échoue, et c'est ce qu'on veut
+  # — il n'a rien à vérifier sans clé.
   openrouter:
     name: Forme réelle des réponses OpenRouter (sur demande)
     if: >-
       github.event_name == 'workflow_dispatch'
-      || contains(github.event.head_commit.message, '[openrouter]')
+      || startsWith(github.event.head_commit.message, '[openrouter]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

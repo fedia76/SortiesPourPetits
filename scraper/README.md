@@ -290,8 +290,10 @@ La forme des réponses a été **confrontée au service** ; le détail de ce qui
 été observé est en tête de `providers/serper_provider.py`. Les tests, eux,
 simulent : ils verrouillent ce que le code fait de cette forme, pas qu'elle
 soit la bonne. Pour la revérifier — après un changement d'API, par exemple —
-il suffit de mettre `[serper]` dans un message de commit : le job du même nom
-appelle le vrai service et affiche ce qu'il rend.
+il suffit de commencer un message de commit par `[serper]` : le job du même nom
+appelle le vrai service et affiche ce qu'il rend. **En tête du message**, pas
+n'importe où : un job qui dépense ne doit pas partir parce qu'un commit a parlé
+de lui.
 
 ### Changer de modèle : OpenRouter
 
@@ -330,6 +332,13 @@ l'estime, au tarif d'un grand modèle, et le journal le dit — même règle que
 pour un modèle absent de `PRICES` : mieux vaut un run qui s'arrête trop tôt
 qu'un plafond qui ne se déclenche jamais.
 
+**Le banc sait le mesurer.** Un run d'évaluation peut nommer `openrouter` pour
+le tri (étage 4) comme pour l'extraction (étage 6), et le modèle avec — c'est
+*Jouer une mesure* → *Par qui*, dans la console du banc. Le run déclare à la
+clôture le modèle réellement appelé, et fait sa propre courbe : deux modèles ne
+sont pas deux états d'une même chose. Le détail est dans
+[`docs/banc-evaluation.md`](../docs/banc-evaluation.md).
+
 **On exige du JSON structuré, et un hébergeur qui sache le rendre.** Les
 schémas envoyés sont ceux de
 [`providers/schemas.py`](sortiesbot/providers/schemas.py) — exactement les
@@ -344,8 +353,11 @@ ou sans hébergeur capable rend un 404 lisible, plutôt qu'une fiche plausible.
 confrontée au service** : elle vient de la documentation, et les tests
 simulent cette forme-là. Pour la vérifier — et vérifier du même coup que la
 table d'équivalences de modèles pointe encore sur des modèles existants —,
-mettez `[openrouter]` dans un message de commit : le job du même nom appelle
-le vrai service et affiche ce qu'il rend.
+commencez un message de commit par `[openrouter]` : le job du même nom appelle
+le vrai service et affiche ce qu'il rend. Il réclame un secret de dépôt
+`OPENROUTER`, qui n'existe pas encore : à créer dans *Settings → Secrets and
+variables → Actions*, avec la même valeur que l'`OPENROUTER_API_KEY` du
+déploiement.
 
 ### Extraire en local plutôt qu'avec le modèle
 
@@ -1874,11 +1886,11 @@ seulement ce que ça coûterait et ce que ça rapporterait.
 
 1. un déclenchement périodique des configurations (le worker sait déjà exécuter
    ce qu'on lui met en file ; il manque qui l'y met, et quand) ;
-2. **mesurer** OpenRouter. Le fournisseur existe et se sélectionne depuis la
-   console ; ce qui manque est le chiffre — quel modèle tient l'étage 6 pour
-   combien, et lequel s'effondre sur le tri. Le banc sait le dire, mais son
-   choix de fournisseur est resté fermé à `anthropic` et `gliner` : c'est
-   l'enum d'`evalExtractionSchema` à ouvrir, et la console du banc à suivre ;
+2. **mesurer** OpenRouter, c'est-à-dire s'en servir. Le banc l'accepte
+   désormais aux deux étages qui appellent quelqu'un — le tri et l'extraction,
+   voir [`docs/banc-evaluation.md`](../docs/banc-evaluation.md) — mais
+   personne n'a encore lancé le run qui dira quel modèle tient l'étage 6 pour
+   combien. L'outil est là ; le chiffre n'y est pas ;
 3. un second script en liste blanche, alimenté par les domaines dont les
    sorties ont été le plus souvent approuvées ;
 4. **mesurer** l'étage 6 local. Le fournisseur `gliner` existe et se branche au

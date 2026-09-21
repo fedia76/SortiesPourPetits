@@ -611,6 +611,93 @@ def test_un_run_gliner_ne_se_declare_pas_joue_par_haiku():
     assert "haiku" not in declare["model"]
 
 
+# ───────────────────────────── le même banc, un modèle d'OpenRouter
+#
+# L'étiqueteur ne sait remplir qu'une fiche ; le routeur, lui, sait jouer les
+# **deux** étages qui appellent quelqu'un — le tri et l'extraction. C'est ce
+# qui fait l'intérêt de la mesure : quel modèle tient l'étage 6 pour combien,
+# et lequel s'effondre sur le tri.
+
+
+def test_un_run_openrouter_impose_son_modele_aux_deux_etages():
+    """Un run ne joue qu'un étage, et on ne sait pas encore lequel ici."""
+    config = worker._config_du_run(
+        {
+            "id": 30,
+            "stage": "EXTRACT",
+            "extraction": {"provider": "openrouter", "model": "google/gemini-2.5-flash"},
+        },
+        quiet=True,
+    )
+    assert config.provider == "openrouter"
+    assert config.extraction_model == "google/gemini-2.5-flash"
+    assert config.select_model == "google/gemini-2.5-flash"
+
+
+def test_un_run_openrouter_sans_modele_garde_celui_de_la_production():
+    """Même modèle, autre route : la comparaison la plus propre qui soit."""
+    config = worker._config_du_run(
+        {"id": 31, "stage": "EXTRACT", "extraction": {"provider": "openrouter"}}, quiet=True
+    )
+    assert config.extraction_model == Config(name="x", theme="x").extraction_model
+
+
+def test_un_modele_openrouter_intraduisible_arrete_le_run_avant_le_corpus():
+    """Pas à la première entrée : le worker aurait déjà été occupé pour rien."""
+    with pytest.raises(ConfigError, match="modèle du run"):
+        worker._config_du_run(
+            {
+                "id": 32,
+                "stage": "EXTRACT",
+                "extraction": {"provider": "openrouter", "model": "gemini-tout-court"},
+            },
+            quiet=True,
+        )
+
+
+def test_un_run_openrouter_declare_le_modele_reellement_appele():
+    """« claude-haiku-4-5 » et « anthropic/claude-haiku-4.5 » sont deux routes.
+
+    Les deux points porteraient sinon le même nom de modèle, et la courbe
+    mélangerait l'appel direct et le passage par le routeur.
+    """
+    config = worker._config_du_run(
+        {"id": 33, "stage": "EXTRACT", "extraction": {"provider": "openrouter"}}, quiet=True
+    )
+    assert worker._declare("EXTRACT", config)["model"] == "anthropic/claude-haiku-4.5"
+
+
+def test_un_run_openrouter_de_tri_declare_son_modele_aussi():
+    config = worker._config_du_run(
+        {
+            "id": 34,
+            "stage": "SELECT",
+            "recherche": {"theme": "spectacles", "dateFrom": "2026-07-01", "dateTo": "2026-07-31"},
+            "extraction": {"provider": "openrouter", "model": "mistralai/mistral-small"},
+        },
+        quiet=True,
+    )
+    assert worker._declare("SELECT", config)["model"] == "mistralai/mistral-small"
+
+
+def test_un_run_de_banc_ne_monte_pas_le_moteur():
+    """Il rejoue une brique sur un corpus gelé : l'étage 1 n'en fait pas partie.
+
+    Sans ça, un run joué par OpenRouter réclamerait une clé Serper pour une
+    recherche qu'il ne lancera jamais.
+    """
+    from sortiesbot.providers.base import get_provider
+    from sortiesbot.providers.openrouter_provider import OpenRouterProvider
+
+    config = worker._config_du_run(
+        {"id": 35, "stage": "EXTRACT", "extraction": {"provider": "openrouter"}}, quiet=True
+    )
+    provider = get_provider(
+        config, api_key=None, serper_key=None, openrouter_key="sk-or-x", search=False
+    )
+    assert isinstance(provider, OpenRouterProvider)
+
+
 # ───────────────────────────────── un run de banc ne doit plus être muet
 #
 # Un run de deux cents pages écrivait un écran vide pendant une heure : « il est

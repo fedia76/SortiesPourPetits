@@ -13,7 +13,7 @@
  * qui a grandi depuis — et c'est voulu : c'est le corpus qui fait autorité,
  * pas la photographie qu'on en avait prise.
  */
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { api } from '../lib/api';
 import { messageDe } from '../lib/erreurs';
 import EvalRunDetail from '../components/EvalRunDetail.vue';
@@ -61,13 +61,43 @@ const prefixes = ref('');
  * corpus, à dix minutes d'écart.
  */
 const provider = ref<EvalProvider>('anthropic');
-const glinerModel = ref('');
+const modele = ref('');
 
-const PROVIDERS: EvalProvider[] = ['anthropic', 'gliner'];
 const STAGES: EvalStage[] = ['HARVEST', 'SELECT', 'READ', 'EXTRACT'];
 
-/** Le fournisseur ne se choisit qu'à l'extraction : lui seul sait s'en servir. */
-const choixDuFournisseur = computed(() => newStage.value === 'EXTRACT');
+/**
+ * Le fournisseur se choisit aux deux étages qui appellent quelqu'un. Le
+ * dépouillement et la lecture sont du Python pur : leur en proposer un ferait
+ * déclarer un fournisseur qui n'a rien fait.
+ */
+const choixDuFournisseur = computed(
+  () => newStage.value === 'EXTRACT' || newStage.value === 'SELECT',
+);
+
+/**
+ * Ceux que l'étage sait employer. L'étiqueteur n'apparaît qu'à l'extraction :
+ * il ne sait pas choisir des numéros de ligne dans une liste, et le serveur le
+ * refuserait — autant ne pas le proposer.
+ */
+const PROVIDERS = computed<EvalProvider[]>(() =>
+  newStage.value === 'EXTRACT'
+    ? ['anthropic', 'openrouter', 'gliner']
+    : ['anthropic', 'openrouter'],
+);
+
+// Changer d'étage peut retirer le fournisseur choisi de la liste : on revient
+// alors à celui de la production, plutôt que de laisser un `select` afficher
+// une valeur que le serveur refusera.
+watch(PROVIDERS, (offerts) => {
+  if (!offerts.includes(provider.value)) provider.value = 'anthropic';
+});
+
+/** Le modèle d'un run OpenRouter s'écrit « éditeur/modèle ». */
+const MODELE_PLACEHOLDER: Record<EvalProvider, string> = {
+  anthropic: '',
+  gliner: 'urchade/gliner_multi-v2.1',
+  openrouter: 'anthropic/claude-haiku-4.5',
+};
 
 async function load() {
   loading.value = true;
@@ -116,7 +146,7 @@ async function launch() {
       // s'il s'écarte de la production : un run qui ne dit rien est un run
       // joué comme d'habitude, et sa ligne en base le dit aussi.
       ...(choixDuFournisseur.value && provider.value !== 'anthropic'
-        ? { extraction: { provider: provider.value, model: glinerModel.value.trim() } }
+        ? { extraction: { provider: provider.value, model: modele.value.trim() } }
         : {}),
     });
     notice.value =
@@ -247,15 +277,7 @@ function courbeDe(run: EvalRun): { cle: string; texte: string } {
     brut = {};
   }
 
-  if (run.stage === 'EXTRACT') {
-    const extraction = (brut.extraction ?? {}) as Partial<EvalExtraction>;
-    // Un run lancé avant que le choix existe n'a pas la clé : il a été joué
-    // par le modèle, puisque c'était le seul. Le ranger ailleurs couperait la
-    // courbe en deux à la date du déploiement, pour rien.
-    if (!extraction.provider || extraction.provider === 'anthropic') return { cle: '', texte: '' };
-    const modele = extraction.model ? ` · ${extraction.model}` : '';
-    return { cle: `p:${extraction.provider}`, texte: `étiqueteur local${modele}` };
-  }
+  if (run.stage === 'EXTRACT') return fournisseurDe(brut);
 
   if (run.stage !== 'SELECT') return { cle: '', texte: '' };
   const r = brut as Partial<EvalRecherche>;
@@ -266,7 +288,33 @@ function courbeDe(run: EvalRun): { cle: string; texte: string } {
     `${r.maxLinks} liens max`,
     r.theme ?? '',
   ].filter(Boolean);
-  return { cle: bouts.join('|'), texte: bouts.join(' · ') };
+  // Le tri se compare à recherche **et** fournisseur égaux : deux modèles sur
+  // la même fenêtre sont deux courbes, pas deux points de la même. Les
+  // confondre ferait lire un effondrement là où seul le modèle a changé.
+  const par = fournisseurDe(brut);
+  return {
+    cle: [bouts.join('|'), par.cle].filter(Boolean).join('|'),
+    texte: [bouts.join(' · '), par.texte].filter(Boolean).join(' · '),
+  };
+}
+
+/**
+ * Par qui un run a été joué, tel que sa ligne le déclare.
+ *
+ * Un run lancé avant que le choix existe n'a pas la clé : il a été joué par le
+ * modèle, puisque c'était le seul. Le ranger ailleurs couperait la courbe en
+ * deux à la date du déploiement, pour rien — d'où la clé vide, qui est celle
+ * de la production.
+ */
+function fournisseurDe(brut: Record<string, unknown>): { cle: string; texte: string } {
+  const extraction = (brut.extraction ?? {}) as Partial<EvalExtraction>;
+  if (!extraction.provider || extraction.provider === 'anthropic') return { cle: '', texte: '' };
+  const modele = extraction.model ? ` · ${extraction.model}` : '';
+  const quoi = extraction.provider === 'gliner' ? 'étiqueteur local' : 'OpenRouter';
+  // Le modèle entre dans la clé : deux modèles d'OpenRouter sont deux courbes.
+  // L'étiqueteur n'en avait pas besoin — il n'y en avait qu'un — mais la règle
+  // est la même, et l'écrire une fois vaut mieux que deux fois à moitié.
+  return { cle: `p:${extraction.provider}${modele}`, texte: `${quoi}${modele}` };
 }
 
 /**
@@ -448,32 +496,54 @@ function depuis(value: string | null): string {
       </fieldset>
 
       <!--
-        Seule l'extraction a le choix du fournisseur, et c'est à qui lance la
-        mesure de le faire : le mettre côté worker obligerait à toucher au
-        service entre deux runs, donc pour le seul usage qu'on en a — comparer.
+        Les deux étages qui appellent quelqu'un ont le choix du fournisseur, et
+        c'est à qui lance la mesure de le faire : le mettre côté worker
+        obligerait à toucher au service entre deux runs, donc pour le seul
+        usage qu'on en a — comparer.
       -->
       <fieldset v-if="choixDuFournisseur" class="reglage">
         <legend>Par qui</legend>
         <div class="row launch-row">
           <div class="field grow">
-            <label for="ev-provider">Qui remplit la fiche</label>
+            <label for="ev-provider">
+              {{ newStage === 'EXTRACT' ? 'Qui remplit la fiche' : 'Qui trie les liens' }}
+            </label>
             <select id="ev-provider" v-model="provider">
               <option v-for="p in PROVIDERS" :key="p" :value="p">
                 {{ EVAL_PROVIDER_LABELS[p] }}
               </option>
             </select>
           </div>
-          <div v-if="provider === 'gliner'" class="field grow">
-            <label for="ev-gliner">Point de contrôle</label>
+          <div v-if="provider !== 'anthropic'" class="field grow">
+            <label for="ev-modele">
+              {{ provider === 'gliner' ? 'Point de contrôle' : 'Modèle' }}
+            </label>
             <input
-              id="ev-gliner"
-              v-model="glinerModel"
+              id="ev-modele"
+              v-model="modele"
               type="text"
               maxlength="120"
-              placeholder="urchade/gliner_multi-v2.1"
+              :placeholder="MODELE_PLACEHOLDER[provider]"
             />
           </div>
         </div>
+        <p v-if="provider === 'openrouter'" class="muted small">
+          Le modèle s’écrit en deux parties — <code>anthropic/claude-haiku-4.5</code>,
+          <code>google/gemini-2.5-flash</code>. Laissé vide, c’est celui de la
+          production qui part chez le routeur : même modèle, autre route, ce qui
+          mesure la route plutôt que le modèle. La question intéressante est
+          l’autre — <strong>quel modèle tient cet étage, et pour combien</strong>.
+        </p>
+        <p v-if="provider === 'openrouter'" class="muted small">
+          Le coût n’est pas estimé mais <strong>annoncé par le service</strong>,
+          appel par appel, et rendu à la clôture. Un run qui coûte dix fois moins
+          pour deux points de moins est une réponse ; celui qui coûte autant pour
+          moins en est une aussi.
+        </p>
+        <p v-if="provider === 'openrouter'" class="muted small">
+          Ce run fera sa <strong>propre courbe</strong>, par modèle. Deux modèles
+          sur la même fenêtre sont deux courbes, pas deux points de la même.
+        </p>
         <p v-if="provider === 'gliner'" class="muted small">
           L’étiqueteur ne rend que des <strong>morceaux de la page</strong> : il
           ne peut pas inventer une valeur, et il ne coûte rien. En échange, il
@@ -500,7 +570,9 @@ function depuis(value: string | null): string {
         {{
           choixDuFournisseur && provider === 'gliner'
             ? 'gratuit — un étiqueteur local, sur le processeur'
-            : EVAL_STAGE_COST[newStage]
+            : choixDuFournisseur && provider === 'openrouter'
+              ? 'au tarif du modèle choisi, annoncé par le routeur et rendu à la clôture'
+              : EVAL_STAGE_COST[newStage]
         }}. L’étiquette n’est pas du décor : c’est elle qui rendra ce point de la
         courbe lisible dans six mois — « run #47 » ne dit rien.
       </p>
