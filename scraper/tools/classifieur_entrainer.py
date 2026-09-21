@@ -35,6 +35,7 @@ import json
 import sys
 from collections import Counter
 from pathlib import Path
+from statistics import median
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -44,6 +45,8 @@ from sortiesbot.api import SppApi  # noqa: E402
 from sortiesbot.classifieur import (  # noqa: E402
     CHAMP,
     MINIMUM_PAR_CLASSE,
+    PRECISION_VISEE,
+    SUPPORT_MINIMUM,
     ClassifieurIndisponible,
     Exemple,
     chemin_du_modele,
@@ -168,6 +171,17 @@ def main(argv: list[str] | None = None) -> int:
         help=f"exemples requis pour garder une classe (défaut : {MINIMUM_PAR_CLASSE}, plancher : 2)",
     )
     parser.add_argument("--grammes", choices=("mot", "car"), default="mot")
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=5,
+        help="découpages différents du même corpus, pour mesurer le bruit (défaut : 5)",
+    )
+    parser.add_argument(
+        "--seuil",
+        type=float,
+        help="forcer le seuil de confiance au lieu de le mesurer",
+    )
     parser.add_argument("--sortie", help=f"où écrire le modèle (défaut : {chemin_du_modele()})")
     parser.add_argument(
         "--a-blanc", action="store_true", help="mesurer sans rien enregistrer"
@@ -221,27 +235,56 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    # ── les deux découpages, et leur écart
+    # ── le plancher à battre, avant tout chiffre
+    #
+    # Sans lui, une exactitude ne veut rien dire : répondre toujours la classe
+    # majoritaire n'apprend rien et obtient déjà ce score-là.
+    restants = Counter(e.etiquette for e in exemples)
+    classe_reine, combien = restants.most_common(1)[0]
+    plancher = combien / len(exemples)
+    print(f"\n  Plancher : répondre « {classe_reine} » à tout donne {plancher:.0%}.")
+    print("  Un modèle qui ne le bat pas n'a rien appris.")
+
+    # ── les deux découpages, répétés pour distinguer l'écart du bruit
     print("\n── Hors échantillon ──")
     try:
-        p_groupe, s_groupe, verites = probas_hors_echantillon(
-            exemples, grammes=args.grammes, groupe=True
-        )
-        p_hasard, _, _ = probas_hors_echantillon(exemples, grammes=args.grammes, groupe=False)
+        repetitions = max(1, int(args.repetitions))
+        par_site, au_hasard = [], []
+        p_groupe = s_groupe = verites = None
+        for graine in range(repetitions):
+            pg, sg, vg = probas_hors_echantillon(
+                exemples, grammes=args.grammes, groupe=True, graine=graine
+            )
+            ph, _, _ = probas_hors_echantillon(
+                exemples, grammes=args.grammes, groupe=False, graine=graine
+            )
+            par_site.append(_bilan(pg, vg))
+            au_hasard.append(_bilan(ph, vg))
+            if p_groupe is None:
+                p_groupe, s_groupe, verites = pg, sg, vg
     except ClassifieurIndisponible as err:
         print(str(err), file=sys.stderr)
         return 2
 
-    par_site = _bilan(p_groupe, verites)
-    au_hasard = _bilan(p_hasard, verites)
-    print(f"  découpage au hasard    {au_hasard:>6.0%}   ← optimiste : fuite par le site")
-    print(f"  découpage par domaine  {par_site:>6.0%}   ← ce qu'il fera sur un site inconnu")
-    ecart = au_hasard - par_site
+    def _ligne(nom: str, scores: list[float], note: str) -> None:
+        etendue = f"{min(scores):.0%} à {max(scores):.0%}" if len(scores) > 1 else "—"
+        print(f"  {nom:<22} {median(scores):>6.0%}   {etendue:>12}   {note}")
+
+    print(f"  {'découpage':<22} {'médiane':>6}   {'étendue':>12}")
+    _ligne("au hasard", au_hasard, "← optimiste : fuite par le site")
+    _ligne("par domaine", par_site, "← sur un site inconnu")
+    if repetitions > 1:
+        print(
+            f"\n  L'étendue est ce que {repetitions} découpages du **même** corpus\n"
+            "  produisent à eux seuls. Tout écart plus petit qu'elle est du bruit,\n"
+            "  pas un résultat — c'est la seule façon de ne pas commenter du vent."
+        )
+    ecart = median(au_hasard) - median(par_site)
     if ecart > 0.10:
         print(
-            f"\n  L'écart est de {ecart:.0%}. Le modèle apprend en partie à reconnaître\n"
-            "  les sites du corpus plutôt que les sorties. C'est le chiffre par\n"
-            "  domaine qu'il faut croire."
+            f"\n  L'écart médian est de {ecart:.0%}, au-delà du bruit. Le modèle\n"
+            "  apprend en partie à reconnaître les sites du corpus plutôt que les\n"
+            "  sorties. C'est le chiffre par domaine qu'il faut croire."
         )
 
     print()
@@ -249,20 +292,40 @@ def main(argv: list[str] | None = None) -> int:
     _confusions(p_groupe, verites)
 
     # ── le seuil, mesuré et non choisi
-    seuil, courbe = seuil_mesure(p_groupe, s_groupe, verites)
+    mesure, courbe = seuil_mesure(p_groupe, s_groupe, verites)
+    seuil = float(args.seuil) if args.seuil is not None else mesure
     print("\n── Le seuil de confiance, mesuré hors échantillon ──")
     print(f"  {'seuil':>6} {'répond':>8} {'justes':>7} {'précision':>10} {'couverture':>11}")
     for point in courbe:
         marque = "  ← retenu" if point["seuil"] == seuil else ""
+        # Un point qui ne répond pas assez souvent porte une précision qui
+        # n'en est pas une : deux justes sur deux réponses, c'est une
+        # coïncidence, et la règle doit refuser de s'appuyer dessus.
+        faible = "" if point["assez"] or not point["repond"] else "  (trop peu pour compter)"
         print(
             f"  {point['seuil']:>6.2f} {point['repond']:>8} {point['justes']:>7} "
-            f"{point['precision']:>9.0%} {point['couverture']:>10.0%}{marque}"
+            f"{point['precision']:>9.0%} {point['couverture']:>10.0%}{marque}{faible}"
         )
     print(
-        "\n  Règle : le seuil le plus permissif dont la précision atteint 70 %.\n"
-        "  Au-dessous, le modèle se tait — un manqué se corrige, un faux se\n"
-        "  publie."
+        f"\n  Règle : le seuil le plus permissif dont la précision atteint "
+        f"{PRECISION_VISEE:.0%},\n  sur au moins {SUPPORT_MINIMUM} réponses."
     )
+    # Zéro peut vouloir dire deux choses opposées : « répondre toujours tient
+    # la précision » ou « aucun seuil ne la tient, on répond quand même ». Les
+    # confondre ferait crier au loup sur un modèle qui va bien.
+    retenu = next(p for p in courbe if p["seuil"] == mesure)
+    tenue = retenu["assez"] and retenu["precision"] >= PRECISION_VISEE
+    if args.seuil is not None:
+        print(f"  Seuil forcé à {seuil:.2f} ; la mesure proposait {mesure:.2f}.")
+    elif not tenue:
+        atteint = next(p for p in courbe if p["seuil"] == 0.0)
+        print(
+            f"\n  ⚠ Aucun seuil ne tient {PRECISION_VISEE:.0%} sur assez de réponses.\n"
+            f"  Le modèle répondra donc **toujours**, à {atteint['precision']:.0%} de\n"
+            "  justesse. Se taire à la place ne rendrait pas une catégorie de plus :\n"
+            "  c'est un choix à faire les yeux ouverts, pas un réglage à subir.\n"
+            "  « --seuil 0.9 » l'éteint ; étiqueter davantage est la vraie réponse."
+        )
 
     if args.a_blanc:
         print("\nÀ blanc : rien n'a été enregistré.")

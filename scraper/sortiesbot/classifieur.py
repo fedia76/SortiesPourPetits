@@ -97,6 +97,17 @@ MINIMUM_PAR_CLASSE = 5
 #: rechercher. À égalité de score, on préfère donc se taire.
 PRECISION_VISEE = 0.70
 
+#: En deçà de combien de réponses une précision n'est plus une mesure.
+#:
+#: Écrit après coup, et il a fallu le vrai corpus pour le voir : la règle a
+#: retenu un seuil où le modèle répondait **deux fois sur cent trente-deux**,
+#: avec 100 % de justes. Deux sur deux n'est pas une précision, c'est une
+#: coïncidence — et la règle jetait ainsi soixante-quinze bonnes réponses pour
+#: en garder deux. Une barre qui rend un dispositif muet tout en ayant l'air
+#: de marcher est pire que pas de barre du tout.
+SUPPORT_MINIMUM = 15
+SUPPORT_MINIMUM_PART = 0.15
+
 #: Les seuils essayés pour tenir cette précision, du plus permissif au plus
 #: prudent. Rien au-delà de 0,90 : un modèle linéaire sur cent soixante
 #: exemples n'y arrive jamais, et prétendre le contraire ne ferait que rendre
@@ -346,7 +357,7 @@ def entrainer(exemples: list[Exemple], *, seuil: float, grammes: str = "mot") ->
 
 
 def probas_hors_echantillon(
-    exemples: list[Exemple], *, grammes: str = "mot", groupe: bool = True
+    exemples: list[Exemple], *, grammes: str = "mot", groupe: bool = True, graine: int = 0
 ) -> tuple[list[str], list[float], list[str]]:
     """Ce que le modèle prédirait sur des pages qu'il n'a **pas** vues.
 
@@ -358,6 +369,12 @@ def probas_hors_echantillon(
     retrouvent des deux côtés du découpage, et le score mesure la capacité du
     modèle à reconnaître un pied de page. Le tableau de bord doit montrer les
     deux : l'écart entre eux **est** le diagnostic.
+
+    `graine` change le découpage sans changer les données. C'est ce qui permet
+    de distinguer un écart réel d'un écart de hasard : sur cent trente
+    exemples, deux découpages différents du **même** corpus donnent déjà des
+    scores séparés de plusieurs points, et lire un de ces points comme un
+    résultat revient à commenter du bruit.
 
     Rend, pour chaque exemple : la classe prédite, sa probabilité, la vérité.
     """
@@ -388,11 +405,13 @@ def probas_hors_echantillon(
     # pas être ajusté. Le premier respecte les groupes *en essayant* de garder
     # les classes réparties.
     decoupe = (
-        StratifiedGroupKFold(n_splits=plis, shuffle=True, random_state=0).split(
+        StratifiedGroupKFold(n_splits=plis, shuffle=True, random_state=graine).split(
             textes, verites, groupes
         )
         if groupe
-        else StratifiedKFold(n_splits=plis, shuffle=True, random_state=0).split(textes, verites)
+        else StratifiedKFold(n_splits=plis, shuffle=True, random_state=graine).split(
+            textes, verites
+        )
     )
 
     predites = [""] * len(exemples)
@@ -424,9 +443,18 @@ def seuil_mesure(
     """Le seuil le plus permissif qui tienne la précision visée, et la courbe.
 
     Une règle énoncée, appliquée à des chiffres hors échantillon — par
-    opposition à un nombre choisi parce qu'il avait l'air raisonnable. Si
-    aucun seuil ne tient la précision, on rend le plus prudent essayé, et
-    l'appelant verra dans la courbe que le modèle n'y arrive pas.
+    opposition à un nombre choisi parce qu'il avait l'air raisonnable.
+
+    Deux garde-fous, tous deux écrits après avoir vu la règle nue échouer sur
+    le vrai corpus :
+
+    * **un seuil n'est retenu que s'il répond assez souvent.** La précision
+      d'un point qui répond deux fois n'est pas une précision.
+    * **quand aucun ne tient, on rend zéro, pas le plus prudent.** Se rabattre
+      sur le plus prudent laissait un classifieur qui ne répondait jamais tout
+      en ayant l'air branché. Le taire est une décision qui doit se prendre en
+      le sachant : la courbe dit alors franchement que la précision visée est
+      hors de portée, et l'appelant choisit.
     """
     courbe: list[dict[str, Any]] = []
     for seuil in SEUILS_ESSAYES:
@@ -439,16 +467,19 @@ def seuil_mesure(
                 "justes": justes,
                 "precision": justes / len(repond) if repond else 0.0,
                 "couverture": len(repond) / len(scores) if scores else 0.0,
+                "assez": len(repond) >= SUPPORT_MINIMUM
+                and len(repond) >= SUPPORT_MINIMUM_PART * max(1, len(scores)),
             }
         )
-    tenables = [p for p in courbe if p["repond"] and p["precision"] >= PRECISION_VISEE]
-    retenu = tenables[0]["seuil"] if tenables else SEUILS_ESSAYES[-1]
+    tenables = [p for p in courbe if p["assez"] and p["precision"] >= PRECISION_VISEE]
+    retenu = tenables[0]["seuil"] if tenables else 0.0
     return float(retenu), courbe
 
 
 __all__ = [
     "CHAMP",
     "MINIMUM_PAR_CLASSE",
+    "SUPPORT_MINIMUM",
     "Classifieur",
     "ClassifieurIndisponible",
     "Exemple",

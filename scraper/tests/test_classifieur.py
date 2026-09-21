@@ -192,32 +192,50 @@ def test_un_corpus_trop_maigre_refuse_d_etre_evalue():
 
 
 def test_le_seuil_retenu_est_le_plus_permissif_qui_tienne_la_precision():
-    # Trois justes très sûrs, deux faux hésitants : la barre doit se poser
-    # entre les deux, et pas plus haut — chaque cran de plus coûte du rappel.
-    # Trois justes très sûrs, deux faux hésitants. À 0,40 le modèle répond
-    # quatre fois pour trois justes — 75 %, la barre est tenue. Monter à 0,50
-    # n'achèterait plus rien et coûterait du rappel : on prend le plus
-    # permissif qui tient, pas le plus prudent.
-    predites = ["A", "A", "A", "B", "B"]
-    verites = ["A", "A", "A", "A", "A"]
-    scores = [0.95, 0.92, 0.85, 0.45, 0.35]
+    # Trente réponses très sûres et justes, trente hésitantes et fausses. 0,50
+    # est le premier cran qui écarte les hésitantes : 100 % sur trente
+    # réponses. Monter plus haut n'achèterait plus rien et coûterait du rappel.
+    predites = ["A"] * 30 + ["B"] * 30
+    verites = ["A"] * 60
+    scores = [0.9] * 30 + [0.45] * 30
     seuil, courbe = seuil_mesure(predites, scores, verites)
-    assert seuil == 0.40
+    assert seuil == 0.50
     a_zero = next(p for p in courbe if p["seuil"] == 0.0)
-    assert a_zero["precision"] == pytest.approx(0.6)
+    assert a_zero["precision"] == pytest.approx(0.5)
 
 
-def test_quand_rien_ne_tient_la_precision_le_seuil_est_le_plus_prudent():
-    """Le modèle rend alors presque rien, et la courbe imprimée dit pourquoi.
+def test_un_seuil_qui_repond_deux_fois_n_est_pas_retenu():
+    """Le défaut qu'a révélé le vrai corpus, et il rendait le dispositif muet.
 
-    Se rabattre sur un seuil permissif « pour avoir des réponses » publierait
-    des catégories fausses en connaissance de cause.
+    La règle avait retenu un seuil où le modèle répondait deux fois sur cent
+    trente-deux, à 100 % de justesse — jetant soixante-quinze bonnes réponses
+    pour en garder deux. Deux sur deux n'est pas une précision, c'est une
+    coïncidence.
     """
-    predites = ["A"] * 4
-    verites = ["B"] * 4
-    scores = [0.99, 0.95, 0.9, 0.85]
+    predites = ["A"] * 2 + ["B"] * 98
+    verites = ["A"] * 100
+    scores = [0.95, 0.92] + [0.1] * 98
+    seuil, courbe = seuil_mesure(predites, scores, verites)
+    assert seuil == 0.0
+    haut = next(p for p in courbe if p["seuil"] == 0.90)
+    assert haut["precision"] == 1.0
+    assert haut["assez"] is False
+
+
+def test_quand_rien_ne_tient_la_precision_le_modele_repond_quand_meme():
+    """Et c'est un choix, pas un repli.
+
+    Se rabattre sur le seuil le plus prudent laissait un classifieur qui ne
+    répondait jamais **tout en ayant l'air branché** — le pire des deux mondes,
+    puisqu'un champ toujours vide ne rend pas une catégorie de plus qu'un champ
+    faux une fois sur deux. Le script le dit alors franchement, et « --seuil »
+    permet de l'éteindre en le sachant.
+    """
+    predites = ["A"] * 40
+    verites = ["B"] * 40
+    scores = [0.5 + i / 100 for i in range(40)]
     seuil, _ = seuil_mesure(predites, scores, verites)
-    assert seuil == 0.90
+    assert seuil == 0.0
 
 
 def test_la_precision_visee_prefere_le_silence_a_l_erreur():
@@ -281,3 +299,21 @@ def test_le_meme_tri_vaut_pour_apprendre_et_pour_mesurer():
     gardes, _ = retenir([*_corpus(), Exemple(texte="rare", etiquette="Rare", groupe="z.fr")])
     modele = entrainer(gardes, seuil=0.0)
     assert "Rare" not in modele.classes
+
+
+def test_un_zero_retenu_se_distingue_d_un_zero_par_defaut():
+    """Zéro veut dire deux choses opposées, et les confondre trompe.
+
+    « répondre toujours tient la précision visée » est un bon résultat ;
+    « aucun seuil ne la tient, on répond quand même » est un avertissement. Le
+    drapeau `assez` et la précision du point retenu les séparent.
+    """
+    bon = seuil_mesure(["A"] * 40, [0.2] * 40, ["A"] * 40)
+    assert bon[0] == 0.0
+    a_zero = next(p for p in bon[1] if p["seuil"] == 0.0)
+    assert a_zero["assez"] and a_zero["precision"] == 1.0
+
+    mauvais = seuil_mesure(["A"] * 40, [0.2] * 40, ["B"] * 40)
+    assert mauvais[0] == 0.0
+    a_zero = next(p for p in mauvais[1] if p["seuil"] == 0.0)
+    assert a_zero["assez"] and a_zero["precision"] == 0.0
