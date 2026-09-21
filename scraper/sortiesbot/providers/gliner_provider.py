@@ -437,8 +437,17 @@ class GlinerProvider:
         modele = self._classifieur_du_disque()
         categorie, confiance = ("", 0.0)
         if modele is not None:
-            titre = str((hints or {}).get("title") or "")
-            categorie, confiance = modele.predire(titre, content)
+            faits = hints or {}
+            # Le titre **et le lieu** que la page déclare — les deux mêmes
+            # sources qu'à l'entraînement. Le lieu n'est pas un détail : une
+            # sortie au Musée des Beaux-Arts est de catégorie Musée quoi que la
+            # page raconte de ses ateliers, et c'est précisément la confusion
+            # que le texte seul ne savait pas trancher.
+            categorie, confiance = modele.predire(
+                str(faits.get("title") or ""),
+                content,
+                str(faits.get("venue_name") or ""),
+            )
         event = replace(event, setting=cadre_lu(content), category=categorie)
         # Une fois la page finie, et pas au milieu : à ce point tout ce que
         # l'encodeur a alloué est libéré côté Python, et il n'y a plus qu'à le

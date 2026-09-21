@@ -525,8 +525,8 @@ class FauxClassifieur:
         self.classe, self.score = classe, score
         self.vus: list[tuple[str, str]] = []
 
-    def predire(self, titre, texte):
-        self.vus.append((titre, texte))
+    def predire(self, titre, texte, lieu=""):
+        self.vus.append((titre, texte, lieu))
         return (self.classe, self.score)
 
 
@@ -538,12 +538,14 @@ def test_la_categorie_vient_du_classifieur_quand_il_y_en_a_un():
         _config(),
         ["Spectacle", "Atelier"],
         _log(),
-        hints={"title": "Le Petit Prince"},
+        hints={"title": "Le Petit Prince", "venue_name": "Musée des Beaux-Arts"},
     )
     assert fiches[0].category == "Spectacle"
-    # Le titre déclaré par la page lui parvient : c'est le signal le plus dense
-    # dont il dispose, et l'entraînement l'a pesé comme tel.
+    # Le titre **et le lieu** déclarés par la page lui parviennent — les deux
+    # mêmes sources qu'à l'entraînement. Servir à l'inférence des traits que
+    # l'entraînement n'a pas vus, ou l'inverse, casse le modèle en silence.
     assert classifieur.vus[0][0] == "Le Petit Prince"
+    assert classifieur.vus[0][2] == "Musée des Beaux-Arts"
 
 
 def test_sans_classifieur_la_categorie_reste_vide_et_le_journal_le_dit():

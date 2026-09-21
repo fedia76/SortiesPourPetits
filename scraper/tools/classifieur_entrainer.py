@@ -56,6 +56,7 @@ from sortiesbot.classifieur import (  # noqa: E402
     retenir,
     seuil_mesure,
     traits,
+    traits_forts,
 )
 from sortiesbot.config import Environment, load_dotenv  # noqa: E402
 from sortiesbot.evaluation import read_from_html  # noqa: E402
@@ -104,23 +105,33 @@ def _recolter(client: SppApi, limite: int) -> list[tuple[str, dict, str]]:
     return recolte
 
 
-def _exemples(recolte: list[tuple[str, dict, str]]) -> tuple[list[Exemple], int]:
+def _exemples(
+    recolte: list[tuple[str, dict, str]], *, sans_lieu: bool = False, avec_lieu=None
+) -> tuple[list[Exemple], int]:
     """Les pages utilisables, et le nombre de celles qu'on a dû écarter.
 
     Une page dont la catégorie n'est pas étiquetée n'apprend rien : la clé
     absente veut dire « personne n'a regardé », pas « aucune catégorie ».
     """
     exemples: list[Exemple] = []
+    avec_lieu = avec_lieu if avec_lieu is not None else [0]
     ecartes = 0
     for url, etiquette, lecture in recolte:
         classe = str(etiquette.get(CHAMP) or "").strip()
         if not classe:
             ecartes += 1
             continue
-        titre = str((lecture.get("facts") or {}).get("title") or "")
+        faits = lecture.get("facts") or {}
+        titre = str(faits.get("title") or "")
+        # Le lieu vient du JSON-LD de la page, comme à l'inférence. Le prendre
+        # dans l'étiquette ferait un modèle superbe à l'entraînement et sans
+        # valeur en production : ce lieu-là fait partie de la réponse.
+        lieu = "" if sans_lieu else str(faits.get("venue_name") or "")
+        if lieu:
+            avec_lieu[0] += 1
         exemples.append(
             Exemple(
-                texte=traits(titre, str(lecture.get("text") or "")),
+                texte=traits(titre, str(lecture.get("text") or ""), lieu),
                 etiquette=classe,
                 groupe=domaine(url),
             )
@@ -178,6 +189,11 @@ def main(argv: list[str] | None = None) -> int:
         help="découpages différents du même corpus, pour mesurer le bruit (défaut : 5)",
     )
     parser.add_argument(
+        "--sans-lieu",
+        action="store_true",
+        help="retirer le nom du lieu des traits, pour mesurer ce qu'il apporte",
+    )
+    parser.add_argument(
         "--seuil",
         type=float,
         help="forcer le seuil de confiance au lieu de le mesurer",
@@ -199,7 +215,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Corpus illisible : {err}", file=sys.stderr)
         return 2
 
-    exemples, ecartes = _exemples(recolte)
+    avec_lieu = [0]
+    exemples, ecartes = _exemples(recolte, sans_lieu=args.sans_lieu, avec_lieu=avec_lieu)
     if not exemples:
         print("Aucune page n'a de catégorie étiquetée.", file=sys.stderr)
         return 2
@@ -207,6 +224,11 @@ def main(argv: list[str] | None = None) -> int:
     comptes = Counter(e.etiquette for e in exemples)
     sites = Counter(e.groupe for e in exemples)
     print(f"\n  {len(exemples)} page(s) utilisable(s), {ecartes} sans catégorie étiquetée")
+    if args.sans_lieu:
+        print("  Trait « lieu » désactivé.")
+    else:
+        part = avec_lieu[0] / len(exemples) if exemples else 0.0
+        print(f"  Lieu connu (JSON-LD) sur {avec_lieu[0]} page(s) — {part:.0%}")
     print(f"  {len(comptes)} classe(s), {len(sites)} site(s)")
     for classe, n in comptes.most_common():
         print(f"    {classe[:34]:<34} {n:>4}")
@@ -327,11 +349,23 @@ def main(argv: list[str] | None = None) -> int:
             "  « --seuil 0.9 » l'éteint ; étiqueter davantage est la vraie réponse."
         )
 
+    # ── ce qu'il a appris, et pas seulement combien il en tire
+    #
+    # Un modèle linéaire a cette vertu : ses poids se lisent. Ce qu'on cherche
+    # ici n'est pas la confirmation qu'il a trouvé « marionnettes », c'est la
+    # présence de noms de sites, de menus et de pieds de page — des raccourcis
+    # qui paient sur le corpus et ne valent rien ailleurs.
+    apercu = entrainer(exemples, seuil=0.0, grammes=args.grammes, lieu=not args.sans_lieu)
+    print("\n── Ce qu'il a retenu (les traits les plus pesés) ──")
+    for classe, mots in sorted(traits_forts(apercu).items()):
+        liste = ", ".join(mot for mot, _ in mots)
+        print(f"  {classe[:18]:<18} {liste}")
+
     if args.a_blanc:
         print("\nÀ blanc : rien n'a été enregistré.")
         return 0
 
-    modele = entrainer(exemples, seuil=seuil, grammes=args.grammes)
+    modele = entrainer(exemples, seuil=seuil, grammes=args.grammes, lieu=not args.sans_lieu)
     chemin = Path(args.sortie) if args.sortie else chemin_du_modele()
     modele.enregistrer(chemin)
     print(f"\nModèle enregistré : {chemin}")

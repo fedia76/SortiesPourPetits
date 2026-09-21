@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from sortiesbot.classifieur import (
+    MARQUE_LIEU,
     MINIMUM_PAR_CLASSE,
     PRECISION_VISEE,
     Classifieur,
@@ -22,6 +23,7 @@ from sortiesbot.classifieur import (
     retenir,
     seuil_mesure,
     traits,
+    traits_forts,
 )
 
 sklearn = pytest.importorskip("sklearn", reason="extra « classifieur » non installé")
@@ -317,3 +319,68 @@ def test_un_zero_retenu_se_distingue_d_un_zero_par_defaut():
     assert mauvais[0] == 0.0
     a_zero = next(p for p in mauvais[1] if p["seuil"] == 0.0)
     assert a_zero["assez"] and a_zero["precision"] == 0.0
+
+
+# ──────────────────────────────── le lieu : un trait que le texte ne porte pas
+
+
+def test_le_lieu_devient_des_traits_a_part():
+    """« musée » dans le nom du lieu n'est pas « musée » lu en passant.
+
+    Sans le préfixe, on n'aurait fait que répéter un mot que le modèle voyait
+    déjà. Avec lui, la régression peut peser les deux autrement — c'est toute
+    la distinction qu'on cherche à lui apprendre.
+    """
+    sortie = traits("Atelier", "venez au musée voir nos ateliers", "Musée des Beaux-Arts")
+    assert MARQUE_LIEU + "musée" in sortie
+    assert sortie.count(MARQUE_LIEU + "musée") == 3
+    # Et le corps n'est pas marqué : c'est bien deux traits distincts.
+    assert " musée " in f" {sortie} "
+
+
+def test_sans_lieu_les_traits_sont_ceux_d_avant():
+    assert traits("Atelier", "du texte") == traits("Atelier", "du texte", "")
+
+
+def test_le_lieu_tranche_une_confusion_que_le_texte_ne_tranche_pas():
+    """Le cas mesuré : neuf pages de musée prises pour des ateliers.
+
+    Les deux corps de page emploient les mêmes mots — une page de musée écrit
+    « atelier pour enfants » en toutes lettres. Seul le lieu les sépare.
+    """
+    corps = "atelier pour enfants activite manuelle famille gouter"
+    exemples = [
+        Exemple(texte=traits("", corps, "Musée des Beaux-Arts"), etiquette="Musée", groupe=f"m{i}.fr")
+        for i in range(6)
+    ] + [
+        Exemple(texte=traits("", corps, "Centre social des Tilleuls"), etiquette="Atelier", groupe=f"a{i}.fr")
+        for i in range(6)
+    ]
+    modele = entrainer(exemples, seuil=0.0)
+    assert modele.predire("", corps, "Musée d'Art Moderne")[0] == "Musée"
+
+
+def test_un_modele_entraine_sans_lieu_ignore_le_lieu():
+    """Servir à l'inférence des traits que l'entraînement n'a pas vus est le
+    genre de désaccord qui ne lève aucune erreur et dégrade en silence."""
+    modele = entrainer(_corpus(), seuil=0.0, lieu=False)
+    assert modele.meta["lieu"] is False
+    sans = modele.predire("", "spectacle de marionnettes")
+    avec = modele.predire("", "spectacle de marionnettes", "Musée des Beaux-Arts")
+    assert sans == avec
+
+
+# ───────────────────────────── lire les poids, et non pas seulement le score
+
+
+def test_les_traits_forts_se_lisent_classe_par_classe():
+    """Un modèle linéaire a cette vertu : ses poids répondent à « qu'a-t-il
+    appris ? » là où un pourcentage ne répond qu'à « combien »."""
+    forts = traits_forts(entrainer(_corpus(), seuil=0.0), combien=5)
+    assert set(forts) == {"Atelier", "Spectacle"}
+    assert len(forts["Atelier"]) == 5
+    mots = [mot for mot, _ in forts["Atelier"]]
+    assert any(m in mots for m in ("atelier", "poterie", "argile", "modelage"))
+    # Rangés du plus pesé au moins pesé : c'est la tête de liste qu'on lit.
+    poids = [p for _, p in forts["Atelier"]]
+    assert poids == sorted(poids, reverse=True)
