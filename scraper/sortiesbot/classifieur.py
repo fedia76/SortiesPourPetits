@@ -155,6 +155,16 @@ class Exemple:
     texte: str
     etiquette: str
     groupe: str = ""
+    #: L'adresse de la page, portée jusqu'ici pour une seule raison : pouvoir
+    #: **aller regarder** les pages sur lesquelles le modèle se trompe. Un
+    #: tableau de confusions dit qu'on prend onze musées pour des ateliers ; il
+    #: ne dit pas si le modèle a tort ou si la frontière entre les deux
+    #: catégories n'est pas tenable depuis le texte.
+    url: str = ""
+    #: Si la page déclarait un lieu. Une couverture globale de 37 % ne dit rien
+    #: tant qu'on ignore **quelles classes** elle couvre : un trait absent
+    #: précisément des pages qu'il devait sauver ne peut rien sauver.
+    lieu: bool = False
 
 
 def domaine(url: str) -> str:
