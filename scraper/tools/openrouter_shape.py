@@ -135,6 +135,11 @@ def main(argv: list[str]) -> int:
             },
             "provider": {"require_parameters": True},
             "usage": {"include": True},
+            # Comme le fournisseur, et pour la même raison qu'on a apprise ici :
+            # un modèle qui raisonne dépense son budget de sortie avant d'écrire
+            # un caractère. Ce qu'on veut savoir, c'est si la consigne est
+            # honorée — d'où l'affichage des jetons de raisonnement plus bas.
+            "reasoning": {"enabled": False},
         },
         timeout=120,
     )
@@ -161,6 +166,11 @@ def main(argv: list[str]) -> int:
     usage = data.get("usage") or {}
     print(f"Champs de « usage »    : {sorted(usage)}")
     print(f"Coût annoncé           : {usage.get('cost')!r}")
+    # La consigne « ne raisonne pas » est-elle honorée ? Un chiffre non nul ici
+    # veut dire que ce modèle raisonne quoi qu'on lui dise, et qu'il faudra
+    # soit en changer, soit payer ce raisonnement à chaque page.
+    raisonnement = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+    print(f"Jetons de raisonnement : {raisonnement!r} (0 attendu : on l'a désactivé)")
     if "cost" not in usage:
         print(
             "\n  `usage.cost` absent : le fournisseur facturerait à l'estime, et le "

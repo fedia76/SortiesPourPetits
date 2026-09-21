@@ -55,13 +55,35 @@ a qu'un appelant, et un fichier de plus ne dirait rien de neuf.
 
 ## Ce que le service rend vraiment
 
-**Pas encore confronté au service.** Ce qui est écrit ici vient de la
-documentation d'OpenRouter, et les tests simulent cette forme-là : ils
-verrouillent ce que le code en fait, pas qu'elle soit la bonne. Le job
-`openrouter` de `.github/workflows/verifier.yml` lance
-`tools/openrouter_shape.py`, qui interroge le vrai service et affiche ce qu'il
-rend — c'est lui qui tranchera, et la ligne ci-dessus est à réécrire le jour
-où il aura tourné.
+Vérifié le 21 septembre 2026 contre le service, par `tools/openrouter_shape.py`
+— les tests, eux, simulent :
+
+    HTTP 200
+    Clés de premier niveau : ['choices', 'created', 'id', 'model', 'object',
+                              'provider', 'service_tier', 'system_fingerprint',
+                              'usage']
+    Champs d'un choix      : ['finish_reason', 'index', 'logprobs', 'message',
+                              'native_finish_reason']
+    Champs d'un message    : ['content', 'reasoning', 'reasoning_details',
+                              'refusal', 'role']
+    Champs de « usage »    : ['completion_tokens', 'completion_tokens_details',
+                              'cost', 'cost_details', 'is_byok',
+                              'prompt_tokens', 'prompt_tokens_details',
+                              'total_tokens']
+    Hébergeur              : CoreWeave  (le modèle par défaut, en `:floor`)
+
+Trois enseignements, et le troisième a coûté un appel pour rien.
+
+La réponse **annonce ce qu'elle a coûté** (`usage.cost`, en dollars) : on le
+lit plutôt que de le déduire, comme chez Serper. Elle **nomme l'hébergeur**
+(`provider`) et le modèle réellement servi, ce qui n'est pas cosmétique avec un
+suffixe `:floor` — il change d'un appel à l'autre.
+
+Et un message porte `reasoning` à côté de `content`. Le tout premier appel réel
+est revenu avec `content: null`, `finish_reason: length` et 0,0002 $ facturés :
+le modèle avait dépensé les 300 jetons de la reconnaissance à raisonner, sans
+rien écrire. D'où le `reasoning: {enabled: false}` de chaque appel, et le
+message d'erreur qui nomme ce cas quand un modèle passe outre.
 """
 
 from __future__ import annotations
@@ -379,6 +401,20 @@ class OpenRouterProvider:
             "provider": {"require_parameters": True},
             # Et qu'il dise ce que ça a coûté.
             "usage": {"include": True},
+            # Pas de raisonnement. Ce n'est pas une opinion sur le raisonnement,
+            # c'est la conséquence de ce que sont ces quatre appels : bornés,
+            # sans outil, et qui rendent un JSON contraint par un schéma.
+            #
+            # Le premier appel réel au service l'a montré sans appel : le modèle
+            # par défaut a dépensé ses 300 jetons de reconnaissance en
+            # raisonnement, rendu `content: null` et `finish_reason: length`,
+            # et facturé 0,0002 $ pour rien. Relever les plafonds aurait payé
+            # deux fois — le raisonnement, puis la réponse — sur un appel qui
+            # demande une étiquette parmi quatre.
+            #
+            # Les modèles qui raisonnent quoi qu'on dise ignorent ce champ ;
+            # `_texte` sait alors le dire, plutôt que d'accuser le prompt.
+            "reasoning": {"enabled": False},
         }
         data = self._post(payload, op=op, modele=modele, log=log)
         self._facturer(data, op=op, modele=modele, log=log)
@@ -502,6 +538,19 @@ def _texte(data: dict[str, Any]) -> str:
     if fin == "length":
         # Le JSON est coupé net : `loads_json` dirait « réponse illisible », ce
         # qui enverrait chercher du côté du modèle une faute qui est la nôtre.
+        #
+        # Reste à dire **laquelle**. Un modèle qui raisonne dépense son budget
+        # de sortie avant d'écrire un seul caractère de réponse : le plafond
+        # est atteint, `content` est vide, et rien dans « réponse tronquée » ne
+        # mettait sur la piste. C'est le premier appel réel au service qui l'a
+        # appris, et il a coûté un job d'intégration continue à comprendre.
+        if str(message.get("reasoning") or "").strip():
+            raise ProviderError(
+                "le modèle a dépensé son budget de sortie en raisonnement, sans "
+                "rien écrire : il ignore « reasoning: enabled=false ». Employez "
+                "un modèle qui sait s'en passer, ou relevez le plafond de jetons "
+                "de cet appel en sachant qu'il paiera le raisonnement à chaque page"
+            )
         raise ProviderError(
             "réponse tronquée par le plafond de jetons — la fiche est incomplète"
         )

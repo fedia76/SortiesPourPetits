@@ -140,6 +140,48 @@ def test_lappel_porte_le_schema_la_consigne_et_la_facture(log):
     assert corps["usage"] == {"include": True}
 
 
+def test_aucun_raisonnement_nest_demande(log):
+    """Le premier appel réel a payé 0,0002 $ pour un `content: null`.
+
+    Le modèle avait dépensé les 300 jetons de la reconnaissance à raisonner.
+    Ces quatre appels sont bornés et rendent un JSON contraint : le
+    raisonnement s'y paie deux fois sans rien rendre de plus.
+    """
+    provider, routeur = provider_de(Reponse(reponse({"nature": "sortie", "pourquoi": "x"})))
+    provider.classify("un condensé", config(), log)
+    assert routeur.appels[0]["body"]["reasoning"] == {"enabled": False}
+
+
+def test_un_modele_qui_raisonne_quand_meme_le_dit(log):
+    """Certains ignorent la consigne. « Réponse tronquée » n'aiderait personne.
+
+    C'est le message qui a manqué au premier appel réel : rien, dans « le
+    plafond de jetons est atteint », ne met sur la piste d'un budget dépensé
+    avant le premier caractère de réponse.
+    """
+    brut = reponse({}, fin="length")
+    brut["choices"][0]["message"] = {
+        "role": "assistant",
+        "content": None,
+        "reasoning": "Voyons. Cette page liste plusieurs dates, donc…",
+    }
+    provider, _ = provider_de(Reponse(brut))
+    with pytest.raises(ProviderError) as err:
+        provider.classify("un condensé", config(), log)
+    assert "raisonnement" in str(err.value)
+
+
+def test_une_troncature_sans_raisonnement_reste_une_troncature(log):
+    """L'autre cause existe toujours : une fiche trop longue pour son plafond."""
+    brut = reponse({}, fin="length")
+    brut["choices"][0]["message"] = {"role": "assistant", "content": '{"title": "Le déb'}
+    provider, _ = provider_de(Reponse(brut))
+    with pytest.raises(ProviderError) as err:
+        provider.extract("https://x.fr/a", "texte", config(), [], log)
+    assert "tronquée" in str(err.value)
+    assert "raisonnement" not in str(err.value)
+
+
 def test_aucun_outil_nest_proposé(log):
     """Le modèle n'a pas d'outil, donc pas d'itération, donc pas de surprise."""
     provider, routeur = provider_de(Reponse(reponse({"queries": ["a", "b"]})))

@@ -371,16 +371,25 @@ une sortie : l'appel demande donc explicitement à n'être routé que vers ceux
 qui le savent (`provider: {require_parameters: true}`). Un modèle introuvable
 ou sans hébergeur capable rend un 404 lisible, plutôt qu'une fiche plausible.
 
-À la différence de Serper, la forme des réponses **n'a pas encore été
-confrontée au service** : elle vient de la documentation, et les tests
-simulent cette forme-là. Pour la vérifier — et vérifier du même coup que le
-modèle par défaut existe encore au catalogue, ce qui est la seule chose que ce
-dépôt affirme d'OpenRouter sans pouvoir la prouver —,
-commencez un message de commit par `[openrouter]` : le job du même nom appelle
-le vrai service et affiche ce qu'il rend. Il réclame un secret de dépôt
-`OPENROUTER`, qui n'existe pas encore : à créer dans *Settings → Secrets and
-variables → Actions*, avec la même valeur que l'`OPENROUTER_API_KEY` du
-déploiement.
+**On ne demande aucun raisonnement** (`reasoning: {enabled: false}`), et c'est
+le service qui l'a imposé. Le tout premier appel réel est revenu avec
+`content: null`, `finish_reason: length` et 0,0002 $ facturés : le modèle avait
+dépensé les 300 jetons de la reconnaissance à raisonner, sans écrire un
+caractère de réponse. Ces quatre appels sont bornés, sans outil, et rendent un
+JSON contraint par un schéma ; relever les plafonds aurait payé deux fois —
+le raisonnement, puis la réponse — pour choisir une étiquette parmi quatre. Un
+modèle qui raisonne malgré la consigne le dit désormais en clair dans le
+journal, plutôt que de faire accuser le prompt.
+
+La forme des réponses **a été confrontée au service** le 21 septembre 2026 ; le
+détail de ce qui a été observé est en tête de `providers/openrouter_provider.py`.
+Les tests, eux, simulent : ils verrouillent ce que le code fait de cette forme,
+pas qu'elle soit la bonne. Pour la revérifier — et vérifier du même coup que le
+modèle par défaut existe encore au catalogue —, commencez un message de commit
+par `[openrouter]` : le job du même nom appelle le vrai service et affiche ce
+qu'il rend, hébergeur compris. Il réclame un secret de dépôt `OPENROUTER`
+(*Settings → Secrets and variables → Actions*), de même valeur que
+l'`OPENROUTER_API_KEY` du déploiement.
 
 ### Extraire en local plutôt qu'avec le modèle
 
