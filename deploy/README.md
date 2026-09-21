@@ -284,6 +284,15 @@ et un modèle rangé là disparaîtrait sans erreur — juste un champ qui
 redeviendrait vide. `SPP_CLASSIFIEUR` dans le `.env` permet de le mettre
 ailleurs.
 
+Le script imprime aussi **les traits les plus pesés par classe** : c'est ce
+qui répond à « qu'a-t-il appris ? » là où un pourcentage ne répond qu'à
+« combien ». Y voir des noms de sites, des menus ou des pieds de page signale
+un modèle qui a pris des raccourcis — ils paient sur le corpus et ne valent
+rien sur un site inconnu.
+
+`--sans-lieu` retire le nom du lieu des traits : c'est la façon de mesurer ce
+qu'il apporte, en comparant deux runs.
+
 Les catégories trop rares sont **mises de côté** : sous cinq exemples, une
 classe ne s'apprend pas — le modèle retient la page, pas la catégorie — et ses
 pages valent mieux manquées que fausses. Le script dit lesquelles et combien

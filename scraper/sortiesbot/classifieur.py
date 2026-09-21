@@ -65,6 +65,26 @@ CHEMIN_DEFAUT = Path.home() / ".local" / "share" / "sortiesbot" / "categorie.job
 #: un poids : TF-IDF compte les occurrences.
 POIDS_TITRE = 3
 
+#: Combien de fois le **lieu** est répété, et pourquoi il compte autant que le
+#: titre.
+#:
+#: Mesuré : le modèle confondait neuf pages de musée avec des ateliers et sept
+#: avec des festivals. Il n'avait pas tort de lire ces mots — une page de musée
+#: écrit « atelier pour enfants » en toutes lettres. C'est le *texte* qui ne
+#: porte pas la réponse : une sortie au Musée des Beaux-Arts est de catégorie
+#: Musée quoi que la page raconte de ses ateliers. La catégorie est souvent une
+#: propriété du lieu, pas du propos.
+POIDS_LIEU = 3
+
+#: Le préfixe qui distingue « musée » lu dans le nom du lieu de « musée » lu
+#: en passant dans le corps.
+#:
+#: Sans lui, les deux seraient le même trait, et on n'aurait fait que répéter
+#: un mot que le modèle voyait déjà. Avec lui, `lieu_musee` est un trait à
+#: part, que la régression peut peser autrement — c'est toute la distinction
+#: qu'on cherche à lui apprendre.
+MARQUE_LIEU = "lieu_"
+
 #: Ce qu'on garde du corps. La page entière noierait le titre sous le pied de
 #: page, et l'information de catégorie est presque toujours dans les premiers
 #: paragraphes.
@@ -143,8 +163,19 @@ def domaine(url: str) -> str:
     return hote[4:] if hote.startswith("www.") else hote
 
 
-def traits(titre: str, texte: str) -> str:
-    """Le texte soumis au modèle : le titre, pesé, puis le début du corps.
+def _marquer(texte: str, prefixe: str) -> str:
+    """Les mots d'un champ, préfixés pour en faire des traits à part.
+
+    « Musée des Beaux-Arts » devient `lieu_musee lieu_des lieu_beaux
+    lieu_arts` : le tiret bas est un caractère de mot, donc le découpeur de
+    TF-IDF les garde entiers.
+    """
+    mots = [m for m in "".join(c if c.isalnum() else " " for c in texte.lower()).split() if m]
+    return " ".join(prefixe + m for m in mots)
+
+
+def traits(titre: str, texte: str, lieu: str = "") -> str:
+    """Le texte soumis au modèle : le titre, le lieu, puis le début du corps.
 
     Une seule chaîne, et c'est délibéré — c'est la frontière derrière laquelle
     on pourra remplacer le sac de mots par des plongements sans rien changer
@@ -153,8 +184,9 @@ def traits(titre: str, texte: str) -> str:
     qu'on lira.
     """
     tete = " ".join([titre.strip()] * POIDS_TITRE) if titre.strip() else ""
+    ou = " ".join([_marquer(lieu, MARQUE_LIEU)] * POIDS_LIEU) if lieu.strip() else ""
     corps = " ".join(texte.split())[:CORPS_MAX]
-    return f"{tete} {corps}".strip()
+    return " ".join(part for part in (tete, ou, corps) if part).strip()
 
 
 def _sklearn() -> Any:
@@ -250,13 +282,17 @@ class Classifieur:
 
     # ───────────────────────────────────────────────────────── l'inférence
 
-    def predire(self, titre: str, texte: str) -> tuple[str, float]:
+    def predire(self, titre: str, texte: str, lieu: str = "") -> tuple[str, float]:
         """La classe et sa probabilité — ou `("", p)` s'il n'est pas assez sûr.
 
         Se taire est une réponse, et souvent la bonne : un modèle qui répond à
         tout sur six classes se trompe cinq fois sur six dès qu'il hésite.
         """
-        probas = self.pipeline.predict_proba([traits(titre, texte)])[0]
+        # Un modèle entraîné sans le lieu n'a aucun trait `lieu_…` : les lui
+        # servir ne casserait rien (TF-IDF ignore ce qu'il ne connaît pas) mais
+        # le taire est plus franc que compter sur cette indulgence.
+        lieu = lieu if self.meta.get("lieu") else ""
+        probas = self.pipeline.predict_proba([traits(titre, texte, lieu)])[0]
         meilleur = max(range(len(probas)), key=lambda i: probas[i])
         score = float(probas[meilleur])
         classe = str(self.pipeline.classes_[meilleur])
@@ -314,6 +350,35 @@ def chemin_du_modele() -> Path:
 # ═══════════════════════════════════════════════════════════ l'entraînement
 
 
+def traits_forts(modele: Classifieur, combien: int = 8) -> dict[str, list[tuple[str, float]]]:
+    """Les mots que la régression a le plus pesés, classe par classe.
+
+    La seule façon de répondre à « qu'est-ce qu'il a appris ? » autrement que
+    par un pourcentage. Un modèle linéaire a cette vertu : ses poids se lisent.
+
+    Ce qu'on y cherche en priorité, ce n'est pas la confirmation qu'il a trouvé
+    « marionnettes » — c'est la présence de **noms de sites, de menus et de
+    pieds de page**. Un trait comme `billetterie` ou le nom d'une salle est un
+    raccourci : il paie sur le corpus et ne vaut rien sur un site inconnu. Le
+    voir en tête, c'est savoir que l'écart entre les deux découpages n'est pas
+    un artefact de mesure mais un vrai défaut du modèle.
+    """
+    sac = modele.pipeline.named_steps["sac"]
+    lineaire = modele.pipeline.named_steps["modele"]
+    noms = sac.get_feature_names_out()
+    poids = lineaire.coef_
+    # Deux classes : scikit-learn ne range qu'une ligne de poids, celle de la
+    # seconde. La première est son exact opposé.
+    if poids.shape[0] == 1:
+        poids = [-poids[0], poids[0]]
+    forts: dict[str, list[tuple[str, float]]] = {}
+    for rang, classe in enumerate(lineaire.classes_):
+        ligne = poids[rang]
+        meilleurs = sorted(range(len(ligne)), key=lambda i: -ligne[i])[:combien]
+        forts[str(classe)] = [(str(noms[i]), float(ligne[i])) for i in meilleurs]
+    return forts
+
+
 def retenir(
     exemples: list[Exemple], minimum: int = MINIMUM_PAR_CLASSE
 ) -> tuple[list[Exemple], dict[str, int]]:
@@ -335,7 +400,9 @@ def retenir(
     return gardes, ecartees
 
 
-def entrainer(exemples: list[Exemple], *, seuil: float, grammes: str = "mot") -> Classifieur:
+def entrainer(
+    exemples: list[Exemple], *, seuil: float, grammes: str = "mot", lieu: bool = True
+) -> Classifieur:
     """Ajuste le modèle sur tout le corpus, au seuil qu'on lui donne.
 
     Le seuil vient de `seuil_mesure`, jamais d'une intuition : c'est la leçon
@@ -352,7 +419,7 @@ def entrainer(exemples: list[Exemple], *, seuil: float, grammes: str = "mot") ->
         pipeline=pipeline,
         classes=sorted(set(etiquettes)),
         seuil=seuil,
-        meta={"exemples": len(exemples), "grammes": grammes},
+        meta={"exemples": len(exemples), "grammes": grammes, "lieu": bool(lieu)},
     )
 
 
@@ -478,6 +545,7 @@ def seuil_mesure(
 
 __all__ = [
     "CHAMP",
+    "MARQUE_LIEU",
     "MINIMUM_PAR_CLASSE",
     "SUPPORT_MINIMUM",
     "Classifieur",
@@ -490,4 +558,5 @@ __all__ = [
     "retenir",
     "seuil_mesure",
     "traits",
+    "traits_forts",
 ]
