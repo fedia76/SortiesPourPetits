@@ -25,6 +25,12 @@ Il fait trois choses, dans cet ordre :
 3. il refait le même appel **par le fournisseur**, et affiche ce qu'il en
    tire et ce qu'il a facturé.
 
+Il affiche aussi **quel hébergeur a répondu**. Ce n'est pas un détail avec le
+modèle par défaut : son suffixe `:floor` demande le moins cher d'entre eux, et
+ce n'est pas le même d'un appel à l'autre. C'est la seule façon de voir qui
+sert réellement les requêtes — et, en le lançant deux fois, de voir si ça
+change.
+
 Si les deux ne concordent pas, c'est ici que ça se voit, et le code des tests
 est à corriger d'après ce que la sortie montre.
 """
@@ -139,6 +145,12 @@ def main(argv: list[str]) -> int:
 
     data = brut.json()
     print(f"Clés de premier niveau : {sorted(data)}")
+    # Avec un suffixe `:floor`, c'est l'information qu'on vient chercher : le
+    # modèle par défaut demande l'hébergeur le moins cher, et celui-là change
+    # d'un appel à l'autre. Savoir lequel a répondu, et si le modèle servi est
+    # bien celui demandé, ne se lit nulle part ailleurs.
+    print(f"Hébergeur                : {data.get('provider', '(non annoncé)')}")
+    print(f"Modèle réellement servi  : {data.get('model', '(non annoncé)')}")
     choices = data.get("choices") or []
     if choices:
         print(f"Champs d'un choix      : {sorted(choices[0])}")
