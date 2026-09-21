@@ -43,12 +43,14 @@ if str(ROOT) not in sys.path:
 from sortiesbot.api import SppApi  # noqa: E402
 from sortiesbot.classifieur import (  # noqa: E402
     CHAMP,
+    MINIMUM_PAR_CLASSE,
     ClassifieurIndisponible,
     Exemple,
     chemin_du_modele,
     domaine,
     entrainer,
     probas_hors_echantillon,
+    retenir,
     seuil_mesure,
     traits,
 )
@@ -159,6 +161,12 @@ def _confusions(predites: list[str], verites: list[str], combien: int = 6) -> No
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--limite", type=int, default=10000, help="plafonner le corpus lu")
+    parser.add_argument(
+        "--minimum",
+        type=int,
+        default=MINIMUM_PAR_CLASSE,
+        help=f"exemples requis pour garder une classe (défaut : {MINIMUM_PAR_CLASSE}, plancher : 2)",
+    )
     parser.add_argument("--grammes", choices=("mot", "car"), default="mot")
     parser.add_argument("--sortie", help=f"où écrire le modèle (défaut : {chemin_du_modele()})")
     parser.add_argument(
@@ -188,13 +196,30 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {len(comptes)} classe(s), {len(sites)} site(s)")
     for classe, n in comptes.most_common():
         print(f"    {classe[:34]:<34} {n:>4}")
-    maigres = [c for c, n in comptes.items() if n < 5]
-    if maigres:
-        # Dit, et pas corrigé : fusionner ou jeter ces classes serait décider à
-        # la place de celui qui étiquette. Mais un chiffre calculé sur trois
-        # exemples n'est pas une mesure, c'est une anecdote.
-        print(f"\n  ⚠ moins de 5 exemples : {', '.join(sorted(maigres))}")
-        print("    Leur score n'aura aucune valeur statistique.")
+    # ── les classes trop rares, mises de côté et non pas subies
+    #
+    # Une classe vue une ou deux fois ne s'apprend pas : le modèle retient la
+    # page, pas la catégorie. L'écarter n'est pas un aveu de faiblesse, c'est
+    # le même arbitrage que le seuil de confiance — ses pages valent mieux
+    # manquées que fausses — appliqué au référentiel.
+    minimum = max(2, int(args.minimum))
+    exemples, ecartees = retenir(exemples, minimum)
+    if ecartees:
+        perdues = sum(ecartees.values())
+        print(f"\n  Mises de côté (moins de {minimum} exemples) — {perdues} page(s) :")
+        for classe, n in sorted(ecartees.items(), key=lambda kv: -kv[1]):
+            print(f"    {classe[:34]:<34} {n:>4}")
+        print(
+            "    Le modèle ne les proposera pas, et ces pages compteront\n"
+            "    « manqué » sur le banc. Elles reviendront d'elles-mêmes au\n"
+            "    prochain entraînement dès qu'elles seront assez nombreuses."
+        )
+    if not exemples:
+        print(
+            f"\nAucune classe n'atteint {minimum} exemples : rien à apprendre.",
+            file=sys.stderr,
+        )
+        return 2
 
     # ── les deux découpages, et leur écart
     print("\n── Hors échantillon ──")
