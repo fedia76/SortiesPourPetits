@@ -284,6 +284,12 @@ et un modèle rangé là disparaîtrait sans erreur — juste un champ qui
 redeviendrait vide. `SPP_CLASSIFIEUR` dans le `.env` permet de le mettre
 ailleurs.
 
+Les catégories trop rares sont **mises de côté** : sous cinq exemples, une
+classe ne s'apprend pas — le modèle retient la page, pas la catégorie — et ses
+pages valent mieux manquées que fausses. Le script dit lesquelles et combien
+de pages ça représente ; elles reviennent d'elles-mêmes dès que le corpus en
+porte assez. `--minimum N` déplace ce plancher.
+
 Sans modèle entraîné, la brique tourne et laisse la catégorie vide ; le
 journal du run porte alors `non_rendus=…,category` et la raison en clair. Il
 faut le réentraîner quand le corpus a sensiblement grossi : le script imprime

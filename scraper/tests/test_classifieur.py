@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from sortiesbot.classifieur import (
+    MINIMUM_PAR_CLASSE,
     PRECISION_VISEE,
     Classifieur,
     ClassifieurIndisponible,
@@ -18,6 +19,7 @@ from sortiesbot.classifieur import (
     domaine,
     entrainer,
     probas_hors_echantillon,
+    retenir,
     seuil_mesure,
     traits,
 )
@@ -222,3 +224,60 @@ def test_la_precision_visee_prefere_le_silence_a_l_erreur():
     """70 % n'est pas un réglage d'humeur : c'est le prix qu'on accepte de payer
     en rappel pour ne pas ranger une sortie au mauvais rayon."""
     assert 0.5 < PRECISION_VISEE < 1.0
+
+
+# ─────────────────────────── les classes trop rares, mises de côté et non subies
+
+
+def _distribution(comptes: dict[str, int]) -> list[Exemple]:
+    return [
+        Exemple(texte=f"{classe} {i}", etiquette=classe, groupe=f"site{i}.fr")
+        for classe, n in comptes.items()
+        for i in range(n)
+    ]
+
+
+def test_une_classe_trop_rare_est_ecartee_et_rendue_a_part():
+    """Rendue à part, pas filtrée en silence : un corpus qui rétrécit sans le
+    dire est la meilleure façon de ne pas comprendre pourquoi un champ a cessé
+    d'être rendu."""
+    gardes, ecartees = retenir(_distribution({"Spectacle": 39, "Concert": 1, "Parc": 2}))
+    assert ecartees == {"Concert": 1, "Parc": 2}
+    assert {e.etiquette for e in gardes} == {"Spectacle"}
+    assert len(gardes) == 39
+
+
+def test_une_classe_pile_au_minimum_est_gardee():
+    _, ecartees = retenir(_distribution({"Sport": MINIMUM_PAR_CLASSE}))
+    assert ecartees == {}
+
+
+def test_deux_pages_rares_ne_bloquent_plus_la_mesure_des_autres():
+    """Le défaut que ce garde-fou avait : refuser d'évaluer cent trente-huit
+    pages parce que deux classes n'en avaient qu'une.
+
+    Le diagnostic était juste — une classe vue une fois ne s'apprend pas — et
+    la sanction disproportionnée.
+    """
+    corpus = [*_corpus(), Exemple(texte="concert musique groupe", etiquette="Concert", groupe="rare.fr")]
+    gardes, ecartees = retenir(corpus, minimum=5)
+    assert ecartees == {"Concert": 1}
+    # Et ce qui reste s'évalue, là où tout le corpus était refusé avant.
+    predites, _, verites = probas_hors_echantillon(gardes)
+    assert len(predites) == len(verites) == 12
+
+
+def test_le_plancher_ne_descend_pas_sous_deux():
+    """À un seul exemple, une classe ne peut être ni apprise ni testée : le
+    garde-fou du découpage la refuse de toute façon, et c'est le bon endroit."""
+    gardes, _ = retenir(_distribution({"A": 6, "B": 6, "C": 1}), minimum=1)
+    assert any(e.etiquette == "C" for e in gardes)
+    with pytest.raises(ClassifieurIndisponible):
+        probas_hors_echantillon(gardes)
+
+
+def test_le_meme_tri_vaut_pour_apprendre_et_pour_mesurer():
+    """Sinon on mesurerait un modèle qui n'est pas celui qu'on livre."""
+    gardes, _ = retenir([*_corpus(), Exemple(texte="rare", etiquette="Rare", groupe="z.fr")])
+    modele = entrainer(gardes, seuil=0.0)
+    assert "Rare" not in modele.classes

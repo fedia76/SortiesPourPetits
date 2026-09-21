@@ -70,6 +70,24 @@ POIDS_TITRE = 3
 #: paragraphes.
 CORPS_MAX = 2000
 
+#: En deçà de combien d'exemples une classe est mise de côté — apprise ni
+#: mesurée.
+#:
+#: Ce n'est pas de la prudence statistique, c'est une décision de production.
+#: Une classe vue une fois ne s'apprend pas : le modèle retient la page, pas
+#: la catégorie, et la ressort sur n'importe quelle page qui lui ressemble de
+#: loin. En attendant qu'elle soit étiquetée ailleurs, ses pages valent mieux
+#: **manquées que fausses** — c'est le même arbitrage que le seuil de
+#: confiance, appliqué au référentiel au lieu de l'être à une prédiction.
+#:
+#: Cinq, et pas deux : à deux exemples, le découpage de l'évaluation se réduit
+#: à deux plis — la moitié du corpus pour apprendre — et le chiffre qui en
+#: sort varie plus que ce qu'il mesure.
+#:
+#: Rien n'est perdu : la classe revient d'elle-même au prochain entraînement
+#: dès que le corpus en porte assez.
+MINIMUM_PAR_CLASSE = 5
+
 #: La précision qu'on exige avant de laisser le modèle répondre, mesurée hors
 #: échantillon. Au-dessous, il se tait.
 #:
@@ -285,6 +303,27 @@ def chemin_du_modele() -> Path:
 # ═══════════════════════════════════════════════════════════ l'entraînement
 
 
+def retenir(
+    exemples: list[Exemple], minimum: int = MINIMUM_PAR_CLASSE
+) -> tuple[list[Exemple], dict[str, int]]:
+    """Les exemples des classes assez peuplées, et ce qu'on met de côté.
+
+    Rendu en deux morceaux plutôt qu'en un seul filtré : ce qu'on écarte doit
+    être **affiché**, pas disparaître. Un corpus qui rétrécit en silence entre
+    deux entraînements est la meilleure façon de ne pas comprendre pourquoi un
+    champ a cessé d'être rendu.
+
+    Le même tri vaut pour l'apprentissage et pour la mesure, sans quoi on
+    mesurerait un modèle qui n'est pas celui qu'on livre.
+    """
+    comptes: dict[str, int] = {}
+    for e in exemples:
+        comptes[e.etiquette] = comptes.get(e.etiquette, 0) + 1
+    ecartees = {c: n for c, n in comptes.items() if n < minimum}
+    gardes = [e for e in exemples if e.etiquette not in ecartees]
+    return gardes, ecartees
+
+
 def entrainer(exemples: list[Exemple], *, seuil: float, grammes: str = "mot") -> Classifieur:
     """Ajuste le modèle sur tout le corpus, au seuil qu'on lui donne.
 
@@ -338,8 +377,9 @@ def probas_hors_echantillon(
     plis = min(5, min(comptes.values()) if comptes else 1, len(set(groupes)))
     if plis < 2:
         raise ClassifieurIndisponible(
-            "corpus trop maigre pour être évalué honnêtement : il faut au "
-            "moins deux exemples de chaque classe, sur deux sites différents."
+            "corpus trop maigre pour être évalué honnêtement : il reste moins "
+            "de deux exemples d'une classe, ou un seul site. Baisser "
+            "« --minimum » ne réglera rien ; il faut étiqueter davantage."
         )
 
     # `StratifiedGroupKFold` plutôt que `GroupKFold` : le second ne regarde que
@@ -408,6 +448,7 @@ def seuil_mesure(
 
 __all__ = [
     "CHAMP",
+    "MINIMUM_PAR_CLASSE",
     "Classifieur",
     "ClassifieurIndisponible",
     "Exemple",
@@ -415,6 +456,7 @@ __all__ = [
     "domaine",
     "entrainer",
     "probas_hors_echantillon",
+    "retenir",
     "seuil_mesure",
     "traits",
 ]
