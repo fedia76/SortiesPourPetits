@@ -1526,6 +1526,14 @@ export interface EvalRun {
   settings: string;
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Ceux de la sortie partis en raisonnement, **compris** dans `outputTokens`.
+   *
+   * Sans eux, un modèle qui réfléchit et un modèle bavard rendent le même
+   * chiffre pour deux causes opposées — et elles ne se corrigent pas au même
+   * endroit : l'effort de raisonnement d'un côté, le prompt de l'autre.
+   */
+  reasoningTokens: number;
   costUsd: number;
   /**
    * Combien d'entrées du corpus ce run avait à traiter — et, une fois clos, ce

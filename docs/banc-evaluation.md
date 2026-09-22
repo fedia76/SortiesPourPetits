@@ -544,7 +544,22 @@ Trois choses en font un instrument plutôt qu'un tableau :
   noierait les quelques dizaines de lignes qu'on est venu lire.
 
 Les jetons et les erreurs des deux runs sont en tête, et ce n'est pas de la
-décoration : une sortie qui enfle pendant que le taux baisse est une explication
+décoration. Deux pièges s'y lisent, qu'aucun taux ne montre :
+
+* **les jetons de sortie ne disent pas ce qu'ils contiennent.** Un modèle qui
+  réfléchit et un modèle bavard rendent le même chiffre, et les deux causes se
+  corrigent à deux endroits opposés — l'effort de raisonnement d'un côté, le
+  prompt de l'autre. La part partie à réfléchir est donc affichée sous le
+  total, quand le service l'annonce. Elle y est **comprise**, jamais en plus :
+  l'additionner compterait deux fois ce qui n'a été payé qu'une ;
+* **les jetons d'entrée ne se comparent pas d'un modèle à l'autre.** Chacun
+  découpe le texte avec son propre vocabulaire : sur le même corpus gelé, un
+  run a rendu 506 300 jetons d'entrée et l'autre 323 716 — 56 % d'écart, sans
+  qu'une ligne ait changé. C'est une propriété du tokeniseur, pas de la page,
+  et elle fausse toute comparaison de tarifs « au million de jetons » faite
+  sans elle.
+
+Le reste de ce que ces deux chiffres disent : une sortie qui enfle pendant que le taux baisse est une explication
 à elle seule — le modèle a raisonné au lieu de répondre —, et une entrée en
 erreur compte MANQUÉ sur **tous** ses aspects, ce qui suffit à faire passer un
 incident technique pour un effondrement de qualité.

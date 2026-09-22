@@ -1077,6 +1077,15 @@ export const evalExtractResultSchema = z.object({
     .default([]),
   inputTokens: z.number().int().min(0).optional().default(0),
   outputTokens: z.number().int().min(0).optional().default(0),
+  /**
+   * Ceux de la sortie partis en raisonnement, quand le service le dit.
+   *
+   * **Compris** dans `outputTokens`, jamais en plus : c'est ainsi qu'ils se
+   * facturent, et les additionner compterait deux fois ce qui n'a été payé
+   * qu'une. Zéro pour un modèle qui n'en fait pas, et pour tous ceux qui ne
+   * l'annoncent pas.
+   */
+  reasoningTokens: z.number().int().min(0).optional().default(0),
   costUsd: z.number().min(0).optional().default(0),
   error: z.string().trim().max(1000).optional(),
 });
@@ -1095,6 +1104,15 @@ export const evalRunFinishSchema = z.object({
   items: z.number().int().min(0).optional().default(0),
   inputTokens: z.number().int().min(0).optional().default(0),
   outputTokens: z.number().int().min(0).optional().default(0),
+  /**
+   * Ceux de la sortie partis en raisonnement, quand le service le dit.
+   *
+   * **Compris** dans `outputTokens`, jamais en plus : c'est ainsi qu'ils se
+   * facturent, et les additionner compterait deux fois ce qui n'a été payé
+   * qu'une. Zéro pour un modèle qui n'en fait pas, et pour tous ceux qui ne
+   * l'annoncent pas.
+   */
+  reasoningTokens: z.number().int().min(0).optional().default(0),
   costUsd: z.number().min(0).optional().default(0),
   /** Vide pour les deux étages de Python pur, qui n'interrogent personne. */
   model: z.string().trim().max(120).optional().default(''),

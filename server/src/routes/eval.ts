@@ -1502,7 +1502,8 @@ evalRouter.get('/runs/:a(\\d+)/comparer/:b(\\d+)', admin, async (req, res) => {
     // plus » se reconnaît, et une sortie qui enfle pendant que le taux baisse
     // est une explication à elle seule.
     select: { id: true, stage: true, label: true, model: true, settings: true,
-      costUsd: true, inputTokens: true, outputTokens: true, finishedAt: true },
+      costUsd: true, inputTokens: true, outputTokens: true,
+      reasoningTokens: true, finishedAt: true },
   });
   const a = runs.find((r) => r.id === ids[0]);
   const b = runs.find((r) => r.id === ids[1]);

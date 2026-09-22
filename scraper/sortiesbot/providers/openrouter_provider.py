@@ -619,6 +619,11 @@ class OpenRouterProvider:
         usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
         step.input_tokens = _entier(usage.get("prompt_tokens"))
         step.output_tokens = _entier(usage.get("completion_tokens"))
+        # Ceux de la sortie qui sont partis à réfléchir. Le service les compte
+        # **dans** `completion_tokens` : on les relève, on ne les ajoute pas.
+        details = usage.get("completion_tokens_details")
+        if isinstance(details, dict):
+            step.reasoning_tokens = _entier(details.get("reasoning_tokens"))
 
         cost = usage.get("cost")
         if isinstance(cost, (int, float)) and cost >= 0:

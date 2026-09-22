@@ -190,9 +190,16 @@ function courtUrl(url: string): string {
         </template>
       </p>
 
-      <!-- Ce que les deux runs ont dépensé. Une sortie qui enfle pendant que
-           le taux baisse est une explication à elle seule : le modèle a
-           raisonné, pas répondu. -->
+      <!-- Ce que les deux runs ont dépensé. Une sortie qui enfle pendant que le
+           taux baisse est une explication à elle seule — encore faut-il savoir
+           laquelle : un modèle qui réfléchit et un modèle bavard rendent le
+           même nombre de jetons, et la correction n'est pas la même. D'où la
+           part du raisonnement, à côté du total.
+
+           Les jetons d'entrée, eux, ne se comparent pas d'un modèle à l'autre :
+           chacun découpe le texte avec son propre vocabulaire, et le même
+           corpus peut rendre 50 % de jetons de plus chez l'un sans qu'une
+           ligne ait changé. -->
       <div class="table-wrap card">
         <table>
           <thead>
@@ -210,7 +217,14 @@ function courtUrl(url: string): string {
               <td>{{ i ? 'Comparé' : 'Référence' }} · #{{ run.id }} {{ run.label }}</td>
               <td class="valeur">{{ run.model || '—' }}</td>
               <td class="num">{{ run.inputTokens.toLocaleString('fr-FR') }}</td>
-              <td class="num">{{ run.outputTokens.toLocaleString('fr-FR') }}</td>
+              <td class="num">
+                {{ run.outputTokens.toLocaleString('fr-FR') }}
+                <!-- Une part, jamais une colonne à additionner : le service
+                     les facture dans la sortie. -->
+                <span v-if="run.reasoningTokens" class="part">
+                  dont {{ run.reasoningTokens.toLocaleString('fr-FR') }} à réfléchir
+                </span>
+              </td>
               <td class="num">{{ run.costUsd.toFixed(4) }} $</td>
               <td class="num" :class="{ alerte: run.erreurs > 0 }">{{ run.erreurs || '—' }}</td>
             </tr>
@@ -359,6 +373,14 @@ function courtUrl(url: string): string {
 
 .attendu {
   font-style: italic;
+}
+
+/* La part de raisonnement sous le total de sortie : une précision, pas une
+   colonne — l'additionner compterait deux fois ce qui n'a été payé qu'une. */
+.part {
+  display: block;
+  font-size: 0.72rem;
+  opacity: 0.65;
 }
 
 .verdict {

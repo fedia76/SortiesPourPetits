@@ -830,6 +830,7 @@ def play_run(run: dict[str, Any], api: SppApi, env: Environment, quiet: bool) ->
             "items": traites,
             "inputTokens": int(getattr(usage, "input_tokens", 0) or 0),
             "outputTokens": int(getattr(usage, "output_tokens", 0) or 0),
+            "reasoningTokens": int(getattr(usage, "reasoning_tokens", 0) or 0),
             "costUsd": round(float(getattr(usage, "total_usd", 0.0) or 0.0), 4),
             **_declare(stage, config),
         }

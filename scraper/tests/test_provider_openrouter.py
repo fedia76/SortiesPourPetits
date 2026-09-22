@@ -585,3 +585,36 @@ def test_en_mode_site_le_moteur_nest_pas_monte():
     conf = config(mode="site", seed_urls=["https://festival.fr"])
     provider = get_provider(conf, openrouter_key="sk-or-x", serper_key=None)
     assert isinstance(provider, OpenRouterProvider)
+
+
+def test_les_jetons_de_raisonnement_se_comptent_a_part(log):
+    """Un modèle qui réfléchit et un modèle bavard rendent le même total.
+
+    Les deux causes se corrigent à deux endroits opposés — l'effort d'un côté,
+    le prompt de l'autre —, et rien ne les distinguait avant ce compteur.
+    """
+    brut = reponse(FICHE)
+    brut["usage"]["completion_tokens_details"] = {"reasoning_tokens": 1312}
+    provider, _ = provider_de(Reponse(brut))
+    provider.extract("https://x.fr/a", "texte", config(), [], log)
+    assert provider.usage.reasoning_tokens == 1312
+    # Compris dans la sortie, jamais en plus : c'est ainsi que le service les
+    # facture, et les additionner compterait deux fois ce qui n'a été payé
+    # qu'une.
+    assert provider.usage.output_tokens == 100
+
+
+def test_un_service_qui_ne_dit_rien_ne_compte_rien(log):
+    """Zéro, et non une estimation : un chiffre inventé vaudrait moins que rien."""
+    provider, _ = provider_de(Reponse(reponse(FICHE)))
+    provider.extract("https://x.fr/a", "texte", config(), [], log)
+    assert provider.usage.reasoning_tokens == 0
+
+
+def test_le_raisonnement_s_additionne_d_un_appel_a_l_autre(log):
+    brut = reponse(FICHE)
+    brut["usage"]["completion_tokens_details"] = {"reasoning_tokens": 200}
+    provider, _ = provider_de(Reponse(brut), Reponse(brut))
+    provider.extract("https://x.fr/a", "texte", config(), [], log)
+    provider.extract("https://x.fr/b", "texte", config(), [], log)
+    assert provider.usage.reasoning_tokens == 400
