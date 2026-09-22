@@ -64,6 +64,10 @@ describe("la balise de mesure d'audience", () => {
     assert.match(balise, /data-website-id="abc-123"/);
     assert.match(balise, /data-host-url="https:\/\/exemple\.fr\/mesure"/);
     assert.match(balise, /data-domains="exemple\.fr"/);
+    // La page de confidentialité annonce que le « Do Not Track » du navigateur
+    // est respecté, et l'exemption de consentement suppose un moyen de s'y
+    // opposer. L'attribut est ce qui rend les deux vrais : il se teste.
+    assert.match(balise, /data-do-not-track="true"/);
     assert.match(balise, /<\/script>$/);
   });
 

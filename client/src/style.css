@@ -546,6 +546,31 @@ th {
 }
 
 /*
+ * Les liens légaux, présents sur chaque page parce que la loi les veut
+ * accessibles de partout. Discrets sans être cachés : on ne les cherche
+ * jamais par envie, mais celui qui les cherche doit les trouver du premier
+ * coup d'œil — un lien de la même couleur que le texte qui l'entoure ne se
+ * trouve pas.
+ */
+.site-footer .legal-links {
+  margin-top: 0.6rem;
+  display: flex;
+  gap: 1.25rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.site-footer .legal-links a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.site-footer .legal-links a:hover,
+.site-footer .legal-links a:focus-visible {
+  color: var(--ink);
+}
+
+/*
  * Le choix de zone — sur l'accueil et au bas d'une page de zone.
  *
  * Ce sont des liens déguisés en étiquettes : ils doivent se voir comme

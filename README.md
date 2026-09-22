@@ -119,6 +119,17 @@ Le Havre, Niort et Nancy.
   mais ne veut rien dire sur une application qui ne recharge jamais la page —
   la dernière page d'une visite y compte zéro seconde.
 
+- **Pages légales** : `/mentions-legales` et `/confidentialite`, liées depuis
+  le pied de chaque page. Le texte est écrit **une fois**
+  (`server/src/lib/legal.ts`) et sort à deux endroits — le document pré-rendu
+  et l'API que la vue relit —, parce que deux copies d'un texte juridique
+  finissent par diverger et que la page mentirait alors à la moitié de ses
+  lecteurs. Elles se lisent sans JavaScript, ce qu'on attend d'une mention que
+  la loi veut accessible. La politique de confidentialité porte le refus de la
+  mesure d'audience : un bouton, et le respect du « Do Not Track » du
+  navigateur — l'exemption de consentement suppose qu'on puisse s'opposer, et
+  ces deux-là sont ce qui le rend vrai.
+
 ## Documentation
 
 Deux natures de documents, et il faut les distinguer — [`docs/`](docs/README.md)

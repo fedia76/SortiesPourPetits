@@ -729,7 +729,13 @@ Deux réserves, et elles sont sérieuses :
 1. c'est vrai tant qu'on ne branche rien d'autre dessus. Ajouter un outil qui
    pose un cookie, ou croiser ces mesures avec les comptes utilisateurs, fait
    retomber l'ensemble dans le régime du consentement ;
-2. l'exemption dispense du bandeau, **pas de l'information**. Le site n'a
-   aujourd'hui ni mentions légales ni politique de confidentialité — il en
-   faut une, qui dise ce qui est mesuré et comment s'y opposer. Ce n'est pas
-   fait ; c'est le prochain chantier.
+2. l'exemption dispense du bandeau, **pas de l'information ni de
+   l'opposition**. Les deux sont en place : `/confidentialite` décrit ce qui
+   est mesuré, et offre deux façons de s'y soustraire — le « Do Not Track » du
+   navigateur, que la balise fait respecter (`data-do-not-track`), et un bouton
+   de refus. Retirer l'un ou l'autre ferait retomber le site sous le régime du
+   consentement, donc du bandeau.
+
+Le numéro de téléphone de l'hébergeur reste à compléter dans
+`server/src/lib/legal.ts` : l'article 6 III de la LCEN le réclame au même titre
+que son adresse.
