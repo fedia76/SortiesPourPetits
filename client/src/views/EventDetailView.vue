@@ -349,7 +349,16 @@ onMounted(async () => {
               <strong>{{ event.venue.name }}</strong><br />
               {{ event.venue.address }}<br />
               {{ event.venue.postalCode }} {{ event.venue.city }}<br />
-              <a :href="mapsUrl" target="_blank" rel="noopener">Voir sur la carte ↗</a>
+              <!-- Mesuré : voir le commentaire du lien « Source » plus bas. -->
+              <a
+                :href="mapsUrl"
+                target="_blank"
+                rel="noopener"
+                data-umami-event="sortie-carte"
+                :data-umami-event-sortie="String(event.id)"
+              >
+                Voir sur la carte ↗
+              </a>
             </dd>
           </div>
           <div v-if="event.openTime && event.closeTime">
@@ -359,7 +368,27 @@ onMounted(async () => {
           <div v-if="event.sourceUrl">
             <dt>Source</dt>
             <dd>
-              <a :href="event.sourceUrl" target="_blank" rel="noopener">
+              <!-- Le seul clic qui dise que le site a servi à quelque chose.
+                   Une page vue ne prouve rien — on peut arriver sur une fiche
+                   et repartir ; partir chez l'organisateur, si. C'est la
+                   mesure à regarder, et non le temps passé, qui ne se mesure
+                   pas honnêtement sur une application qui ne recharge jamais
+                   la page : la dernière consultée d'une visite compte zéro.
+
+                   Les attributs suffisent, il n'y a pas de code à écrire : le
+                   script écoute le clic sur `document` et remonte au
+                   `[data-umami-event]` le plus proche, donc un lien affiché
+                   par Vue après coup est couvert. Sans script chargé — en
+                   développement, ou chez un visiteur qui bloque — ce ne sont
+                   que des attributs inertes. -->
+              <a
+                :href="event.sourceUrl"
+                target="_blank"
+                rel="noopener"
+                data-umami-event="sortie-source"
+                :data-umami-event-hote="hostLabel(event.sourceUrl)"
+                :data-umami-event-sortie="String(event.id)"
+              >
                 {{ hostLabel(event.sourceUrl) }} ↗
               </a>
               <span v-if="sourceSignal" class="signal">{{ sourceSignal }}</span>

@@ -1,5 +1,6 @@
 import { config } from '../config';
 import { escapeHtml, jsonLdScript } from './html';
+import { audienceTag } from './audience';
 
 export const SITE_NAME = 'SortiesPourPetits';
 
@@ -66,6 +67,16 @@ export function buildHead(base: string, meta: PageMeta): string {
     `<meta name="twitter:description" content="${escapeHtml(meta.description)}" />`,
     image ? `<meta name="twitter:image" content="${escapeHtml(image)}" />` : '',
     ...(meta.jsonLd ?? []).map(jsonLdScript),
+    // La mesure d'audience, en dernier et sur toutes les pages — y compris
+    // celles qu'on demande aux moteurs d'ignorer : le formulaire d'inscription
+    // ou la page de connexion sont précisément les endroits où l'on veut
+    // savoir combien de visiteurs arrivent.
+    //
+    // Se compter soi-même reste le vrai biais, et il ne se règle pas en
+    // choisissant des pages : on visite aussi les siennes. C'est au navigateur
+    // de se taire — voir « Ne pas se compter soi-même » dans
+    // deploy/README.md § 10.
+    audienceTag(),
   ];
   return tags.filter(Boolean).join('\n    ');
 }

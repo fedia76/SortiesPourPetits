@@ -38,6 +38,25 @@ export const config = {
       : path.join(__dirname, '..', '..', 'client', 'dist')),
 
   /**
+   * La mesure d'audience, et de quoi la débrancher en ne renseignant rien.
+   *
+   * Les trois valeurs sont publiques — elles finissent dans le HTML de chaque
+   * page, c'est leur rôle. Elles sont ici, et non dans le build du front,
+   * pour que le développement et une éventuelle préproduction ne comptent pas
+   * dans les mêmes chiffres que le site : sans `AUDIENCE_WEBSITE_ID`, aucune
+   * balise n'est posée et rien n'est mesuré.
+   *
+   * `AUDIENCE_SCRIPT_URL` est servie par Caddy depuis notre propre domaine
+   * (voir `deploy/Caddyfile`), et pas depuis le conteneur : un script tiers se
+   * fait bloquer, et ce qui est bloqué ne se compte pas.
+   */
+  audience: {
+    scriptUrl: process.env.AUDIENCE_SCRIPT_URL ?? '',
+    websiteId: process.env.AUDIENCE_WEBSITE_ID ?? '',
+    hostUrl: (process.env.AUDIENCE_HOST_URL ?? '').replace(/\/+$/, ''),
+  },
+
+  /**
    * Autorise-t-on les moteurs à indexer ?
    *
    * Non par défaut : une préproduction ou un poste de développement joignable

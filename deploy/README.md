@@ -429,3 +429,221 @@ cd /opt/sortiespourpetits/scraper
 Sans `--submit`, rien n'est envoyé au site : le run écrit dans `runs/` le
 journal de ce qu'il a consulté et le JSON des sorties retenues. Un dry-run n'a
 besoin que de `CLAUDE_KEY`.
+
+## 10. Mesure d'audience (Umami)
+
+De quoi répondre à trois questions : sur quelles pages vont les visiteurs, d'où
+ils arrivent, et **sur quels liens ils cliquent**. Sans cookie, donc sans
+bandeau de consentement.
+
+Umami tourne en conteneurs, alors que tout le reste du serveur est en systemd,
+et ce n'est pas une inconséquence : c'est une application Next.js, et la
+**construire** demande plus de mémoire que ce VPS n'en a de libre à côté de
+MySQL, de l'API et du worker — le même mur que torch au § 9. L'image publiée
+est déjà construite ; on ne compile rien sur le serveur, et une mise à jour se
+résume à un `pull`. Le raisonnement complet est en tête de
+[`umami/docker-compose.yml`](umami/docker-compose.yml).
+
+La base d'Umami est **PostgreSQL** : le projet a retiré MySQL de ses bases
+supportées en version 3. Elle n'a aucun rapport avec le MySQL du site — deux
+moteurs, deux données, aucun lien.
+
+### 10.1 Docker
+
+En root :
+
+```bash
+curl -fsSL https://get.docker.com | sh
+```
+
+Rien à ouvrir dans le pare-feu. Le conteneur publie son port sur
+`127.0.0.1:3001` et sur rien d'autre : c'est Caddy, et lui seul, qui donne
+accès à ce qui doit l'être. Cette précision vaut d'être comprise — Docker écrit
+ses propres règles iptables et **passe devant `ufw`**, si bien qu'un port publié
+sans adresse (`3001:3000`) serait joignable depuis l'extérieur malgré le
+pare-feu. L'adresse de boucle locale dans le mappage est ce qui l'en empêche.
+
+### 10.2 Les secrets, créés sur le VPS et nulle part ailleurs
+
+```bash
+cd /opt/sortiespourpetits/deploy/umami
+cp .env.example .env
+chmod 600 .env
+nano .env   # remplir les trois valeurs avec les `openssl rand` indiqués
+```
+
+⚠️ **Ce fichier n'existe que sur le VPS.** Le déploiement dépose le dossier
+`deploy/` avec un `rsync --delete`, qui efface tout ce qui ne vient pas du
+dépôt : `umami/.env` est explicitement épargné dans
+`.github/workflows/deploy.yml`. Si vous déplacez ce fichier ailleurs dans
+`deploy/`, l'exclusion ne le suivra pas et la première mise en ligne emportera
+vos secrets — la pile ne redémarrera plus.
+
+### 10.3 Démarrer
+
+```bash
+cd /opt/sortiespourpetits/deploy/umami
+docker compose up -d
+docker compose logs -f umami   # « Ready » au bout de quelques dizaines de secondes
+```
+
+Aucune table à créer : Umami joue ses propres migrations sur la base vide au
+premier démarrage.
+
+### 10.4 Le sous-domaine et Caddy
+
+Une entrée DNS `A` (et `AAAA` si IPv6) pour `stats.votre-domaine.fr` vers l'IP
+du VPS, chez votre registrar. Caddy n'obtiendra son certificat qu'une fois le
+nom résolu.
+
+Le [`Caddyfile`](Caddyfile) du dépôt porte déjà les trois blocs nécessaires :
+le script (`/mesure/mesure.js`), le point de collecte (`/mesure/api/send`) et
+le tableau de bord sur son sous-domaine. Reprenez-le et rechargez :
+
+```bash
+cp /opt/sortiespourpetits/deploy/Caddyfile /etc/caddy/Caddyfile
+nano /etc/caddy/Caddyfile   # remplacer votre-domaine.fr, ici aussi
+systemctl reload caddy
+```
+
+Deux adresses seulement sortent sur le domaine principal, et elles sont
+énumérées une à une. Ce n'est pas de la coquetterie : une règle large aurait
+exposé l'API d'administration d'Umami sur l'adresse que tout le monde visite.
+
+Pourquoi faire passer le script par notre domaine au lieu de pointer sur le
+conteneur : un script servi par un tiers se fait bloquer par les bloqueurs de
+publicité, et le trafic mobile en perd une part qu'on ne retrouve jamais. Servi
+depuis `sortiespourpetits.fr`, il est indistinguable du reste du site. Le nom
+`mesure.js` participe de la même idée — les listes de filtrage visent des noms
+de fichiers connus, et `umami.js` en est un.
+
+### 10.5 Créer le site et le brancher
+
+Ouvrez `https://stats.votre-domaine.fr`. Identifiants par défaut :
+`admin` / `umami` — **changez le mot de passe immédiatement**, c'est une
+console ouverte sur Internet.
+
+Puis *Settings → Websites → Add website*, avec le domaine du site. Umami donne
+alors un identifiant (un UUID). Reportez-le dans `server/.env` :
+
+```bash
+nano /opt/sortiespourpetits/server/.env
+```
+
+```ini
+AUDIENCE_WEBSITE_ID="l-uuid-donné-par-umami"
+AUDIENCE_SCRIPT_URL="/mesure/mesure.js"
+AUDIENCE_HOST_URL="https://votre-domaine.fr/mesure"
+```
+
+```bash
+sudo systemctl restart sortiespourpetits-api
+```
+
+La balise est écrite par le serveur, dans le `<head>` de chaque page pré-rendue
+(`server/src/seo/audience.ts`) — pas dans le build du front. Deux
+conséquences voulues : l'identifiant se change sans reconstruire le front, et
+**tant que `AUDIENCE_WEBSITE_ID` est vide, aucune balise n'est posée**. C'est
+l'état du développement, et c'est ce qui garantit qu'une préproduction ne
+compte pas dans les mêmes chiffres.
+
+### 10.6 Vérifier
+
+```bash
+curl -sI https://votre-domaine.fr/mesure/mesure.js | head -1   # 200
+curl -s  https://votre-domaine.fr/ | grep -o 'data-website-id="[^"]*"'
+```
+
+Puis chargez une page du site : la visite doit apparaître en direct dans le
+tableau de bord. Si le script répond 200 mais que rien n'arrive, regardez la
+console du navigateur — c'est l'appel à `/mesure/api/send` qu'il faut y voir
+réussir.
+
+### 10.7 Ne pas se compter soi-même
+
+C'est le premier biais, et de loin : sur un site qui commence, les visites du
+modérateur écrasent celles des visiteurs. Depuis la console de **votre**
+navigateur, sur le site :
+
+```js
+localStorage.setItem('umami.disabled', 1)
+```
+
+À refaire par navigateur et par appareil. Filtrer des pages ne servirait à
+rien : vous consultez aussi les pages publiques, et ce sont elles qui comptent.
+Si votre IP est fixe, `IGNORE_IP` dans le `.env` du conteneur fait le même
+travail sans dépendre du navigateur.
+
+### 10.8 Sauvegarder
+
+Les mesures vivent dans un volume Docker, pas dans MySQL : votre sauvegarde du
+site ne les couvre pas.
+
+```bash
+docker compose -f /opt/sortiespourpetits/deploy/umami/docker-compose.yml \
+  exec -T db pg_dump -U umami umami | gzip > ~/umami-$(date +%F).sql.gz
+```
+
+`docker compose down` laisse le volume en place. `docker compose down -v`
+l'efface — c'est la commande à ne pas taper.
+
+### 10.9 Mettre à jour
+
+```bash
+cd /opt/sortiespourpetits/deploy/umami
+docker compose pull && docker compose up -d
+```
+
+L'image suit l'étiquette `latest`, comme le compose publié par le projet : un
+`pull` peut donc apporter une version majeure. C'est pour ça que la mise à jour
+est une commande que l'on tape, jamais un automatisme, et qu'une sauvegarde la
+précède. Pour figer une version, remplacez l'étiquette dans le compose.
+
+### 10.10 Ce que ça mesure — et ce que ça ne mesure pas
+
+**Sans rien à coder**, parce que le script s'en charge :
+
+- **les pages vues**, y compris la navigation interne de l'application : le
+  script enrobe `history.pushState`, que vue-router appelle à chaque changement
+  de page ;
+- **les recherches**, parce qu'elles vivent dans la *query string* et donc dans
+  l'adresse — la page vue les porte déjà ;
+- **d'où viennent les visiteurs** : moteur, réseau social, lien direct.
+
+**Avec deux attributs dans la fiche d'une sortie**
+(`client/src/views/EventDetailView.vue`) :
+
+| Événement | Ce qu'il dit |
+|---|---|
+| `sortie-source` | quelqu'un est parti chez l'organisateur depuis une fiche |
+| `sortie-carte` | quelqu'un a ouvert le lieu sur une carte |
+
+`sortie-source` est **la** mesure à regarder. Une page vue ne prouve rien : on
+peut ouvrir une fiche et repartir. Partir chez l'organisateur, c'est le site
+qui a servi à quelque chose.
+
+**Ce qu'il ne faut pas piloter avec :** le temps passé. Le chiffre existe dans
+le tableau de bord, il est trompeur, et il l'est davantage ici : ce site est
+une application qui ne recharge jamais la page, et la durée s'y calcule par
+différence entre deux événements. **La dernière page d'une visite compte donc
+zéro seconde** — quelqu'un qui lit une fiche pendant quatre minutes puis ferme
+l'onglet est enregistré à 0 s. Aucun outil ne corrige cela honnêtement. Sur un
+faible volume, la moyenne n'est que du bruit.
+
+### 10.11 Consentement
+
+Umami ne pose aucun cookie et ne construit pas d'identifiant durable. C'est ce
+qui permet de tenir les quatre critères d'exemption de la CNIL — finalité
+limitée à la seule mesure d'audience, pas de recoupement avec d'autres
+traitements ni de transmission à des tiers, pas de suivi d'un site à l'autre,
+information et opposition possibles — et donc de mesurer **sans bandeau**.
+
+Deux réserves, et elles sont sérieuses :
+
+1. c'est vrai tant qu'on ne branche rien d'autre dessus. Ajouter un outil qui
+   pose un cookie, ou croiser ces mesures avec les comptes utilisateurs, fait
+   retomber l'ensemble dans le régime du consentement ;
+2. l'exemption dispense du bandeau, **pas de l'information**. Le site n'a
+   aujourd'hui ni mentions légales ni politique de confidentialité — il en
+   faut une, qui dise ce qui est mesuré et comment s'y opposer. Ce n'est pas
+   fait ; c'est le prochain chantier.
