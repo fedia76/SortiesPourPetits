@@ -14,6 +14,32 @@ sortiespourpetits.fr {
 		reverse_proxy localhost:3000
 	}
 
+	# --- Mesure d'audience -------------------------------------------------
+	#
+	# Umami tourne en conteneur sur le port 3001, joignable depuis la boucle
+	# locale seulement (voir deploy/umami/docker-compose.yml). Deux adresses
+	# seulement en sortent sur le domaine principal, et elles sont énumérées :
+	# le script et le point de collecte. Le tableau de bord, lui, est sur son
+	# propre sous-domaine — il n'a rien à faire ici, et une règle large aurait
+	# exposé son API d'administration sur l'adresse du site.
+	#
+	# Pourquoi le faire passer par notre domaine plutôt que de pointer sur le
+	# conteneur : un script servi par un tiers se fait bloquer par les
+	# bloqueurs de publicité, et le trafic mobile en perd une part qu'on ne
+	# retrouve jamais. Servi ici, il est indistinguable du reste du site.
+	#
+	# Le nom « mesure.js » n'est pas non plus une coquetterie : les listes de
+	# filtrage visent des noms de fichiers connus, et « umami.js » en est un.
+	handle /mesure/mesure.js {
+		rewrite * /script.js
+		reverse_proxy localhost:3001
+	}
+
+	handle /mesure/api/send {
+		rewrite * /api/send
+		reverse_proxy localhost:3001
+	}
+
 	# Tout le reste passe par l'API — les appels d'API comme les pages.
 	#
 	# Le front était servi ici en `try_files … /index.html` : toute adresse
@@ -28,4 +54,20 @@ sortiespourpetits.fr {
 
 www.sortiespourpetits.fr {
 	redir https://sortiespourpetits.fr{uri} permanent
+}
+
+
+# Le tableau de bord d'Umami, sur son propre sous-domaine.
+#
+# Il demande une entrée DNS `A` (et `AAAA` si IPv6) vers l'IP du VPS, comme le
+# domaine principal : Caddy n'obtiendra son certificat qu'une fois le nom
+# résolu. Sans cette entrée, ce bloc ne dessert rien et le reste du fichier
+# continue de fonctionner.
+#
+# Séparé du site, et pas rangé sous « /mesure/ » : c'est une console
+# d'administration avec sa propre API. La mettre sous le domaine du site
+# reviendrait à ouvrir cette API sur l'adresse que tout le monde visite.
+stats.sortiespourpetits.fr {
+	encode zstd gzip
+	reverse_proxy localhost:3001
 }

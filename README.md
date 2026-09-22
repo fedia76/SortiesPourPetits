@@ -14,6 +14,7 @@ Le Havre, Niort et Nancy.
 | Géocodage | [Photon](https://photon.komoot.io) (OpenStreetMap, gratuit, sans clé). L'[API Adresse](https://adresse.data.gouv.fr/api-doc/adresse) se choisit au build : `VITE_GEOCODER=ban` |
 | Photos | Upload local, redimensionnement WebP via sharp |
 | Scraper | Python 3.10+, BeautifulSoup, API Claude (`web_search`) — voir [`scraper/`](scraper/README.md) |
+| Audience | [Umami](https://umami.is) auto-hébergé, sans cookie — voir [`deploy/README.md` § 10](deploy/README.md#10-mesure-daudience-umami) |
 
 ## Fonctionnalités
 
@@ -106,6 +107,17 @@ Le Havre, Niort et Nancy.
   à `-1` : la modération les signale et refuse l'approbation tant qu'ils ne
   sont pas complétés. Tout ce qu'une exécution a produit — ses sorties et ce
   qu'elle a mémorisé — se supprime d'un bouton depuis sa page.
+
+- **Mesure d'audience** : quelles pages les visiteurs consultent, d'où ils
+  arrivent, ce qu'ils cherchent, et surtout **sur quels liens ils cliquent** —
+  le départ d'une fiche vers le site de l'organisateur est la seule mesure qui
+  dise que le site a servi à quelque chose. Sans cookie ni identifiant durable,
+  donc sans bandeau de consentement. La balise est écrite par le serveur et non
+  par le build du front (`server/src/seo/audience.ts`) : l'installation qui ne
+  la configure pas ne mesure rien, ce qui tient le développement et une
+  préproduction hors des chiffres du site. Le temps passé, lui, est affiché
+  mais ne veut rien dire sur une application qui ne recharge jamais la page —
+  la dernière page d'une visite y compte zéro seconde.
 
 ## Documentation
 

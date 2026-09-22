@@ -124,7 +124,12 @@ jobs:
       # copiés à la main — voir deploy/README.md § 6 et § 9.
       - name: Déposer les fichiers de configuration système
         run: |
-          rsync -az --delete deploy/ \
+          # `umami/.env` porte les secrets de la pile de mesure d'audience. Il
+          # est créé une fois sur le VPS et n'existe pas dans le dépôt : sans
+          # cette exclusion, le `--delete` l'emporterait à chaque mise en ligne
+          # et `docker compose` ne saurait plus démarrer. Même raison que pour
+          # le `.env` du scraper, qui est exclu de son propre rsync.
+          rsync -az --delete --exclude 'umami/.env' deploy/ \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/deploy/"
 
       # Le fichier .env du scraper est régénéré à chaque déploiement : il se

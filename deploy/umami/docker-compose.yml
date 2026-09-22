@@ -1,0 +1,92 @@
+# Umami — la mesure d'audience du site, sur ce même VPS.
+#
+# Pourquoi des conteneurs alors que tout le reste du serveur tourne en systemd :
+# Umami est une application Next.js, et la **construire** demande plus de
+# mémoire que ce VPS n'en a de libre à côté de MySQL, de l'API et du worker.
+# C'est le même mur que torch (voir deploy/README.md § 9) : un `/tmp` en tmpfs
+# qui prend deux gigaoctets sur les quatre de RAM, et un build qui meurt sans
+# que le disque bouge. L'image publiée, elle, est déjà construite — on ne
+# compile rien ici, et une mise à jour se résume à un `pull`.
+#
+# Rien de sensible dans ce fichier : les secrets vivent dans un `.env` posé à
+# côté, **sur le VPS uniquement**. Voir deploy/README.md § 10.
+
+services:
+  umami:
+    image: ghcr.io/umami-software/umami:latest
+    # `latest` est ce que publie le projet, et ce que son propre compose
+    # utilise. La contrepartie est qu'un `docker compose pull` peut apporter
+    # une version majeure : c'est pour ça que la mise à jour est une commande
+    # que l'on tape, jamais un automatisme. Pour figer une version, remplacez
+    # par l'étiquette voulue — les données restent dans le volume.
+
+    # Exposé sur la **boucle locale seulement** : le port 3000 du conteneur
+    # sort en 3001 sur l'hôte, parce que 3000 est déjà pris par l'API du site.
+    # Rien n'écoute sur l'extérieur : c'est Caddy qui donne accès à ce qui doit
+    # l'être, et à cela seul (le script et le point de collecte sur le domaine
+    # principal, le tableau de bord sur son sous-domaine).
+    ports:
+      - '127.0.0.1:3001:3000'
+
+    environment:
+      DATABASE_URL: postgresql://umami:${POSTGRES_PASSWORD}@db:5432/umami
+      APP_SECRET: ${APP_SECRET}
+      TWO_FACTOR_ENCRYPTION_KEY: ${TWO_FACTOR_ENCRYPTION_KEY}
+
+      # L'adresse publique du tableau de bord. Elle sert aux liens qu'Umami
+      # fabrique lui-même — l'extrait de code à coller, notamment.
+      TRACKER_SCRIPT_URL: ${TRACKER_SCRIPT_URL}
+
+      # Le visiteur arrive par Caddy : sans cet en-tête, Umami compterait
+      # toutes les visites comme venant de 127.0.0.1 — même pays, même
+      # empreinte de session, donc un seul visiteur pour tout le monde.
+      CLIENT_IP_HEADER: x-forwarded-for
+
+      # Umami n'a aucune raison de téléphoner chez lui pour nous.
+      DISABLE_TELEMETRY: '1'
+
+      # « /sorties/12 » et « /sorties/12/ » sont la même page : sans cette
+      # ligne elles feraient deux lignes dans le rapport, et le classement des
+      # pages les plus vues en deviendrait faux.
+      REMOVE_TRAILING_SLASH: '1'
+
+    depends_on:
+      db:
+        condition: service_healthy
+    init: true
+    restart: always
+
+    # Next.js n'a pas de plafond naturel de mémoire, et ce VPS en a quatre
+    # gigaoctets à partager avec MySQL, l'API et le worker. Mieux vaut un
+    # conteneur que Docker redémarre qu'un noyau qui choisit lui-même quoi tuer
+    # — et son choix se porterait sur MySQL, le plus gros.
+    mem_limit: 512m
+
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -f http://localhost:3000/api/heartbeat || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  db:
+    # PostgreSQL, et non MySQL : Umami a retiré MySQL de ses bases supportées
+    # en version 3. Celle du site reste MySQL et n'est pas concernée — ce sont
+    # deux moteurs, deux données, aucun lien entre eux.
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: umami
+      POSTGRES_USER: umami
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - umami-db-data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  # Les mesures vivent ici, et nulle part ailleurs. `docker compose down` les
+  # laisse en place ; `down -v` les efface — c'est la commande à ne pas taper.
+  umami-db-data:
