@@ -559,7 +559,54 @@ tableau de bord. Si le script répond 200 mais que rien n'arrive, regardez la
 console du navigateur — c'est l'appel à `/mesure/api/send` qu'il faut y voir
 réussir.
 
-### 10.7 Quand le script ne répond pas
+### 10.7 Ne pas se compter soi-même
+
+C'est le premier biais, et de loin : sur un site qui commence, les visites du
+modérateur écrasent celles des visiteurs. Depuis la console de **votre**
+navigateur, sur le site :
+
+```js
+localStorage.setItem('umami.disabled', 1)
+```
+
+À refaire par navigateur et par appareil. Filtrer des pages ne servirait à
+rien : vous consultez aussi les pages publiques, et ce sont elles qui comptent.
+Si votre IP est fixe, `IGNORE_IP` dans le `.env` du conteneur fait le même
+travail sans dépendre du navigateur.
+
+Une fois ce drapeau posé, **ce navigateur ne produit plus rien** : le tableau
+de bord y restera vide quoi que vous fassiez, et ce n'est pas une panne. C'est
+le piège de cette page, parce qu'on éprouve son installation avec le navigateur
+qu'on vient de faire taire. Toute vérification ultérieure se fait depuis un
+autre navigateur, ou une fenêtre privée d'un autre navigateur — pas une fenêtre
+privée du même, qui partage parfois ce stockage.
+
+### 10.8 Quand rien n'apparaît dans le tableau de bord
+
+**À vérifier avant tout le reste, et c'est le cas le plus fréquent :** le
+drapeau d'auto-exclusion du § 10.7. Dans la console du navigateur, sur le site :
+
+```js
+localStorage.getItem('umami.disabled')
+```
+
+S'il rend `"1"`, tout fonctionne — ce navigateur est simplement celui que vous
+avez fait taire, et il doit le rester. Une page chargée depuis un autre
+navigateur le confirme en quelques secondes ; c'est le test à faire en premier,
+avant d'aller chercher une panne qui n'existe pas.
+
+S'il rend `null` et que rien n'arrive quand même, l'onglet Réseau (F12) tranche
+en une fois : rechargez et regardez le POST vers `/mesure/api/send`. « Blocked »
+désigne une extension du navigateur ; un code `4xx` désigne la configuration —
+`400` avec « Website not found » signifie que `AUDIENCE_WEBSITE_ID` ne
+correspond à aucun site créé dans Umami.
+
+Ce n'est pas le « Do Not Track » du navigateur : le script ne l'honore que si
+on le lui demande par `data-do-not-track`, ce que la balise ne fait pas. Ce
+n'est pas non plus le cache : les pages sortent en `max-age=60`
+(`server/src/routes/site.ts`), soit une minute.
+
+### 10.9 Quand le script lui-même ne répond pas
 
 Le symptôme le plus déroutant est un `curl` qui **attend** au lieu de répondre
 — ni 200, ni 404, rien. Ce n'est pas un pare-feu : c'est une boucle. Trois
@@ -613,22 +660,7 @@ grep -c 'mesure.js' /etc/caddy/Caddyfile   # 1 attendu, 0 = fichier pas à jour
 Si le fichier n'est pas à jour, c'est qu'il n'a pas été recopié depuis
 `/opt/sortiespourpetits/deploy/` après le déploiement — voir § 10.4.
 
-### 10.8 Ne pas se compter soi-même
-
-C'est le premier biais, et de loin : sur un site qui commence, les visites du
-modérateur écrasent celles des visiteurs. Depuis la console de **votre**
-navigateur, sur le site :
-
-```js
-localStorage.setItem('umami.disabled', 1)
-```
-
-À refaire par navigateur et par appareil. Filtrer des pages ne servirait à
-rien : vous consultez aussi les pages publiques, et ce sont elles qui comptent.
-Si votre IP est fixe, `IGNORE_IP` dans le `.env` du conteneur fait le même
-travail sans dépendre du navigateur.
-
-### 10.9 Sauvegarder
+### 10.10 Sauvegarder
 
 Les mesures vivent dans un volume Docker, pas dans MySQL : votre sauvegarde du
 site ne les couvre pas.
@@ -641,7 +673,7 @@ docker compose -f /opt/sortiespourpetits/deploy/umami/docker-compose.yml \
 `docker compose down` laisse le volume en place. `docker compose down -v`
 l'efface — c'est la commande à ne pas taper.
 
-### 10.10 Mettre à jour
+### 10.11 Mettre à jour
 
 ```bash
 cd /opt/sortiespourpetits/deploy/umami
@@ -653,7 +685,7 @@ L'image suit l'étiquette `latest`, comme le compose publié par le projet : un
 est une commande que l'on tape, jamais un automatisme, et qu'une sauvegarde la
 précède. Pour figer une version, remplacez l'étiquette dans le compose.
 
-### 10.11 Ce que ça mesure — et ce que ça ne mesure pas
+### 10.12 Ce que ça mesure — et ce que ça ne mesure pas
 
 **Sans rien à coder**, parce que le script s'en charge :
 
@@ -684,7 +716,7 @@ zéro seconde** — quelqu'un qui lit une fiche pendant quatre minutes puis ferm
 l'onglet est enregistré à 0 s. Aucun outil ne corrige cela honnêtement. Sur un
 faible volume, la moyenne n'est que du bruit.
 
-### 10.12 Consentement
+### 10.13 Consentement
 
 Umami ne pose aucun cookie et ne construit pas d'identifiant durable. C'est ce
 qui permet de tenir les quatre critères d'exemption de la CNIL — finalité
