@@ -172,6 +172,21 @@ const router = createRouter({
       component: () => import('../views/AdminEvalRunsView.vue'),
       meta: { title: 'Mesures du banc', noindex: true, requiresAuth: true, requiresAdmin: true },
     },
+    // Deux mesures côte à côte. Une page à part de la précédente, et non un
+    // panneau de plus : on n'y vient pas pour suivre une courbe mais pour
+    // enquêter sur un chiffre qu'elle a montré, et cette lecture-là se
+    // partage par son adresse — d'où les deux runs dans la requête.
+    {
+      path: '/admin/evaluation/comparer',
+      name: 'admin-eval-compare',
+      component: () => import('../views/AdminEvalCompareView.vue'),
+      meta: {
+        title: 'Comparer deux mesures',
+        noindex: true,
+        requiresAuth: true,
+        requiresAdmin: true,
+      },
+    },
     // Une adresse inconnue affichait l'accueil, par redirection : le visiteur
     // n'y comprenait rien, et le serveur, lui, répond 404 sur cette adresse.
     {

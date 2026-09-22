@@ -61,6 +61,7 @@ import { avancements, reprendreLesAbandonnes } from '../lib/evalRuns';
 import { requireRole } from '../middleware/auth';
 import {
   aspectsDetail,
+  comparerExtractions,
   couverture,
   criteresParEtage,
   acheverAspectTallies,
@@ -1473,6 +1474,90 @@ evalRouter.get('/runs/:id(\\d+)', admin, async (req, res) => {
   res.json({
     run: { ...run, traites: faits.get(id) ?? 0, score: await scoreRun(id, run.stage) },
     detail: await runDetail(id, run.stage),
+  });
+});
+
+/**
+ * Deux runs de fiches, mis côte à côte sortie par sortie et aspect par aspect.
+ *
+ * Un taux dit **qu'**une brique a reculé ; il ne dit jamais **sur quoi**.
+ * « Intérieur ou extérieur : 75 % d'un côté, 6 % de l'autre » ne se corrige
+ * pas tant qu'on n'a pas lu ce que le second met là où le premier avait bon —
+ * et c'est une chose qu'aucun total ne montrera jamais.
+ *
+ * Le premier run est la **référence** : les bascules se lisent de son point de
+ * vue, « perdu » voulant dire qu'il avait bon et que l'autre non. L'ordre
+ * compte donc, et l'inverser est une autre question, légitime aussi.
+ *
+ * Réservé à l'étage 6 : c'est le seul dont chaque entrée porte une fiche
+ * entière, donc la seule où « ce qu'il a répondu à la place » a un sens. Le
+ * tri rend des numéros de ligne, le dépouillement des liens ; les comparer
+ * demanderait une autre vue, et l'invention de celle-ci n'attend pas.
+ */
+evalRouter.get('/runs/:a(\\d+)/comparer/:b(\\d+)', admin, async (req, res) => {
+  const ids = [Number(req.params.a), Number(req.params.b)];
+  const runs = await prisma.evalRun.findMany({
+    where: { id: { in: ids } },
+    // Les jetons autant que le coût : c'est par eux qu'un run qui « raisonne
+    // plus » se reconnaît, et une sortie qui enfle pendant que le taux baisse
+    // est une explication à elle seule.
+    select: { id: true, stage: true, label: true, model: true, settings: true,
+      costUsd: true, inputTokens: true, outputTokens: true, finishedAt: true },
+  });
+  const a = runs.find((r) => r.id === ids[0]);
+  const b = runs.find((r) => r.id === ids[1]);
+  if (!a || !b) {
+    res.status(404).json({ error: 'Exécution introuvable' });
+    return;
+  }
+  if (a.stage !== 'EXTRACT' || b.stage !== 'EXTRACT') {
+    res.status(400).json({ error: 'La comparaison ne vaut que pour deux runs d’extraction' });
+    return;
+  }
+  if (a.id === b.id) {
+    res.status(400).json({ error: 'Comparer un run à lui-même ne dit rien' });
+    return;
+  }
+
+  const [resultatsA, resultatsB] = await Promise.all(
+    ids.map((runId) =>
+      prisma.evalExtractResult.findMany({
+        where: { runId },
+        select: {
+          sortieId: true,
+          fiche: true,
+          error: true,
+          sortie: { select: { url: true, label: true, expected: true } },
+        },
+      }),
+    ),
+  );
+
+  // Seules les sorties que les **deux** ont traitées : comparer une fiche à
+  // une absence ne dit rien du modèle, seulement qu'un run s'est arrêté en
+  // chemin — ce que son compteur d'entrées dit déjà, et mieux.
+  const parSortieB = new Map(resultatsB.map((row) => [row.sortieId, row]));
+  const entrees = resultatsA.flatMap((rowA) => {
+    const rowB = parSortieB.get(rowA.sortieId);
+    if (!rowB) return [];
+    return [{
+      sortieId: rowA.sortieId,
+      url: rowA.sortie.url,
+      label: rowA.sortie.label,
+      attendue: parseJson<FicheRendue>(rowA.sortie.expected, {}),
+      renduA: parseJson<FicheRendue>(rowA.fiche, {}),
+      renduB: parseJson<FicheRendue>(rowB.fiche, {}),
+    }];
+  });
+
+  res.json({
+    a: { ...a, erreurs: resultatsA.filter((r) => r.error).length, traites: resultatsA.length },
+    b: { ...b, erreurs: resultatsB.filter((r) => r.error).length, traites: resultatsB.length },
+    // Ce que l'un a traité et l'autre non. Un écart ici change la lecture de
+    // tout le reste : deux runs qui n'ont pas lu les mêmes pages ne se
+    // comparent pas aspect par aspect sans le dire.
+    communes: entrees.length,
+    ...comparerExtractions(entrees),
   });
 });
 

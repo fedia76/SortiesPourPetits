@@ -440,6 +440,7 @@ function depuis(value: string | null): string {
     <nav class="row" style="gap: 1rem; margin-bottom: 1rem">
       <RouterLink to="/admin/evaluation">Corpus et étiquettes</RouterLink>
       <RouterLink to="/admin/evaluation/mesures">Mesures</RouterLink>
+      <RouterLink to="/admin/evaluation/comparer">Comparer</RouterLink>
     </nav>
 
     <p class="muted">
@@ -447,6 +448,12 @@ function depuis(value: string | null): string {
       un écart entre deux runs ne peut donc venir que du code, jamais du site.
       Rien n’est écrasé — les runs s’empilent, et c’est ce qui permet enfin de
       voir si ça monte.
+    </p>
+    <p class="muted small">
+      Un taux qui baisse ne dit pas sur quoi.
+      <RouterLink to="/admin/evaluation/comparer">Comparer deux mesures</RouterLink>
+      met les deux fiches d’une même page l’une à côté de l’autre, et sait ne
+      montrer que ce que la seconde casse de ce que la première réussissait.
     </p>
 
     <!-- ── Lancer ─────────────────────────────────────────────────────── -->
