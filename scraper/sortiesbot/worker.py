@@ -54,7 +54,11 @@ from .models import Summary
 from .orchestrator import run as run_pipeline
 from .orchestrator import run_source
 from .providers.base import ProviderError, get_provider
-from .providers.openrouter_provider import EFFORTS, modele_openrouter
+from .providers.openrouter_provider import (
+    EFFORTS_CONNUS,
+    effort_valide,
+    modele_openrouter,
+)
 from .providers.serper_client import client_or_none
 from .store import RemoteStore
 
@@ -517,10 +521,11 @@ def _fournisseur_du_run(config: Config, run: dict[str, Any], quiet: bool) -> Con
         # coût d'une reconnaissance par seize. Validé ici, pour la même raison
         # que le modèle — `replace` ne repasse pas par `validated`.
         effort = str(demande.get("effort") or "").strip().lower()
-        if effort and effort not in EFFORTS:
+        if not effort_valide(effort):
             raise ConfigError(
-                f"effort de raisonnement inconnu dans les réglages du run : "
-                f"« {effort} » (connus : {', '.join(EFFORTS)})"
+                f"effort de raisonnement illisible dans les réglages du run : "
+                f"« {effort} » (un mot en minuscules ; les valeurs dépendent du "
+                f"modèle — {', '.join(EFFORTS_CONNUS)} pour celui par défaut)"
             )
         return replace(
             config,

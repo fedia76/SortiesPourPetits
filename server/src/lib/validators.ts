@@ -913,10 +913,24 @@ export const evalExtractionSchema = z.object({
    * zéro — sans qu'on sache ce que « high » rendrait de plus. Une question à
    * laquelle un run répond.
    *
-   * Vide : celui du scraper, le plus bas. Les trois valeurs sont celles
-   * qu'OpenRouter accepte ; le service refuse les autres, mais à mi-corpus.
+   * Vide : celui du scraper, le plus bas. « low », « high » et « max » pour le
+   * modèle par défaut — mais ce vocabulaire est celui du **modèle**, pas du
+   * routeur : un autre éditeur dit « minimal » ou « medium », et celui qui ne
+   * raisonne pas n'en a aucun. Une liste fermée ici interdirait la moitié des
+   * comparaisons que le banc existe pour rendre possibles.
+   *
+   * Seule la forme est donc vérifiée — un mot court, en minuscules, sans
+   * accent —, ce qui arrête une faute de frappe sans prétendre connaître le
+   * catalogue de qui que ce soit. Le service refusera le reste en 400, et le
+   * worker le dira.
    */
-  effort: z.enum(['', 'low', 'high', 'max']).optional().default(''),
+  effort: z
+    .string()
+    .trim()
+    .max(20)
+    .regex(/^[a-z]*$/, 'L’effort s’écrit en un mot, en minuscules et sans accent')
+    .optional()
+    .default(''),
 });
 
 export const evalRunSchema = z

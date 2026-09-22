@@ -1356,17 +1356,18 @@ export interface EvalRecherche {
  */
 export type EvalProvider = 'anthropic' | 'gliner' | 'openrouter';
 
-/** Combien le modèle a le droit de réfléchir. `''` : celui du scraper. */
-export type EvalEffort = '' | 'low' | 'high' | 'max';
+/**
+ * Combien le modèle a le droit de réfléchir. `''` : celui du scraper.
+ *
+ * Une chaîne libre, et non trois valeurs : ce vocabulaire est celui du
+ * **modèle**, pas du routeur. « low », « high » et « max » sont ceux du modèle
+ * par défaut ; un autre éditeur dit « minimal » ou « medium », et celui qui ne
+ * raisonne pas n'en a aucun.
+ */
+export type EvalEffort = string;
 
-export const EVAL_EFFORTS: EvalEffort[] = ['', 'low', 'high', 'max'];
-
-export const EVAL_EFFORT_LABELS: Record<EvalEffort, string> = {
-  '': 'Celui du scraper (le plus bas)',
-  low: 'Bas — sur le modèle par défaut, il l’éteint tout à fait',
-  high: 'Élevé',
-  max: 'Maximum',
-};
+/** Ceux qu'on connaît, pour les **proposer**. La saisie reste libre. */
+export const EVAL_EFFORTS_CONNUS = ['low', 'high', 'max'];
 
 export interface EvalExtraction {
   provider: EvalProvider;

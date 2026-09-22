@@ -216,9 +216,11 @@ TARIF_INCONNU = (5.0, 25.0)
 #: *était* le coût de cet appel. Et « low » l'annule tout à fait sur ce
 #: modèle-là, là où `enabled: false` se faisait refuser en 400.
 #:
-#: Les valeurs qu'OpenRouter accepte sont dans `EFFORTS`, et une configuration
-#: qui en nomme une autre est refusée au chargement : le service la refuserait
-#: en 400, mais à mi-corpus et après avoir occupé le worker.
+#: Les valeurs connues sont dans `EFFORTS_CONNUS`, et ce n'est qu'une
+#: indication : elles dépendent du modèle, pas du routeur. Seule la **forme**
+#: est vérifiée au chargement — assez pour arrêter une faute de frappe avant
+#: la première dépense, pas assez pour interdire un modèle dont on ignore le
+#: vocabulaire.
 #:
 #: Le réglage est envoyé à **tous** les modèles, et ce n'est pas sans risque :
 #: il voyage à côté de `require_parameters`, qui ne route que vers un hébergeur
@@ -228,9 +230,28 @@ TARIF_INCONNU = (5.0, 25.0)
 #: fatalité.
 EFFORT_RAISONNEMENT = "low"
 
-#: Ce qu'OpenRouter accepte comme effort, du moins au plus. Le vide s'y ajoute
-#: côté configuration, où il veut dire « celui du fournisseur ».
-EFFORTS = ("low", "high", "max")
+#: Les efforts qu'on connaît, pour les proposer — **pas** pour les imposer.
+#:
+#: Ce fut d'abord une liste fermée, et c'était une erreur de lecture : ces
+#: trois valeurs sont celles du modèle par défaut, pas celles d'OpenRouter.
+#: Un autre modèle en accepte d'autres — « minimal » chez certains éditeurs,
+#: « medium » chez d'autres, aucune chez ceux qui ne raisonnent pas —, et le
+#: catalogue bouge plus vite qu'une constante. Refuser ce qu'on ne connaît pas
+#: revenait à interdire la moitié des comparaisons que le banc existe pour
+#: rendre possibles.
+#:
+#: Ce qui est vérifié tient donc à la **forme**, et rien de plus : un mot
+#: court, en minuscules. C'est ce qui attrape une faute de frappe sans
+#: prétendre connaître le catalogue de qui que ce soit — le service, lui,
+#: refusera en 400 ce qu'il ne comprend pas, et le message le dira.
+EFFORTS_CONNUS = ("low", "high", "max")
+
+
+def effort_valide(effort: str) -> bool:
+    """La forme d'un effort de raisonnement. Vide compris : il veut dire « le défaut »."""
+    effort = (effort or "").strip()
+    return not effort or (len(effort) <= 20 and effort.isascii() and effort.islower()
+                          and effort.isalpha())
 
 #: Jetons ajoutés au plafond de chaque appel, pour que le raisonnement ne
 #: mange pas la réponse.

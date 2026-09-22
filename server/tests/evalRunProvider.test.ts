@@ -111,12 +111,26 @@ test('l’effort de raisonnement se choisit sur le routeur', () => {
   assert.equal(parsed.data.extraction?.effort, 'high');
 });
 
-test('un effort inconnu est refusé', () => {
+test('un effort qu’on ne connaît pas passe : c’est le modèle qui décide', () => {
+  // Le vocabulaire est celui du modèle, pas du routeur — « minimal » chez un
+  // éditeur, « medium » chez un autre. Une liste fermée ici interdirait la
+  // moitié des comparaisons que le banc existe pour rendre possibles.
   const parsed = evalRunSchema.safeParse({
     stage: 'EXTRACT',
-    extraction: { provider: 'openrouter', effort: 'moyen' },
+    extraction: { provider: 'openrouter', effort: 'minimal' },
   });
-  assert.ok(!parsed.success);
+  assert.ok(parsed.success);
+  assert.equal(parsed.data.extraction?.effort, 'minimal');
+});
+
+test('un effort illisible est refusé : c’est une faute de frappe', () => {
+  for (const effort of ['très haut', 'HIGH', 'low 2', 'a'.repeat(21)]) {
+    const parsed = evalRunSchema.safeParse({
+      stage: 'EXTRACT',
+      extraction: { provider: 'openrouter', effort },
+    });
+    assert.ok(!parsed.success, `« ${effort} » aurait dû être refusé`);
+  }
 });
 
 test('l’effort ne se règle pas sur les fournisseurs qui n’en ont pas', () => {

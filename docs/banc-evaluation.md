@@ -580,7 +580,12 @@ Deux conséquences, et la seconde compte autant que la première :
   courbe porteraient le même nom pour deux modèles différents, et un run joué
   ne dit jamais ce qu'il était : c'est irrattrapable après coup ;
 
-* l'**effort de raisonnement** se choisit comme le modèle, et il pèse autant.
+* l'**effort de raisonnement** se choisit comme le modèle, se saisit aussi
+  librement que lui, et il pèse autant. Librement, parce que ce vocabulaire est
+  celui du **modèle** et non du routeur : « low », « high » et « max » sont
+  ceux du modèle par défaut, un autre éditeur dit « minimal » ou « medium », et
+  celui qui ne raisonne pas n'en a aucun. Une liste fermée aurait interdit la
+  moitié des comparaisons que le banc existe pour rendre possibles.
   Sur le modèle par défaut, passer de « rien demandé » à « low » a fait tomber
   une reconnaissance de 1 312 jetons de raisonnement à zéro, et son coût de
   0,001475 $ à 0,000090 $ — seize fois moins cher pour la même page. Ce que

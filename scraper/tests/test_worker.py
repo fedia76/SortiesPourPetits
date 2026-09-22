@@ -700,16 +700,33 @@ def test_un_run_openrouter_impose_son_effort_de_raisonnement():
     assert config.reasoning_effort == "high"
 
 
-def test_un_effort_inconnu_arrete_le_run_avant_le_corpus():
-    with pytest.raises(ConfigError, match="effort de raisonnement inconnu"):
+def test_un_effort_illisible_arrete_le_run_avant_le_corpus():
+    with pytest.raises(ConfigError, match="effort de raisonnement illisible"):
         worker._config_du_run(
             {
                 "id": 37,
                 "stage": "EXTRACT",
-                "extraction": {"provider": "openrouter", "effort": "moyen"},
+                "extraction": {"provider": "openrouter", "effort": "très haut"},
             },
             quiet=True,
         )
+
+
+def test_un_effort_propre_au_modele_choisi_est_accepte():
+    """« minimal », « medium »… : le vocabulaire est celui du modèle."""
+    config = worker._config_du_run(
+        {
+            "id": 39,
+            "stage": "EXTRACT",
+            "extraction": {
+                "provider": "openrouter",
+                "model": "openai/gpt-5-mini",
+                "effort": "minimal",
+            },
+        },
+        quiet=True,
+    )
+    assert config.reasoning_effort == "minimal"
 
 
 def test_deux_efforts_ne_se_declarent_pas_sous_le_meme_nom():
