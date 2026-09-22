@@ -255,7 +255,10 @@ function detail(run: EvalRun): string {
   return (
     `${s.JUSTE} juste(s) · ${s.FAUX} faux · ${s.INVENTE} inventé(s) · ` +
     `${s.MANQUE} manquant(s)` +
-    (s.inconnu ? ` · ${s.inconnu} champ(s) sans étiquette` : '')
+    (s.inconnu ? ` · ${s.inconnu} champ(s) sans étiquette` : '') +
+    // En tête de ce qu'on lit, et non en note : sans ce chiffre, les
+    // manquants d'un run à moitié raté se lisent comme un modèle qui se tait.
+    (s.erreurs ? ` — ${s.erreurs} fiche(s) jamais revenue(s)` : '')
   );
 }
 

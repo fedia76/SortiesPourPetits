@@ -1474,6 +1474,16 @@ export type EvalScore =
       INVENTE: number;
       MANQUE: number;
       inconnu: number;
+      /**
+       * Entrées dont la fiche n'est jamais revenue : appel refusé, réponse
+       * tronquée, hébergeur tombé.
+       *
+       * À lire **avant** les manquants : une fiche absente compte MANQUÉ sur
+       * ses douze aspects, et un incident technique prend alors l'apparence
+       * d'un effondrement de qualité. Les deux ne se corrigent pas au même
+       * endroit.
+       */
+      erreurs: number;
       rate: number | null;
       /** Le même décompte, aspect par aspect. Voir `EvalAspectTally`. */
       parAspect: EvalAspectTally[];

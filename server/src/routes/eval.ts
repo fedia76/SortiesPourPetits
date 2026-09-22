@@ -1695,6 +1695,13 @@ async function scoreRun(runId: number, stage: string) {
     kind: 'extract' as const,
     items: results.length,
     ...tally,
+    // Les entrées dont la fiche n'est jamais revenue — appel refusé, réponse
+    // tronquée, hébergeur tombé. Elles étaient **invisibles** : une fiche
+    // absente compte MANQUÉ sur ses douze aspects, si bien qu'un run où
+    // quarante pages ont échoué techniquement affichait « 480 manquants » et
+    // se lisait comme un effondrement de qualité. Les deux se corrigent à deux
+    // endroits opposés, et rien ne permettait de les distinguer.
+    erreurs: results.filter((row) => row.error).length,
     rate: judged > 0 ? tally.JUSTE / judged : null,
     parAspect: acheverAspectTallies(parAspect),
   };
