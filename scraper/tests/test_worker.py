@@ -683,6 +683,54 @@ def test_un_run_openrouter_de_tri_declare_son_modele_aussi():
     assert worker._declare("SELECT", config)["model"] == "mistralai/mistral-small"
 
 
+def test_un_run_openrouter_impose_son_effort_de_raisonnement():
+    """La comparaison la plus intéressante qu'on puisse faire sur ce modèle.
+
+    Passer de « rien demandé » à « low » a divisé le coût d'une reconnaissance
+    par seize ; ce que « high » rend de plus, personne ne le sait encore.
+    """
+    config = worker._config_du_run(
+        {
+            "id": 36,
+            "stage": "EXTRACT",
+            "extraction": {"provider": "openrouter", "effort": "high"},
+        },
+        quiet=True,
+    )
+    assert config.reasoning_effort == "high"
+
+
+def test_un_effort_inconnu_arrete_le_run_avant_le_corpus():
+    with pytest.raises(ConfigError, match="effort de raisonnement inconnu"):
+        worker._config_du_run(
+            {
+                "id": 37,
+                "stage": "EXTRACT",
+                "extraction": {"provider": "openrouter", "effort": "moyen"},
+            },
+            quiet=True,
+        )
+
+
+def test_deux_efforts_ne_se_declarent_pas_sous_le_meme_nom():
+    """Sinon la courbe confondrait deux runs dont l'un peut coûter seize fois
+    l'autre — et c'est irrattrapable après coup."""
+    noms = set()
+    for effort in ("low", "max"):
+        config = worker._config_du_run(
+            {
+                "id": 38,
+                "stage": "EXTRACT",
+                "extraction": {"provider": "openrouter", "effort": effort},
+            },
+            quiet=True,
+        )
+        nom = worker._declare("EXTRACT", config)["model"]
+        assert effort in nom
+        noms.add(nom)
+    assert len(noms) == 2
+
+
 def test_un_run_de_banc_ne_monte_pas_le_moteur():
     """Il rejoue une brique sur un corpus gelé : l'étage 1 n'en fait pas partie.
 

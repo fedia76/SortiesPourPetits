@@ -12,6 +12,7 @@ la clé.
 
     OPENROUTER_API_KEY=… python -m tools.openrouter_shape
     OPENROUTER_API_KEY=… python -m tools.openrouter_shape google/gemini-2.5-flash
+    OPENROUTER_API_KEY=… python -m tools.openrouter_shape z-ai/glm-5.3-flash high
 
 Il fait trois choses, dans cet ordre :
 
@@ -107,11 +108,14 @@ def main(argv: list[str]) -> int:
 
     session = requests.Session()
     modele = argv[1] if len(argv) > 1 else MODELE_DEFAUT
+    # Le second argument mesure ce qu'un effort coûte, sans passer par un run
+    # du banc : deux appels suffisent à chiffrer ce que « high » ajoute.
+    effort = argv[2] if len(argv) > 2 else EFFORT_RAISONNEMENT
     faute = verifier_le_defaut(session, modele)
     print(f"\n— un appel de reconnaissance à {modele}, sur {ENDPOINT} —")
 
     config = Config(name="verif", theme="spectacles enfants", provider="openrouter",
-                    classify_model=modele)
+                    classify_model=modele, reasoning_effort=effort)
     brut = session.post(
         ENDPOINT,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -144,7 +148,7 @@ def main(argv: list[str]) -> int:
             # Comme le fournisseur : le couper est refusé, le régler ne l'est
             # pas. C'est ce chiffre-là — les jetons de raisonnement affichés
             # plus bas — que le réglage vise.
-            "reasoning": {"effort": EFFORT_RAISONNEMENT},
+            "reasoning": {"effort": effort},
         },
         timeout=120,
     )
@@ -177,7 +181,7 @@ def main(argv: list[str]) -> int:
     raisonnement = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
     print(
         f"Jetons de raisonnement : {raisonnement!r} "
-        f"(effort « {EFFORT_RAISONNEMENT or 'non réglé'} », "
+        f"(effort « {effort or 'non réglé'} », "
         f"marge prévue : {MARGE_RAISONNEMENT})"
     )
     if "cost" not in usage:

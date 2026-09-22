@@ -387,7 +387,10 @@ répondre :
 
 Ce modèle raisonne, il n'y a pas à discuter. Mais s'il refuse qu'on le coupe,
 il accepte qu'on le **règle** : `EFFORT_RAISONNEMENT` vaut `low`, le moins que
-sa page OpenRouter propose. Un appel qui choisit une étiquette parmi quatre, ou
+sa page OpenRouter propose. C'est un défaut, pas une fatalité — un run du banc
+choisit le sien (*Jouer une mesure* → *Effort de raisonnement*), et
+`tools/openrouter_shape.py` prend le même en second argument pour chiffrer ce
+qu'un cran de plus coûte sans occuper le worker. Un appel qui choisit une étiquette parmi quatre, ou
 qui recopie des numéros de ligne, n'a besoin de rien de plus — et c'est la
 seule prise qu'on ait sur la seule chose qui coûte cher ici.
 

@@ -177,6 +177,16 @@ class Config:
     #: nom d'un modèle Anthropic avec celui d'un dépôt Hugging Face rendrait la
     #: table des prix et la colonne « modèle » de la console incompréhensibles.
     gliner_model: str = "urchade/gliner_multi-v2.1"
+    #: Combien le modèle a le droit de réfléchir, quand `provider` vaut
+    #: « openrouter » : « low », « high », « max ». Vide — le cas normal — :
+    #: celui du fournisseur, qui est le plus bas.
+    #:
+    #: C'est un réglage du **banc** avant tout : sur le modèle par défaut,
+    #: passer de « rien demandé » à « low » a divisé le coût d'une
+    #: reconnaissance par seize, et personne ne sait encore ce que « high »
+    #: rendrait de plus. Une question à laquelle un run répond, pas une
+    #: intuition — d'où ce champ, que la console du banc expose.
+    reasoning_effort: str = ""
     search_prompt: str = prompts.SEARCH
     #: Requêtes web à lancer. Vides : un appel au modèle les formule, ce qui
     #: coûte quelques centimes de centime et varie d'un run à l'autre. Les
@@ -348,7 +358,8 @@ def validated(config: Config) -> Config:
 
 
 def _openrouter_models(config: Config) -> None:
-    """Refuse au chargement un modèle qu'OpenRouter ne saurait pas nommer.
+    """Refuse au chargement ce qu'OpenRouter ne saurait pas lire : un nom de
+    modèle, un effort de raisonnement.
 
     Là-bas un modèle s'appelle « éditeur/modèle ». Les quatre champs de la
     console portent, eux, les noms du vocabulaire d'Anthropic : basculer une
@@ -362,7 +373,16 @@ def _openrouter_models(config: Config) -> None:
     tête ferait une boucle.
     """
     from .providers.base import ProviderError
-    from .providers.openrouter_provider import modele_openrouter
+    from .providers.openrouter_provider import EFFORTS, modele_openrouter
+
+    effort = config.reasoning_effort.strip().lower()
+    if effort and effort not in EFFORTS:
+        # Le service le refuserait en 400 — mais à mi-corpus, après avoir
+        # occupé le worker. Ici, c'est avant le premier appel.
+        raise ConfigError(
+            f"effort de raisonnement inconnu : « {effort} » "
+            f"(connus : {', '.join(EFFORTS)} — vide pour celui du fournisseur)"
+        )
 
     champs = {
         "searchModel": config.search_model,
@@ -498,6 +518,7 @@ def config_from_api(raw: dict[str, Any]) -> Config:
             select_model=str(raw.get("selectModel") or defaults.select_model),
             extraction_model=str(raw.get("extractionModel") or defaults.extraction_model),
             gliner_model=str(raw.get("glinerModel") or defaults.gliner_model),
+            reasoning_effort=str(raw.get("reasoningEffort") or "").strip().lower(),
             search_prompt=prompt("searchPrompt", defaults.search_prompt),
             queries_prompt=prompt("queriesPrompt", defaults.queries_prompt),
             classify_prompt=prompt("classifyPrompt", defaults.classify_prompt),
@@ -605,4 +626,5 @@ def describe(config: Config) -> dict[str, Any]:
         "select_model": config.select_model,
         "extraction_model": config.extraction_model,
         "gliner_model": config.gliner_model,
+        "reasoning_effort": config.reasoning_effort,
     }

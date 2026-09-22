@@ -18,8 +18,11 @@ import { api } from '../lib/api';
 import { messageDe } from '../lib/erreurs';
 import EvalRunDetail from '../components/EvalRunDetail.vue';
 import type {
-  EvalExtraction, EvalProvider, EvalRecherche, EvalRun, EvalScore, EvalStage } from '../types';
+  EvalEffort, EvalExtraction, EvalProvider, EvalRecherche, EvalRun, EvalScore,
+  EvalStage } from '../types';
 import {
+  EVAL_EFFORT_LABELS,
+  EVAL_EFFORTS,
   EVAL_PROVIDER_LABELS,
   EVAL_RUN_STATUS_LABELS,
   EVAL_STAGE_COST,
@@ -63,6 +66,8 @@ const prefixes = ref('');
  */
 const provider = ref<EvalProvider>('anthropic');
 const modele = ref('');
+/** Vide : celui du scraper. Ne vaut que pour le routeur. */
+const effort = ref<EvalEffort>('');
 
 const STAGES: EvalStage[] = ['HARVEST', 'SELECT', 'READ', 'EXTRACT'];
 
@@ -147,7 +152,15 @@ async function launch() {
       // s'il s'écarte de la production : un run qui ne dit rien est un run
       // joué comme d'habitude, et sa ligne en base le dit aussi.
       ...(choixDuFournisseur.value && provider.value !== 'anthropic'
-        ? { extraction: { provider: provider.value, model: modele.value.trim() } }
+        ? {
+            extraction: {
+              provider: provider.value,
+              model: modele.value.trim(),
+              // Le serveur refuse un effort hors du routeur : l'étiqueteur n'en
+              // a pas, et l'envoyer ferait une ligne fausse en base.
+              ...(provider.value === 'openrouter' ? { effort: effort.value } : {}),
+            },
+          }
         : {}),
     });
     notice.value =
@@ -311,11 +324,18 @@ function fournisseurDe(brut: Record<string, unknown>): { cle: string; texte: str
   const extraction = (brut.extraction ?? {}) as Partial<EvalExtraction>;
   if (!extraction.provider || extraction.provider === 'anthropic') return { cle: '', texte: '' };
   const modele = extraction.model ? ` · ${extraction.model}` : '';
+  // L'effort de raisonnement compte autant que le modèle : « low » et « max »
+  // sur le même modèle ne sont pas deux états d'une même chose, et le second
+  // peut coûter seize fois le premier.
+  const effort = extraction.effort ? ` · effort ${extraction.effort}` : '';
   const quoi = extraction.provider === 'gliner' ? 'étiqueteur local' : 'OpenRouter';
   // Le modèle entre dans la clé : deux modèles d'OpenRouter sont deux courbes.
   // L'étiqueteur n'en avait pas besoin — il n'y en avait qu'un — mais la règle
   // est la même, et l'écrire une fois vaut mieux que deux fois à moitié.
-  return { cle: `p:${extraction.provider}${modele}`, texte: `${quoi}${modele}` };
+  return {
+    cle: `p:${extraction.provider}${modele}${effort}`,
+    texte: `${quoi}${modele}${effort}`,
+  };
 }
 
 /**
@@ -527,7 +547,24 @@ function depuis(value: string | null): string {
               :placeholder="MODELE_PLACEHOLDER[provider]"
             />
           </div>
+          <div v-if="provider === 'openrouter'" class="field grow">
+            <label for="ev-effort">Effort de raisonnement</label>
+            <select id="ev-effort" v-model="effort">
+              <option v-for="e in EVAL_EFFORTS" :key="e" :value="e">
+                {{ EVAL_EFFORT_LABELS[e] }}
+              </option>
+            </select>
+          </div>
         </div>
+        <p v-if="provider === 'openrouter'" class="muted small">
+          C’est la comparaison que ce fournisseur rend possible, et elle n’a rien
+          d’anodin : sur le modèle par défaut, passer de « rien demandé » à
+          <strong>bas</strong> a fait tomber une reconnaissance de 1 312 jetons de
+          raisonnement à <strong>zéro</strong>, et son coût de 0,001475 $ à
+          0,000090 $. Seize fois moins cher pour la même page. Ce que « élevé »
+          rend de plus en échange, personne ne l’a mesuré — c’est à ça qu’un run
+          sert.
+        </p>
         <p v-if="provider === 'openrouter'" class="muted small">
           Le modèle s’écrit en deux parties — <code>z-ai/glm-5.3-flash</code>,
           <code>google/gemini-2.5-flash</code>, <code>anthropic/claude-haiku-4.5</code>.

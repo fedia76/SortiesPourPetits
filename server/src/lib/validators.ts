@@ -904,6 +904,19 @@ export const evalExtractionSchema = z.object({
    * entrée.
    */
   model: z.string().trim().max(120).optional().default(''),
+  /**
+   * Combien le modèle a le droit de réfléchir, pour un run OpenRouter.
+   *
+   * C'est la comparaison la plus intéressante que ce fournisseur permette :
+   * sur le modèle par défaut, passer de « rien demandé » à « low » a divisé le
+   * coût d'une reconnaissance par seize — 1 312 jetons de raisonnement contre
+   * zéro — sans qu'on sache ce que « high » rendrait de plus. Une question à
+   * laquelle un run répond.
+   *
+   * Vide : celui du scraper, le plus bas. Les trois valeurs sont celles
+   * qu'OpenRouter accepte ; le service refuse les autres, mais à mi-corpus.
+   */
+  effort: z.enum(['', 'low', 'high', 'max']).optional().default(''),
 });
 
 export const evalRunSchema = z
@@ -935,6 +948,14 @@ export const evalRunSchema = z
   .refine((v) => v.extraction === undefined || v.stage === 'EXTRACT' || v.stage === 'SELECT', {
     message:
       'Cet étage ne fait appel à personne : il n’y a pas de fournisseur à lui choisir',
+    path: ['extraction'],
+  })
+  // L'effort de raisonnement n'existe que chez le routeur. Le déclarer
+  // ailleurs ferait une ligne fausse en base : ni l'étiqueteur local ni le
+  // fournisseur de production ne l'envoient nulle part, et la colonne
+  // « modèle » du run porterait un réglage qui n'a joué aucun rôle.
+  .refine((v) => !v.extraction?.effort || v.extraction.provider === 'openrouter', {
+    message: 'L’effort de raisonnement ne se règle que sur un modèle d’OpenRouter',
     path: ['extraction'],
   });
 
