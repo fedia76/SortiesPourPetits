@@ -33,9 +33,17 @@ services:
       APP_SECRET: ${APP_SECRET}
       TWO_FACTOR_ENCRYPTION_KEY: ${TWO_FACTOR_ENCRYPTION_KEY}
 
-      # L'adresse publique du tableau de bord. Elle sert aux liens qu'Umami
-      # fabrique lui-même — l'extrait de code à coller, notamment.
-      TRACKER_SCRIPT_URL: ${TRACKER_SCRIPT_URL}
+      # ⚠️ Ne jamais poser TRACKER_SCRIPT_URL ici. Ce n'est pas une valeur
+      # d'affichage : le middleware de l'image réécrit, à l'exécution, toute
+      # requête sur `/script.js` vers l'adresse qu'elle contient. Pointée sur
+      # notre propre domaine — où Caddy la renvoie au conteneur —, elle fait
+      # tourner la requête en rond jusqu'à l'expiration, et le script n'est
+      # jamais servi. Le renommage en « mesure.js » est le travail de Caddy,
+      # et il n'a besoin d'aucune variable ici.
+      #
+      # La variable qui renommerait le script côté Umami serait
+      # TRACKER_SCRIPT_NAME, et elle ferait double emploi avec la réécriture
+      # de Caddy.
 
       # Le visiteur arrive par Caddy : sans cet en-tête, Umami compterait
       # toutes les visites comme venant de 127.0.0.1 — même pays, même

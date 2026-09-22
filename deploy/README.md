@@ -559,7 +559,61 @@ tableau de bord. Si le script répond 200 mais que rien n'arrive, regardez la
 console du navigateur — c'est l'appel à `/mesure/api/send` qu'il faut y voir
 réussir.
 
-### 10.7 Ne pas se compter soi-même
+### 10.7 Quand le script ne répond pas
+
+Le symptôme le plus déroutant est un `curl` qui **attend** au lieu de répondre
+— ni 200, ni 404, rien. Ce n'est pas un pare-feu : c'est une boucle. Trois
+causes possibles, à écarter dans cet ordre.
+
+**Le conteneur sert-il seulement le script ?** Depuis le VPS, en court-circuitant
+Caddy :
+
+```bash
+curl -sI http://127.0.0.1:3001/script.js | head -3
+```
+
+- `200` → le conteneur va bien, le problème est dans Caddy (voir plus bas).
+- ça attend, puis expire → c'est la boucle décrite juste après.
+- `connection refused` → le conteneur n'est pas démarré :
+  `docker compose ps` et `docker compose logs umami`.
+
+**La boucle : `TRACKER_SCRIPT_URL`.** Cette variable n'est pas une valeur
+d'affichage. Le middleware de l'image réécrit, à l'exécution, toute requête sur
+`/script.js` vers l'adresse qu'elle contient. Si cette adresse est celle que
+Caddy renvoie au conteneur, la requête tourne en rond jusqu'à l'expiration et
+le script n'est jamais servi. **Elle ne doit pas figurer dans le `.env`** — le
+renommage en `mesure.js` est le travail de Caddy et ne demande aucune variable.
+
+```bash
+grep TRACKER_SCRIPT_URL /opt/sortiespourpetits/deploy/umami/.env   # ne doit rien sortir
+```
+
+Si la ligne est là, retirez-la puis :
+
+```bash
+cd /opt/sortiespourpetits/deploy/umami
+docker compose up -d --force-recreate umami
+```
+
+`--force-recreate` n'est pas décoratif : `up -d` seul ne recrée pas un
+conteneur dont l'image n'a pas changé, et l'ancienne variable resterait dans
+son environnement.
+
+**Caddy sert-il bien la configuration attendue ?** Un `reload` qui échoue
+laisse l'ancienne configuration en place, et le site continue de répondre comme
+si de rien n'était :
+
+```bash
+caddy validate --config /etc/caddy/Caddyfile
+systemctl status caddy --no-pager
+journalctl -u caddy -n 30 --no-pager
+grep -c 'mesure.js' /etc/caddy/Caddyfile   # 1 attendu, 0 = fichier pas à jour
+```
+
+Si le fichier n'est pas à jour, c'est qu'il n'a pas été recopié depuis
+`/opt/sortiespourpetits/deploy/` après le déploiement — voir § 10.4.
+
+### 10.8 Ne pas se compter soi-même
 
 C'est le premier biais, et de loin : sur un site qui commence, les visites du
 modérateur écrasent celles des visiteurs. Depuis la console de **votre**
@@ -574,7 +628,7 @@ rien : vous consultez aussi les pages publiques, et ce sont elles qui comptent.
 Si votre IP est fixe, `IGNORE_IP` dans le `.env` du conteneur fait le même
 travail sans dépendre du navigateur.
 
-### 10.8 Sauvegarder
+### 10.9 Sauvegarder
 
 Les mesures vivent dans un volume Docker, pas dans MySQL : votre sauvegarde du
 site ne les couvre pas.
@@ -587,7 +641,7 @@ docker compose -f /opt/sortiespourpetits/deploy/umami/docker-compose.yml \
 `docker compose down` laisse le volume en place. `docker compose down -v`
 l'efface — c'est la commande à ne pas taper.
 
-### 10.9 Mettre à jour
+### 10.10 Mettre à jour
 
 ```bash
 cd /opt/sortiespourpetits/deploy/umami
@@ -599,7 +653,7 @@ L'image suit l'étiquette `latest`, comme le compose publié par le projet : un
 est une commande que l'on tape, jamais un automatisme, et qu'une sauvegarde la
 précède. Pour figer une version, remplacez l'étiquette dans le compose.
 
-### 10.10 Ce que ça mesure — et ce que ça ne mesure pas
+### 10.11 Ce que ça mesure — et ce que ça ne mesure pas
 
 **Sans rien à coder**, parce que le script s'en charge :
 
@@ -630,7 +684,7 @@ zéro seconde** — quelqu'un qui lit une fiche pendant quatre minutes puis ferm
 l'onglet est enregistré à 0 s. Aucun outil ne corrige cela honnêtement. Sur un
 faible volume, la moyenne n'est que du bruit.
 
-### 10.11 Consentement
+### 10.12 Consentement
 
 Umami ne pose aucun cookie et ne construit pas d'identifiant durable. C'est ce
 qui permet de tenir les quatre critères d'exemption de la CNIL — finalité
