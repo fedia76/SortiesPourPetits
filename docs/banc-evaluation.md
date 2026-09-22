@@ -635,6 +635,16 @@ tient pas à la qualité du corpus mais aux instruments eux-mêmes :
   tel modèle satisfait gratuitement** ; la condition suffisante — c'est le
   *bon* tarif parmi les cinq qu'affiche la page — n'est mesurée par aucun
   d'eux ;
+* une sortie **gratuite** n'a pas de prix, et les deux écritures se valent.
+  « Gratuit » et « gratuit, 0 € » sont la même phrase ; la mesure les comptait
+  FAUX l'une contre l'autre. Le site n'enregistre jamais de prix pour une
+  gratuité — `payload.py` écrit `null` —, si bien que **toute** fiche rendue
+  avec `price: 0` sur une sortie gratuite comptait faux, quel que soit le
+  modèle. Le prix n'est donc plus jugé quand la gratuité est affirmée des deux
+  côtés ; un désaccord sur `free`, lui, reste un désaccord et le tarif entier
+  se juge alors. Comme la mesure se calcule **à la lecture**, la correction
+  vaut pour tous les runs déjà joués : leurs taux de tarif montent sans qu'on
+  ait rejoué quoi que ce soit ;
 * la **description** n'est jugée que sur sa présence, des deux côtés :
   `pareil()` rend `true` sans condition sur le genre `prose`, et `_overlap` est
   satisfait par une recopie. Une description recopiée mot pour mot de la page

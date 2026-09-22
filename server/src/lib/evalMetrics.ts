@@ -1044,11 +1044,11 @@ function renduDe(rendue: FicheRendue, champ: Champ): unknown {
  * page n'annonce pas de tarif » et « personne n'a vérifié le tarif » seraient
  * le même silence, et une valeur inventée deviendrait invisible.
  */
-export function verdictAspect(
+export function champsJuges(
   aspect: { key: string; champs: Champ[] },
   attendue: FicheRendue,
   rendue: FicheRendue,
-): FieldVerdict | null {
+): Champ[] {
   // Seuls les champs que l'étiquette **porte** sont jugés. Un champ absent
   // n'est pas un vide : personne ne l'a regardé, et le comparer reprocherait à
   // la brique d'avoir rendu quelque chose sur quoi le corpus se tait.
@@ -1057,6 +1057,33 @@ export function verdictAspect(
   // `dates` mais jamais les jours de la semaine, que le site ne reçoit pas.
   // Sans ce filtre, chaque sortie à récurrence compterait « faux ».
   const juges = aspect.champs.filter(([champ]) => champ in attendue);
+
+  // Et une règle de fond, qui ne tient qu'au tarif : **une sortie gratuite n'a
+  // pas de prix**. « Gratuit » et « gratuit, 0 € » sont la même phrase, écrite
+  // deux fois.
+  //
+  // La mesure les comptait FAUX l'une contre l'autre, et c'est exactement la
+  // faute que ce fichier dit ailleurs être la pire — deux valeurs qui disent la
+  // même chose autrement, qu'aucun total ne révèle. Elle frappait fort : le
+  // site n'enregistre jamais de prix pour une sortie gratuite (`payload.py`
+  // écrit `null`), si bien que **toute** fiche rendue avec `price: 0` sur une
+  // sortie gratuite comptait faux, quel que soit le modèle.
+  //
+  // Le prix n'est donc pas jugé quand la gratuité est affirmée des deux côtés.
+  // Des deux côtés seulement : un désaccord sur `free` reste un désaccord, et
+  // c'est alors le tarif entier qui se juge.
+  if (aspect.key === 'tarif' && attendue.free === true && rendue.free === true) {
+    return juges.filter(([champ]) => champ !== 'price');
+  }
+  return juges;
+}
+
+export function verdictAspect(
+  aspect: { key: string; champs: Champ[] },
+  attendue: FicheRendue,
+  rendue: FicheRendue,
+): FieldVerdict | null {
+  const juges = champsJuges(aspect, attendue, rendue);
   if (juges.length === 0) return null;
 
   const attenduRempli = juges.some(([champ]) => !muet(attendue[champ]));
@@ -1332,10 +1359,11 @@ function ecrire(champs: Champ[], fiche: FicheRendue, cote: 'etiquette' | 'rendu'
 
 export function aspectsDetail(attendue: FicheRendue, rendue: FicheRendue): AspectDetail[] {
   return ASPECTS.map((aspect) => {
-    // Seuls les champs que l'étiquette porte sont jugés — c'est le test de
-    // `verdictAspect`, et l'afficher autrement montrerait une comparaison qui
-    // n'a pas eu lieu.
-    const juges = aspect.champs.filter(([champ]) => champ in attendue);
+    // Exactement les champs que `verdictAspect` a jugés, par la même fonction :
+    // en afficher d'autres montrerait une comparaison qui n'a pas eu lieu, et
+    // c'est ainsi qu'on passe une heure à chercher pourquoi un « juste » porte
+    // deux valeurs différentes.
+    const juges = champsJuges(aspect, attendue, rendue);
     return {
       key: aspect.key,
       libelle: LIBELLES_ASPECTS[aspect.key] ?? aspect.key,
