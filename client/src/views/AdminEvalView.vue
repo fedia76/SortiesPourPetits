@@ -960,6 +960,7 @@ const corpusSize = computed(() => ({
     <nav class="row" style="gap: 1rem; margin-bottom: 1rem">
       <RouterLink to="/admin/evaluation">Corpus et étiquettes</RouterLink>
       <RouterLink to="/admin/evaluation/mesures">Mesures</RouterLink>
+      <RouterLink to="/admin/evaluation/comparer">Comparer</RouterLink>
     </nav>
 
     <p class="muted">

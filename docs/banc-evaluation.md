@@ -511,6 +511,44 @@ précédentes. C'est aussi pourquoi les catégories du site partent dans le prom
 le modèle doit y choisir la sienne, et les lui refuser faisait compter faux un
 champ qu'on l'empêchait de remplir.
 
+### Comparer deux mesures, ligne à ligne
+
+Un taux dit **qu'**une brique a reculé ; il ne dit jamais **sur quoi**. La
+première comparaison sérieuse du banc — Haiku contre un modèle d'OpenRouter sur
+l'étage 6 — l'a montré d'un coup : dix points de moins en moyenne, ce qui se
+discute, et **un aspect tombé de 75 % à 6 %**, ce qui ne se discute pas mais ne
+s'explique pas non plus avec un pourcentage pour seule pièce.
+
+D'où *Comparer* (`/admin/evaluation/comparer`), qui met deux runs d'extraction
+côte à côte, page par page et aspect par aspect. Elle ne mesure rien : elle
+rapproche deux verdicts déjà rendus par `verdictAspect` et les range dans la
+case qu'ils forment ensemble.
+
+| Bascule | Ce qu'elle dit |
+|---|---|
+| **Perdu** | La référence avait bon, l'autre non. C'est ce qu'on vient chercher. |
+| **Gagné** | L'autre a bon là où la référence se trompait. |
+| **Tenu** | Les deux ont bon. Compté, pas listé. |
+| **Raté** | Les deux se trompent — pas forcément de la même façon, et les deux erreurs ne se corrigent pas au même endroit. |
+| **Non jugé** | Le corpus ne dit rien de cet aspect : personne n'a regardé. |
+
+Trois choses en font un instrument plutôt qu'un tableau :
+
+* **le premier run est la référence, et l'ordre compte.** « Ce que B casse de A »
+  et « ce que A casse de B » sont deux questions, toutes deux légitimes ;
+* **seules les pages lues par les deux runs entrent.** Comparer une fiche à une
+  absence ne dit rien du modèle, seulement qu'un run s'est arrêté en chemin — et
+  la vue le dit en toutes lettres quand les deux comptes diffèrent ;
+* **le détail ne garde que ce qui diverge.** Cent quarante sorties font près de
+  deux mille aspects ; y laisser ceux sur lesquels les deux runs s'accordent
+  noierait les quelques dizaines de lignes qu'on est venu lire.
+
+Les jetons et les erreurs des deux runs sont en tête, et ce n'est pas de la
+décoration : une sortie qui enfle pendant que le taux baisse est une explication
+à elle seule — le modèle a raisonné au lieu de répondre —, et une entrée en
+erreur compte MANQUÉ sur **tous** ses aspects, ce qui suffit à faire passer un
+incident technique pour un effondrement de qualité.
+
 ### Rejouer une brique avec un autre fournisseur
 
 La même brique, le même corpus gelé, un autre fournisseur : c'est la

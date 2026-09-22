@@ -1392,6 +1392,59 @@ export const EVAL_PROVIDER_LABELS: Record<EvalProvider, string> = {
   gliner: 'Un étiqueteur local (GLiNER) — gratuit, sans rédaction',
 };
 
+/**
+ * Ce que deux verdicts font ensemble, du point de vue du run de référence.
+ *
+ * C'est la seule chose que la comparaison ajoute au banc : elle ne juge rien,
+ * elle rapproche deux jugements déjà rendus.
+ */
+export type EvalBascule = 'PERDU' | 'GAGNE' | 'TENU' | 'RATE' | 'NON_JUGE';
+
+export const EVAL_BASCULE_LABELS: Record<EvalBascule, string> = {
+  PERDU: 'La référence avait bon, l’autre non',
+  GAGNE: 'L’autre a bon, la référence non',
+  TENU: 'Les deux ont bon',
+  RATE: 'Les deux se trompent',
+  NON_JUGE: 'Le corpus ne dit rien',
+};
+
+/** Une ligne de comparaison : une page du corpus, un aspect, deux réponses. */
+export interface EvalLigneComparee {
+  sortieId: number;
+  url: string;
+  label: string;
+  key: string;
+  libelle: string;
+  attendu: string;
+  renduA: string;
+  renduB: string;
+  verdictA: 'JUSTE' | 'FAUX' | 'INVENTE' | 'MANQUE' | null;
+  verdictB: 'JUSTE' | 'FAUX' | 'INVENTE' | 'MANQUE' | null;
+  bascule: EvalBascule;
+}
+
+export interface EvalBasculesAspect {
+  key: string;
+  libelle: string;
+  tenu: number;
+  perdu: number;
+  gagne: number;
+  rate: number;
+  nonJuge: number;
+}
+
+/** Ce que rend `/api/eval/runs/:a/comparer/:b`. */
+export interface EvalComparaison {
+  a: EvalRun & { erreurs: number; traites: number };
+  b: EvalRun & { erreurs: number; traites: number };
+  /** Pages lues par les **deux** runs : les seules qui se comparent. */
+  communes: number;
+  aspects: EvalBasculesAspect[];
+  lignes: EvalLigneComparee[];
+  /** Aspects où les deux runs disent la même chose, comptés et non listés. */
+  identiques: number;
+}
+
 /** Le résumé chiffré d'un run, calculé à la lecture et jamais stocké. */
 export type EvalScore =
   | ({ kind: 'links' } & EvalHarvestScore &
@@ -1421,6 +1474,16 @@ export type EvalScore =
       INVENTE: number;
       MANQUE: number;
       inconnu: number;
+      /**
+       * Entrées dont la fiche n'est jamais revenue : appel refusé, réponse
+       * tronquée, hébergeur tombé.
+       *
+       * À lire **avant** les manquants : une fiche absente compte MANQUÉ sur
+       * ses douze aspects, et un incident technique prend alors l'apparence
+       * d'un effondrement de qualité. Les deux ne se corrigent pas au même
+       * endroit.
+       */
+      erreurs: number;
       rate: number | null;
       /** Le même décompte, aspect par aspect. Voir `EvalAspectTally`. */
       parAspect: EvalAspectTally[];
