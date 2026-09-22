@@ -223,6 +223,21 @@ class Usage:
 
     input_tokens: int = 0
     output_tokens: int = 0
+    #: Ceux de `output_tokens` qui sont partis en **raisonnement**, quand le
+    #: service le dit. Zéro pour un modèle qui n'en fait pas, et pour tous ceux
+    #: qui ne l'annoncent pas.
+    #:
+    #: Compris dans `output_tokens`, jamais en plus : c'est ainsi que le
+    #: service les facture, et les additionner ferait compter deux fois ce qui
+    #: n'a été payé qu'une.
+    #:
+    #: Sans ce compteur, un modèle qui raisonne et un modèle bavard sont
+    #: indiscernables — même nombre de jetons de sortie, deux causes opposées
+    #: et deux corrections opposées. Le banc a buté là-dessus : un run rendait
+    #: 67 % de jetons de sortie de plus que celui d'en face pour des fiches
+    #: **plus pauvres**, et rien ne permettait de dire s'il réfléchissait ou
+    #: s'il se répandait.
+    reasoning_tokens: int = 0
     web_searches: int = 0
     #: Coût des jetons. Les recherches se facturent à part.
     cost_usd: float = 0.0
@@ -234,6 +249,7 @@ class Usage:
     def add(self, other: Usage) -> None:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
+        self.reasoning_tokens += other.reasoning_tokens
         self.web_searches += other.web_searches
         self.cost_usd += other.cost_usd
         self.search_cost_usd += other.search_cost_usd
@@ -246,6 +262,7 @@ class Usage:
         return {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
             "web_searches": self.web_searches,
             "token_cost_usd": round(self.cost_usd, 4),
             "search_cost_usd": round(self.search_cost_usd, 4),

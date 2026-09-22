@@ -390,7 +390,15 @@ il accepte qu'on le **règle** : `EFFORT_RAISONNEMENT` vaut `low`, le moins que
 sa page OpenRouter propose. C'est un défaut, pas une fatalité — un run du banc
 choisit le sien (*Jouer une mesure* → *Effort de raisonnement*), et
 `tools/openrouter_shape.py` prend le même en second argument pour chiffrer ce
-qu'un cran de plus coûte sans occuper le worker. Un appel qui choisit une étiquette parmi quatre, ou
+qu'un cran de plus coûte sans occuper le worker.
+
+Ce réglage se **saisit librement**, et la console ne fait que suggérer les
+valeurs connues. Elles appartiennent au modèle, pas au routeur : « low »,
+« high » et « max » sont celles du modèle par défaut ; un autre éditeur dit
+« minimal » ou « medium », et celui qui ne raisonne pas n'en a aucune. Seule
+la forme est vérifiée avant le run — un mot en minuscules, sans accent —, ce
+qui arrête une faute de frappe sans prétendre connaître le catalogue de qui
+que ce soit. Le service refuse le reste, et le message le dit. Un appel qui choisit une étiquette parmi quatre, ou
 qui recopie des numéros de ligne, n'a besoin de rien de plus — et c'est la
 seule prise qu'on ait sur la seule chose qui coûte cher ici.
 

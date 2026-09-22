@@ -1207,9 +1207,16 @@ model EvalRun {
   settings   String @default("{}") @db.Text
 
   // ── ce qu'il a coûté. Nul pour les étages de Python pur.
-  inputTokens  Int   @default(0)
-  outputTokens Int   @default(0)
-  costUsd      Float @default(0)
+  inputTokens     Int   @default(0)
+  outputTokens    Int   @default(0)
+  /// Ceux de `outputTokens` partis en raisonnement, quand le service le dit.
+  ///
+  /// **Compris** dans la sortie, jamais en plus : c'est ainsi qu'ils se
+  /// facturent. Sans eux, un modèle qui réfléchit et un modèle bavard rendent
+  /// le même chiffre pour deux causes opposées, qui se corrigent à deux
+  /// endroits opposés.
+  reasoningTokens Int   @default(0)
+  costUsd         Float @default(0)
 
   /// Nombre d'entrées du corpus soumises à ce run.
   items Int @default(0)
@@ -1326,9 +1333,11 @@ model EvalExtractResult {
   /// dérivent de la comparaison au corpus, au moment de la mesure.
   aspects String @default("[]") @db.Text
 
-  inputTokens  Int   @default(0)
-  outputTokens Int   @default(0)
-  costUsd      Float @default(0)
+  inputTokens     Int   @default(0)
+  outputTokens    Int   @default(0)
+  /// Ceux de `outputTokens` partis en raisonnement. Voir `EvalRun`.
+  reasoningTokens Int   @default(0)
+  costUsd         Float @default(0)
 
   error String? @db.Text
 

@@ -12,7 +12,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { evalRunSchema } from '../src/lib/validators';
+import {
+  evalExtractResultSchema,
+  evalRunFinishSchema,
+  evalRunSchema,
+} from '../src/lib/validators';
 
 const RECHERCHE = {
   dateFrom: '2026-07-01',
@@ -111,12 +115,26 @@ test('l’effort de raisonnement se choisit sur le routeur', () => {
   assert.equal(parsed.data.extraction?.effort, 'high');
 });
 
-test('un effort inconnu est refusé', () => {
+test('un effort qu’on ne connaît pas passe : c’est le modèle qui décide', () => {
+  // Le vocabulaire est celui du modèle, pas du routeur — « minimal » chez un
+  // éditeur, « medium » chez un autre. Une liste fermée ici interdirait la
+  // moitié des comparaisons que le banc existe pour rendre possibles.
   const parsed = evalRunSchema.safeParse({
     stage: 'EXTRACT',
-    extraction: { provider: 'openrouter', effort: 'moyen' },
+    extraction: { provider: 'openrouter', effort: 'minimal' },
   });
-  assert.ok(!parsed.success);
+  assert.ok(parsed.success);
+  assert.equal(parsed.data.extraction?.effort, 'minimal');
+});
+
+test('un effort illisible est refusé : c’est une faute de frappe', () => {
+  for (const effort of ['très haut', 'HIGH', 'low 2', 'a'.repeat(21)]) {
+    const parsed = evalRunSchema.safeParse({
+      stage: 'EXTRACT',
+      extraction: { provider: 'openrouter', effort },
+    });
+    assert.ok(!parsed.success, `« ${effort} » aurait dû être refusé`);
+  }
 });
 
 test('l’effort ne se règle pas sur les fournisseurs qui n’en ont pas', () => {
@@ -173,4 +191,37 @@ test('les deux réglages voyagent ensemble sans s’effacer', () => {
   assert.equal((recherche as { theme: string }).theme, 'sorties enfants');
   // Et la clé `extraction` ne doit pas polluer la recherche que le worker lit.
   assert.ok(!('extraction' in recherche));
+});
+
+test('un relevé peut dire ce qui est parti en raisonnement', () => {
+  // Compris dans la sortie, jamais en plus : c'est ainsi que le service les
+  // facture. Le schéma les accepte séparément pour qu'on puisse les lire, pas
+  // pour qu'on les additionne.
+  const parsed = evalExtractResultSchema.safeParse({
+    sortieId: 1,
+    fiche: { title: 'Atelier' },
+    outputTokens: 537,
+    reasoningTokens: 216,
+  });
+  assert.ok(parsed.success);
+  assert.equal(parsed.data.reasoningTokens, 216);
+});
+
+test('un relevé qui ne dit rien du raisonnement compte zéro', () => {
+  // Zéro, et non une estimation : un modèle qui n'en fait pas et un service
+  // qui ne l'annonce pas donnent le même chiffre, et c'est le seul honnête.
+  const parsed = evalExtractResultSchema.safeParse({ sortieId: 1, fiche: {} });
+  assert.ok(parsed.success);
+  assert.equal(parsed.data.reasoningTokens, 0);
+});
+
+test('la clôture d’un run porte le même compteur', () => {
+  const parsed = evalRunFinishSchema.safeParse({
+    status: 'DONE',
+    items: 141,
+    outputTokens: 75_701,
+    reasoningTokens: 30_366,
+  });
+  assert.ok(parsed.success);
+  assert.equal(parsed.data.reasoningTokens, 30_366);
 });

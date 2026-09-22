@@ -411,6 +411,34 @@ test('deux colonnes qui disent un seul fait ne comptent qu’une faute', () => {
   assert.equal(verdict('tarif', { free: true, price: null }, {}), 'MANQUE');
 });
 
+test('une sortie gratuite n’a pas de prix, et les deux écritures se valent', () => {
+  // « Gratuit » et « gratuit, 0 € » sont la même phrase écrite deux fois. La
+  // mesure les comptait FAUX l'une contre l'autre, et le site n'enregistre
+  // jamais de prix pour une sortie gratuite : **toute** fiche rendue avec
+  // `price: 0` sur une gratuité comptait faux, quel que soit le modèle.
+  assert.equal(verdict('tarif', { free: true, price: null }, { free: true, price: 0 }), 'JUSTE');
+  assert.equal(verdict('tarif', { free: true, price: 0 }, { free: true, price: null }), 'JUSTE');
+  assert.equal(verdict('tarif', { free: true, price: 0 }, { free: true, price: 0 }), 'JUSTE');
+});
+
+test('la gratuité ne pardonne le prix que si les deux l’affirment', () => {
+  // Un désaccord sur `free` reste un désaccord, et c'est alors le tarif entier
+  // qui se juge — prix compris. Sans quoi « gratuit » contre « 8 € » passerait.
+  assert.equal(verdict('tarif', { free: true, price: null }, { free: false, price: 8 }), 'FAUX');
+  assert.equal(verdict('tarif', { free: false, price: 0 }, { free: true, price: null }), 'FAUX');
+  // Et un prix reste jugé quand la sortie est payante des deux côtés.
+  assert.equal(verdict('tarif', { free: false, price: 8 }, { free: false, price: 12 }), 'FAUX');
+});
+
+test('le détail n’affiche que les champs réellement jugés', () => {
+  // Sinon un « juste » porterait deux valeurs différentes côte à côte, et on
+  // passerait une heure à chercher l'erreur qui n'existe pas.
+  const detail = aspectsDetail({ free: true, price: null }, { free: true, price: 0 });
+  const tarif = detail.find((aspect) => aspect.key === 'tarif');
+  assert.equal(tarif?.verdict, 'JUSTE');
+  assert.ok(!tarif?.rendu.includes('price'), `le prix ne devait pas être montré : ${tarif?.rendu}`);
+});
+
 test('un faux qui dit quelque chose n’est pas un vide', () => {
   // `false` et `0` **disent** : gratuit, et zéro an. Les traiter en silence
   // ferait compter MANQUÉ une gratuité correctement lue.

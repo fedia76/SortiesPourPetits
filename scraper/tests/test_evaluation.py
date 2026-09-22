@@ -774,7 +774,11 @@ class FakeProvider:
     def __init__(self, event: ExtractedEvent):
         self.event = event
         self.seen: dict[str, object] = {}
-        self.usage = type("U", (), {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0})()
+        self.usage = type(
+            "U",
+            (),
+            {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0, "cost_usd": 0.0},
+        )()
 
     def extract(self, url, content, config, categories, log, *, multiple=False, hints=None):
         self.seen = {
@@ -785,6 +789,7 @@ class FakeProvider:
         }
         self.usage.input_tokens = 2130
         self.usage.output_tokens = 410
+        self.usage.reasoning_tokens = 216
         self.usage.cost_usd = 0.0031
         return [self.event]
 
@@ -818,6 +823,9 @@ def test_l_extraction_est_rejouee_sur_le_texte_gele_jamais_sur_la_page():
     assert len(out["aspects"]) == 12
     assert out["inputTokens"] == 2130
     assert out["costUsd"] == 0.0031
+    # La part de la sortie partie à réfléchir, remontée **par entrée** : c'est
+    # la seule échelle où elle se relie à une fiche qu'on peut relire.
+    assert (out["outputTokens"], out["reasoningTokens"]) == (410, 216)
 
 
 def test_un_appel_en_echec_remonte_son_motif_et_rien_d_autre():

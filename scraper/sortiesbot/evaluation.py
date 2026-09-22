@@ -510,6 +510,7 @@ def extract_page(
     before = getattr(provider, "usage", None)
     spent_in = getattr(before, "input_tokens", 0)
     spent_out = getattr(before, "output_tokens", 0)
+    spent_reasoning = getattr(before, "reasoning_tokens", 0)
     spent_usd = getattr(before, "cost_usd", 0.0)
 
     try:
@@ -539,5 +540,8 @@ def extract_page(
         "aspects": aspects,
         "inputTokens": getattr(after, "input_tokens", 0) - spent_in,
         "outputTokens": getattr(after, "output_tokens", 0) - spent_out,
+        # Compris dans les précédents. Sans eux, un modèle qui réfléchit et un
+        # modèle bavard rendent le même chiffre pour deux causes opposées.
+        "reasoningTokens": getattr(after, "reasoning_tokens", 0) - spent_reasoning,
         "costUsd": round(getattr(after, "cost_usd", 0.0) - spent_usd, 6),
     }

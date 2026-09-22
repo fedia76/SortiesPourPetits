@@ -373,15 +373,16 @@ def _openrouter_models(config: Config) -> None:
     tête ferait une boucle.
     """
     from .providers.base import ProviderError
-    from .providers.openrouter_provider import EFFORTS, modele_openrouter
+    from .providers.openrouter_provider import EFFORTS_CONNUS, effort_valide, modele_openrouter
 
-    effort = config.reasoning_effort.strip().lower()
-    if effort and effort not in EFFORTS:
-        # Le service le refuserait en 400 — mais à mi-corpus, après avoir
-        # occupé le worker. Ici, c'est avant le premier appel.
+    if not effort_valide(config.reasoning_effort):
+        # Sa **forme**, et pas son appartenance à une liste : les valeurs
+        # dépendent du modèle, pas du routeur. Assez pour arrêter une faute de
+        # frappe avant la première dépense ; le service refusera le reste.
         raise ConfigError(
-            f"effort de raisonnement inconnu : « {effort} » "
-            f"(connus : {', '.join(EFFORTS)} — vide pour celui du fournisseur)"
+            f"effort de raisonnement illisible : « {config.reasoning_effort} » "
+            f"(un mot en minuscules — {', '.join(EFFORTS_CONNUS)} pour le modèle "
+            "par défaut, vide pour celui du fournisseur)"
         )
 
     champs = {

@@ -544,7 +544,22 @@ Trois choses en font un instrument plutôt qu'un tableau :
   noierait les quelques dizaines de lignes qu'on est venu lire.
 
 Les jetons et les erreurs des deux runs sont en tête, et ce n'est pas de la
-décoration : une sortie qui enfle pendant que le taux baisse est une explication
+décoration. Deux pièges s'y lisent, qu'aucun taux ne montre :
+
+* **les jetons de sortie ne disent pas ce qu'ils contiennent.** Un modèle qui
+  réfléchit et un modèle bavard rendent le même chiffre, et les deux causes se
+  corrigent à deux endroits opposés — l'effort de raisonnement d'un côté, le
+  prompt de l'autre. La part partie à réfléchir est donc affichée sous le
+  total, quand le service l'annonce. Elle y est **comprise**, jamais en plus :
+  l'additionner compterait deux fois ce qui n'a été payé qu'une ;
+* **les jetons d'entrée ne se comparent pas d'un modèle à l'autre.** Chacun
+  découpe le texte avec son propre vocabulaire : sur le même corpus gelé, un
+  run a rendu 506 300 jetons d'entrée et l'autre 323 716 — 56 % d'écart, sans
+  qu'une ligne ait changé. C'est une propriété du tokeniseur, pas de la page,
+  et elle fausse toute comparaison de tarifs « au million de jetons » faite
+  sans elle.
+
+Le reste de ce que ces deux chiffres disent : une sortie qui enfle pendant que le taux baisse est une explication
 à elle seule — le modèle a raisonné au lieu de répondre —, et une entrée en
 erreur compte MANQUÉ sur **tous** ses aspects, ce qui suffit à faire passer un
 incident technique pour un effondrement de qualité.
@@ -580,7 +595,12 @@ Deux conséquences, et la seconde compte autant que la première :
   courbe porteraient le même nom pour deux modèles différents, et un run joué
   ne dit jamais ce qu'il était : c'est irrattrapable après coup ;
 
-* l'**effort de raisonnement** se choisit comme le modèle, et il pèse autant.
+* l'**effort de raisonnement** se choisit comme le modèle, se saisit aussi
+  librement que lui, et il pèse autant. Librement, parce que ce vocabulaire est
+  celui du **modèle** et non du routeur : « low », « high » et « max » sont
+  ceux du modèle par défaut, un autre éditeur dit « minimal » ou « medium », et
+  celui qui ne raisonne pas n'en a aucun. Une liste fermée aurait interdit la
+  moitié des comparaisons que le banc existe pour rendre possibles.
   Sur le modèle par défaut, passer de « rien demandé » à « low » a fait tomber
   une reconnaissance de 1 312 jetons de raisonnement à zéro, et son coût de
   0,001475 $ à 0,000090 $ — seize fois moins cher pour la même page. Ce que
@@ -615,6 +635,16 @@ tient pas à la qualité du corpus mais aux instruments eux-mêmes :
   tel modèle satisfait gratuitement** ; la condition suffisante — c'est le
   *bon* tarif parmi les cinq qu'affiche la page — n'est mesurée par aucun
   d'eux ;
+* une sortie **gratuite** n'a pas de prix, et les deux écritures se valent.
+  « Gratuit » et « gratuit, 0 € » sont la même phrase ; la mesure les comptait
+  FAUX l'une contre l'autre. Le site n'enregistre jamais de prix pour une
+  gratuité — `payload.py` écrit `null` —, si bien que **toute** fiche rendue
+  avec `price: 0` sur une sortie gratuite comptait faux, quel que soit le
+  modèle. Le prix n'est donc plus jugé quand la gratuité est affirmée des deux
+  côtés ; un désaccord sur `free`, lui, reste un désaccord et le tarif entier
+  se juge alors. Comme la mesure se calcule **à la lecture**, la correction
+  vaut pour tous les runs déjà joués : leurs taux de tarif montent sans qu'on
+  ait rejoué quoi que ce soit ;
 * la **description** n'est jugée que sur sa présence, des deux côtés :
   `pareil()` rend `true` sans condition sur le genre `prose`, et `_overlap` est
   satisfait par une recopie. Une description recopiée mot pour mot de la page
