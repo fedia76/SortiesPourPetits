@@ -102,6 +102,45 @@ test('la forme du slug n’est pas vérifiée ici, et c’est délibéré', () =
   assert.ok(parsed.success);
 });
 
+test('l’effort de raisonnement se choisit sur le routeur', () => {
+  const parsed = evalRunSchema.safeParse({
+    stage: 'EXTRACT',
+    extraction: { provider: 'openrouter', effort: 'high' },
+  });
+  assert.ok(parsed.success);
+  assert.equal(parsed.data.extraction?.effort, 'high');
+});
+
+test('un effort inconnu est refusé', () => {
+  const parsed = evalRunSchema.safeParse({
+    stage: 'EXTRACT',
+    extraction: { provider: 'openrouter', effort: 'moyen' },
+  });
+  assert.ok(!parsed.success);
+});
+
+test('l’effort ne se règle pas sur les fournisseurs qui n’en ont pas', () => {
+  // Une ligne fausse en base : ni l'étiqueteur ni la production n'envoient
+  // d'effort nulle part, et la colonne « modèle » porterait un réglage qui
+  // n'a joué aucun rôle.
+  for (const provider of ['anthropic', 'gliner'] as const) {
+    const parsed = evalRunSchema.safeParse({
+      stage: 'EXTRACT',
+      extraction: { provider, effort: 'high' },
+    });
+    assert.ok(!parsed.success, `${provider} + effort aurait dû être refusé`);
+  }
+});
+
+test('un run sans effort reste valide : c’est celui du scraper qui vaudra', () => {
+  const parsed = evalRunSchema.safeParse({
+    stage: 'EXTRACT',
+    extraction: { provider: 'openrouter' },
+  });
+  assert.ok(parsed.success);
+  assert.equal(parsed.data.extraction?.effort, '');
+});
+
 test('le modèle reste permis partout — c’est le fournisseur de production', () => {
   const parsed = evalRunSchema.safeParse({
     stage: 'SELECT',

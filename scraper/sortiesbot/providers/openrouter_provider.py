@@ -198,8 +198,11 @@ CODES_PASSAGERS = (408, 429, 502, 503, 504)
 #: `UNKNOWN_MODEL_PRICE` chez Anthropic.
 TARIF_INCONNU = (5.0, 25.0)
 
-#: Combien le modèle a le droit de réfléchir, quand il ne sait pas faire
-#: autrement. `""` : on ne demande rien, et c'est l'hébergeur qui décide.
+#: Combien le modèle a le droit de réfléchir, **à défaut** d'une configuration
+#: qui le dise — `Config.reasoning_effort` l'emporte, et c'est par lui que la
+#: console du banc compare « low », « high » et « max » sur le même corpus.
+#:
+#: `""` des deux côtés : on ne demande rien, et c'est l'hébergeur qui décide.
 #:
 #: Le modèle par défaut refuse qu'on lui coupe le raisonnement — voir
 #: `MARGE_RAISONNEMENT` —, mais il accepte qu'on le **règle** : sa page
@@ -213,6 +216,10 @@ TARIF_INCONNU = (5.0, 25.0)
 #: *était* le coût de cet appel. Et « low » l'annule tout à fait sur ce
 #: modèle-là, là où `enabled: false` se faisait refuser en 400.
 #:
+#: Les valeurs qu'OpenRouter accepte sont dans `EFFORTS`, et une configuration
+#: qui en nomme une autre est refusée au chargement : le service la refuserait
+#: en 400, mais à mi-corpus et après avoir occupé le worker.
+#:
 #: Le réglage est envoyé à **tous** les modèles, et ce n'est pas sans risque :
 #: il voyage à côté de `require_parameters`, qui ne route que vers un hébergeur
 #: honorant tout ce qu'on demande. Un modèle sans raisonnement du tout peut
@@ -220,6 +227,10 @@ TARIF_INCONNU = (5.0, 25.0)
 #: message nomme cette piste. Le videz-le alors : c'est un réglage, pas une
 #: fatalité.
 EFFORT_RAISONNEMENT = "low"
+
+#: Ce qu'OpenRouter accepte comme effort, du moins au plus. Le vide s'y ajoute
+#: côté configuration, où il veut dire « celui du fournisseur ».
+EFFORTS = ("low", "high", "max")
 
 #: Jetons ajoutés au plafond de chaque appel, pour que le raisonnement ne
 #: mange pas la réponse.
@@ -340,6 +351,7 @@ class OpenRouterProvider:
     def queries(self, config: Config, log: RunLog) -> list[str]:
         """Formule les requêtes. Le plus petit appel du pipeline."""
         data = self._ask(
+            config=config,
             model=config.search_model,
             prompt=config.render_queries(),
             schema=QUERIES_SCHEMA,
@@ -370,6 +382,7 @@ class OpenRouterProvider:
     def classify(self, digest: str, config: Config, log: RunLog) -> tuple[str, str]:
         """Le plus petit des quatre appels : un condensé, une étiquette."""
         data = self._ask(
+            config=config,
             model=config.classify_model,
             prompt=config.render_classify(digest),
             schema=CLASSIFY_SCHEMA,
@@ -402,6 +415,7 @@ class OpenRouterProvider:
                 context=link.context, agenda=page,
             )
         data = self._ask(
+            config=config,
             model=config.select_model,
             prompt=config.render_select(page, listing),
             schema=SELECT_SCHEMA,
@@ -450,6 +464,7 @@ class OpenRouterProvider:
         """
         if not multiple:
             data = self._ask(
+                config=config,
                 model=config.extraction_model,
                 prompt=config.render_extraction(url, content, categories),
                 schema=EXTRACTION_SCHEMA,
@@ -461,6 +476,7 @@ class OpenRouterProvider:
             return [ExtractedEvent.from_json(data)]
 
         data = self._ask(
+            config=config,
             model=config.extraction_model,
             prompt=config.render_extraction_multi(url, content, categories),
             schema=EXTRACTION_MULTI_SCHEMA,
@@ -476,6 +492,7 @@ class OpenRouterProvider:
     def _ask(
         self,
         *,
+        config: Config,
         model: str,
         prompt: str,
         schema: dict[str, Any],
@@ -506,11 +523,12 @@ class OpenRouterProvider:
             # Et qu'il dise ce que ça a coûté.
             "usage": {"include": True},
         }
-        if EFFORT_RAISONNEMENT:
-            # Le couper est refusé par le modèle par défaut ; le régler ne
-            # l'est pas. C'est la seule prise qu'on ait sur la seule chose qui
-            # coûte cher dans ces quatre appels.
-            payload["reasoning"] = {"effort": EFFORT_RAISONNEMENT}
+        # Celui que le run demande, sinon celui d'ici. Le couper est refusé par
+        # le modèle par défaut ; le régler ne l'est pas, et c'est la seule prise
+        # qu'on ait sur la seule chose qui coûte cher dans ces quatre appels.
+        effort = (config.reasoning_effort or EFFORT_RAISONNEMENT).strip()
+        if effort:
+            payload["reasoning"] = {"effort": effort}
         data = self._post(payload, op=op, modele=modele, log=log)
         self._facturer(data, op=op, modele=modele, log=log)
         return loads_json(_texte(data), ProviderError)

@@ -54,7 +54,7 @@ from .models import Summary
 from .orchestrator import run as run_pipeline
 from .orchestrator import run_source
 from .providers.base import ProviderError, get_provider
-from .providers.openrouter_provider import modele_openrouter
+from .providers.openrouter_provider import EFFORTS, modele_openrouter
 from .providers.serper_client import client_or_none
 from .store import RemoteStore
 
@@ -511,8 +511,23 @@ def _fournisseur_du_run(config: Config, run: dict[str, Any], quiet: bool) -> Con
             modele_openrouter(resolu)
         except ProviderError as err:
             raise ConfigError(f"modèle du run : {err}") from err
+        # L'effort de raisonnement se compare comme le modèle : c'est même la
+        # comparaison la plus intéressante qu'on puisse faire sur ce
+        # fournisseur, puisque passer de « rien demandé » à « low » a divisé le
+        # coût d'une reconnaissance par seize. Validé ici, pour la même raison
+        # que le modèle — `replace` ne repasse pas par `validated`.
+        effort = str(demande.get("effort") or "").strip().lower()
+        if effort and effort not in EFFORTS:
+            raise ConfigError(
+                f"effort de raisonnement inconnu dans les réglages du run : "
+                f"« {effort} » (connus : {', '.join(EFFORTS)})"
+            )
         return replace(
-            config, provider=fournisseur, select_model=resolu, extraction_model=resolu
+            config,
+            provider=fournisseur,
+            select_model=resolu,
+            extraction_model=resolu,
+            reasoning_effort=effort or config.reasoning_effort,
         )
 
     return replace(
@@ -552,7 +567,14 @@ def _declare(stage: str, config: Config | None) -> dict[str, str]:
         # joué ce run — c'est le modèle par défaut du routeur qui l'a fait. Deux
         # points de la courbe porteraient le même nom pour deux modèles
         # différents, et la comparaison serait perdue.
+        #
+        # L'effort de raisonnement en fait partie : deux runs du même modèle à
+        # « low » et à « max » ne sont pas deux états d'une même chose, et le
+        # second peut coûter seize fois le premier. Un nom qui les confondrait
+        # rendrait la courbe illisible, et c'est irrattrapable après coup.
         model = modele_openrouter(model)
+        if config.reasoning_effort:
+            model = f"{model} ({config.reasoning_effort})"
     return {
         "model": model,
         "promptHash": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],

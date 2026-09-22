@@ -1356,6 +1356,18 @@ export interface EvalRecherche {
  */
 export type EvalProvider = 'anthropic' | 'gliner' | 'openrouter';
 
+/** Combien le modèle a le droit de réfléchir. `''` : celui du scraper. */
+export type EvalEffort = '' | 'low' | 'high' | 'max';
+
+export const EVAL_EFFORTS: EvalEffort[] = ['', 'low', 'high', 'max'];
+
+export const EVAL_EFFORT_LABELS: Record<EvalEffort, string> = {
+  '': 'Celui du scraper (le plus bas)',
+  low: 'Bas — sur le modèle par défaut, il l’éteint tout à fait',
+  high: 'Élevé',
+  max: 'Maximum',
+};
+
 export interface EvalExtraction {
   provider: EvalProvider;
   /**
@@ -1364,6 +1376,14 @@ export interface EvalExtraction {
    * défaut du scraper.
    */
   model?: string;
+  /**
+   * L'effort de raisonnement, pour un run OpenRouter et lui seul.
+   *
+   * C'est la comparaison la plus intéressante que ce fournisseur permette :
+   * passer de « rien demandé » à « low » a divisé le coût d'une reconnaissance
+   * par seize, et ce que « high » rend de plus reste à mesurer.
+   */
+  effort?: EvalEffort;
 }
 
 export const EVAL_PROVIDER_LABELS: Record<EvalProvider, string> = {

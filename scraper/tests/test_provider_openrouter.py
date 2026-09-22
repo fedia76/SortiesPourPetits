@@ -32,6 +32,7 @@ from sortiesbot.prompts import SYSTEM
 from sortiesbot.providers.base import ProviderError, get_provider
 from sortiesbot.providers.openrouter_provider import (
     EFFORT_RAISONNEMENT,
+    EFFORTS,
     ENDPOINT,
     MARGE_RAISONNEMENT,
     MODELE_DEFAUT,
@@ -163,6 +164,37 @@ def test_le_plafond_laisse_sa_place_au_raisonnement(log):
     # plus bas : c'est la seule prise qu'on ait sur la seule chose qui coûte.
     assert corps["reasoning"] == {"effort": EFFORT_RAISONNEMENT}
     assert "enabled" not in corps["reasoning"]
+
+
+def test_la_configuration_impose_son_effort(log):
+    """Ce que le banc règle : « low » contre « high » sur le même corpus."""
+    provider, routeur = provider_de(Reponse(reponse({"nature": "sortie", "pourquoi": "x"})))
+    provider.classify("un condensé", config(reasoning_effort="high"), log)
+    assert routeur.appels[0]["body"]["reasoning"] == {"effort": "high"}
+
+
+def test_sans_effort_declare_cest_celui_du_fournisseur(log):
+    """Une recherche de production ne dit rien, et garde le réglage mesuré."""
+    provider, routeur = provider_de(Reponse(reponse({"nature": "sortie", "pourquoi": "x"})))
+    provider.classify("un condensé", config(), log)
+    assert routeur.appels[0]["body"]["reasoning"] == {"effort": EFFORT_RAISONNEMENT}
+
+
+def test_un_effort_inconnu_est_refuse_au_chargement():
+    """Le service le refuserait en 400, mais à mi-corpus."""
+    with pytest.raises(ConfigError) as err:
+        config_from_api(
+            {"name": "e", "theme": "x", "provider": "openrouter", "reasoningEffort": "moyen"}
+        )
+    assert "effort de raisonnement inconnu" in str(err.value)
+
+
+def test_les_trois_efforts_sont_acceptes():
+    for effort in EFFORTS:
+        conf = config_from_api(
+            {"name": "e", "theme": "x", "provider": "openrouter", "reasoningEffort": effort}
+        )
+        assert conf.reasoning_effort == effort
 
 
 def test_un_effort_vide_ne_demande_rien(monkeypatch, log):

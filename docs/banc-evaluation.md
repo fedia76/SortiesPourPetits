@@ -542,6 +542,14 @@ Deux conséquences, et la seconde compte autant que la première :
   courbe porteraient le même nom pour deux modèles différents, et un run joué
   ne dit jamais ce qu'il était : c'est irrattrapable après coup ;
 
+* l'**effort de raisonnement** se choisit comme le modèle, et il pèse autant.
+  Sur le modèle par défaut, passer de « rien demandé » à « low » a fait tomber
+  une reconnaissance de 1 312 jetons de raisonnement à zéro, et son coût de
+  0,001475 $ à 0,000090 $ — seize fois moins cher pour la même page. Ce que
+  « high » rend de plus en échange n'est mesuré par personne, et c'est
+  exactement une question de banc. Deux efforts font donc deux courbes, et le
+  run déclare le sien à côté du modèle : `z-ai/glm-5.3-flash:floor (high)` ;
+
 * un run qu'on veut **reproductible** nomme son modèle sans suffixe de
   routage. Le défaut porte `:floor`, qui demande l'hébergeur le moins cher —
   et il n'est pas le même d'un appel à l'autre, quantisations et réglages
