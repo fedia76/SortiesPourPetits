@@ -32,7 +32,7 @@ from sortiesbot.prompts import SYSTEM
 from sortiesbot.providers.base import ProviderError, get_provider
 from sortiesbot.providers.openrouter_provider import (
     EFFORT_RAISONNEMENT,
-    EFFORTS,
+    EFFORTS_CONNUS,
     ENDPOINT,
     MARGE_RAISONNEMENT,
     MODELE_DEFAUT,
@@ -180,17 +180,31 @@ def test_sans_effort_declare_cest_celui_du_fournisseur(log):
     assert routeur.appels[0]["body"]["reasoning"] == {"effort": EFFORT_RAISONNEMENT}
 
 
-def test_un_effort_inconnu_est_refuse_au_chargement():
-    """Le service le refuserait en 400, mais à mi-corpus."""
+def test_un_effort_illisible_est_refuse_au_chargement():
+    """Une faute de frappe se voit avant la première dépense."""
     with pytest.raises(ConfigError) as err:
         config_from_api(
-            {"name": "e", "theme": "x", "provider": "openrouter", "reasoningEffort": "moyen"}
+            {"name": "e", "theme": "x", "provider": "openrouter", "reasoningEffort": "très haut"}
         )
-    assert "effort de raisonnement inconnu" in str(err.value)
+    assert "effort de raisonnement illisible" in str(err.value)
 
 
-def test_les_trois_efforts_sont_acceptes():
-    for effort in EFFORTS:
+def test_un_effort_quon_ne_connait_pas_passe_quand_meme():
+    """Les valeurs dépendent du **modèle**, pas du routeur.
+
+    Une liste fermée interdisait la moitié des comparaisons que le banc existe
+    pour rendre possibles : « minimal » chez un éditeur, « medium » chez un
+    autre, et rien du tout chez qui ne raisonne pas. On vérifie la forme ; le
+    service refusera le reste, et le dira.
+    """
+    conf = config_from_api(
+        {"name": "e", "theme": "x", "provider": "openrouter", "reasoningEffort": "minimal"}
+    )
+    assert conf.reasoning_effort == "minimal"
+
+
+def test_les_efforts_connus_passent_aussi():
+    for effort in EFFORTS_CONNUS:
         conf = config_from_api(
             {"name": "e", "theme": "x", "provider": "openrouter", "reasoningEffort": effort}
         )
@@ -571,3 +585,36 @@ def test_en_mode_site_le_moteur_nest_pas_monte():
     conf = config(mode="site", seed_urls=["https://festival.fr"])
     provider = get_provider(conf, openrouter_key="sk-or-x", serper_key=None)
     assert isinstance(provider, OpenRouterProvider)
+
+
+def test_les_jetons_de_raisonnement_se_comptent_a_part(log):
+    """Un modèle qui réfléchit et un modèle bavard rendent le même total.
+
+    Les deux causes se corrigent à deux endroits opposés — l'effort d'un côté,
+    le prompt de l'autre —, et rien ne les distinguait avant ce compteur.
+    """
+    brut = reponse(FICHE)
+    brut["usage"]["completion_tokens_details"] = {"reasoning_tokens": 1312}
+    provider, _ = provider_de(Reponse(brut))
+    provider.extract("https://x.fr/a", "texte", config(), [], log)
+    assert provider.usage.reasoning_tokens == 1312
+    # Compris dans la sortie, jamais en plus : c'est ainsi que le service les
+    # facture, et les additionner compterait deux fois ce qui n'a été payé
+    # qu'une.
+    assert provider.usage.output_tokens == 100
+
+
+def test_un_service_qui_ne_dit_rien_ne_compte_rien(log):
+    """Zéro, et non une estimation : un chiffre inventé vaudrait moins que rien."""
+    provider, _ = provider_de(Reponse(reponse(FICHE)))
+    provider.extract("https://x.fr/a", "texte", config(), [], log)
+    assert provider.usage.reasoning_tokens == 0
+
+
+def test_le_raisonnement_s_additionne_d_un_appel_a_l_autre(log):
+    brut = reponse(FICHE)
+    brut["usage"]["completion_tokens_details"] = {"reasoning_tokens": 200}
+    provider, _ = provider_de(Reponse(brut), Reponse(brut))
+    provider.extract("https://x.fr/a", "texte", config(), [], log)
+    provider.extract("https://x.fr/b", "texte", config(), [], log)
+    assert provider.usage.reasoning_tokens == 400

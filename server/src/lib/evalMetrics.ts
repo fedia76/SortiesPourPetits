@@ -1044,11 +1044,11 @@ function renduDe(rendue: FicheRendue, champ: Champ): unknown {
  * page n'annonce pas de tarif » et « personne n'a vérifié le tarif » seraient
  * le même silence, et une valeur inventée deviendrait invisible.
  */
-export function verdictAspect(
+export function champsJuges(
   aspect: { key: string; champs: Champ[] },
   attendue: FicheRendue,
   rendue: FicheRendue,
-): FieldVerdict | null {
+): Champ[] {
   // Seuls les champs que l'étiquette **porte** sont jugés. Un champ absent
   // n'est pas un vide : personne ne l'a regardé, et le comparer reprocherait à
   // la brique d'avoir rendu quelque chose sur quoi le corpus se tait.
@@ -1057,6 +1057,33 @@ export function verdictAspect(
   // `dates` mais jamais les jours de la semaine, que le site ne reçoit pas.
   // Sans ce filtre, chaque sortie à récurrence compterait « faux ».
   const juges = aspect.champs.filter(([champ]) => champ in attendue);
+
+  // Et une règle de fond, qui ne tient qu'au tarif : **une sortie gratuite n'a
+  // pas de prix**. « Gratuit » et « gratuit, 0 € » sont la même phrase, écrite
+  // deux fois.
+  //
+  // La mesure les comptait FAUX l'une contre l'autre, et c'est exactement la
+  // faute que ce fichier dit ailleurs être la pire — deux valeurs qui disent la
+  // même chose autrement, qu'aucun total ne révèle. Elle frappait fort : le
+  // site n'enregistre jamais de prix pour une sortie gratuite (`payload.py`
+  // écrit `null`), si bien que **toute** fiche rendue avec `price: 0` sur une
+  // sortie gratuite comptait faux, quel que soit le modèle.
+  //
+  // Le prix n'est donc pas jugé quand la gratuité est affirmée des deux côtés.
+  // Des deux côtés seulement : un désaccord sur `free` reste un désaccord, et
+  // c'est alors le tarif entier qui se juge.
+  if (aspect.key === 'tarif' && attendue.free === true && rendue.free === true) {
+    return juges.filter(([champ]) => champ !== 'price');
+  }
+  return juges;
+}
+
+export function verdictAspect(
+  aspect: { key: string; champs: Champ[] },
+  attendue: FicheRendue,
+  rendue: FicheRendue,
+): FieldVerdict | null {
+  const juges = champsJuges(aspect, attendue, rendue);
   if (juges.length === 0) return null;
 
   const attenduRempli = juges.some(([champ]) => !muet(attendue[champ]));
@@ -1332,10 +1359,11 @@ function ecrire(champs: Champ[], fiche: FicheRendue, cote: 'etiquette' | 'rendu'
 
 export function aspectsDetail(attendue: FicheRendue, rendue: FicheRendue): AspectDetail[] {
   return ASPECTS.map((aspect) => {
-    // Seuls les champs que l'étiquette porte sont jugés — c'est le test de
-    // `verdictAspect`, et l'afficher autrement montrerait une comparaison qui
-    // n'a pas eu lieu.
-    const juges = aspect.champs.filter(([champ]) => champ in attendue);
+    // Exactement les champs que `verdictAspect` a jugés, par la même fonction :
+    // en afficher d'autres montrerait une comparaison qui n'a pas eu lieu, et
+    // c'est ainsi qu'on passe une heure à chercher pourquoi un « juste » porte
+    // deux valeurs différentes.
+    const juges = champsJuges(aspect, attendue, rendue);
     return {
       key: aspect.key,
       libelle: LIBELLES_ASPECTS[aspect.key] ?? aspect.key,
@@ -1344,4 +1372,148 @@ export function aspectsDetail(attendue: FicheRendue, rendue: FicheRendue): Aspec
       rendu: ecrire(juges.length ? juges : aspect.champs, rendue, 'rendu'),
     };
   });
+}
+
+// ══════════════════════════════════════════════ comparer deux runs de fiches
+//
+// Un taux par aspect dit **qu'**une brique a reculé ; il ne dit jamais **sur
+// quoi**. « Intérieur ou extérieur : 75 % ici, 6 % là » est un chiffre qu'on
+// ne peut ni croire ni corriger : il faut voir les fiches, l'une à côté de
+// l'autre, et lire ce que l'une met là où l'autre avait bon.
+//
+// D'où cette comparaison, qui ne calcule rien de neuf : elle rapproche par
+// **sortie du corpus** deux relevés déjà mesurés, et range chaque aspect dans
+// la case que les deux verdicts forment ensemble. La mesure reste celle de
+// `verdictAspect` — sans quoi la comparaison et les totaux qu'elle explique
+// finiraient par se contredire.
+
+/** Ce que deux verdicts font ensemble, du point de vue du premier run. */
+export type Bascule =
+  /** Le premier avait bon, le second non. C'est ce qu'on vient chercher. */
+  | 'PERDU'
+  /** Le second a bon là où le premier se trompait. */
+  | 'GAGNE'
+  /** Les deux ont bon. */
+  | 'TENU'
+  /** Les deux se trompent — pas forcément de la même façon. */
+  | 'RATE'
+  /** L'un des deux n'a pas été jugé : le corpus ne dit rien de cet aspect. */
+  | 'NON_JUGE';
+
+export function bascule(a: FieldVerdict | null, b: FieldVerdict | null): Bascule {
+  if (a === null || b === null) return 'NON_JUGE';
+  if (a === 'JUSTE' && b === 'JUSTE') return 'TENU';
+  if (a === 'JUSTE') return 'PERDU';
+  if (b === 'JUSTE') return 'GAGNE';
+  return 'RATE';
+}
+
+/** Une ligne de comparaison : une sortie du corpus, un aspect, deux réponses. */
+export interface LigneComparee {
+  sortieId: number;
+  url: string;
+  label: string;
+  key: string;
+  libelle: string;
+  /** Ce que le corpus attend. La pièce qui permet de trancher qui a raison. */
+  attendu: string;
+  renduA: string;
+  renduB: string;
+  verdictA: FieldVerdict | null;
+  verdictB: FieldVerdict | null;
+  bascule: Bascule;
+}
+
+/** Le compte des bascules d'un aspect. */
+export interface BasculesAspect {
+  key: string;
+  libelle: string;
+  tenu: number;
+  perdu: number;
+  gagne: number;
+  rate: number;
+  nonJuge: number;
+}
+
+export interface Comparaison {
+  aspects: BasculesAspect[];
+  lignes: LigneComparee[];
+  /** Lignes écartées du détail parce que les deux runs disent la même chose. */
+  identiques: number;
+}
+
+/**
+ * Rapproche deux relevés d'extraction, sortie par sortie et aspect par aspect.
+ *
+ * Seules les sorties que **les deux** runs ont traitées entrent : comparer une
+ * fiche à une absence ne dit rien du modèle, seulement qu'un run s'est arrêté
+ * en chemin — ce que son compteur d'entrées dit déjà, et mieux.
+ *
+ * Le détail ne garde que ce qui **diverge**, par le verdict ou par la valeur.
+ * Deux runs d'accord sur un aspect n'apprennent rien ligne à ligne, et les
+ * garder noierait les quelques dizaines de lignes qu'on est venu lire sous un
+ * millier d'autres. Ils restent comptés dans `aspects`, où leur nombre a un
+ * sens.
+ */
+export function comparerExtractions(
+  entrees: {
+    sortieId: number;
+    url: string;
+    label: string;
+    attendue: FicheRendue;
+    renduA: FicheRendue;
+    renduB: FicheRendue;
+  }[],
+): Comparaison {
+  const compteurs = new Map<string, BasculesAspect>();
+  for (const aspect of ASPECTS) {
+    compteurs.set(aspect.key, {
+      key: aspect.key,
+      libelle: LIBELLES_ASPECTS[aspect.key] ?? aspect.key,
+      tenu: 0,
+      perdu: 0,
+      gagne: 0,
+      rate: 0,
+      nonJuge: 0,
+    });
+  }
+
+  const lignes: LigneComparee[] = [];
+  let identiques = 0;
+
+  for (const entree of entrees) {
+    const a = aspectsDetail(entree.attendue, entree.renduA);
+    const b = aspectsDetail(entree.attendue, entree.renduB);
+    for (const [index, detailA] of a.entries()) {
+      const detailB = b[index];
+      const sort = bascule(detailA.verdict, detailB.verdict);
+      const compteur = compteurs.get(detailA.key);
+      if (compteur) {
+        if (sort === 'TENU') compteur.tenu += 1;
+        else if (sort === 'PERDU') compteur.perdu += 1;
+        else if (sort === 'GAGNE') compteur.gagne += 1;
+        else if (sort === 'RATE') compteur.rate += 1;
+        else compteur.nonJuge += 1;
+      }
+      if (detailA.verdict === detailB.verdict && detailA.rendu === detailB.rendu) {
+        identiques += 1;
+        continue;
+      }
+      lignes.push({
+        sortieId: entree.sortieId,
+        url: entree.url,
+        label: entree.label,
+        key: detailA.key,
+        libelle: detailA.libelle,
+        attendu: detailA.attendu,
+        renduA: detailA.rendu,
+        renduB: detailB.rendu,
+        verdictA: detailA.verdict,
+        verdictB: detailB.verdict,
+        bascule: sort,
+      });
+    }
+  }
+
+  return { aspects: [...compteurs.values()], lignes, identiques };
 }

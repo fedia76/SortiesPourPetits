@@ -21,8 +21,7 @@ import type {
   EvalEffort, EvalExtraction, EvalProvider, EvalRecherche, EvalRun, EvalScore,
   EvalStage } from '../types';
 import {
-  EVAL_EFFORT_LABELS,
-  EVAL_EFFORTS,
+  EVAL_EFFORTS_CONNUS,
   EVAL_PROVIDER_LABELS,
   EVAL_RUN_STATUS_LABELS,
   EVAL_STAGE_COST,
@@ -66,7 +65,7 @@ const prefixes = ref('');
  */
 const provider = ref<EvalProvider>('anthropic');
 const modele = ref('');
-/** Vide : celui du scraper. Ne vaut que pour le routeur. */
+/** Vide : celui du scraper. Ne vaut que pour le routeur, et se saisit libre. */
 const effort = ref<EvalEffort>('');
 
 const STAGES: EvalStage[] = ['HARVEST', 'SELECT', 'READ', 'EXTRACT'];
@@ -255,7 +254,10 @@ function detail(run: EvalRun): string {
   return (
     `${s.JUSTE} juste(s) · ${s.FAUX} faux · ${s.INVENTE} inventé(s) · ` +
     `${s.MANQUE} manquant(s)` +
-    (s.inconnu ? ` · ${s.inconnu} champ(s) sans étiquette` : '')
+    (s.inconnu ? ` · ${s.inconnu} champ(s) sans étiquette` : '') +
+    // En tête de ce qu'on lit, et non en note : sans ce chiffre, les
+    // manquants d'un run à moitié raté se lisent comme un modèle qui se tait.
+    (s.erreurs ? ` — ${s.erreurs} fiche(s) jamais revenue(s)` : '')
   );
 }
 
@@ -440,6 +442,7 @@ function depuis(value: string | null): string {
     <nav class="row" style="gap: 1rem; margin-bottom: 1rem">
       <RouterLink to="/admin/evaluation">Corpus et étiquettes</RouterLink>
       <RouterLink to="/admin/evaluation/mesures">Mesures</RouterLink>
+      <RouterLink to="/admin/evaluation/comparer">Comparer</RouterLink>
     </nav>
 
     <p class="muted">
@@ -447,6 +450,12 @@ function depuis(value: string | null): string {
       un écart entre deux runs ne peut donc venir que du code, jamais du site.
       Rien n’est écrasé — les runs s’empilent, et c’est ce qui permet enfin de
       voir si ça monte.
+    </p>
+    <p class="muted small">
+      Un taux qui baisse ne dit pas sur quoi.
+      <RouterLink to="/admin/evaluation/comparer">Comparer deux mesures</RouterLink>
+      met les deux fiches d’une même page l’une à côté de l’autre, et sait ne
+      montrer que ce que la seconde casse de ce que la première réussissait.
     </p>
 
     <!-- ── Lancer ─────────────────────────────────────────────────────── -->
@@ -549,11 +558,20 @@ function depuis(value: string | null): string {
           </div>
           <div v-if="provider === 'openrouter'" class="field grow">
             <label for="ev-effort">Effort de raisonnement</label>
-            <select id="ev-effort" v-model="effort">
-              <option v-for="e in EVAL_EFFORTS" :key="e" :value="e">
-                {{ EVAL_EFFORT_LABELS[e] }}
-              </option>
-            </select>
+            <!-- Libre, avec des suggestions : ce vocabulaire est celui du
+                 modèle et non du routeur, et une liste fermée interdirait la
+                 moitié des comparaisons qu'on veut faire. -->
+            <input
+              id="ev-effort"
+              v-model="effort"
+              type="text"
+              list="ev-efforts"
+              maxlength="20"
+              placeholder="vide : celui du scraper"
+            />
+            <datalist id="ev-efforts">
+              <option v-for="e in EVAL_EFFORTS_CONNUS" :key="e" :value="e" />
+            </datalist>
           </div>
         </div>
         <p v-if="provider === 'openrouter'" class="muted small">
@@ -564,6 +582,15 @@ function depuis(value: string | null): string {
           0,000090 $. Seize fois moins cher pour la même page. Ce que « élevé »
           rend de plus en échange, personne ne l’a mesuré — c’est à ça qu’un run
           sert.
+        </p>
+        <p v-if="provider === 'openrouter'" class="muted small">
+          L’effort se saisit librement : <code>low</code>, <code>high</code> et
+          <code>max</code> sont ceux du modèle par défaut, mais ce vocabulaire est
+          celui du <strong>modèle</strong> et non du routeur — un autre éditeur dit
+          <code>minimal</code> ou <code>medium</code>, et celui qui ne raisonne pas
+          n’en a aucun. Laissé vide, c’est le réglage du scraper qui vaut. Un mot
+          que le modèle ne comprend pas fait échouer le run sur un message du
+          service, pas en silence.
         </p>
         <p v-if="provider === 'openrouter'" class="muted small">
           Le modèle s’écrit en deux parties — <code>z-ai/glm-5.3-flash</code>,

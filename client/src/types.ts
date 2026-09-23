@@ -1356,17 +1356,18 @@ export interface EvalRecherche {
  */
 export type EvalProvider = 'anthropic' | 'gliner' | 'openrouter';
 
-/** Combien le modèle a le droit de réfléchir. `''` : celui du scraper. */
-export type EvalEffort = '' | 'low' | 'high' | 'max';
+/**
+ * Combien le modèle a le droit de réfléchir. `''` : celui du scraper.
+ *
+ * Une chaîne libre, et non trois valeurs : ce vocabulaire est celui du
+ * **modèle**, pas du routeur. « low », « high » et « max » sont ceux du modèle
+ * par défaut ; un autre éditeur dit « minimal » ou « medium », et celui qui ne
+ * raisonne pas n'en a aucun.
+ */
+export type EvalEffort = string;
 
-export const EVAL_EFFORTS: EvalEffort[] = ['', 'low', 'high', 'max'];
-
-export const EVAL_EFFORT_LABELS: Record<EvalEffort, string> = {
-  '': 'Celui du scraper (le plus bas)',
-  low: 'Bas — sur le modèle par défaut, il l’éteint tout à fait',
-  high: 'Élevé',
-  max: 'Maximum',
-};
+/** Ceux qu'on connaît, pour les **proposer**. La saisie reste libre. */
+export const EVAL_EFFORTS_CONNUS = ['low', 'high', 'max'];
 
 export interface EvalExtraction {
   provider: EvalProvider;
@@ -1391,6 +1392,59 @@ export const EVAL_PROVIDER_LABELS: Record<EvalProvider, string> = {
   openrouter: 'Un modèle d’OpenRouter — au choix, au tarif qu’il annonce',
   gliner: 'Un étiqueteur local (GLiNER) — gratuit, sans rédaction',
 };
+
+/**
+ * Ce que deux verdicts font ensemble, du point de vue du run de référence.
+ *
+ * C'est la seule chose que la comparaison ajoute au banc : elle ne juge rien,
+ * elle rapproche deux jugements déjà rendus.
+ */
+export type EvalBascule = 'PERDU' | 'GAGNE' | 'TENU' | 'RATE' | 'NON_JUGE';
+
+export const EVAL_BASCULE_LABELS: Record<EvalBascule, string> = {
+  PERDU: 'La référence avait bon, l’autre non',
+  GAGNE: 'L’autre a bon, la référence non',
+  TENU: 'Les deux ont bon',
+  RATE: 'Les deux se trompent',
+  NON_JUGE: 'Le corpus ne dit rien',
+};
+
+/** Une ligne de comparaison : une page du corpus, un aspect, deux réponses. */
+export interface EvalLigneComparee {
+  sortieId: number;
+  url: string;
+  label: string;
+  key: string;
+  libelle: string;
+  attendu: string;
+  renduA: string;
+  renduB: string;
+  verdictA: 'JUSTE' | 'FAUX' | 'INVENTE' | 'MANQUE' | null;
+  verdictB: 'JUSTE' | 'FAUX' | 'INVENTE' | 'MANQUE' | null;
+  bascule: EvalBascule;
+}
+
+export interface EvalBasculesAspect {
+  key: string;
+  libelle: string;
+  tenu: number;
+  perdu: number;
+  gagne: number;
+  rate: number;
+  nonJuge: number;
+}
+
+/** Ce que rend `/api/eval/runs/:a/comparer/:b`. */
+export interface EvalComparaison {
+  a: EvalRun & { erreurs: number; traites: number };
+  b: EvalRun & { erreurs: number; traites: number };
+  /** Pages lues par les **deux** runs : les seules qui se comparent. */
+  communes: number;
+  aspects: EvalBasculesAspect[];
+  lignes: EvalLigneComparee[];
+  /** Aspects où les deux runs disent la même chose, comptés et non listés. */
+  identiques: number;
+}
 
 /** Le résumé chiffré d'un run, calculé à la lecture et jamais stocké. */
 export type EvalScore =
@@ -1421,6 +1475,16 @@ export type EvalScore =
       INVENTE: number;
       MANQUE: number;
       inconnu: number;
+      /**
+       * Entrées dont la fiche n'est jamais revenue : appel refusé, réponse
+       * tronquée, hébergeur tombé.
+       *
+       * À lire **avant** les manquants : une fiche absente compte MANQUÉ sur
+       * ses douze aspects, et un incident technique prend alors l'apparence
+       * d'un effondrement de qualité. Les deux ne se corrigent pas au même
+       * endroit.
+       */
+      erreurs: number;
       rate: number | null;
       /** Le même décompte, aspect par aspect. Voir `EvalAspectTally`. */
       parAspect: EvalAspectTally[];
@@ -1462,6 +1526,14 @@ export interface EvalRun {
   settings: string;
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Ceux de la sortie partis en raisonnement, **compris** dans `outputTokens`.
+   *
+   * Sans eux, un modèle qui réfléchit et un modèle bavard rendent le même
+   * chiffre pour deux causes opposées — et elles ne se corrigent pas au même
+   * endroit : l'effort de raisonnement d'un côté, le prompt de l'autre.
+   */
+  reasoningTokens: number;
   costUsd: number;
   /**
    * Combien d'entrées du corpus ce run avait à traiter — et, une fois clos, ce

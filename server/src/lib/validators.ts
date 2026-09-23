@@ -913,10 +913,24 @@ export const evalExtractionSchema = z.object({
    * zéro — sans qu'on sache ce que « high » rendrait de plus. Une question à
    * laquelle un run répond.
    *
-   * Vide : celui du scraper, le plus bas. Les trois valeurs sont celles
-   * qu'OpenRouter accepte ; le service refuse les autres, mais à mi-corpus.
+   * Vide : celui du scraper, le plus bas. « low », « high » et « max » pour le
+   * modèle par défaut — mais ce vocabulaire est celui du **modèle**, pas du
+   * routeur : un autre éditeur dit « minimal » ou « medium », et celui qui ne
+   * raisonne pas n'en a aucun. Une liste fermée ici interdirait la moitié des
+   * comparaisons que le banc existe pour rendre possibles.
+   *
+   * Seule la forme est donc vérifiée — un mot court, en minuscules, sans
+   * accent —, ce qui arrête une faute de frappe sans prétendre connaître le
+   * catalogue de qui que ce soit. Le service refusera le reste en 400, et le
+   * worker le dira.
    */
-  effort: z.enum(['', 'low', 'high', 'max']).optional().default(''),
+  effort: z
+    .string()
+    .trim()
+    .max(20)
+    .regex(/^[a-z]*$/, 'L’effort s’écrit en un mot, en minuscules et sans accent')
+    .optional()
+    .default(''),
 });
 
 export const evalRunSchema = z
@@ -1063,6 +1077,15 @@ export const evalExtractResultSchema = z.object({
     .default([]),
   inputTokens: z.number().int().min(0).optional().default(0),
   outputTokens: z.number().int().min(0).optional().default(0),
+  /**
+   * Ceux de la sortie partis en raisonnement, quand le service le dit.
+   *
+   * **Compris** dans `outputTokens`, jamais en plus : c'est ainsi qu'ils se
+   * facturent, et les additionner compterait deux fois ce qui n'a été payé
+   * qu'une. Zéro pour un modèle qui n'en fait pas, et pour tous ceux qui ne
+   * l'annoncent pas.
+   */
+  reasoningTokens: z.number().int().min(0).optional().default(0),
   costUsd: z.number().min(0).optional().default(0),
   error: z.string().trim().max(1000).optional(),
 });
@@ -1081,6 +1104,15 @@ export const evalRunFinishSchema = z.object({
   items: z.number().int().min(0).optional().default(0),
   inputTokens: z.number().int().min(0).optional().default(0),
   outputTokens: z.number().int().min(0).optional().default(0),
+  /**
+   * Ceux de la sortie partis en raisonnement, quand le service le dit.
+   *
+   * **Compris** dans `outputTokens`, jamais en plus : c'est ainsi qu'ils se
+   * facturent, et les additionner compterait deux fois ce qui n'a été payé
+   * qu'une. Zéro pour un modèle qui n'en fait pas, et pour tous ceux qui ne
+   * l'annoncent pas.
+   */
+  reasoningTokens: z.number().int().min(0).optional().default(0),
   costUsd: z.number().min(0).optional().default(0),
   /** Vide pour les deux étages de Python pur, qui n'interrogent personne. */
   model: z.string().trim().max(120).optional().default(''),

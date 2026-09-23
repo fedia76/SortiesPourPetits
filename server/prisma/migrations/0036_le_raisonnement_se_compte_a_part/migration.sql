@@ -1,0 +1,31 @@
+-- Les jetons de sortie partis en raisonnement, comptés à part.
+--
+-- ## Ce qui n'allait pas
+--
+-- Un run rendait 67 % de jetons de sortie de plus que celui d'en face, pour
+-- des fiches **plus pauvres** — plus de champs vides, pas moins. Deux causes
+-- expliquent ce chiffre et elles sont opposées : un modèle qui **réfléchit**
+-- avant d'écrire, et un modèle qui **se répand** en écrivant. La première se
+-- corrige en baissant l'effort de raisonnement, la seconde en resserrant le
+-- prompt. Rien, dans `outputTokens`, ne permettait de dire laquelle.
+--
+-- Le service le disait pourtant : OpenRouter renvoie
+-- `usage.completion_tokens_details.reasoning_tokens` à chaque appel. On ne le
+-- lisait pas.
+--
+-- ## Ce que ça change
+--
+-- `reasoningTokens` sur les deux tables où les jetons vivent déjà : l'entrée
+-- (`EvalExtractResult`) et le run (`EvalRun`). Zéro partout pour l'existant,
+-- ce qui est la vérité pour les runs joués par un modèle qui ne raisonne pas —
+-- et une valeur inconnue plutôt que fausse pour ceux qui l'ont fait sans
+-- qu'on compte. Aucune ligne n'est réécrite : un run passé ne dira jamais ce
+-- qu'il n'a pas mesuré.
+--
+-- Ces jetons sont **compris** dans `outputTokens`, jamais en plus : c'est
+-- ainsi que le service les facture, et les additionner ferait compter deux
+-- fois ce qui n'a été payé qu'une. La console les montre donc comme une part,
+-- « 537 dont 216 de raisonnement », et non comme une colonne à additionner.
+
+ALTER TABLE `EvalExtractResult` ADD COLUMN `reasoningTokens` INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE `EvalRun` ADD COLUMN `reasoningTokens` INTEGER NOT NULL DEFAULT 0;

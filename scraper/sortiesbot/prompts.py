@@ -22,6 +22,17 @@ Les deux extractions s'excluent : une page ne porte qu'une sortie (mode
 Le schéma de sortie de l'extraction est défini dans
 [`providers/schemas.py`](providers/schemas.py) : un champ ajouté ici doit
 l'être là aussi, sinon le modèle n'a pas le droit de le renseigner.
+
+Un champ que le schéma déclare et que ces gabarits ne nomment pas tombe sous
+la règle générale — « un champ inconnu reste vide » —, et c'est une règle qui
+ne convient pas à tous. Le banc l'a chiffré : `setting` n'était décrit nulle
+part, et l'aspect « intérieur ou extérieur » est passé de 75 % à 6 % en
+changeant de modèle. Ce n'était pas le modèle qui lisait mal, c'était le
+prompt qui lui disait de se taire — l'un le devinait quand même, l'autre
+obéissait. Les deux champs qui se **déduisent** plutôt qu'ils ne se lisent,
+`category` et `setting`, sont donc nommés comme tels, dans les deux gabarits
+d'extraction : le mode « site » n'a aucune raison d'avoir une autre règle que
+le mode « recherche ».
 """
 
 #: Ce qu'on dit au modèle avant tout le reste, quel que soit l'appel et quel
@@ -185,12 +196,22 @@ Règles :
     récurrence — dans ce cas `weekdays` suffit.
   N'extrapole ni l'une ni l'autre : ne remplis que ce que la page affirme.
 - `category` doit être choisie parmi : $categories
+- `setting` dit où la sortie se passe, et il se **déduit du lieu** : `INDOOR`
+  sous un toit (théâtre, musée, médiathèque, cinéma, salle des fêtes),
+  `OUTDOOR` en plein air (parc, jardin, rue, forêt, ferme), `BOTH` quand la
+  page annonce les deux. Un spectacle au théâtre est en intérieur même si la
+  page ne l'écrit nulle part. Ne le laisse vide que si le lieu lui-même ne
+  tranche pas.
 
 Ne cherche pas d'illustration : tu ne reçois que le texte de la page, et son
 image est relevée séparément dans le HTML (`harvest.main_image`). Laisse
 `photo_url` vide plutôt que de deviner une URL.
 
 Ne renseigne que ce que la page dit réellement : un champ inconnu reste vide.
+Cela vaut pour les **faits** — dates, tarifs, adresses, âges, horaires : ne
+les devine jamais. Deux champs font exception et se déduisent de ce qu'elle
+dit : `category`, qui se choisit dans la liste ci-dessus, et `setting`, qui se
+lit du lieu.
 """
 
 
@@ -247,9 +268,19 @@ Pour chaque fiche, les règles sont celles de la lecture d'une page unique :
 - `category` doit être choisie parmi : $categories
 - `relevant` vaut true pour chaque fiche que tu renvoies : les entrées
   écartées ne figurent simplement pas dans la liste.
+- `setting` dit où la sortie se passe, et il se **déduit du lieu** : `INDOOR`
+  sous un toit (théâtre, musée, médiathèque, cinéma, salle des fêtes),
+  `OUTDOOR` en plein air (parc, jardin, rue, forêt, ferme), `BOTH` quand la
+  page annonce les deux. Un spectacle au théâtre est en intérieur même si la
+  page ne l'écrit nulle part. Ne le laisse vide que si le lieu lui-même ne
+  tranche pas.
 
 Ne cherche pas d'illustration : tu ne reçois que le texte de la page, et son
 image est relevée séparément dans le HTML. Laisse `photo_url` vide.
 
 Ne renseigne que ce que la page dit réellement : un champ inconnu reste vide.
+Cela vaut pour les **faits** — dates, tarifs, adresses, âges, horaires : ne
+les devine jamais. Deux champs font exception et se déduisent de ce qu'elle
+dit : `category`, qui se choisit dans la liste ci-dessus, et `setting`, qui se
+lit du lieu.
 """
