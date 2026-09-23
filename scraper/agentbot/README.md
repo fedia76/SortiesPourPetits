@@ -12,17 +12,20 @@ justifient.
 ## Lancer
 
 ```bash
-cd scraper
-pip install -e .
-# .env : OPENROUTER_API_KEY et SERPER_API_KEY
-python -m agentbot --config configs/agent-exemple.yaml --forget
+cd /opt/sortiespourpetits/scraper
+sudo -u deploy .venv/bin/python -m agentbot --config configs/agent-exemple.yaml --forget
 ```
+
+Sur le VPS : le Python du venv (celui du worker, qui a les dépendances), et
+l'utilisateur `deploy`, pour que `runs/` et `state/` ne deviennent pas la
+propriété de root. Les clés (`OPENROUTER_API_KEY`, `SERPER_API_KEY`) sont déjà
+dans `scraper/.env`. Une configuration écrite à la main doit être en UTF-8.
 
 | Option | Effet |
 |---|---|
 | `--pilot` | modèle OpenRouter qui pilote (`z-ai/glm-5.3-flash` par défaut, `anthropic/claude-haiku-4.5`, `google/gemini-2.5-flash`…) |
 | `--effort` | effort de raisonnement du pilote (`low` par défaut, vide pour celui du modèle) |
-| `--max-turns`, `--max-pages`, `--max-depth`, `--max-searches` | les plafonds de l'exploration |
+| `--max-turns`, `--max-pages`, `--max-depth`, `--max-searches` | les plafonds de l'exploration (60 tours, 40 pages, 3 clics, 20 recherches par défaut) |
 | `--limit N` | plafonne le nombre de sorties retenues |
 | `--forget` | mémoire vide, pour rejouer |
 | `--state` | mémoire des pages vues — **séparée** de celle du pipeline par défaut |
@@ -67,9 +70,9 @@ projet (2,35 $ pour six sorties) :
 La configuration est celle du pipeline : la même peut être jouée par les deux.
 
 ```bash
-python -m sortiesbot --config configs/agent-exemple.yaml --forget
-python -m agentbot   --config configs/agent-exemple.yaml --forget
-python -m agentbot   --config configs/agent-exemple.yaml --forget --pilot anthropic/claude-haiku-4.5
+.venv/bin/python -m sortiesbot --config configs/agent-exemple.yaml --forget
+.venv/bin/python -m agentbot   --config configs/agent-exemple.yaml --forget
+.venv/bin/python -m agentbot   --config configs/agent-exemple.yaml --forget --pilot anthropic/claude-haiku-4.5
 ```
 
 Ce qu'il faut regarder, dans les deux JSON :
@@ -85,13 +88,28 @@ Trois runs de chaque côté, au minimum. Et toujours deux pilotes : si l'agent
 plafonne avec GLM, rien ne dit encore si c'est l'idée qui est en cause ou le
 modèle.
 
+## Ce que le premier run réel a appris
+
+Le Havre, 0-4 ans, GLM : 24 tours, 0,023 $, 3 sorties retenues dont **une
+seule** pour des tout-petits. Quatre corrections en sont sorties :
+
+- **le pilote vérifie l'âge, la période et la zone avant de proposer** — il
+  avait retenu deux sorties « dès 6 ans ». Le prompt le lui demande, et
+  l'extraction lui montre « âge non précisé » avec le début de la description
+  quand la fiche n'a pas d'âge ;
+- **`finish` rappelle une fois les pages de sortie jamais extraites** — la
+  meilleure piste du run (des lectures du samedi pour les tout-petits) avait
+  été ouverte au tour 2 et oubliée ;
+- **20 recherches par défaut au lieu de 8** — c'est le quota de recherches, pas
+  le budget, qui avait arrêté le run, à 5 % du budget dépensé. Le prompt
+  demande aussi des requêtes simples : les guillemets et les `OR` en avaient
+  gâché plusieurs ;
+- **les liens de menu perdent leur contexte et passent en fin de liste** — un
+  contexte partagé par trois liens ou plus est celui d'un menu. Il noyait les
+  listes, et faisait passer tous les liens du menu au filtre « jeune public ».
+
 ## Ce qui n'est pas vérifié
 
-- **La forme d'une réponse à outils d'OpenRouter** n'a pas pu être vérifiée
-  contre le service au moment de l'écriture. Le code suit le format OpenAI
-  (`tool_calls[].function.arguments`) et renvoie `reasoning_details` d'un tour
-  à l'autre. Si le premier run échoue au premier tour, c'est là qu'il faut
-  regarder.
 - **La capacité d'un modèle « flash » à piloter soixante tours.** C'est la
   vraie question du prototype, et seuls des runs y répondront.
 - **Le cache chez les hébergeurs de GLM.** L'élagage est conçu pour le

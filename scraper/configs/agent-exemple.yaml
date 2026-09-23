@@ -3,27 +3,42 @@
 # C'est le format du pipeline, au champ près : la même configuration peut
 # être jouée par les deux scrapers, et c'est ce qui permet de les comparer.
 #
-#   python -m sortiesbot --config configs/agent-exemple.yaml --forget
-#   python -m agentbot   --config configs/agent-exemple.yaml --forget
+#   .venv/bin/python -m sortiesbot --config configs/agent-exemple.yaml --forget
+#   .venv/bin/python -m agentbot   --config configs/agent-exemple.yaml --forget
 #
 # Le pilote de l'agent se choisit en ligne de commande (`--pilot`). Ici,
 # `provider` et `extraction_model` ne désignent que ce qui **lit** les pages.
+#
+# Le thème est lu tel quel par le pilote, et c'est contre lui qu'il vérifie
+# chaque fiche avant de la proposer : l'âge doit y être écrit en clair.
 
-name: agent-niort
+name: agent-le-havre
 theme: >-
-  des spectacles, ateliers, contes et animations pour enfants (0 à 12 ans)
-area: Niort et les Deux-Sèvres
+  des sorties pour les tout-petits de 0 à 4 ans, à faire avec leurs parents :
+  spectacles très jeune public, lectures et heures du conte, éveil musical,
+  ateliers parents-enfants, bébés nageurs, ludothèques, animations des
+  médiathèques et des musées. Pas les sorties « dès 6 ans » ni réservées aux
+  scolaires ou aux crèches.
+area: Le Havre et ses environs (Montivilliers, Harfleur, Sainte-Adresse, Gonfreville-l'Orcher, Octeville-sur-Mer, Fécamp, Étretat, Bolbec, Lillebonne)
 period: les quatre prochaines semaines
 horizon_days: 28
 
 max_events: 15
+# Le quota de l'agent est de 20 recherches au moins (0,001 $ pièce chez
+# Serper) ; cette valeur ne sert qu'à le relever. Le pipeline, lui, s'en
+# sert telle quelle.
 max_searches: 8
 max_page_chars: 8000
 max_cost_usd: 0.50
 
 default_category: Non classé
-keep_out_of_scope: true
-postal_prefixes: ["79"]
+# Strict : une fiche hors zone ou hors période est écartée par le code, pas
+# seulement signalée. Le prompt demande déjà au pilote de les écarter, mais un
+# modèle se trompe, et une règle écrite ici ne se trompe pas. Les deux
+# scrapers jouant la même configuration, la comparaison reste équitable.
+keep_out_of_scope: false
+# Seine-Maritime : la zone qu'on vérifie sur le code postal de la fiche.
+postal_prefixes: ["76"]
 
 # Lire les pages avec GLM, comme le pilote : une seule clé, OpenRouter.
 provider: openrouter

@@ -33,7 +33,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 from urllib.parse import urlsplit
 
-from sortiesbot.classify import PROGRAMME
+from sortiesbot.classify import PROGRAMME, SORTIE
 from sortiesbot.harvest import Link, first_heading, json_ld_dates, links_of, page_text
 from sortiesbot.models import Candidate, ExtractedEvent, FoundPage
 from sortiesbot.providers.base import ProviderError
@@ -67,7 +67,9 @@ class Limits:
     #: Clics depuis un résultat de recherche : 0 pour le résultat lui-même.
     max_depth: int = 3
     max_pages: int = 40
-    max_searches: int = 8
+    #: Une recherche coûte 0,001 $ : c'est elle, et non le budget, qui a
+    #: arrêté le premier run réel — 8 sur 8, à 5 % du budget dépensé.
+    max_searches: int = 20
 
 
 @dataclass
@@ -132,6 +134,7 @@ class Toolbox:
         self.log: AgentLog = ctx.log  # type: ignore[assignment]
         self.counters = Counters()
         self.finished: str | None = None
+        self._rappel_fait = False
 
         self.targets: dict[str, Target] = {}
         self.by_url: dict[str, str] = {}
@@ -299,19 +302,21 @@ class Toolbox:
             store = self.ctx.store
             store.preload([link.url for link in harvested])
             here = normalize_url(found.url)
-            fresh = [
-                link
-                for link in harvested
-                if normalize_url(link.url) != here
-                and not self._blocked(link.url)
-                and not store.seen(link.url)
+            # La page elle-même et les domaines écartés ne sont pas « connus » :
+            # ils sont retirés sans être comptés, sinon le compte mentirait.
+            candidates = [
+                link for link in harvested
+                if normalize_url(link.url) != here and not self._blocked(link.url)
             ]
-            found.known = len(harvested) - len(fresh)
-            found.links = fresh
+            fresh = [link for link in candidates if not store.seen(link.url)]
+            found.known = len(candidates) - len(fresh)
+            found.links = denoised(fresh)
 
         pool = found.links
         motif = fold(str(filtre))
         if motif:
+            # Sur le contexte **débruité** : un menu qui contient « Jeune
+            # public » ferait sinon passer tous les liens du menu au filtre.
             pool = [
                 link for link in pool
                 if motif in fold(f"{link.text} {link.context} {link.url}")
@@ -326,13 +331,15 @@ class Toolbox:
         lines = []
         for link in chunk:
             target = self._target("l", link.url, link.text, found.depth + 1, origin=found.url)
-            context = " ".join(link.context.split())[:120]
-            lines.append(f"{target.ref} · {link.text[:80]} | {context} — {link.url[:110]}")
+            context = f" | {link.context[:120]}" if link.context else ""
+            lines.append(f"{target.ref} · {link.text[:80]}{context} — {link.url[:110]}")
         rest = len(pool) - start - len(chunk)
+        menus = sum(1 for link in pool if not link.context)
         head = (
             f"{found.ref} : liens {start + 1} à {start + len(chunk)} sur {len(pool)}"
             + (f" pour « {filtre} »" if motif else "")
-            + (f" ({found.known} déjà connus, écartés)" if found.known else "")
+            + (f" ({found.known} déjà vus par un run précédent, écartés)" if found.known else "")
+            + (f" — dont {menus} sans contexte (menus), placés en fin de liste" if menus else "")
             + (f" — suite={int(suite) + 1} pour la suite." if rest > 0 else ".")
         )
         return head + "\n" + "\n".join(lines)
@@ -398,6 +405,21 @@ class Toolbox:
         return f"{found.ref} {found.outcome}"
 
     def finish(self, bilan: str = "") -> str:
+        # Une seule fois : le premier run réel a ouvert une page de sortie
+        # (des lectures pour tout-petits, la meilleure piste du run) au tour 2,
+        # et conclu au tour 24 sans l'avoir jamais extraite. Le rappel coûte
+        # un tour ; le pilote reste libre de confirmer.
+        oubliees = [
+            p.ref for p in self.pages.values()
+            if p.nature in (SORTIE, PROGRAMME) and p.fiches is None
+        ]
+        if oubliees and not self._rappel_fait and not self.ctx.budget_reached:
+            self._rappel_fait = True
+            return (
+                f"Pas encore : page(s) de sortie ouvertes mais jamais extraites : "
+                f"{', '.join(oubliees)}. Extrais-les, ou rappelle finish si tu les "
+                "écartes sciemment."
+            )
         self.finished = str(bilan).strip() or "sans bilan"
         return "Exploration close."
 
@@ -453,6 +475,44 @@ class Toolbox:
         return [self._target("r", url, "", 0, origin="") for url in urls]
 
 
+#: Un contexte partagé par au moins ce nombre de liens est celui d'un menu.
+MENU = 3
+
+
+def denoised(links: list[Link]) -> list[Link]:
+    """Retire le contexte des liens de menu, et range ces liens en fin de liste.
+
+    `links_of` remonte les ancêtres d'un lien pour trouver sa « carte » — date,
+    lieu, tarif. Dans un menu, l'ancêtre qu'il trouve est la liste du menu
+    entier, et chaque lien reçoit le même contexte : « Accueil Agenda Jeune
+    public Rouen Le Havre… ». Le premier run réel en était plein, et le pilote
+    y a perdu des tours à lire des menus comme s'ils étaient des sorties.
+
+    La signature est simple et ne dépend d'aucun site : un contexte **répété**
+    n'est pas un contexte. Une carte d'événement est propre à son lien ; un
+    menu est commun à tous les siens. Un contexte qui ne dit rien de plus que
+    le texte du lien est retiré aussi.
+
+    Les liens ne sont pas supprimés — un menu mène parfois à la page
+    « Jeune public » qu'on cherche —, seulement rangés après ceux qui ont
+    quelque chose à dire. L'ordre est stable dans chaque groupe.
+    """
+    counts: dict[str, int] = {}
+    for link in links:
+        key = fold(link.context)
+        counts[key] = counts.get(key, 0) + 1
+
+    carded: list[Link] = []
+    menus: list[Link] = []
+    for link in links:
+        context = " ".join(link.context.split())
+        if counts[fold(link.context)] >= MENU or fold(context) == fold(link.text):
+            menus.append(replace(link, context=""))
+        else:
+            carded.append(replace(link, context=context))
+    return carded + menus
+
+
 def _resume(event: ExtractedEvent) -> str:
     """Une fiche en une ligne : de quoi décider de la proposer, pas plus."""
     if not event.relevant:
@@ -469,6 +529,15 @@ def _resume(event: ExtractedEvent) -> str:
     if event.age_min is not None or event.age_max is not None:
         parts.append(f"{event.age_min if event.age_min is not None else '?'}-"
                      f"{event.age_max if event.age_max is not None else '?'} ans")
+    else:
+        # Dit plutôt que passé sous silence : un âge absent n'est pas un âge
+        # compatible, et le pilote doit le savoir pour en juger.
+        parts.append("âge non précisé")
+        # Et de quoi en juger quand même : le prompt demande au pilote de ne
+        # proposer que si la description désigne clairement le public visé,
+        # encore faut-il qu'il la voie.
+        if event.description:
+            parts.append(f"« {' '.join(event.description.split())[:140]}… »")
     if event.free:
         parts.append("gratuit")
     elif event.price is not None:
@@ -498,8 +567,9 @@ SCHEMAS: list[dict[str, Any]] = [
     _fn(
         "search",
         "Lance une recherche web (Google). Rend des résultats numérotés r1, r2… "
-        "avec titre, adresse et extrait. Coûte une recherche sur un quota limité : "
-        "formule des requêtes précises (lieu, public, type de sortie).",
+        "avec titre, adresse et extrait. Coûte une recherche sur un quota limité. "
+        "Requêtes courtes, en mots simples (lieu, public, type de sortie), sans "
+        "guillemets ni opérateurs (OR, site:…).",
         {"query": {"type": "string", "description": "La requête, en français."}},
         ["query"],
     ),
@@ -538,7 +608,8 @@ SCHEMAS: list[dict[str, Any]] = [
     ),
     _fn(
         "propose",
-        "Retient une fiche : cherche la page de l'organisateur si la fiche vient "
+        "Retient une fiche — seulement si son âge, sa période et sa zone "
+        "correspondent à l'objectif. Cherche la page de l'organisateur si la fiche vient "
         "d'un agrégateur, vérifie les dates, la zone et les doublons, géocode "
         "l'adresse. Rend « retenue » ou le motif du refus.",
         {"fiche": {"type": "string", "description": "Une référence f…"}},
