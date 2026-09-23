@@ -108,6 +108,23 @@ seule** pour des tout-petits. Quatre corrections en sont sorties :
   contexte partagé par trois liens ou plus est celui d'un menu. Il noyait les
   listes, et faisait passer tous les liens du menu au filtre « jeune public ».
 
+## Ce que le deuxième run réel a appris
+
+Mêmes lieu et âges, 60 tours, 0,066 $, 13 sorties retenues dont 6 bonnes et 4
+limites. Trois corrections :
+
+- **l'âge n'écarte plus ce qu'un tout-petit peut faire.** Une sortie tous
+  publics ou à l'âge non précisé est proposée : le site classe déjà les sorties
+  à l'âge précis devant les autres (`server/src/lib/relevance.ts`), le rôle du
+  scraper est de ne pas en perdre. Seul un âge incompatible (« dès 6 ans »)
+  écarte ;
+- **une page qui présente trois lieux ou plus est un agrégateur**, quel que
+  soit son domaine : cinq fiches venaient d'un billet de blog, sans source ni
+  dates. Le domaine rejoint `aggregator_domains` pour le reste du run, et
+  l'attribution remonte chaque fiche à sa page officielle ;
+- **le pilote est prévenu cinq tours avant le plafond** — il avait été coupé en
+  pleine exploration, sans bilan.
+
 ## Ce qui n'est pas vérifié
 
 - **La capacité d'un modèle « flash » à piloter soixante tours.** C'est la

@@ -40,6 +40,33 @@ keep_out_of_scope: false
 # Seine-Maritime : la zone qu'on vérifie sur le code postal de la fiche.
 postal_prefixes: ["76"]
 
+# Sites qui republient sans être la source : une fiche lue chez eux est
+# remontée à la page officielle avant d'être retenue. La liste remplace celle
+# par défaut, d'où les quinze premiers, recopiés tels quels ; les trois
+# derniers viennent du deuxième run réel (un blog, un journal, un agenda
+# local). L'agent repère aussi de lui-même une page qui présente trois lieux
+# ou plus. En production, cette liste se tient dans la console
+# (« Recherche auto → Agrégateurs »), pas ici.
+aggregator_domains:
+  - kidiklik.fr
+  - citizenkid.com
+  - parismomes.fr
+  - familyinparis.fr
+  - sortiraparis.com
+  - parisetudiant.com
+  - unjourdeplusaparis.com
+  - offi.fr
+  - timeout.fr
+  - lylo.fr
+  - petitfute.com
+  - tripadvisor.fr
+  - infolocale.fr
+  - wherevent.com
+  - agendaculturel.fr
+  - onivapp.com
+  - actu.fr
+  - alentoor.fr
+
 # Lire les pages avec GLM, comme le pilote : une seule clé, OpenRouter.
 provider: openrouter
 classify_model: z-ai/glm-5.3-flash
