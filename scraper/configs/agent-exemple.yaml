@@ -1,0 +1,42 @@
+# Exemple de configuration pour l'agent (`python -m agentbot`).
+#
+# C'est le format du pipeline, au champ près : la même configuration peut
+# être jouée par les deux scrapers, et c'est ce qui permet de les comparer.
+#
+#   python -m sortiesbot --config configs/agent-exemple.yaml --forget
+#   python -m agentbot   --config configs/agent-exemple.yaml --forget
+#
+# Le pilote de l'agent se choisit en ligne de commande (`--pilot`). Ici,
+# `provider` et `extraction_model` ne désignent que ce qui **lit** les pages.
+
+name: agent-niort
+theme: >-
+  des spectacles, ateliers, contes et animations pour enfants (0 à 12 ans)
+area: Niort et les Deux-Sèvres
+period: les quatre prochaines semaines
+horizon_days: 28
+
+max_events: 15
+max_searches: 8
+max_page_chars: 8000
+max_cost_usd: 0.50
+
+default_category: Non classé
+keep_out_of_scope: true
+postal_prefixes: ["79"]
+
+# Lire les pages avec GLM, comme le pilote : une seule clé, OpenRouter.
+provider: openrouter
+classify_model: z-ai/glm-5.3-flash
+extraction_model: z-ai/glm-5.3-flash
+select_model: z-ai/glm-5.3-flash
+search_model: z-ai/glm-5.3-flash
+
+blocked_domains:
+  - facebook.com
+  - instagram.com
+  - x.com
+  - twitter.com
+  - tiktok.com
+  - youtube.com
+  - pinterest.fr
