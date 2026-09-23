@@ -41,7 +41,13 @@ async function logout() {
     </main>
 
     <footer class="site-footer">
-      SortiesPourPetits — des idées de sorties avec des enfants, partout en France 🎈
+      <p>SortiesPourPetits — des idées de sorties avec des enfants, partout en France 🎈</p>
+      <!-- Depuis chaque page, parce que la loi veut ces mentions accessibles
+           partout et pas seulement d'un endroit qu'il faut deviner. -->
+      <nav class="legal-links">
+        <RouterLink to="/mentions-legales">Mentions légales</RouterLink>
+        <RouterLink to="/confidentialite">Confidentialité</RouterLink>
+      </nav>
     </footer>
   </v-app>
 </template>

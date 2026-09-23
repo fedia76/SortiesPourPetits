@@ -574,7 +574,93 @@ rien : vous consultez aussi les pages publiques, et ce sont elles qui comptent.
 Si votre IP est fixe, `IGNORE_IP` dans le `.env` du conteneur fait le même
 travail sans dépendre du navigateur.
 
-### 10.8 Sauvegarder
+Une fois ce drapeau posé, **ce navigateur ne produit plus rien** : le tableau
+de bord y restera vide quoi que vous fassiez, et ce n'est pas une panne. C'est
+le piège de cette page, parce qu'on éprouve son installation avec le navigateur
+qu'on vient de faire taire. Toute vérification ultérieure se fait depuis un
+autre navigateur, ou une fenêtre privée d'un autre navigateur — pas une fenêtre
+privée du même, qui partage parfois ce stockage.
+
+### 10.8 Quand rien n'apparaît dans le tableau de bord
+
+**À vérifier avant tout le reste, et c'est le cas le plus fréquent :** le
+drapeau d'auto-exclusion du § 10.7. Dans la console du navigateur, sur le site :
+
+```js
+localStorage.getItem('umami.disabled')
+```
+
+S'il rend `"1"`, tout fonctionne — ce navigateur est simplement celui que vous
+avez fait taire, et il doit le rester. Une page chargée depuis un autre
+navigateur le confirme en quelques secondes ; c'est le test à faire en premier,
+avant d'aller chercher une panne qui n'existe pas.
+
+S'il rend `null` et que rien n'arrive quand même, l'onglet Réseau (F12) tranche
+en une fois : rechargez et regardez le POST vers `/mesure/api/send`. « Blocked »
+désigne une extension du navigateur ; un code `4xx` désigne la configuration —
+`400` avec « Website not found » signifie que `AUDIENCE_WEBSITE_ID` ne
+correspond à aucun site créé dans Umami.
+
+Ce n'est pas le « Do Not Track » du navigateur : le script ne l'honore que si
+on le lui demande par `data-do-not-track`, ce que la balise ne fait pas. Ce
+n'est pas non plus le cache : les pages sortent en `max-age=60`
+(`server/src/routes/site.ts`), soit une minute.
+
+### 10.9 Quand le script lui-même ne répond pas
+
+Le symptôme le plus déroutant est un `curl` qui **attend** au lieu de répondre
+— ni 200, ni 404, rien. Ce n'est pas un pare-feu : c'est une boucle. Trois
+causes possibles, à écarter dans cet ordre.
+
+**Le conteneur sert-il seulement le script ?** Depuis le VPS, en court-circuitant
+Caddy :
+
+```bash
+curl -sI http://127.0.0.1:3001/script.js | head -3
+```
+
+- `200` → le conteneur va bien, le problème est dans Caddy (voir plus bas).
+- ça attend, puis expire → c'est la boucle décrite juste après.
+- `connection refused` → le conteneur n'est pas démarré :
+  `docker compose ps` et `docker compose logs umami`.
+
+**La boucle : `TRACKER_SCRIPT_URL`.** Cette variable n'est pas une valeur
+d'affichage. Le middleware de l'image réécrit, à l'exécution, toute requête sur
+`/script.js` vers l'adresse qu'elle contient. Si cette adresse est celle que
+Caddy renvoie au conteneur, la requête tourne en rond jusqu'à l'expiration et
+le script n'est jamais servi. **Elle ne doit pas figurer dans le `.env`** — le
+renommage en `mesure.js` est le travail de Caddy et ne demande aucune variable.
+
+```bash
+grep TRACKER_SCRIPT_URL /opt/sortiespourpetits/deploy/umami/.env   # ne doit rien sortir
+```
+
+Si la ligne est là, retirez-la puis :
+
+```bash
+cd /opt/sortiespourpetits/deploy/umami
+docker compose up -d --force-recreate umami
+```
+
+`--force-recreate` n'est pas décoratif : `up -d` seul ne recrée pas un
+conteneur dont l'image n'a pas changé, et l'ancienne variable resterait dans
+son environnement.
+
+**Caddy sert-il bien la configuration attendue ?** Un `reload` qui échoue
+laisse l'ancienne configuration en place, et le site continue de répondre comme
+si de rien n'était :
+
+```bash
+caddy validate --config /etc/caddy/Caddyfile
+systemctl status caddy --no-pager
+journalctl -u caddy -n 30 --no-pager
+grep -c 'mesure.js' /etc/caddy/Caddyfile   # 1 attendu, 0 = fichier pas à jour
+```
+
+Si le fichier n'est pas à jour, c'est qu'il n'a pas été recopié depuis
+`/opt/sortiespourpetits/deploy/` après le déploiement — voir § 10.4.
+
+### 10.10 Sauvegarder
 
 Les mesures vivent dans un volume Docker, pas dans MySQL : votre sauvegarde du
 site ne les couvre pas.
@@ -587,7 +673,7 @@ docker compose -f /opt/sortiespourpetits/deploy/umami/docker-compose.yml \
 `docker compose down` laisse le volume en place. `docker compose down -v`
 l'efface — c'est la commande à ne pas taper.
 
-### 10.9 Mettre à jour
+### 10.11 Mettre à jour
 
 ```bash
 cd /opt/sortiespourpetits/deploy/umami
@@ -599,7 +685,7 @@ L'image suit l'étiquette `latest`, comme le compose publié par le projet : un
 est une commande que l'on tape, jamais un automatisme, et qu'une sauvegarde la
 précède. Pour figer une version, remplacez l'étiquette dans le compose.
 
-### 10.10 Ce que ça mesure — et ce que ça ne mesure pas
+### 10.12 Ce que ça mesure — et ce que ça ne mesure pas
 
 **Sans rien à coder**, parce que le script s'en charge :
 
@@ -630,7 +716,7 @@ zéro seconde** — quelqu'un qui lit une fiche pendant quatre minutes puis ferm
 l'onglet est enregistré à 0 s. Aucun outil ne corrige cela honnêtement. Sur un
 faible volume, la moyenne n'est que du bruit.
 
-### 10.11 Consentement
+### 10.13 Consentement
 
 Umami ne pose aucun cookie et ne construit pas d'identifiant durable. C'est ce
 qui permet de tenir les quatre critères d'exemption de la CNIL — finalité
@@ -643,7 +729,13 @@ Deux réserves, et elles sont sérieuses :
 1. c'est vrai tant qu'on ne branche rien d'autre dessus. Ajouter un outil qui
    pose un cookie, ou croiser ces mesures avec les comptes utilisateurs, fait
    retomber l'ensemble dans le régime du consentement ;
-2. l'exemption dispense du bandeau, **pas de l'information**. Le site n'a
-   aujourd'hui ni mentions légales ni politique de confidentialité — il en
-   faut une, qui dise ce qui est mesuré et comment s'y opposer. Ce n'est pas
-   fait ; c'est le prochain chantier.
+2. l'exemption dispense du bandeau, **pas de l'information ni de
+   l'opposition**. Les deux sont en place : `/confidentialite` décrit ce qui
+   est mesuré, et offre deux façons de s'y soustraire — le « Do Not Track » du
+   navigateur, que la balise fait respecter (`data-do-not-track`), et un bouton
+   de refus. Retirer l'un ou l'autre ferait retomber le site sous le régime du
+   consentement, donc du bandeau.
+
+Le numéro de téléphone de l'hébergeur reste à compléter dans
+`server/src/lib/legal.ts` : l'article 6 III de la LCEN le réclame au même titre
+que son adresse.

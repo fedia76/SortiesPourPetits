@@ -187,6 +187,24 @@ const router = createRouter({
         requiresAdmin: true,
       },
     },
+    // Les pages légales : publiques, indexables, et servies par le serveur
+    // avant que Vue ne démarre. Une mention légale doit rester lisible quand
+    // le JavaScript ne s'exécute pas — c'est même tout l'intérêt de l'imposer.
+    // `legalSlug` dit à la vue lequel des deux textes afficher ; il vaut aussi
+    // l'adresse de l'appel d'API, et le serveur écrit sa réponse dans le
+    // document (voir `server/src/seo/pages.ts`).
+    {
+      path: '/mentions-legales',
+      name: 'legal-notice',
+      component: () => import('../views/LegalView.vue'),
+      meta: { title: 'Mentions légales', legalSlug: 'mentions-legales' },
+    },
+    {
+      path: '/confidentialite',
+      name: 'privacy',
+      component: () => import('../views/LegalView.vue'),
+      meta: { title: 'Politique de confidentialité', legalSlug: 'confidentialite' },
+    },
     // Une adresse inconnue affichait l'accueil, par redirection : le visiteur
     // n'y comprenait rien, et le serveur, lui, répond 404 sur cette adresse.
     {

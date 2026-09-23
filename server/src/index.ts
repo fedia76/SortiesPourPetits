@@ -17,6 +17,7 @@ import { scraperRouter } from './routes/scraper';
 import { evalRouter } from './routes/eval';
 import { apiKeysRouter } from './routes/apiKeys';
 import { siteRouter } from './routes/site';
+import { legalRouter } from './routes/legal';
 
 const app = express();
 
@@ -80,6 +81,7 @@ app.use('/api/areas', areasRouter);
 app.use('/api/keys', apiKeysRouter);
 app.use('/api/scraper', scraperRouter);
 app.use('/api/eval', evalRouter);
+app.use('/api/legal', legalRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });

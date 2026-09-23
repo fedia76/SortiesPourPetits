@@ -2,6 +2,7 @@ import { today } from '../lib/dateWindow';
 import { escapeHtml, truncate, type InitialState, type RenderedPage } from './html';
 import { breadcrumbJsonLd, eventJsonLd, itemListJsonLd, websiteJsonLd } from './jsonld';
 import { SITE_NAME, absolute, buildHead, type PageMeta } from './meta';
+import { pageLegaleParChemin, type PageLegale } from '../lib/legal';
 import {
   SETTING_LABELS,
   ageLabel,
@@ -388,6 +389,41 @@ function privatePage(path: string): Page {
   };
 }
 
+/**
+ * Une page légale, rendue depuis le texte qui fait foi (`lib/legal.ts`).
+ *
+ * Le corps est écrit ici **et** transmis en données dans l'état initial : le
+ * document se lit sans JavaScript — ce qu'on attend d'une mention légale, qui
+ * doit rester consultable en toutes circonstances — et la vue qui remplace ce
+ * document retrouve le même texte sans un aller-retour réseau.
+ *
+ * Indexable, contrairement au reste des pages sans sortie : une mention légale
+ * a vocation à être trouvée, c'est même l'objet de la loi qui l'impose.
+ */
+function legalPage(page: PageLegale): Page {
+  const sections = page.sections
+    .map(
+      (section) => `<section>
+      <h2>${escapeHtml(section.titre)}</h2>
+      ${section.paragraphes.map((texte) => `<p>${escapeHtml(texte)}</p>`).join('\n      ')}
+    </section>`,
+    )
+    .join('\n    ');
+
+  return {
+    meta: {
+      title: `${page.titre} — ${SITE_NAME}`,
+      description: page.description,
+      path: page.chemin,
+    },
+    body: `<div class="container page">
+    <h1>${escapeHtml(page.titre)}</h1>
+    ${sections}
+  </div>`,
+    state: { [`/api/legal/${page.slug}`]: { page } },
+  };
+}
+
 const EVENT_PATH = /^\/sorties\/(\d+)\/?$/;
 /** Même espace d'adresses que les fiches, d'où le slug non numérique imposé. */
 const AREA_PATH = /^\/sorties\/([a-z0-9][a-z0-9-]*)\/?$/;
@@ -402,6 +438,7 @@ export async function renderPage(
   let page: Page;
 
   const eventMatch = EVENT_PATH.exec(pathname);
+  const legal = pageLegaleParChemin(pathname);
   if (pathname === '/') {
     page = await homePage(base, pageOf(query.page));
   } else if (isPrivatePath(pathname)) {
@@ -414,6 +451,8 @@ export async function renderPage(
       page = notFoundPage();
       status = 404;
     }
+  } else if (legal) {
+    page = legalPage(legal);
   } else if (AREA_PATH.test(pathname)) {
     const area = await findArea(AREA_PATH.exec(pathname)![1]);
     if (area) {

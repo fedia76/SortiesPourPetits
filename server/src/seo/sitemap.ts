@@ -1,4 +1,5 @@
 import { escapeHtml } from './html';
+import { PAGES_LEGALES } from '../lib/legal';
 
 /**
  * Le sitemap : la seule façon fiable, pour un site dont les fiches se
@@ -40,6 +41,16 @@ export function sitemapXml(
     <loc>${escapeHtml(`${base}${a.path}`)}</loc>${lastmod(a.lastmod)}
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
+  </url>`,
+    ),
+    // Les pages légales : elles ne bougent quasiment jamais et n'ont pas
+    // vocation à être classées, mais elles doivent être trouvables — c'est
+    // l'objet même de l'obligation de les publier. Priorité basse, à la fin.
+    ...PAGES_LEGALES.map(
+      (page) => `  <url>
+    <loc>${escapeHtml(`${base}${page.chemin}`)}</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.1</priority>
   </url>`,
     ),
     ...events.map(

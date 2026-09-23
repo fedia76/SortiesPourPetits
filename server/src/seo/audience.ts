@@ -30,6 +30,11 @@ import { escapeHtml } from './html';
  * recoupement, pas de suivi d'un site à l'autre, information et opposition —
  * et donc de mesurer sans bandeau. Ce n'est vrai que tant qu'on ne branche
  * rien d'autre dessus.
+ *
+ * Les deux derniers critères ne se décrètent pas, ils s'outillent : l'information
+ * est la page de confidentialité, et l'opposition tient en deux moyens — le
+ * « Do Not Track » du navigateur, que `data-do-not-track` fait respecter ici,
+ * et le bouton de refus de cette même page.
  */
 export function audienceTag(): string {
   const { scriptUrl, websiteId, hostUrl } = config.audience;
@@ -58,6 +63,16 @@ export function audienceTag(): string {
     // la balise et viendrait gonfler les chiffres avec un trafic qui n'est pas
     // le nôtre. Cette ligne la fait se taire ailleurs qu'à la maison.
     domaine ? `data-domains="${escapeHtml(domaine)}"` : '',
+    // Le « Do Not Track » du navigateur, honoré — le script l'ignore par
+    // défaut, il faut le lui demander. Ce n'est pas une politesse : l'exemption
+    // de consentement de la CNIL suppose que le visiteur puisse s'opposer à la
+    // mesure, et une case à cocher dans son navigateur est le seul moyen qui ne
+    // lui demande rien de particulier. La page de confidentialité le promet ;
+    // cette ligne est ce qui tient la promesse.
+    //
+    // Elle coûte les visiteurs qui l'ont activé. C'est le prix de l'exemption,
+    // et il est petit devant un bandeau de consentement.
+    'data-do-not-track="true"',
   ].filter(Boolean);
 
   return `<script defer ${attributs.join(' ')}></script>`;
