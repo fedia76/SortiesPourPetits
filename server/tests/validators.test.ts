@@ -15,6 +15,8 @@ import {
   parseSeedUrls,
   checkScraperMode,
   evalCorpusSchema,
+  scraperRunSchema,
+  moderationQueueSchema,
 } from '../src/lib/validators';
 
 /** Une sortie valide, à laquelle chaque test ne change que ce qui l'intéresse. */
@@ -192,4 +194,34 @@ test('le curseur accepte une chaîne, comme tout ce qui vient du réseau', () =>
   const parsed = evalCorpusSchema.parse({ after: '42', limit: '5' });
   assert.equal(parsed.after, 42);
   assert.equal(parsed.limit, 5);
+});
+
+
+// ───────────────────────────────────────────── les deux scrapers
+
+test('une exécution sans scraper précisé est une exécution du pipeline', () => {
+  const run = scraperRunSchema.parse({ submit: true });
+  assert.equal(run.engine, 'pipeline');
+  assert.equal(run.pilot, undefined);
+});
+
+test('l\'agent accepte un pilote au format d\'OpenRouter, ou aucun', () => {
+  assert.equal(scraperRunSchema.parse({ engine: 'agent', pilot: 'z-ai/glm-5.3-flash' }).pilot, 'z-ai/glm-5.3-flash');
+  assert.equal(scraperRunSchema.parse({ engine: 'agent', pilot: 'z-ai/glm-5.3-flash:floor' }).pilot, 'z-ai/glm-5.3-flash:floor');
+  assert.equal(scraperRunSchema.parse({ engine: 'agent', pilot: '' }).pilot, '');
+  assert.equal(scraperRunSchema.safeParse({ engine: 'agent', pilot: 'glm-flash' }).success, false);
+});
+
+test('un pilote sur une exécution du pipeline est refusé', () => {
+  assert.equal(scraperRunSchema.safeParse({ pilot: 'z-ai/glm-5.3-flash' }).success, false);
+});
+
+test('un scraper inconnu est refusé', () => {
+  assert.equal(scraperRunSchema.safeParse({ engine: 'autre' }).success, false);
+});
+
+test('la file de modération se filtre par scraper', () => {
+  assert.equal(moderationQueueSchema.parse({ origin: 'agent' }).origin, 'agent');
+  assert.equal(moderationQueueSchema.parse({ origin: 'pipeline', configId: '3' }).configId, 3);
+  assert.equal(moderationQueueSchema.safeParse({ origin: 'robot' }).success, false);
 });

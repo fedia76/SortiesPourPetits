@@ -5,11 +5,29 @@ enchaîne ses huit étages dans un ordre écrit d'avance (`Run.chain()`), l'agen
 laisse un modèle — le **pilote** — choisir à chaque tour l'outil suivant :
 chercher, ouvrir, lister des liens, extraire, proposer, conclure.
 
-Rien n'est proposé au site : l'agent ne tourne qu'en essai. Il n'est pas
-branché à la console ni au worker ; ce sera à faire si les chiffres le
-justifient.
+## Depuis la console
 
-## Lancer
+Chaque recherche de « Recherche auto » a deux boutons de plus : **◆ Agent :
+essai** et **◆ Agent : lancer et proposer**. Le modèle pilote se choisit en
+tête de la liste (vide : GLM). L'exécution part au worker de l'agent
+(`python -m agentbot.worker`, service `sortiespourpetits-agent`, installation
+au § 9 de [`deploy/README.md`](../../deploy/README.md)), qui ne prend que les
+siennes — celui du pipeline ne les voit pas.
+
+Une exécution de l'agent a la même page que celle du pipeline : journal,
+pages traitées, compteurs, coût. En modération, ses sorties portent le badge
+**◆ Agent** (au lieu de 🤖 Pipeline), et la file se filtre par scraper — tout
+l'agent, ou l'agent sur une recherche précise.
+
+La mémoire des pages, depuis la console, est **celle du site**, commune aux
+deux scrapers : c'est ce qui les empêche de proposer deux fois la même
+sortie. Pour les comparer sur une même recherche, purgez la mémoire entre les
+deux runs — sinon le second saute ce que le premier a lu.
+
+## En ligne de commande
+
+Toujours en essai : rien n'est proposé au site, et la mémoire est locale
+(`state/agent-seen.sqlite3`), séparée de celle du site.
 
 ```bash
 cd /opt/sortiespourpetits/scraper

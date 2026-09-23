@@ -30,7 +30,9 @@ const MODERATION_INCLUDE = {
   // D'où vient la proposition. Une seule ligne suffit : les suivantes
   // désigneraient la même page revue par une autre exécution.
   scraperItems: {
-    select: { run: { select: { configId: true, config: { select: { name: true } } } } },
+    select: {
+      run: { select: { configId: true, engine: true, pilot: true, config: { select: { name: true } } } },
+    },
     orderBy: { id: 'asc' },
     take: 1,
   },
@@ -48,7 +50,13 @@ function serializeEvent(event: ModeratedEvent, similarity?: SimilarityScore) {
   // là pour le type, pas pour un cas connu.
   const origin =
     from?.config && from.configId !== null
-      ? { configId: from.configId, configName: from.config.name }
+      ? {
+          configId: from.configId,
+          configName: from.config.name,
+          // Quel scraper l'a proposée — et, pour l'agent, avec quel pilote.
+          engine: from.engine,
+          pilot: from.pilot,
+        }
       : null;
   return {
     ...rest,
@@ -74,8 +82,18 @@ function serializeEvent(event: ModeratedEvent, similarity?: SimilarityScore) {
  */
 function pendingWhere(filter: ModerationFilter): Prisma.EventWhereInput {
   const where: Prisma.EventWhereInput = { status: 'PENDING' };
-  if (filter.configId) {
-    where.scraperItems = { some: { run: { configId: filter.configId } } };
+  // Le scraper se combine avec la recherche : « l'agent, sur Le Havre » est
+  // la question qu'on pose pour comparer les deux sur un même territoire.
+  const engine = filter.origin === 'pipeline' || filter.origin === 'agent' ? filter.origin : null;
+  if (filter.configId || engine) {
+    where.scraperItems = {
+      some: {
+        run: {
+          ...(filter.configId ? { configId: filter.configId } : {}),
+          ...(engine ? { engine } : {}),
+        },
+      },
+    };
   } else if (filter.origin === 'scraper') {
     where.scraperItems = { some: {} };
   } else if (filter.origin === 'visitors') {

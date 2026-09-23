@@ -213,3 +213,11 @@ jobs:
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
             'sudo systemctl restart sortiespourpetits-scraper' \
             || echo 'Worker non installé sur le VPS — voir deploy/README.md § 9.'
+
+      # Le worker de l'agent, le second scraper. Même tolérance : tant qu'il
+      # n'est pas installé, les exécutions « agent » attendent en file.
+      - name: Redémarrer le worker de l'agent
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            'sudo systemctl restart sortiespourpetits-agent' \
+            || echo "Worker de l'agent non installé sur le VPS — voir deploy/README.md § 9."

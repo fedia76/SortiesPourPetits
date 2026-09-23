@@ -106,7 +106,14 @@ export interface EventItem {
    * La recherche automatique qui a proposé cette sortie, `null` si elle vient
    * d'un visiteur. Renseigné par la file de modération.
    */
-  origin?: { configId: number; configName: string } | null;
+  origin?: {
+    configId: number;
+    configName: string;
+    /** Le scraper qui l'a proposée. */
+    engine: ScraperEngine;
+    /** Le modèle qui pilotait l'agent, quand c'est lui ; `null` sinon ou par défaut. */
+    pilot: string | null;
+  } | null;
   distanceKm?: number;
   /** Renseigné par la recherche de doublons de la modération. */
   similarity?: Similarity;
@@ -231,10 +238,24 @@ export interface ScraperConfig {
   runs?: Pick<ScraperRun, 'id' | 'status' | 'queuedAt' | 'finishedAt' | 'retained'>[];
 }
 
+/**
+ * Les deux scrapers : le pipeline (`sortiesbot`, huit étages dans un ordre
+ * fixe) et l'agent (`agentbot`, un modèle qui choisit l'étape suivante).
+ */
+export type ScraperEngine = 'pipeline' | 'agent';
+
+export const ENGINE_LABELS: Record<ScraperEngine, string> = {
+  pipeline: 'Pipeline',
+  agent: 'Agent',
+};
+
 export interface ScraperRun {
   id: number;
   status: ScraperRunStatus;
   submit: boolean;
+  engine: ScraperEngine;
+  /** Le modèle qui pilote l'agent ; `null` pour le pipeline, ou pour le défaut du worker. */
+  pilot: string | null;
   queuedAt: string;
   startedAt: string | null;
   finishedAt: string | null;

@@ -321,15 +321,30 @@ scraperRouter.post('/configs/:id/run', async (req, res) => {
   // celle qui bloque soit vivante — d'où le ménage, ici plutôt qu'ailleurs :
   // c'est ce clic-ci qu'un run mort empêchait.
   await closeStaleRuns();
+  const { submit, engine, pilot } = parsed.data;
+  // Une par scraper, pas une par configuration : les deux ont chacun leur
+  // worker, et les lancer côte à côte sur la même recherche est précisément
+  // ce qu'on fait pour les comparer.
   const pending = await prisma.scraperRun.findFirst({
-    where: { configId, status: { in: ['QUEUED', 'RUNNING'] } },
+    where: { configId, engine, status: { in: ['QUEUED', 'RUNNING'] } },
   });
   if (pending) {
-    res.status(409).json({ error: 'Une exécution est déjà en attente pour cette configuration' });
+    res.status(409).json({
+      error:
+        engine === 'agent'
+          ? 'Une exécution de l\'agent est déjà en attente pour cette configuration'
+          : 'Une exécution est déjà en attente pour cette configuration',
+    });
     return;
   }
   const run = await prisma.scraperRun.create({
-    data: { configId, submit: parsed.data.submit, requestedById: req.user!.id },
+    data: {
+      configId,
+      submit,
+      engine,
+      pilot: engine === 'agent' && pilot ? pilot : null,
+      requestedById: req.user!.id,
+    },
   });
   res.status(201).json({ run: serializeRun(run) });
 });
@@ -1000,12 +1015,17 @@ scraperRouter.get('/events/:id/source', async (req, res) => {
  * en RUNNING est conditionné au statut QUEUED, donc deux workers ne peuvent
  * pas se disputer la même exécution.
  */
-scraperRouter.post('/next', async (_req, res) => {
+scraperRouter.post('/next', async (req, res) => {
   // Le worker passe toutes les trente secondes : c'est le balayage régulier,
   // celui qui remet la console d'aplomb sans que personne ait rien à cliquer.
   await closeStaleRuns();
+  // Chaque worker ne prend que les exécutions de son scraper. Celui du
+  // pipeline ne précise rien — il ne sait pas qu'il y en a un autre — et
+  // reçoit donc les siennes. Une recherche de source est toujours du
+  // pipeline : c'est son étage 7 qu'elle rejoue.
+  const engine = req.query.engine === 'agent' ? 'agent' : 'pipeline';
   const queued = await prisma.scraperRun.findFirst({
-    where: { status: 'QUEUED' },
+    where: { status: 'QUEUED', engine },
     orderBy: { queuedAt: 'asc' },
     include: {
       config: true,

@@ -207,9 +207,19 @@ export const searchSchema = z.object({
  * détail : une file filtrée qu'on vide ne doit emporter que ce qui était
  * affiché.
  */
+/**
+ * Les deux scrapers. « pipeline » est le défaut partout : c'est celui qui
+ * existait avant l'agent, et c'est ce que le worker du pipeline réclame sans
+ * le savoir.
+ */
+export const SCRAPER_ENGINES = ['pipeline', 'agent'] as const;
+export type ScraperEngine = (typeof SCRAPER_ENGINES)[number];
+
 const moderationFilterShape = {
   configId: z.coerce.number().int().positive().optional(),
-  origin: z.enum(['scraper', 'visitors']).optional(),
+  // « pipeline » et « agent » sont deux sous-ensembles de « scraper » : de
+  // quel scraper vient la sortie, pour comparer ce que chacun fait passer.
+  origin: z.enum(['scraper', 'visitors', ...SCRAPER_ENGINES]).optional(),
 };
 
 export const moderationQueueSchema = z.object(moderationFilterShape);
@@ -417,10 +427,31 @@ export function checkScraperMode(config: { mode: string; seedUrls: string }): st
   return null;
 }
 
+/**
+ * Un modèle au format d'OpenRouter : `éditeur/modèle`, avec un suffixe de
+ * routage facultatif (`:floor`). La forme seulement — c'est le catalogue
+ * d'OpenRouter qui dit s'il existe, et le worker le saura au premier appel.
+ */
+const pilotSlug = z
+  .string()
+  .trim()
+  .max(100)
+  .regex(/^[a-z0-9][a-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*(:[a-z]+)?$/, 'Modèle invalide : « éditeur/modèle » attendu');
+
 /** Mise en file d'une exécution depuis la console. */
-export const scraperRunSchema = z.object({
-  submit: z.boolean().optional().default(false),
-});
+export const scraperRunSchema = z
+  .object({
+    submit: z.boolean().optional().default(false),
+    engine: z.enum(SCRAPER_ENGINES).optional().default('pipeline'),
+    // Vide : le défaut du worker de l'agent.
+    pilot: z.union([pilotSlug, z.literal('')]).optional(),
+  })
+  // Le pilote n'a de sens que pour l'agent : l'accepter sur un run du
+  // pipeline laisserait croire qu'il a servi.
+  .refine((run) => run.engine === 'agent' || !run.pilot, {
+    message: 'Le modèle pilote ne vaut que pour l\'agent',
+    path: ['pilot'],
+  });
 
 const scraperUrl = z.string().trim().url('URL invalide').max(500);
 

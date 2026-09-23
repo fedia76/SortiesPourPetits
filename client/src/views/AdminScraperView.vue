@@ -2,8 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { api } from '../lib/api';
 import { messageDe } from '../lib/erreurs';
-import type { ScraperConfig, ScraperMode, ScraperRun } from '../types';
-import { RUN_STATUS_LABELS } from '../types';
+import type { ScraperConfig, ScraperEngine, ScraperMode, ScraperRun } from '../types';
+import { ENGINE_LABELS, RUN_STATUS_LABELS } from '../types';
 import { runLabel } from '../lib/sorties';
 import { usePolling } from '../composables/usePolling';
 
@@ -176,14 +176,44 @@ async function remove(config: ScraperConfig) {
   }
 }
 
-async function launch(config: ScraperConfig, submit: boolean) {
+/**
+ * Le modèle qui pilotera l'agent, pour les lancements de cette page. Vide :
+ * le défaut du worker (GLM). Gardé dans le navigateur, parce que comparer deux
+ * pilotes se fait en plusieurs lancements, et le retaper à chaque fois
+ * finirait en faute de frappe.
+ */
+const PILOT_KEY = 'spp.agentPilot';
+const pilot = ref(readPilot());
+
+function readPilot(): string {
+  try {
+    return localStorage.getItem(PILOT_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function rememberPilot() {
+  try {
+    localStorage.setItem(PILOT_KEY, pilot.value.trim());
+  } catch {
+    // Navigation privée : le champ marche quand même, il ne sera pas retenu.
+  }
+}
+
+async function launch(config: ScraperConfig, submit: boolean, engine: ScraperEngine = 'pipeline') {
+  const qui = engine === 'agent' ? `l'agent${pilot.value.trim() ? ` (${pilot.value.trim()})` : ''} sur ` : '';
   const question = submit
-    ? `Lancer « ${config.name} » et proposer les sorties trouvées à la modération ?`
-    : `Lancer « ${config.name} » en essai ? Rien ne sera proposé au site.`;
+    ? `Lancer ${qui}« ${config.name} » et proposer les sorties trouvées à la modération ?`
+    : `Lancer ${qui}« ${config.name} » en essai ? Rien ne sera proposé au site.`;
   if (!confirm(question)) return;
   error.value = '';
   try {
-    await api.post(`/api/scraper/configs/${config.id}/run`, { submit });
+    await api.post(`/api/scraper/configs/${config.id}/run`, {
+      submit,
+      engine,
+      ...(engine === 'agent' && pilot.value.trim() ? { pilot: pilot.value.trim() } : {}),
+    });
     await load();
   } catch (e) {
     error.value = messageDe(e);
@@ -575,6 +605,26 @@ onMounted(load);
 
     <!-- Configurations -->
     <h2 style="margin-top: 1.6rem">Recherches</h2>
+    <div class="card agent-pilot">
+      <label>
+        <span><strong>◆ Pilote de l'agent</strong> — le modèle qui choisit où chercher, au format
+          d'OpenRouter. Vide : GLM, le défaut.</span>
+        <input
+          v-model="pilot"
+          type="text"
+          placeholder="z-ai/glm-5.3-flash"
+          spellcheck="false"
+          autocomplete="off"
+          @change="rememberPilot"
+        />
+      </label>
+      <p class="muted small">
+        Le pipeline et l'agent se lancent sur les mêmes recherches, chacun avec son worker : un de
+        chaque peut tourner en même temps. Leur mémoire des pages est commune — pour les comparer
+        sur une même recherche, purgez la
+        <RouterLink to="/admin/scraper/memoire">mémoire</RouterLink> entre les deux.
+      </p>
+    </div>
     <p v-if="!loading && configs.length === 0" class="muted">
       Aucune recherche pour l'instant.
     </p>
@@ -604,6 +654,8 @@ onMounted(load);
       <div class="row">
         <button class="btn small" @click="launch(c, false)">▶ Essai</button>
         <button class="btn small" @click="launch(c, true)">▶ Lancer et proposer</button>
+        <button class="btn small agent" @click="launch(c, false, 'agent')">◆ Agent : essai</button>
+        <button class="btn small agent" @click="launch(c, true, 'agent')">◆ Agent : lancer et proposer</button>
         <button class="btn small ghost" @click="startEdit(c)">Modifier</button>
         <button class="btn small ghost" @click="toggle(c)">
           {{ c.enabled ? 'Désactiver' : 'Activer' }}
@@ -632,6 +684,11 @@ onMounted(load);
         <tr v-for="r in runs" :key="r.id">
           <td>
             <RouterLink :to="`/admin/scraper/runs/${r.id}`">{{ runLabel(r) }}</RouterLink>
+            <span
+              v-if="r.engine === 'agent'"
+              class="badge engine-agent"
+              :title="`Joué par l'agent${r.pilot ? `, piloté par ${r.pilot}` : ''}`"
+            >◆ {{ ENGINE_LABELS.agent }}</span>
             <span v-if="!r.submit" class="badge">essai</span>
             <span v-if="r.purgedAt" class="badge" title="Sorties et mémoire supprimées">vidée</span>
           </td>
@@ -743,6 +800,25 @@ onMounted(load);
   color: var(--accent-dark);
   cursor: pointer;
   text-decoration: underline;
+}
+
+.btn.agent {
+  background: var(--agent, #5b3fa8);
+}
+
+.badge.engine-agent {
+  background: var(--agent-soft, #ece6fb);
+  color: var(--agent, #5b3fa8);
+}
+
+.agent-pilot label {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.agent-pilot input {
+  max-width: 22rem;
+  font-family: ui-monospace, monospace;
 }
 
 .runs {
