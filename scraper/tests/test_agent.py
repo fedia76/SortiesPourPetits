@@ -330,3 +330,74 @@ def test_un_nom_de_modele_sans_editeur_est_refuse_avant_toute_depense():
 
     with pytest.raises(ProviderError):
         Pilot("glm-flash", Usage(), router=FakeRouter([]))
+
+
+# ──────────────────────────────────────── ce que le premier run réel a appris
+
+MENU_HTML = """
+<html><body>
+  <nav><ul>
+    <li><a href="/jeune-public/rouen/">Jeune public Rouen</a></li>
+    <li><a href="/jeune-public/le-havre/">Jeune public Le Havre</a></li>
+    <li><a href="/jeune-public/dieppe/">Jeune public Dieppe</a></li>
+  </ul></nav>
+  <main>
+    <h1>Agenda des tout-petits</h1>
+    <p>Toutes les sorties pour les enfants de moins de quatre ans, mises à jour
+    chaque semaine par l'équipe de l'agenda, salle par salle et date par date.</p>
+    <article><a href="/tout-petits/bebes-lecteurs-niemeyer.html">Bébés lecteurs à la médiathèque</a>
+      <span>samedi 3 octobre, 10 h — médiathèque Oscar Niemeyer, de 0 à 3 ans</span></article>
+  </main>
+</body></html>
+"""
+MENU_URL = "https://agenda.fr/tout-petits/"
+
+
+def test_les_liens_de_menu_perdent_leur_contexte_et_passent_en_fin_de_liste():
+    toolbox = outils([], pages={MENU_URL: MENU_HTML})
+    toolbox._target("r", MENU_URL, "Agenda", 0, origin="q")
+    toolbox.open("r1")
+
+    listing = toolbox.links("p1").splitlines()
+
+    assert "3 sans contexte (menus)" in listing[0]
+    assert listing[1].startswith("l") and "Bébés lecteurs à la médiathèque | " in listing[1] and "samedi 3 octobre" in listing[1]
+    assert all(" | " not in line for line in listing[2:])
+    # Le filtre ne s'y laisse plus prendre : « jeune public » était dans le
+    # menu de chaque lien, il ne reste que dans leurs titres.
+    filtre = toolbox.links("p1", filtre="dieppe")
+    assert "1 à 1 sur 1" in filtre
+
+
+def test_la_page_elle_meme_nest_pas_comptee_comme_deja_vue():
+    page = MENU_HTML.replace("<main>", f'<main><a href="{MENU_URL}">Recharger</a>')
+    toolbox = outils([], pages={MENU_URL: page})
+    toolbox._target("r", MENU_URL, "Agenda", 0, origin="q")
+    toolbox.open("r1")
+    assert "déjà vus" not in toolbox.links("p1").splitlines()[0]
+
+
+def test_finish_rappelle_une_fois_les_pages_de_sortie_jamais_extraites():
+    toolbox = outils([])
+    toolbox.search("q")
+    toolbox.open("r1")
+    toolbox.links("p1")
+    toolbox.open("l1")
+    toolbox.pages["p2"].nature = "sortie"
+
+    rappel = toolbox.finish("fini")
+    assert rappel.startswith("Pas encore") and "p2" in rappel
+    assert toolbox.finished is None
+    assert toolbox.finish("fini quand même") == "Exploration close."
+    assert toolbox.finished == "fini quand même"
+
+
+def test_un_age_absent_est_dit_avec_de_quoi_en_juger():
+    provider = FakeProvider([], {EVENT_URL: sortie(description="Lectures pour les bébés et leurs parents.")})
+    toolbox = outils([], provider=provider)
+    toolbox.search("q")
+    toolbox.open("r1")
+    toolbox.links("p1")
+    toolbox.open("l1")
+    resume = toolbox.extract("p2")
+    assert "âge non précisé" in resume and "Lectures pour les bébés" in resume
