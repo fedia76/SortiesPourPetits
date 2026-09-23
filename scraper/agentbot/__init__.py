@@ -32,9 +32,11 @@ Ce qui ne change pas, délibérément :
   pilote ne peut pas non plus ouvrir une adresse qu'aucun outil ne lui a
   rendue — il lui est matériellement impossible d'en inventer une.
 
-Rien n'est proposé au site : l'agent ne tourne qu'en essai, et sa mémoire des
-pages vues est séparée de celle du pipeline. Sans cette séparation, il sauterait
-tout ce que le pipeline a déjà lu, et la comparaison serait faussée d'office.
+Deux points d'entrée :
 
-Point d'entrée : `python -m agentbot --config configs/agent-exemple.yaml`.
+* `python -m agentbot --config configs/agent-exemple.yaml` — en ligne de
+  commande, toujours en essai, avec une mémoire locale séparée de celle du
+  site ;
+* `python -m agentbot.worker` — le service qui joue les exécutions « agent »
+  lancées depuis la console, soumission comprise, avec la mémoire du site.
 """

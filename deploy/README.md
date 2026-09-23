@@ -392,6 +392,28 @@ en root, pour ne pas reproduire le problème. Un journal fichier impossible à
 ouvrir n'arrête pas le run — la console garde la trace de chaque page — mais
 autant garder la trace sur disque aussi.
 
+### Le worker de l'agent
+
+Le second scraper ([`scraper/agentbot/`](../scraper/agentbot/README.md)) a son
+propre worker : il ne prend que les exécutions lancées avec « Agent » dans la
+console, et le worker du pipeline ne les voit jamais. Même code, même venv,
+même `.env`, une autre unité. À installer **une fois**, en root, après le
+premier déploiement qui la dépose :
+
+```bash
+cp /opt/sortiespourpetits/deploy/sortiespourpetits-agent.service \
+   /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now sortiespourpetits-agent
+echo 'deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart sortiespourpetits-api, /usr/bin/systemctl restart sortiespourpetits-scraper, /usr/bin/systemctl restart sortiespourpetits-agent' \
+  | tee /etc/sudoers.d/sortiespourpetits-deploy
+visudo -c
+```
+
+Il lui faut `OPENROUTER_API_KEY` (le pilote) et `SERPER_API_KEY` (la
+recherche), en plus de `SPP_API_KEY` : il refuse de démarrer sans, et le
+journal le dit (`journalctl -u sortiespourpetits-agent -f`).
+
 ### Surveiller le worker
 
 ```bash

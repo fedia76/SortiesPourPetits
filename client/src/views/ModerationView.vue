@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../lib/api';
 import { messageDe } from '../lib/erreurs';
-import type { EventItem, RejectionMeaning, ScraperConfig } from '../types';
+import type { EventItem, RejectionMeaning, ScraperConfig, ScraperEngine } from '../types';
 import { SETTING_LABELS, STATUS_LABELS } from '../types';
 import {
   dayLabel,
@@ -38,20 +38,51 @@ const duplicates = ref<Record<number, DuplicateCheck>>({});
  * c'est aussi la façon de modérer une région à la fois.
  */
 const source = ref<string>('');
+/**
+ * Le scraper, en plus d'une recherche : `''` pour les deux. Sans effet quand
+ * l'origine choisie est déjà « visiteurs » ou un scraper entier.
+ */
+const engine = ref<'' | ScraperEngine>('');
 const configs = ref<ScraperConfig[]>([]);
+
+/** Les origines qui ne sont pas une recherche précise. */
+const WHOLE_ORIGINS = ['visitors', 'scraper', 'pipeline', 'agent'];
+
+/** Le filtre désigne une recherche : c'est là seulement que le choix du scraper a un sens. */
+const isConfig = computed(() => source.value !== '' && !WHOLE_ORIGINS.includes(source.value));
+
+/** L'origine d'une proposition, en toutes lettres, pour l'infobulle. */
+function originTitle(origin: NonNullable<EventItem['origin']>): string {
+  const par =
+    origin.engine === 'agent'
+      ? `l'agent${origin.pilot ? `, piloté par ${origin.pilot}` : ''}`
+      : 'le pipeline';
+  return `Proposée par ${par}, recherche « ${origin.configName} »`;
+}
 
 /** Ce que le filtre courant ajoute à l'URL de la file. */
 const query = computed(() => {
-  if (source.value === 'visitors' || source.value === 'scraper') return `origin=${source.value}`;
-  return source.value ? `configId=${source.value}` : '';
+  const params = new URLSearchParams();
+  if (!source.value) return '';
+  if (!isConfig.value) {
+    params.set('origin', source.value);
+  } else {
+    params.set('configId', source.value);
+    // Le scraper se combine avec la recherche : « l'agent, sur Le Havre ».
+    if (engine.value) params.set('origin', engine.value);
+  }
+  return params.toString();
 });
 
 /** Le filtre en toutes lettres, pour les phrases qui doivent le rappeler. */
 const sourceLabel = computed(() => {
   if (source.value === 'visitors') return 'proposées par un visiteur';
   if (source.value === 'scraper') return 'issues des recherches automatiques';
+  if (source.value === 'pipeline') return 'issues du pipeline';
+  if (source.value === 'agent') return 'issues de l\'agent';
   const found = configs.value.find((c) => String(c.id) === source.value);
-  return found ? `issues de la recherche « ${found.name} »` : '';
+  const par = engine.value ? ` par ${engine.value === 'agent' ? 'l\'agent' : 'le pipeline'}` : '';
+  return found ? `issues de la recherche « ${found.name} »${par}` : '';
 });
 
 /** Au-delà, on considère le doublon probable plutôt que simplement possible. */
@@ -299,9 +330,19 @@ onMounted(() => {
           <option value="">Toutes les propositions</option>
           <option value="visitors">Proposées par un visiteur</option>
           <option value="scraper">Toutes les recherches automatiques</option>
+          <option value="pipeline">Tout le pipeline</option>
+          <option value="agent">Tout l'agent</option>
           <option v-for="c in configs" :key="c.id" :value="String(c.id)">
             Recherche « {{ c.name }} »
           </option>
+        </select>
+      </label>
+      <label v-if="isConfig" class="filtre">
+        <span class="muted small">Scraper</span>
+        <select v-model="engine" @change="load">
+          <option value="">Les deux</option>
+          <option value="pipeline">Pipeline</option>
+          <option value="agent">Agent</option>
         </select>
       </label>
       <button
@@ -336,8 +377,13 @@ onMounted(() => {
 
     <div v-for="e in events" :key="e.id" class="card" style="padding: 1.2rem; margin-bottom: 1rem">
       <div class="badges" style="margin-bottom: 0.4rem">
-        <span v-if="e.origin" class="badge origin" :title="`Proposée par la recherche automatique « ${e.origin.configName} »`">
-          🤖 {{ e.origin.configName }}
+        <span
+          v-if="e.origin"
+          class="badge origin"
+          :class="`engine-${e.origin.engine}`"
+          :title="originTitle(e.origin)"
+        >
+          {{ e.origin.engine === 'agent' ? '◆ Agent' : '🤖 Pipeline' }} · {{ e.origin.configName }}
         </span>
         <span class="badge price">{{ priceLabel(e) }}</span>
         <span v-if="shortAgeLabel(e)" class="badge">{{ shortAgeLabel(e) }}</span>
@@ -593,6 +639,12 @@ onMounted(() => {
 .badge.origin {
   background: var(--accent-soft);
   color: var(--accent-dark);
+}
+
+/* L'agent se distingue d'un coup d'œil : c'est ce qu'on compare. */
+.badge.origin.engine-agent {
+  background: var(--agent-soft, #ece6fb);
+  color: var(--agent, #5b3fa8);
 }
 
 .small {

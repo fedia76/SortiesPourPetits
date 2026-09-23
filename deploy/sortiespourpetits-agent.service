@@ -1,0 +1,29 @@
+[Unit]
+Description=SortiesPourPetits — worker de l'agent (second scraper)
+# Le jumeau de sortiespourpetits-scraper : même code, même venv, même .env,
+# mais il ne réclame que les exécutions « agent » (voir scraper/agentbot/).
+After=network.target sortiespourpetits-api.service
+Wants=sortiespourpetits-api.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/sortiespourpetits/scraper
+# OPENROUTER_API_KEY (le pilote), SERPER_API_KEY (la recherche) et SPP_API_KEY
+# sont écrites par le déploiement, dans le même fichier que pour le pipeline.
+EnvironmentFile=/opt/sortiespourpetits/scraper/.env
+ExecStart=/opt/sortiespourpetits/scraper/.venv/bin/python -m agentbot.worker
+# Un run de l'agent dure jusqu'à soixante tours : on le laisse finir.
+KillSignal=SIGTERM
+TimeoutStopSec=600
+Restart=on-failure
+RestartSec=10
+# Plus bas que le pipeline : l'agent ne charge aucun modèle local, tout passe
+# par des appels d'API. Un dépassement serait une fuite, pas un besoin.
+MemoryHigh=600M
+MemoryMax=800M
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

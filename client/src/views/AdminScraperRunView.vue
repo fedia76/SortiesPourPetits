@@ -175,6 +175,11 @@ onMounted(load);
       <h1>
         {{ runLabel(run) }}
         <span class="badge" :class="`run-${run.status}`">{{ RUN_STATUS_LABELS[run.status] }}</span>
+        <span
+          v-if="run.engine === 'agent'"
+          class="badge engine-agent"
+          :title="run.pilot ? `Piloté par ${run.pilot}` : 'Pilote par défaut du worker'"
+        >◆ Agent{{ run.pilot ? ` · ${run.pilot}` : '' }}</span>
         <span v-if="!run.submit" class="badge">essai</span>
       </h1>
       <p class="muted">
@@ -300,6 +305,11 @@ onMounted(load);
 </template>
 
 <style scoped>
+.badge.engine-agent {
+  background: var(--agent-soft, #ece6fb);
+  color: var(--agent, #5b3fa8);
+}
+
 .notice {
   padding: 0.6rem 0.8rem;
   border-radius: 10px;

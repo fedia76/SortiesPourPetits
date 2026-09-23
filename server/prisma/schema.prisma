@@ -403,6 +403,18 @@ model ScraperRun {
   /// Faux : le run explore sans rien proposer au site.
   submit Boolean          @default(false)
 
+  /// Le scraper qui joue l'exécution : « pipeline » (`sortiesbot`, les huit
+  /// étages dans un ordre fixe) ou « agent » (`agentbot`, un modèle qui
+  /// choisit l'étape suivante). Deux workers, chacun ne réclame que les
+  /// siennes : le pipeline, qui ne sait rien de ce champ, reçoit donc le
+  /// défaut. C'est aussi ce qui dit, en modération, de quel scraper vient une
+  /// sortie.
+  engine String  @default("pipeline") @db.VarChar(16)
+  /// Le modèle qui pilote l'agent, au format d'OpenRouter. Nul pour le
+  /// pipeline, et nul pour un agent lancé sans préférence : le worker prend
+  /// alors son défaut.
+  pilot  String? @db.VarChar(100)
+
   queuedAt   DateTime  @default(now())
   startedAt  DateTime?
   finishedAt DateTime?
@@ -456,6 +468,7 @@ model ScraperRun {
   @@index([status, queuedAt])
   @@index([configId])
   @@index([eventId])
+  @@index([status, engine])
 }
 
 /// Le journal détaillé d'une exécution, étage par étage.
