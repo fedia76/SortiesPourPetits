@@ -39,13 +39,13 @@ const CONTACT = 'floriantanay@gmail.com';
 /**
  * L'hébergeur, dont la loi impose de publier les coordonnées.
  *
- * ⚠️ Le numéro de téléphone d'OVH reste à compléter : l'article 6 III de la
- * LCEN le réclame au même titre que l'adresse, et il n'a pas été recopié ici
- * faute d'avoir pu le vérifier à la source. Il se trouve sur les mentions
- * légales d'OVHcloud ; ajoutez-le dans la phrase ci-dessous.
+ * Le téléphone y figure parce que l'article 6 III de la LCEN le réclame au
+ * même titre que l'adresse — c'est une des rares mentions dont l'absence se
+ * remarque, puisqu'elle prive le lecteur du seul moyen de joindre quelqu'un
+ * quand l'éditeur ne répond plus.
  */
 const HEBERGEUR =
-  'OVH SAS, 2 rue Kellermann, 59100 Roubaix, France — https://www.ovhcloud.com';
+  'OVH SAS, 2 rue Kellermann, 59100 Roubaix, France — téléphone : 1007 — https://www.ovhcloud.com';
 
 const mentionsLegales: PageLegale = {
   slug: 'mentions-legales',
