@@ -49,6 +49,9 @@ ELAGUER_TOUS = 8
 #: Tours récents dont les résultats restent entiers.
 GARDER = 4
 
+#: Tours de préavis avant le plafond, pour que le pilote conclue lui-même.
+PREAVIS = 5
+
 ELAGUE = " [détail élagué : rappelle l'outil si besoin]"
 
 
@@ -105,6 +108,16 @@ def run_agent(ctx: RunContext, pilot: Pilot, toolbox: Toolbox, limits: Limits) -
             # Un dernier tour, pour que le pilote écrive son bilan.
             budget_annonce = True
             messages.append({"role": "user", "content": "Budget épuisé : appelle finish maintenant."})
+        if turn == limits.max_turns - PREAVIS + 1 and toolbox.finished is None:
+            # Le deuxième run réel a été coupé au 60e tour en pleine
+            # exploration, sans bilan : le pilote ne voyait pas venir la fin.
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Il te reste {PREAVIS} tours. Termine ce qui est en "
+                    "cours (extraire, proposer), puis appelle finish avec ton bilan.",
+                }
+            )
         if turn % ELAGUER_TOUS == 0:
             prune(messages, GARDER)
 

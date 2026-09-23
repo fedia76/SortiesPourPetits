@@ -57,6 +57,9 @@ RESULTATS_PAR_RECHERCHE = 8
 #: Caractères du début de page montrés à l'ouverture. Assez pour reconnaître
 #: un sujet, trop peu pour que la page entre dans le contexte.
 EXTRAIT = 280
+#: Lieux distincts sur une même page à partir desquels elle est tenue pour un
+#: agrégateur — voir `Toolbox._multi_organisateurs`.
+LIEUX_AGREGATEUR = 3
 
 
 @dataclass(frozen=True)
@@ -379,7 +382,38 @@ class Toolbox:
             found.fiches.append(ref)
         if not events:
             return f"{found.ref} : aucune fiche ({self.log.why(mark) or 'extraction vide'})."
-        return self._describe_fiches(found)
+        note = self._multi_organisateurs(found, events)
+        return self._describe_fiches(found) + note
+
+    def _multi_organisateurs(self, page: Page, events: list[ExtractedEvent]) -> str:
+        """Une page qui présente des sorties de plusieurs lieux n'en est pas la source.
+
+        L'attribution (étage 7) ne cherche la page officielle que pour les
+        domaines de `aggregator_domains` — une liste qui a toujours un site de
+        retard. Le deuxième run réel a tiré cinq fiches d'un billet de blog
+        (« activités bébé au Havre ») : ni dates, ni source, et « à deux heures
+        de route de Caen » recopié dans la description. Le domaine n'était dans
+        aucune liste.
+
+        Le signal retenu ne dépend d'aucune liste : **trois lieux distincts ou
+        plus** sur une même page. Un théâtre présente sa saison dans ses murs ;
+        un blog, un journal ou un agenda présente les lieux des autres. Le
+        domaine rejoint alors les agrégateurs pour le reste du run, et chaque
+        fiche est remontée à sa source avant d'être retenue.
+        """
+        lieux = {fold(e.venue_name) for e in events if e.relevant and e.venue_name}
+        if len(lieux) < LIEUX_AGREGATEUR:
+            return ""
+        host = urlsplit(page.url).netloc.lower().removeprefix("www.")
+        config = self.ctx.config
+        if not host or any(host == d or host.endswith(f".{d}") for d in config.aggregator_domains):
+            return ""
+        self.ctx.config = replace(config, aggregator_domains=[*config.aggregator_domains, host])
+        self.log.event("aggregator_detected", url=page.url, host=host, venues=len(lieux))
+        return (
+            f"\n({host} présente {len(lieux)} lieux différents : c'est un agrégateur. "
+            "propose cherchera la page officielle de chaque fiche.)"
+        )
 
     def propose(self, fiche: str) -> str:
         found = self.fiches.get(str(fiche))

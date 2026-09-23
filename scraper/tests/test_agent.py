@@ -401,3 +401,55 @@ def test_un_age_absent_est_dit_avec_de_quoi_en_juger():
     toolbox.open("l1")
     resume = toolbox.extract("p2")
     assert "âge non précisé" in resume and "Lectures pour les bébés" in resume
+
+
+# ─────────────────────────────────────── ce que le deuxième run réel a appris
+
+BLOG_URL = "https://blog.fr/activites-bebe-au-havre"
+
+
+def test_une_page_qui_presente_trois_lieux_devient_un_agregateur():
+    fiches = [
+        sortie(title="Bébés nageurs", venue_name="Bains des Docks"),
+        sortie(title="Lectures", venue_name="Bibliothèque Niemeyer"),
+        sortie(title="Motricité", venue_name="Médiathèque de Gonfreville"),
+    ]
+    provider = FakeProvider([], {BLOG_URL: fiches})
+    toolbox = outils([], provider=provider, pages={BLOG_URL: EVENT_HTML})
+    toolbox._target("r", BLOG_URL, "Activités bébé", 0, origin="q")
+    toolbox.open("r1")
+    toolbox.pages["p1"].nature = "programme"
+
+    resume = toolbox.extract("p1")
+
+    assert "blog.fr présente 3 lieux différents" in resume
+    assert "blog.fr" in toolbox.ctx.config.aggregator_domains
+    # Les briques lisent la même configuration : l'attribution le saura.
+    assert toolbox.attribution._is_aggregator(BLOG_URL)
+
+
+def test_une_saison_dans_un_seul_lieu_nest_pas_un_agregateur():
+    fiches = [sortie(title=t, venue_name="Le Volcan") for t in ("Fusées", "Noé", "Ludilo")]
+    provider = FakeProvider([], {BLOG_URL: fiches})
+    toolbox = outils([], provider=provider, pages={BLOG_URL: EVENT_HTML})
+    toolbox._target("r", BLOG_URL, "Saison", 0, origin="q")
+    toolbox.open("r1")
+    toolbox.pages["p1"].nature = "programme"
+
+    assert "agrégateur" not in toolbox.extract("p1")
+    assert "blog.fr" not in toolbox.ctx.config.aggregator_domains
+
+
+def test_le_pilote_est_prevenu_avant_le_plafond_de_tours():
+    turns = [tour(appel("links", page="p9")) for _ in range(8)]
+    ctx, pilot, toolbox, limits, router = monte(turns, limits=Limits(max_turns=8))
+    run_agent(ctx, pilot, toolbox, limits)
+
+    preavis = [
+        i for i, p in enumerate(router.payloads)
+        if any("Il te reste 5 tours" in str(m.get("content")) for m in p["messages"])
+    ]
+    # Annoncé au 4e tour (8 - 5 + 1), une seule fois, et gardé ensuite.
+    assert preavis[0] == 3
+    dernier = router.payloads[-1]["messages"]
+    assert sum("Il te reste 5 tours" in str(m.get("content")) for m in dernier) == 1
