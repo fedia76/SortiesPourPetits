@@ -24,6 +24,22 @@ deux scrapers : c'est ce qui les empêche de proposer deux fois la même
 sortie. Pour les comparer sur une même recherche, purgez la mémoire entre les
 deux runs — sinon le second saute ce que le premier a lu.
 
+### Les pages gelées
+
+Chaque page que l'agent télécharge — et le pipeline aussi, c'est le même code (`sortiesbot/gel.py`) — part au site, telle quelle : le HTML
+**brut, sans JavaScript** — ce qu'il a réellement lu. Dans le journal de
+l'exécution, une ligne qui porte une adresse gelée a deux liens de plus :
+**👁 Page gelée** (la page affichée sans script, isolée du reste de la
+console) et **</> HTML** (le texte brut, où chercher un élément avec Ctrl+F).
+Une page refusée est gelée aussi, avec son code HTTP : la page de blocage
+d'un pare-feu dit souvent qui bloque.
+
+C'est la réponse à « le scraper voyait-il cet élément ? ». S'il n'est pas
+dans le gel, c'est un script qui le charge dans le navigateur, et aucun des
+deux scrapers ne le verra.
+
+Le gel est effacé avec le journal de l'exécution, et avec sa recherche.
+
 ## En ligne de commande
 
 Toujours en essai : rien n'est proposé au site, et la mémoire est locale

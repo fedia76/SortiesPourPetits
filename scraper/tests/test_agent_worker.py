@@ -66,7 +66,7 @@ def branche(monkeypatch, turns):
     monkeypatch.setattr(worker, "Pilot", pilote)
     monkeypatch.setattr(worker, "SerperClient", lambda key: FakeSearch())
     monkeypatch.setattr(
-        worker, "Fetcher", lambda: FakeFetcher({AGENDA_URL: AGENDA_HTML, EVENT_URL: EVENT_HTML})
+        worker, "Fetcher", lambda **kw: FakeFetcher({AGENDA_URL: AGENDA_HTML, EVENT_URL: EVENT_HTML})
     )
     return pilots
 

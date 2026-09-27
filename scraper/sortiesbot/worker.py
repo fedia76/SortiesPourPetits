@@ -47,6 +47,7 @@ from .evaluation import (
     read_from_html,
     select_from_html,
 )
+from .gel import PageFreezer, TalkativeFetcher
 from .harvest import Fetcher
 from .journal import RemoteJournal, RunLog, run_log_path
 from .ledger import Ledger, ledger_path
@@ -246,15 +247,19 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
                 # Serper l'est, quel que soit le fournisseur de la recherche
                 # que la console a choisi.
                 engine = client_or_none(env.serper_key)
+                # Chaque page reçue part au site, telle quelle : le journal de
+                # la console y renvoie, pour vérifier ce que le run a
+                # réellement lu — voir `gel.py`.
+                fetcher = TalkativeFetcher(on_page=PageFreezer(api, run_id))
                 if event is None:
                     summary = run_pipeline(
                         config, provider, store, api, log, submit=submit,
-                        ledger=ledger, engine=engine,
+                        fetcher=fetcher, ledger=ledger, engine=engine,
                     ).summary
                 else:
                     found = run_source(
                         config, provider, store, api, log, event,
-                        ledger=ledger, engine=engine,
+                        fetcher=fetcher, ledger=ledger, engine=engine,
                     )
                     summary = found.summary
                     # Le rapport fait partie du travail : une recherche qui

@@ -438,6 +438,17 @@ const pilotSlug = z
   .max(100)
   .regex(/^[a-z0-9][a-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*(:[a-z]+)?$/, 'Modèle invalide : « éditeur/modèle » attendu');
 
+/**
+ * Une page gelée par le worker pendant l'exécution : ce qu'il a réellement
+ * reçu, refus compris. Le HTML arrive gzippé en base64, comme au banc.
+ */
+export const scraperRunPageSchema = z.object({
+  url: z.string().trim().url('URL invalide').max(500),
+  status: z.number().int().min(100).max(599),
+  bytes: z.number().int().min(0),
+  html: z.string().min(1).max(1_000_000),
+});
+
 /** Mise en file d'une exécution depuis la console. */
 export const scraperRunSchema = z
   .object({

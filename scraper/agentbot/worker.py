@@ -37,7 +37,8 @@ from typing import Any
 
 from sortiesbot.api import ApiError, SppApi
 from sortiesbot.config import ConfigError, Environment, config_from_api, load_dotenv
-from sortiesbot.harvest import Fetcher
+from sortiesbot.gel import PageFreezer
+from sortiesbot.gel import TalkativeFetcher as Fetcher
 from sortiesbot.journal import RemoteJournal, run_log_path
 from sortiesbot.models import Summary
 from sortiesbot.providers.base import ProviderError, get_provider
@@ -138,7 +139,9 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
                 provider=provider,
                 store=store,
                 api=api,
-                fetcher=Fetcher(),
+                # Chaque page reçue part au site : le journal de la console y
+                # renvoie, pour vérifier ce que l'agent a réellement lu.
+                fetcher=Fetcher(on_page=PageFreezer(api, run_id)),
                 log=log,
                 submit=submit,
             )

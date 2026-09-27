@@ -453,3 +453,127 @@ def test_le_pilote_est_prevenu_avant_le_plafond_de_tours():
     assert preavis[0] == 3
     dernier = router.payloads[-1]["messages"]
     assert sum("Il te reste 5 tours" in str(m.get("content")) for m in dernier) == 1
+
+
+# ───────────────────────────────────── une page refusée, et pourquoi
+
+def test_une_page_en_echec_nest_pas_retentee():
+    toolbox = outils([], pages={EVENT_URL: EVENT_HTML})  # l'agenda manque : injoignable
+    toolbox.search("q")
+    premier = toolbox.open("r1")
+    assert premier.startswith("r1 injoignable : ")
+    assert toolbox.open("r1").startswith("r1 déjà tentée, sans succès")
+    assert toolbox.ctx.fetcher.asked.count(AGENDA_URL) == 1
+    assert toolbox.counters.opened == 1
+
+
+class _Reponse:
+    def __init__(self, code, body=b""):
+        self.status_code = code
+        self.headers = {"Content-Type": "text/html; charset=utf-8"}
+        self.body = body
+        self.encoding = "utf-8"
+
+    def close(self):
+        pass
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, size):
+        yield self.body
+
+
+class _Session:
+    def __init__(self, code, body=b""):
+        self.code = code
+        self.body = body
+        self.headers = {}
+
+    def get(self, url, **kwargs):
+        # robots.txt absent : accès autorisé, comme le veut la convention.
+        if url.endswith("/robots.txt"):
+            return _Reponse(404)
+        return _Reponse(self.code, self.body)
+
+
+@pytest.mark.parametrize(
+    ("code", "attendu"),
+    [(403, "HTTP 403 : le site refuse l'accès"), (429, "HTTP 429 : trop de requêtes"), (418, "HTTP 418 : refus du site")],
+)
+def test_le_telechargeur_de_lagent_dit_le_code_http(code, attendu):
+    from sortiesbot.gel import TalkativeFetcher
+    from sortiesbot.harvest import FetchError
+
+    fetcher = TalkativeFetcher(session=_Session(code))
+    with pytest.raises(FetchError, match=attendu):
+        fetcher.get_html("https://exemple.fr/agenda")
+
+
+def test_chaque_page_recue_est_gelee_une_fois():
+    from sortiesbot.gel import TalkativeFetcher
+
+    geles = []
+    fetcher = TalkativeFetcher(
+        session=_Session(200, b"<html><body>Bebes lecteurs</body></html>"),
+        on_page=lambda *page: geles.append(page),
+    )
+    fetcher.get_html("https://exemple.fr/agenda")
+    fetcher.get_html("https://exemple.fr/agenda")  # relue : sortie du cache
+    assert geles == [("https://exemple.fr/agenda", 200, "<html><body>Bebes lecteurs</body></html>")]
+
+
+def test_un_refus_est_gele_avec_son_code_et_sa_page_de_blocage():
+    from sortiesbot.gel import TalkativeFetcher
+    from sortiesbot.harvest import FetchError
+
+    geles = []
+    fetcher = TalkativeFetcher(
+        session=_Session(403, b"<h1>Access denied - Cloudflare</h1>"),
+        on_page=lambda *page: geles.append(page),
+    )
+    with pytest.raises(FetchError, match="HTTP 403"):
+        fetcher.get_html("https://exemple.fr/agenda")
+    assert geles == [("https://exemple.fr/agenda", 403, "<h1>Access denied - Cloudflare</h1>")]
+
+
+def test_un_gel_qui_echoue_ne_fait_pas_echouer_la_lecture():
+    from sortiesbot.gel import TalkativeFetcher
+
+    def boom(*_page):
+        raise RuntimeError("site injoignable")
+
+    fetcher = TalkativeFetcher(session=_Session(200, b"<p>ok</p>"), on_page=boom)
+    assert fetcher.get_html("https://exemple.fr/") == "<p>ok</p>"
+
+
+def test_le_gel_part_au_site_gzippe_et_renonce_apres_trois_echecs():
+    import base64
+    import gzip
+
+    from sortiesbot.api import ApiError
+    from sortiesbot.gel import PageFreezer
+
+    class Api:
+        def __init__(self, fail=False):
+            self.fail = fail
+            self.posts = []
+
+        def _post_json(self, path, payload=None):
+            self.posts.append((path, payload))
+            if self.fail:
+                raise ApiError("HTTP 500")
+            return {}
+
+    api = Api()
+    PageFreezer(api, 7)("https://exemple.fr/", 200, "<p>é</p>")
+    path, payload = api.posts[0]
+    assert path == "/api/scraper/runs/7/pages"
+    assert gzip.decompress(base64.b64decode(payload["html"])).decode() == "<p>é</p>"
+    assert (payload["status"], payload["bytes"]) == (200, len("<p>é</p>".encode()))
+
+    panne = Api(fail=True)
+    gel = PageFreezer(panne, 7)
+    for i in range(5):
+        gel(f"https://exemple.fr/{i}", 200, "<p>x</p>")
+    assert len(panne.posts) == 3

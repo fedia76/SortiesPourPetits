@@ -230,7 +230,11 @@ def run_job(api, monkeypatch, provider, fetcher, runs_dir, payload=None):
     monkeypatch.setattr(
         worker,
         "run_pipeline",
-        lambda config, prov, store, spp, log, submit=False, ledger=None, engine=None: (
+        # Le téléchargeur du worker — celui qui gèle ses pages au site —
+        # arrive dans `_worker` et n'est pas utilisé : le test le remplace par
+        # le serveur web simulé. Pas de paramètre `fetcher` ici, il masquerait
+        # celui du test.
+        lambda config, prov, store, spp, log, submit=False, ledger=None, engine=None, **_worker: (
             __import__("sortiesbot.orchestrator", fromlist=["run"]).run(
                 config, prov, store, spp, log,
                 submit=submit, fetcher=fetcher, ledger=ledger, engine=engine,
@@ -966,3 +970,25 @@ def test_l_echec_d_une_entree_se_lit_dans_le_journal(capsys, monkeypatch):
     api = FauxBanc([_entree(1)])
     worker.play_run({"id": 33, "stage": "READ", "items": 1}, api, _env_banc(), quiet=False)
     assert "texte illisible" in capsys.readouterr().out
+
+
+def test_le_worker_du_pipeline_gele_les_pages_quil_lit(tmp_path, monkeypatch, geocodeur_simule):
+    """Le téléchargeur passé au pipeline gèle au site, rattaché à l'exécution."""
+    from sortiesbot.gel import PageFreezer, TalkativeFetcher
+
+    recu = {}
+
+    def pipeline(config, prov, store, spp, log, submit=False, ledger=None, engine=None, fetcher=None):
+        recu["fetcher"] = fetcher
+        from sortiesbot.orchestrator import RunResult
+        return RunResult()
+
+    monkeypatch.setattr(worker, "get_provider", lambda config, **clés: FakeProvider([], {}))
+    monkeypatch.setattr(worker, "run_pipeline", pipeline)
+    monkeypatch.setattr(worker, "LEDGER_DIR", tmp_path)
+    env = Environment(api_url="http://site", api_key="spp_x", anthropic_key="clé")
+    worker.execute(job(), ScraperApi(), env, runs_dir=tmp_path, quiet=True)
+
+    assert isinstance(recu["fetcher"], TalkativeFetcher)
+    assert isinstance(recu["fetcher"].on_page, PageFreezer)
+    assert recu["fetcher"].on_page.run_id == 42

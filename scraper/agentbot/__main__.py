@@ -22,7 +22,7 @@ from pathlib import Path
 
 from sortiesbot.api import SppApi
 from sortiesbot.config import ConfigError, Environment, load_config, load_dotenv, with_limit
-from sortiesbot.harvest import Fetcher
+from sortiesbot.gel import TalkativeFetcher as Fetcher
 from sortiesbot.journal import run_log_path
 from sortiesbot.providers.base import ProviderError, get_provider
 from sortiesbot.providers.serper_client import SerperClient, client_or_none
