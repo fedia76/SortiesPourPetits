@@ -464,11 +464,41 @@ model ScraperRun {
 
   items ScraperRunItem[]
   logs  ScraperRunLog[]
+  frozen ScraperRunPage[]
 
   @@index([status, queuedAt])
   @@index([configId])
   @@index([eventId])
   @@index([status, engine])
+}
+
+/// Une page telle que le worker l'a reçue pendant l'exécution — le gel.
+///
+/// Le HTML **brut**, tel que le serveur du site l'a rendu, sans JavaScript :
+/// c'est exactement ce que le scraper a lu. Un élément qui n'y figure pas est
+/// chargé par un script, et le scraper ne l'a jamais vu. C'est la question que
+/// ce gel sert à trancher, et la seule façon d'y répondre après coup — la page
+/// en ligne aura changé.
+///
+/// Distinct du corpus du banc (`EvalAgendaPage`) : celui-ci re-télécharge
+/// après la clôture, pour mesurer ; celui-là garde ce qui a été lu, pour
+/// déboguer. Une page refusée est gelée aussi, avec son code : la page de
+/// blocage d'un pare-feu dit souvent pourquoi.
+model ScraperRunPage {
+  id       Int      @id @default(autoincrement())
+  url      String   @db.VarChar(500)
+  /// Le code HTTP de la réponse : 200, ou celui du refus.
+  status   Int
+  /// Le fichier gzippé, dans le même dossier que les pages du banc.
+  htmlPath String   @db.VarChar(255)
+  /// Taille du HTML déballé, en octets.
+  bytes    Int
+  at       DateTime @default(now())
+
+  run   ScraperRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId Int
+
+  @@unique([runId, url])
 }
 
 /// Le journal détaillé d'une exécution, étage par étage.

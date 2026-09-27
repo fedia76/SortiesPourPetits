@@ -2,6 +2,8 @@ import { Prisma, Role } from '@prisma/client';
 import { safeRouter } from '../lib/asyncRoutes';
 import { prisma } from '../db';
 import { deletePhoto } from '../lib/upload';
+import { deleteEvalPages, readEvalPage, saveEvalPage } from '../lib/evalPages';
+import { FROZEN_PAGE_CSP, withBase } from '../lib/frozenPages';
 import { ATTRIBUTE_STAGE, buildAttribution } from '../lib/scraperAttribution';
 import { TREE_MAX_ROWS, buildTree } from '../lib/scraperTree';
 import { filiationOf, groupProvenance } from '../lib/scraperProvenance';
@@ -21,6 +23,7 @@ import {
   scraperLogsSchema,
   scraperMemoryPurgeSchema,
   scraperMemorySchema,
+  scraperRunPageSchema,
   scraperRunSchema,
   scraperSeenSchema,
   scraperSourceSchema,
@@ -199,8 +202,15 @@ scraperRouter.delete('/configs/:id', async (req, res) => {
   }
   try {
     // Les runs et leurs lignes suivent (onDelete: Cascade) ; la mémoire des
-    // pages, elle, est commune à toutes les configurations et survit.
+    // pages, elle, est commune à toutes les configurations et survit. Les
+    // pages gelées sont des fichiers : la cascade efface leurs lignes, pas
+    // eux — d'où la liste relevée avant.
+    const frozen = await prisma.scraperRunPage.findMany({
+      where: { run: { configId: id } },
+      select: { htmlPath: true },
+    });
     await prisma.scraperConfig.delete({ where: { id } });
+    await deleteEvalPages(frozen.map((p) => p.htmlPath));
     res.json({ ok: true });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
@@ -1505,8 +1515,99 @@ scraperRouter.delete('/runs/:id/logs', async (req, res) => {
     return;
   }
   const { count } = await prisma.scraperRunLog.deleteMany({ where: { runId: id } });
+  // Les pages gelées vont avec le journal : elles servent à le relire, et
+  // n'ont plus d'usage une fois qu'il est oublié.
+  const frozen = await prisma.scraperRunPage.findMany({ where: { runId: id }, select: { htmlPath: true } });
+  await prisma.scraperRunPage.deleteMany({ where: { runId: id } });
+  await deleteEvalPages(frozen.map((p) => p.htmlPath));
   res.json({ ok: true, deleted: count });
 });
+
+// ------------------------------------------------------------ pages gelées
+
+/**
+ * Gèle une page telle que le worker l'a reçue — refus compris.
+ *
+ * Une par adresse et par exécution : la première lecture fait foi, une
+ * relecture dans le même run ne la remplace pas. Un gel raté n'est pas une
+ * erreur pour le worker, qui continue son run ; c'est lui qui en décide.
+ */
+scraperRouter.post('/runs/:id/pages', async (req, res) => {
+  const runId = parseId(req.params.id);
+  const parsed = scraperRunPageSchema.safeParse(req.body);
+  if (runId === null || !parsed.success) {
+    res.status(400).json({ error: parsed.success ? 'Requête invalide' : parsed.error.issues[0].message });
+    return;
+  }
+  const run = await prisma.scraperRun.findUnique({ where: { id: runId }, select: { id: true } });
+  if (!run) {
+    res.status(404).json({ error: 'Exécution introuvable' });
+    return;
+  }
+  const { url, status, bytes, html } = parsed.data;
+  const known = await prisma.scraperRunPage.findUnique({ where: { runId_url: { runId, url } } });
+  if (known) {
+    res.json({ page: { id: known.id }, already: true });
+    return;
+  }
+  const htmlPath = await saveEvalPage(html);
+  if (!htmlPath) {
+    res.status(507).json({ error: 'Page non enregistrée (disque)' });
+    return;
+  }
+  const page = await prisma.scraperRunPage.create({ data: { runId, url, status, bytes, htmlPath } });
+  res.status(201).json({ page: { id: page.id } });
+});
+
+/** Les pages gelées d'une exécution, sans leur contenu. */
+scraperRouter.get('/runs/:id/pages', async (req, res) => {
+  const runId = parseId(req.params.id);
+  if (runId === null) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const pages = await prisma.scraperRunPage.findMany({
+    where: { runId },
+    orderBy: { at: 'asc' },
+    select: { id: true, url: true, status: true, bytes: true, at: true },
+  });
+  res.json({ pages });
+});
+
+/**
+ * Le HTML gelé. En texte par défaut — c'est ce qu'on cherche des yeux, et
+ * c'est inoffensif. `?rendu=1` l'affiche comme une page, pour voir ce qu'un
+ * navigateur montrerait **sans JavaScript**, c'est-à-dire ce que le scraper a
+ * vu.
+ *
+ * Le rendu sert du HTML étranger depuis notre domaine : il part donc sous une
+ * CSP `sandbox` sans `allow-scripts`. Le navigateur l'isole dans une origine
+ * opaque — pas de script, pas d'accès aux cookies de la console, pas de
+ * formulaire — et le `<base>` ajouté ne sert qu'à retrouver ses images et ses
+ * feuilles de style.
+ */
+scraperRouter.get('/runs/:id/pages/:pageId/html', async (req, res) => {
+  const runId = parseId(req.params.id);
+  const pageId = parseId(req.params.pageId);
+  if (runId === null || pageId === null) {
+    res.status(400).json({ error: 'Requête invalide' });
+    return;
+  }
+  const page = await prisma.scraperRunPage.findFirst({ where: { id: pageId, runId } });
+  const html = page ? await readEvalPage(page.htmlPath) : null;
+  if (!page || html === null) {
+    res.status(404).json({ error: 'Page gelée introuvable' });
+    return;
+  }
+  if (req.query.rendu !== '1') {
+    res.type('text/plain; charset=utf-8').send(html);
+    return;
+  }
+  res.setHeader('Content-Security-Policy', FROZEN_PAGE_CSP);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.type('text/html; charset=utf-8').send(withBase(html, page.url));
+});
+
 
 /**
  * Supprime tout ce qu'une exécution a produit : ses sorties, et ce qu'elle

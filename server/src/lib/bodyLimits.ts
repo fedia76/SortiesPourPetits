@@ -57,7 +57,17 @@ export const EVAL_PREFIX = '/api/eval';
  * `guardEval` garde le plafond large : il s'exécute avant que le moindre octet
  * ne soit lu, et un appelant refusé ne coûte donc rien d'autre qu'un 401.
  */
+/**
+ * Le gel d'une page par le worker : une page par requête, au plus
+ * `EVAL_MAX_HTML_B64` de HTML gzippé en base64. Même règle que le banc — le
+ * plafond large d'abord, gardé par le même contrôle de rôle — mais pour cette
+ * seule route : le reste de `/api/scraper` garde le plafond serré.
+ */
+export const RUN_PAGE_PATH = /^\/api\/scraper\/runs\/\d+\/pages$/;
+export const RUN_PAGE_BODY_LIMIT = '2mb';
+
 export function mountJsonParsers(app: Express, guardEval: RequestHandler): void {
   app.use(EVAL_PREFIX, guardEval, express.json({ limit: EVAL_BODY_LIMIT }));
+  app.use(RUN_PAGE_PATH, guardEval, express.json({ limit: RUN_PAGE_BODY_LIMIT }));
   app.use(express.json());
 }

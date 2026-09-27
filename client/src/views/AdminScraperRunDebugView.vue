@@ -18,6 +18,7 @@ import { api } from '../lib/api';
 import { estIntrouvable, messageDe } from '../lib/erreurs';
 import { usePolling } from '../composables/usePolling';
 import type {
+  FrozenPage,
   ScraperAttribution,
   ScraperRun,
   ScraperRunLog,
@@ -131,6 +132,26 @@ async function loadGraph() {
   outside.value = res.outside;
 }
 
+/**
+ * Les pages gelées de l'exécution, par adresse : le journal renvoie à celle
+ * que le worker a reçue, pour vérifier ce qu'il a réellement lu. Une panne
+ * ici ne gêne rien d'autre — le journal reste lisible sans ses gels.
+ */
+const frozen = ref<Record<string, FrozenPage>>({});
+
+async function loadFrozen() {
+  try {
+    const res = await api.get<{ pages: FrozenPage[] }>(`/api/scraper/runs/${runId.value}/pages`);
+    frozen.value = Object.fromEntries(res.pages.map((page) => [page.url, page]));
+  } catch {
+    frozen.value = {};
+  }
+}
+
+function frozenHref(page: FrozenPage, rendu: boolean): string {
+  return `/api/scraper/runs/${runId.value}/pages/${page.id}/html${rendu ? '?rendu=1' : ''}`;
+}
+
 async function loadLogs() {
   const res = await api.get<{ logs: ScraperRunLog[]; hasMore: boolean; total: number }>(
     `/api/scraper/runs/${runId.value}/logs?${query()}`,
@@ -159,7 +180,7 @@ async function loadMore() {
 
 async function loadAll() {
   try {
-    await Promise.all([loadRun(), loadGraph(), loadTree(), loadAttribution(), loadLogs()]);
+    await Promise.all([loadRun(), loadGraph(), loadTree(), loadAttribution(), loadLogs(), loadFrozen()]);
     error.value = '';
   } catch (e) {
     if (estIntrouvable(e)) {
@@ -1180,6 +1201,25 @@ function clip(text: string, max = 22) {
             <button v-if="log.url" class="btn tiny ghost" @click="follow(log.url!)">
               Suivre cette page
             </button>
+            <template v-if="log.url && frozen[log.url]">
+              <a
+                :href="frozenHref(frozen[log.url], true)"
+                target="_blank"
+                rel="noopener"
+                class="btn tiny ghost"
+                title="La page telle que le scraper l'a reçue, affichée sans JavaScript"
+              >👁 Page gelée</a>
+              <a
+                :href="frozenHref(frozen[log.url], false)"
+                target="_blank"
+                rel="noopener"
+                class="btn tiny ghost"
+                title="Le HTML brut reçu : cherchez-y un élément (Ctrl+F) pour savoir si le scraper le voyait"
+              >&lt;/&gt; HTML</a>
+              <span v-if="frozen[log.url].status >= 400" class="badge refus">
+                HTTP {{ frozen[log.url].status }}
+              </span>
+            </template>
           </div>
           <dl v-if="open.has(log.id) && details(log)" class="detail">
             <template v-for="[k, v] of details(log)!" :key="k">
@@ -1217,6 +1257,11 @@ function clip(text: string, max = 22) {
 </template>
 
 <style scoped>
+.badge.refus {
+  background: var(--danger-soft, #fde2e2);
+  color: var(--danger, #b3261e);
+}
+
 /* La console de débogage déborde volontairement du gabarit du site :
    six briques de front ne tiennent pas dans 1080 px. */
 .debug {

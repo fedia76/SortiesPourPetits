@@ -249,6 +249,19 @@ export const ENGINE_LABELS: Record<ScraperEngine, string> = {
   agent: 'Agent',
 };
 
+/**
+ * Une page telle que le worker l'a reçue pendant l'exécution : le HTML brut,
+ * sans JavaScript. Seul l'agent gèle ses pages pour l'instant.
+ */
+export interface FrozenPage {
+  id: number;
+  url: string;
+  /** Code HTTP de la réponse : 200, ou celui du refus. */
+  status: number;
+  bytes: number;
+  at: string;
+}
+
 export interface ScraperRun {
   id: number;
   status: ScraperRunStatus;

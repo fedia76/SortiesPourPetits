@@ -46,6 +46,7 @@ from sortiesbot.store import RemoteStore
 from sortiesbot.worker import POLL_SECONDS, counters, finish
 
 from .fetcher import TalkativeFetcher as Fetcher
+from .freezer import PageFreezer
 from .journal import AgentLog
 from .loop import run_agent
 from .pilot import PILOTE_DEFAUT, Pilot
@@ -138,7 +139,9 @@ def execute(job: dict[str, Any], api: SppApi, env: Environment, runs_dir: Path, 
                 provider=provider,
                 store=store,
                 api=api,
-                fetcher=Fetcher(),
+                # Chaque page reçue part au site : le journal de la console y
+                # renvoie, pour vérifier ce que l'agent a réellement lu.
+                fetcher=Fetcher(on_page=PageFreezer(api, run_id)),
                 log=log,
                 submit=submit,
             )

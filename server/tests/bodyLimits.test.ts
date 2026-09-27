@@ -39,6 +39,8 @@ mountJsonParsers(app, (_req, res, next) => {
 // est le parseur, pas ce qu'il y a derrière.
 app.post('/api/eval/hunts/1/pages', (req, res) => res.json({ octets: JSON.stringify(req.body).length }));
 app.post('/api/events', (req, res) => res.json({ octets: JSON.stringify(req.body).length }));
+app.post('/api/scraper/runs/7/pages', (req, res) => res.json({ octets: JSON.stringify(req.body).length }));
+app.post('/api/scraper/runs/7/items', (req, res) => res.json({ octets: JSON.stringify(req.body).length }));
 app.use((err: Error, _req: Request, res: ExpressResponse, _next: NextFunction) => {
   const { status, error } = reponseErreur(err);
   res.status(status).json({ error });
@@ -100,6 +102,22 @@ test('un appelant refusé sur le banc ne retombe pas sur le plafond serré', asy
   try {
     const res = await poste('/api/eval/hunts/1/pages', 300);
     assert.equal(res.status, 401);
+  } finally {
+    autorise = true;
+  }
+});
+
+test('le gel d’une page accepte un mégaoctet de HTML, et lui seul dans /api/scraper', async () => {
+  // Une page gzippée en base64 dépasse vite les 100 ko par défaut : sans le
+  // plafond de cette route, le gel des grosses pages échouait en silence.
+  assert.equal((await poste('/api/scraper/runs/7/pages', 1024)).status, 200);
+  assert.equal((await poste('/api/scraper/runs/7/items', 300)).status, 413);
+});
+
+test('le gel d’une page garde le contrôle de rôle avant de lire le corps', async () => {
+  autorise = false;
+  try {
+    assert.equal((await poste('/api/scraper/runs/7/pages', 1024)).status, 401);
   } finally {
     autorise = true;
   }
