@@ -502,7 +502,7 @@ class _Session:
     [(403, "HTTP 403 : le site refuse l'accès"), (429, "HTTP 429 : trop de requêtes"), (418, "HTTP 418 : refus du site")],
 )
 def test_le_telechargeur_de_lagent_dit_le_code_http(code, attendu):
-    from agentbot.fetcher import TalkativeFetcher
+    from sortiesbot.gel import TalkativeFetcher
     from sortiesbot.harvest import FetchError
 
     fetcher = TalkativeFetcher(session=_Session(code))
@@ -511,7 +511,7 @@ def test_le_telechargeur_de_lagent_dit_le_code_http(code, attendu):
 
 
 def test_chaque_page_recue_est_gelee_une_fois():
-    from agentbot.fetcher import TalkativeFetcher
+    from sortiesbot.gel import TalkativeFetcher
 
     geles = []
     fetcher = TalkativeFetcher(
@@ -524,7 +524,7 @@ def test_chaque_page_recue_est_gelee_une_fois():
 
 
 def test_un_refus_est_gele_avec_son_code_et_sa_page_de_blocage():
-    from agentbot.fetcher import TalkativeFetcher
+    from sortiesbot.gel import TalkativeFetcher
     from sortiesbot.harvest import FetchError
 
     geles = []
@@ -538,7 +538,7 @@ def test_un_refus_est_gele_avec_son_code_et_sa_page_de_blocage():
 
 
 def test_un_gel_qui_echoue_ne_fait_pas_echouer_la_lecture():
-    from agentbot.fetcher import TalkativeFetcher
+    from sortiesbot.gel import TalkativeFetcher
 
     def boom(*_page):
         raise RuntimeError("site injoignable")
@@ -551,8 +551,8 @@ def test_le_gel_part_au_site_gzippe_et_renonce_apres_trois_echecs():
     import base64
     import gzip
 
-    from agentbot.freezer import PageFreezer
     from sortiesbot.api import ApiError
+    from sortiesbot.gel import PageFreezer
 
     class Api:
         def __init__(self, fail=False):

@@ -75,6 +75,12 @@ recherche avec la configuration que le site lui donne, rend compte page par
 page (`/runs/:id/items`) puis clôt l'exécution avec ses compteurs
 (`/runs/:id/finish`). Il ne décide de rien : tout se règle dans la console.
 
+Chaque page qu'il télécharge est **gelée** au site (`/runs/:id/pages`), telle
+qu'il l'a reçue — le HTML brut, sans JavaScript, refus compris avec leur code
+HTTP. Le journal de l'exécution y renvoie : c'est ce qui dit, après coup, si
+le scraper voyait un élément de la page ou si un script le chargeait dans le
+navigateur seulement. Voir [`sortiesbot/gel.py`](sortiesbot/gel.py).
+
 Il sert aussi **trois autres files**, celles du banc d'évaluation — voir
 « [Mesurer les briques : le banc
 d'évaluation](#mesurer-les-briques--le-banc-dévaluation) » —, et l'ordre dans

@@ -37,6 +37,8 @@ from typing import Any
 
 from sortiesbot.api import ApiError, SppApi
 from sortiesbot.config import ConfigError, Environment, config_from_api, load_dotenv
+from sortiesbot.gel import PageFreezer
+from sortiesbot.gel import TalkativeFetcher as Fetcher
 from sortiesbot.journal import RemoteJournal, run_log_path
 from sortiesbot.models import Summary
 from sortiesbot.providers.base import ProviderError, get_provider
@@ -45,8 +47,6 @@ from sortiesbot.stages.base import RunContext
 from sortiesbot.store import RemoteStore
 from sortiesbot.worker import POLL_SECONDS, counters, finish
 
-from .fetcher import TalkativeFetcher as Fetcher
-from .freezer import PageFreezer
 from .journal import AgentLog
 from .loop import run_agent
 from .pilot import PILOTE_DEFAUT, Pilot

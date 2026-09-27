@@ -251,7 +251,7 @@ export const ENGINE_LABELS: Record<ScraperEngine, string> = {
 
 /**
  * Une page telle que le worker l'a reçue pendant l'exécution : le HTML brut,
- * sans JavaScript. Seul l'agent gèle ses pages pour l'instant.
+ * sans JavaScript. Les deux scrapers gèlent leurs pages.
  */
 export interface FrozenPage {
   id: number;

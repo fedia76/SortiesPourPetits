@@ -26,7 +26,7 @@ deux runs — sinon le second saute ce que le premier a lu.
 
 ### Les pages gelées
 
-Chaque page que l'agent télécharge part au site, telle quelle : le HTML
+Chaque page que l'agent télécharge — et le pipeline aussi, c'est le même code (`sortiesbot/gel.py`) — part au site, telle quelle : le HTML
 **brut, sans JavaScript** — ce qu'il a réellement lu. Dans le journal de
 l'exécution, une ligne qui porte une adresse gelée a deux liens de plus :
 **👁 Page gelée** (la page affichée sans script, isolée du reste de la

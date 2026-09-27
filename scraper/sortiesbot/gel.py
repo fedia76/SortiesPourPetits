@@ -1,27 +1,36 @@
-"""Le téléchargeur du pipeline, qui dit en plus **pourquoi** une page refuse.
+"""Le gel des pages : ce que le scraper a réellement reçu, gardé pour le relire.
 
-`sortiesbot.harvest.Fetcher` rend « page inaccessible (HTTPError) » pour
-toute réponse 4xx ou 5xx : le code est perdu en chemin. Or c'est lui qui dit
-quoi faire — 404, l'adresse est morte ; 403, le site refuse les robots ; 429,
-il nous trouve trop pressés et il faut revenir plus tard ; 503, il est tombé.
+Deux pièces, communes aux deux scrapers — le pipeline et l'agent :
 
-Le premier cas réel l'a montré : une page lue sans peine par le pipeline,
-refusée à l'agent quelques minutes plus tard, et rien dans le journal pour
-dire si c'était le site qui nous bloquait ou l'adresse qui avait changé.
+* `TalkativeFetcher`, le `Fetcher` de `harvest.py` avec deux choses de plus :
+  ses refus HTTP portent leur code (« HTTP 429 : trop de requêtes »), là où
+  le message d'origine ne disait que « HTTPError » ; et un crochet `on_page`
+  appelé à chaque **première** lecture d'une adresse, refus compris ;
+* `PageFreezer`, le crochet du worker : il envoie chaque page au site,
+  gzippée, rattachée à l'exécution. Le journal de la console y renvoie.
 
-Ce n'est qu'un message plus précis : le comportement ne change pas, la page
-est refusée dans les mêmes cas.
+Le HTML gelé est **brut, sans JavaScript** — ce que le scraper a lu. C'est
+ce qui tranche après coup « est-ce que le scraper voyait cet élément ? » :
+s'il n'est pas dans le gel, un script le charge dans le navigateur, et le
+scraper ne le verra jamais. La page en ligne, elle, aura changé.
+
+Geler est un confort, lire est le travail : aucune panne du gel ne remonte
+jusqu'à la lecture, et au bout de quelques échecs d'envoi on renonce pour le
+reste du run.
 """
 
 from __future__ import annotations
 
+import base64
 import contextlib
+import gzip
 from collections.abc import Callable
 from typing import Any
 
 import requests
 
-from sortiesbot.harvest import Fetcher, FetchError
+from .api import ApiError
+from .harvest import Fetcher, FetchError
 
 #: Ce qu'un code veut dire, pour le pilote comme pour qui lit le journal.
 SENS = {
@@ -105,3 +114,39 @@ def _corps(response: requests.Response) -> str:
         return b"".join(morceaux)[:REFUS_MAX].decode(response.encoding or "utf-8", errors="replace")
     except Exception:  # noqa: BLE001 — un corps illisible ne change rien au refus
         return ""
+
+
+# ═══════════════════════════════════════════════════════ l'envoi au site
+
+#: Le plafond du site pour une page gelée (`EVAL_MAX_HTML_B64`).
+MAX_B64 = 1_000_000
+#: Échecs d'affilée après lesquels on cesse d'essayer.
+MAX_ECHECS = 3
+
+
+class PageFreezer:
+    """Envoie chaque page au site, rattachée à l'exécution."""
+
+    def __init__(self, api: Any, run_id: int) -> None:
+        self.api = api
+        self.run_id = run_id
+        self.echecs = 0
+        self.envoyees = 0
+
+    def __call__(self, url: str, status: int, html: str) -> None:
+        if self.echecs >= MAX_ECHECS or not html:
+            return
+        brut = html.encode("utf-8")
+        charge = base64.b64encode(gzip.compress(brut)).decode("ascii")
+        if len(charge) > MAX_B64:
+            return
+        try:
+            self.api._post_json(
+                f"/api/scraper/runs/{self.run_id}/pages",
+                {"url": url[:500], "status": status, "bytes": len(brut), "html": charge},
+            )
+        except ApiError:
+            self.echecs += 1
+            return
+        self.echecs = 0
+        self.envoyees += 1
