@@ -22,13 +22,13 @@ from pathlib import Path
 
 from sortiesbot.api import SppApi
 from sortiesbot.config import ConfigError, Environment, load_config, load_dotenv, with_limit
-from sortiesbot.harvest import Fetcher
 from sortiesbot.journal import run_log_path
 from sortiesbot.providers.base import ProviderError, get_provider
 from sortiesbot.providers.serper_client import SerperClient, client_or_none
 from sortiesbot.stages.base import RunContext
 from sortiesbot.store import SeenStore
 
+from .fetcher import TalkativeFetcher as Fetcher
 from .journal import AgentLog
 from .loop import run_agent
 from .pilot import PILOTE_DEFAUT, Pilot

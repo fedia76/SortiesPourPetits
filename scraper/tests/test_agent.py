@@ -453,3 +453,47 @@ def test_le_pilote_est_prevenu_avant_le_plafond_de_tours():
     assert preavis[0] == 3
     dernier = router.payloads[-1]["messages"]
     assert sum("Il te reste 5 tours" in str(m.get("content")) for m in dernier) == 1
+
+
+# ───────────────────────────────────── une page refusée, et pourquoi
+
+def test_une_page_en_echec_nest_pas_retentee():
+    toolbox = outils([], pages={EVENT_URL: EVENT_HTML})  # l'agenda manque : injoignable
+    toolbox.search("q")
+    premier = toolbox.open("r1")
+    assert premier.startswith("r1 injoignable : ")
+    assert toolbox.open("r1").startswith("r1 déjà tentée, sans succès")
+    assert toolbox.ctx.fetcher.asked.count(AGENDA_URL) == 1
+    assert toolbox.counters.opened == 1
+
+
+class _Reponse:
+    def __init__(self, code):
+        self.status_code = code
+        self.headers = {}
+
+    def close(self):
+        pass
+
+
+class _Session:
+    def __init__(self, code):
+        self.code = code
+        self.headers = {}
+
+    def get(self, url, **kwargs):
+        # robots.txt absent : accès autorisé, comme le veut la convention.
+        return _Reponse(404 if url.endswith("/robots.txt") else self.code)
+
+
+@pytest.mark.parametrize(
+    ("code", "attendu"),
+    [(403, "HTTP 403 : le site refuse l'accès"), (429, "HTTP 429 : trop de requêtes"), (418, "HTTP 418 : refus du site")],
+)
+def test_le_telechargeur_de_lagent_dit_le_code_http(code, attendu):
+    from agentbot.fetcher import TalkativeFetcher
+    from sortiesbot.harvest import FetchError
+
+    fetcher = TalkativeFetcher(session=_Session(code))
+    with pytest.raises(FetchError, match=attendu):
+        fetcher.get_html("https://exemple.fr/agenda")

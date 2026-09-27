@@ -144,6 +144,8 @@ class Toolbox:
         self.pages: dict[str, Page] = {}
         self.opened: dict[str, str] = {}
         self.fiches: dict[str, Fiche] = {}
+        #: Pages qu'on n'a pas pu ouvrir, et pourquoi. Pas de seconde tentative.
+        self.echecs: dict[str, str] = {}
         self._next = {"r": 0, "l": 0, "p": 0, "f": 0}
 
         self.identification = Identification(ctx)
@@ -244,6 +246,10 @@ class Toolbox:
         if key in self.opened:
             page = self.pages[self.opened[key]]
             return f"Déjà ouverte : {page.ref} ({page.nature}, « {page.title} »)."
+        if key in self.echecs:
+            # Un vrai run a rouvert deux fois de suite la même page en échec :
+            # chaque essai coûte un tour, et le site répond la même chose.
+            return f"{target.ref} déjà tentée, sans succès ({self.echecs[key]}) : passe à autre chose."
         if target.depth > self.limits.max_depth:
             return f"Refusé : profondeur {target.depth} au-delà du maximum ({self.limits.max_depth})."
         if self.counters.opened >= self.limits.max_pages:
@@ -254,12 +260,15 @@ class Toolbox:
             return "Déjà traitée comme sortie lors d'un run précédent : inutile de l'ouvrir."
 
         self.counters.opened += 1
+        mark = self.log.mark
         with self.log.trail(page=target.url, agenda=target.origin):
             found = self.identification.run(
                 FoundPage(url=target.url, title=target.title, query=target.origin)
             )
         if found is None:
-            return f"{target.ref} injoignable."
+            motif = self.log.why(mark) or "injoignable"
+            self.echecs[key] = motif
+            return f"{target.ref} injoignable : {motif}."
         nature, source = found
         try:
             html = self.ctx.fetcher.get_html(source.url)  # en cache depuis l'étage 2
